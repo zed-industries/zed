@@ -73,6 +73,7 @@ pub struct OutlinePanel {
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     pending_serialization: Task<Option<()>>,
+    depth_map: Vec<usize>,
     visible_entries: Vec<OutlinePanelEntry>,
     // TODO kb has to include files with outlines later?
     expanded_dir_ids: HashMap<WorktreeId, BTreeSet<ProjectEntryId>>,
@@ -269,6 +270,7 @@ impl OutlinePanel {
                         } else {
                             outline_panel.displayed_item = None;
                             outline_panel.visible_entries.clear();
+                            outline_panel.depth_map.clear();
                             cx.notify();
                         }
                     }
@@ -294,6 +296,7 @@ impl OutlinePanel {
                 scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
                 visible_entries: Vec::new(),
+                depth_map: Vec::new(),
                 expanded_dir_ids: HashMap::default(),
                 unfolded_dir_ids: Default::default(),
                 selected_entry: None,
@@ -1189,6 +1192,8 @@ impl OutlinePanel {
         name
     }
 
+    // TODO kb make async + rebounce
+    // TODO kb do not update when hidden, but update on open?
     fn update_visible_entries(
         &mut self,
         active_editor: &View<Editor>,
@@ -1197,6 +1202,7 @@ impl OutlinePanel {
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
         self.visible_entries.clear();
+        self.depth_map.clear();
 
         let auto_collapse_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
         let project = self.project.read(cx);
@@ -1343,6 +1349,9 @@ impl OutlinePanel {
             }
         }
 
+        let mut outline_depth = None;
+        let mut depth = 0;
+        let mut parent_entry_stack = Vec::new();
         self.visible_entries = external_entries
             .into_iter()
             .chain(worktree_items_with_outlines.into_iter())
@@ -1356,6 +1365,57 @@ impl OutlinePanel {
                         .into_iter()
                         .map(OutlinePanelEntry::Outline),
                 )
+            })
+            .filter(|visible_item| {
+                match visible_item {
+                    OutlinePanelEntry::Directory(_, dir_entry) => {
+                        outline_depth = None;
+                        while !parent_entry_stack.is_empty()
+                            && !dir_entry
+                                .path
+                                .starts_with(parent_entry_stack.last().unwrap())
+                        {
+                            parent_entry_stack.pop();
+                            depth -= 1;
+                        }
+                        parent_entry_stack.push(dir_entry.path.clone());
+                        self.depth_map.push(depth);
+                        depth += 1;
+                    }
+                    OutlinePanelEntry::File(_, file_entry) => {
+                        outline_depth = None::<usize>;
+                        while !parent_entry_stack.is_empty()
+                            && !file_entry
+                                .path
+                                .starts_with(parent_entry_stack.last().unwrap())
+                        {
+                            parent_entry_stack.pop();
+                            depth -= 1;
+                        }
+                        self.depth_map.push(depth);
+                    }
+                    OutlinePanelEntry::Outline(outline) => {
+                        let mut depth = *self.depth_map.last().unwrap_or(&0);
+                        if let Some(outline_depth) = outline_depth {
+                            match outline_depth.cmp(&outline.depth) {
+                                cmp::Ordering::Less => depth += 1,
+                                cmp::Ordering::Equal => {}
+                                cmp::Ordering::Greater => depth -= 1,
+                            };
+                        }
+
+                        outline_depth = Some(outline.depth);
+                        self.depth_map.push(depth);
+                    }
+                    OutlinePanelEntry::ExternalFile(..) => {
+                        outline_depth = None;
+                        depth = 0;
+                        parent_entry_stack.clear();
+                        self.depth_map.push(depth);
+                    }
+                }
+
+                true
             })
             .collect();
 
@@ -1566,69 +1626,15 @@ impl Render for OutlinePanel {
                 .child(
                     uniform_list(cx.view().clone(), "entries", self.visible_entries.len(), {
                         |outline_panel, range, cx| {
-                            let mut depths = Vec::new();
-                            let mut outline_depth = None;
-                            let mut depth = 0;
-                            let mut parent_entry_stack = Vec::new();
                             outline_panel
                                 .visible_entries
-                                .iter()
+                                .get(range.clone())
+                                .into_iter()
+                                .flatten()
                                 .enumerate()
-                                .filter_map(|(i, visible_item)| {
-                                    match visible_item {
-                                        OutlinePanelEntry::Directory(_, dir_entry) => {
-                                            outline_depth = None;
-                                            while !parent_entry_stack.is_empty()
-                                                && !dir_entry
-                                                    .path
-                                                    .starts_with(parent_entry_stack.last().unwrap())
-                                            {
-                                                parent_entry_stack.pop();
-                                                depth -= 1;
-                                            }
-                                            parent_entry_stack.push(&dir_entry.path);
-                                            depths.push(depth);
-                                            depth += 1;
-                                        }
-                                        OutlinePanelEntry::File(_, file_entry) => {
-                                            outline_depth = None::<usize>;
-                                            while !parent_entry_stack.is_empty()
-                                                && !file_entry
-                                                    .path
-                                                    .starts_with(parent_entry_stack.last().unwrap())
-                                            {
-                                                parent_entry_stack.pop();
-                                                depth -= 1;
-                                            }
-                                            depths.push(depth);
-                                        }
-                                        OutlinePanelEntry::Outline(outline) => {
-                                            let mut depth = *depths.last().unwrap_or(&0);
-                                            if let Some(outline_depth) = outline_depth {
-                                                match outline_depth.cmp(&outline.depth) {
-                                                    cmp::Ordering::Less => depth += 1,
-                                                    cmp::Ordering::Equal => {}
-                                                    cmp::Ordering::Greater => depth -= 1,
-                                                };
-                                            }
-
-                                            outline_depth = Some(outline.depth);
-                                            depths.push(depth);
-                                        }
-                                        OutlinePanelEntry::ExternalFile(..) => {
-                                            outline_depth = None;
-                                            depth = 0;
-                                            parent_entry_stack.clear();
-                                            depths.push(depth);
-                                        }
-                                    };
-
-                                    if range.contains(&i) {
-                                        let depth = depths.last().cloned().unwrap_or(0);
-                                        Some(outline_panel.render_entry(visible_item, depth, cx))
-                                    } else {
-                                        None
-                                    }
+                                .filter_map(|(i, dipslayed_item)| {
+                                    let depth = *outline_panel.depth_map.get(range.start + i)?;
+                                    Some(outline_panel.render_entry(dipslayed_item, depth, cx))
                                 })
                                 .collect()
                         }
