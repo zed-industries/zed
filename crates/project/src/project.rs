@@ -7962,9 +7962,6 @@ impl Project {
     ) {
         let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
 
-        dbg!(&worktree_id);
-        dbg!(&self.yarn_worktree_ids_reported);
-
         if !self.yarn_worktree_ids_reported.contains(&worktree_id) {
             let is_yarn_project = updated_entries_set.iter().any(|(path, _, _)| {
                 path.as_ref()
