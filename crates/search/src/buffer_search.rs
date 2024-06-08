@@ -556,6 +556,9 @@ impl BufferSearchBar {
             active_editor.toggle_filtered_search_ranges(false, cx);
             let handle = active_editor.focus_handle(cx);
             cx.focus(&handle);
+            cx.on_next_frame(|_, cx| {
+                cx.invalidate_character_coordinates();
+            });
         }
         cx.emit(Event::UpdateLocation);
         cx.emit(ToolbarItemEvent::ChangeLocation(
