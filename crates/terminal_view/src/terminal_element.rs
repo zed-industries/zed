@@ -929,7 +929,7 @@ impl InputHandler for TerminalInputHandler {
 
         self.workspace
             .update(cx, |this, cx| {
-                cx.update_ime_position();
+                cx.invalidate_character_coordinates();
 
                 let telemetry = this.project().read(cx).client().telemetry().clone();
                 telemetry.log_edit_event("terminal");

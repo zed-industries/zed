@@ -591,7 +591,7 @@ fn subscribe_for_terminal_events(
             Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
             Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
             Event::SelectionsChanged => {
-                cx.update_ime_position();
+                cx.invalidate_character_coordinates();
                 cx.emit(SearchEvent::ActiveMatchChanged)
             }
         });
@@ -719,7 +719,7 @@ impl TerminalView {
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         self.terminal.read(cx).focus_in();
         self.blink_cursors(self.blink_epoch, cx);
-        cx.update_ime_position();
+        cx.invalidate_character_coordinates();
         cx.notify();
     }
 

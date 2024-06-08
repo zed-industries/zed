@@ -2172,7 +2172,7 @@ impl Editor {
         show_completions: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        cx.update_ime_position();
+        cx.invalidate_character_coordinates();
 
         // Copy selections to primary selection buffer
         #[cfg(target_os = "linux")]
