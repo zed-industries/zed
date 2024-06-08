@@ -487,8 +487,20 @@ impl ExtensionsPage {
                         .size(LabelSize::Small),
                     )
                     .child(
-                        Label::new(format!("Downloads: {}", extension.download_count))
-                            .size(LabelSize::Small),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Download)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Default),
+                            )
+                            .child(
+                                Label::new(format!(
+                                    "{}",
+                                    format_download_count(extension.download_count)
+                                ))
+                                .size(LabelSize::Small),
+                            ),
                     ),
             )
             .child(
@@ -986,5 +998,42 @@ impl Item for ExtensionsPage {
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
         f(*event)
+    }
+}
+
+pub fn format_download_count(download_count: u64) -> String {
+    let units = ["", "K", "M", "B", "T"];
+    let mut index = 0;
+    let mut count_f64 = download_count as f64;
+
+    while count_f64 >= 1000.0 {
+        count_f64 /= 1000.0;
+        index += 1;
+    }
+
+    let count_str = format!("{:.1}", count_f64);
+    let count_str = count_str.trim_end_matches('0').trim_end_matches('.');
+
+    format!("{}{}", count_str, units[index])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_download_count() {
+        assert_eq!(format_download_count(1000), "1K");
+        assert_eq!(format_download_count(1200), "1.2K");
+        assert_eq!(format_download_count(1000000), "1M");
+        assert_eq!(format_download_count(1200000), "1.2M");
+        assert_eq!(format_download_count(1000000000), "1B");
+        assert_eq!(format_download_count(1200000000), "1.2B");
+        assert_eq!(format_download_count(1000000000000), "1T");
+        assert_eq!(format_download_count(1200000000000), "1.2T");
+        assert_eq!(format_download_count(100), "100");
+        assert_eq!(format_download_count(10), "10");
+        assert_eq!(format_download_count(1), "1");
+        assert_eq!(format_download_count(0), "0");
     }
 }
