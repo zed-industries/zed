@@ -1271,22 +1271,14 @@ impl OutlinePanel {
                         };
                         outline_entries.entry(container).or_default().extend(
                             buffer_snapshot
-                                .outline(Some(&syntax_theme))
-                                .map(|outline| outline.items)
+                                .outline_items_containing(
+                                    excerpt_range.context,
+                                    false,
+                                    Some(&syntax_theme),
+                                )
                                 .unwrap_or_default()
                                 .into_iter()
-                                .filter(|outline| {
-                                    let intersects = range_contains(
-                                        &excerpt_range.context,
-                                        outline.range.start,
-                                        &buffer_snapshot,
-                                    ) || range_contains(
-                                        &excerpt_range.context,
-                                        outline.range.end,
-                                        &buffer_snapshot,
-                                    );
-                                    intersects && processed_outlines.insert(outline.clone())
-                                }),
+                                .filter(|outline| processed_outlines.insert(outline.clone())),
                         );
 
                         if let Some(worktree) = worktree {
@@ -1316,7 +1308,6 @@ impl OutlinePanel {
                                             } else if collapsed_dir_ids.contains(&current_entry.id)
                                             {
                                                 entries_to_add.clear();
-                                                // TODO kb displays does not remove folded dir inside a folded dir
                                                 entries_to_add.insert(current_entry);
                                                 break;
                                             }
@@ -1521,7 +1512,13 @@ impl OutlinePanel {
             .iter()
             .filter_map(|entry| {
                 if let OutlinePanelEntry::Outline(outline) = entry {
-                    Some(outline)
+                    if outline.range.start.buffer_id == selection.buffer_id
+                        || outline.range.end.buffer_id == selection.buffer_id
+                    {
+                        Some(outline)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -1838,6 +1835,6 @@ fn range_contains(
 }
 
 // TODO kb tests
-// TODO kb do not run update on every operation (toggling dirs' expansion/folds better be without it, or have to skip most of the work)
-// TODO kb still slow for the small result sets, ~500 excerpts — `buffer_snapshot.outline` is a very slow method when called for every excerpt, and it's also called for the entire range: try to reduce that?
+// TODO kb less aggressive task replace? We can allow every Nth task to finish fully
+// TODO kb query outlines only for visible ranges in the editor
 // TODO kb toggling and displaying in the tree is not working well enough
