@@ -185,7 +185,7 @@ pub struct CloseInactiveTabsAndPanes {
 pub struct SendKeystrokes(pub String);
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
-pub struct Restart {
+pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
 
@@ -198,7 +198,7 @@ impl_actions!(
         CloseInactiveTabsAndPanes,
         NewFileInDirection,
         OpenTerminal,
-        Restart,
+        Reload,
         Save,
         SaveAll,
         SwapPaneInDirection,
@@ -282,7 +282,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     notifications::init(cx);
 
     cx.on_action(Workspace::close_global);
-    cx.on_action(restart);
+    cx.on_action(reload);
 
     cx.on_action({
         let app_state = Arc::downgrade(&app_state);
@@ -5085,7 +5085,7 @@ pub fn join_in_room_project(
     })
 }
 
-pub fn restart(restart: &Restart, cx: &mut AppContext) {
+pub fn reload(reload: &Reload, cx: &mut AppContext) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     let mut workspace_windows = cx
         .windows()
@@ -5111,7 +5111,7 @@ pub fn restart(restart: &Restart, cx: &mut AppContext) {
             .ok();
     }
 
-    let binary_path = restart.binary_path.clone();
+    let binary_path = reload.binary_path.clone();
     cx.spawn(|mut cx| async move {
         if let Some(prompt) = prompt {
             let answer = prompt.await?;
