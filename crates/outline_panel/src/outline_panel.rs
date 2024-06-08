@@ -27,7 +27,7 @@ use gpui::{
     Render, SharedString, Stateful, Styled, StyledText, Subscription, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
-use language::{BufferId, OffsetRangeExt, OutlineItem, ToOffset};
+use language::{BufferId, OffsetRangeExt, OutlineItem};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
@@ -1530,8 +1530,8 @@ impl OutlinePanel {
                 range_contains(&outline_item.range, selection.text_anchor, buffer_snapshot)
             })
             .min_by_key(|outline| {
-                let range = outline.range.to_offset(&buffer_snapshot);
-                let cursor_offset = selection.text_anchor.to_offset(&buffer_snapshot) as isize;
+                let range = outline.range.start.offset..outline.range.end.offset;
+                let cursor_offset = selection.text_anchor.offset as isize;
                 let distance_to_closest_endpoint = cmp::min(
                     (range.start as isize - cursor_offset).abs(),
                     (range.end as isize - cursor_offset).abs(),
@@ -1838,3 +1838,6 @@ fn range_contains(
 }
 
 // TODO kb tests
+// TODO kb do not run update on every operation (toggling dirs' expansion/folds better be without it, or have to skip most of the work)
+// TODO kb still slow for the small result sets, ~500 excerpts — `buffer_snapshot.outline` is a very slow method when called for every excerpt, and it's also called for the entire range: try to reduce that?
+// TODO kb toggling and displaying in the tree is not working well enough
