@@ -1226,55 +1226,19 @@ fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
 }
 
 fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> {
-    match code {
-        // VK_0 - VK_9
-        48..=57 => Some(Keystroke {
-            modifiers,
-            key: format!("{}", code - VK_0.0),
-            ime_key: None,
-        }),
-        // VK_A - VK_Z
-        65..=90 => Some(Keystroke {
-            modifiers,
-            key: format!("{}", (b'a' + code as u8 - VK_A.0 as u8) as char),
-            ime_key: None,
-        }),
-        // VK_F1 - VK_F24
-        112..=135 => Some(Keystroke {
-            modifiers,
-            key: format!("f{}", code - VK_F1.0 + 1),
-            ime_key: None,
-        }),
-        // OEM3: `/~, OEM_MINUS: -/_, OEM_PLUS: =/+, ...
-        _ => {
-            if let Some(key) = oemkey_vkcode_to_string(code) {
-                Some(Keystroke {
-                    modifiers,
-                    key,
-                    ime_key: None,
-                })
-            } else {
-                None
-            }
-        }
-    }
-}
+    let mapped_code = unsafe { MapVirtualKeyW(code as u32, MAPVK_VK_TO_CHAR) };
 
-fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
-    match code {
-        186 => Some(";".to_string()), // VK_OEM_1
-        187 => Some("=".to_string()), // VK_OEM_PLUS
-        188 => Some(",".to_string()), // VK_OEM_COMMA
-        189 => Some("-".to_string()), // VK_OEM_MINUS
-        190 => Some(".".to_string()), // VK_OEM_PERIOD
-        // https://kbdlayout.info/features/virtualkeys/VK_ABNT_C1
-        191 | 193 => Some("/".to_string()), // VK_OEM_2 VK_ABNT_C1
-        192 => Some("`".to_string()),       // VK_OEM_3
-        219 => Some("[".to_string()),       // VK_OEM_4
-        220 => Some("\\".to_string()),      // VK_OEM_5
-        221 => Some("]".to_string()),       // VK_OEM_6
-        222 => Some("'".to_string()),       // VK_OEM_7
-        _ => None,
+    match mapped_code {
+        0 => None,
+        raw_code => {
+            let char = char::from_u32(raw_code)?;
+
+            Some(Keystroke {
+                modifiers,
+                key: char.to_string(),
+                ime_key: None,
+            })
+        }
     }
 }
 
