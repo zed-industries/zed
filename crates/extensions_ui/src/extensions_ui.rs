@@ -495,10 +495,7 @@ impl ExtensionsPage {
                                     .color(Color::Default),
                             )
                             .child(
-                                Label::new(format!(
-                                    "{}",
-                                    format_download_count(extension.download_count)
-                                ))
+                                Label::new(format_download_count(extension.download_count))
                                 .size(LabelSize::Small),
                             ),
                     ),
