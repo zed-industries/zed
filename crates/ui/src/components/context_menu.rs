@@ -161,10 +161,10 @@ impl ContextMenu {
                 ContextMenuItem::Entry { handler, .. }
                 | ContextMenuItem::CustomEntry { handler, .. },
             ) => (handler)(cx),
-            _ => {}
+            _ => {
+                cx.emit(DismissEvent);
+            }
         }
-
-        cx.emit(DismissEvent);
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
