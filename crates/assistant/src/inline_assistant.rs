@@ -124,23 +124,29 @@ impl InlineAssistant {
             )
         });
         let block_id = editor.update(cx, |editor, cx| {
+            let position = if selection.reversed {
+                snapshot.anchor_before(point_selection.head())
+            } else {
+                snapshot.anchor_after(point_selection.head())
+            };
+            let disposition = if selection.reversed {
+                BlockDisposition::Above
+            } else {
+                BlockDisposition::Below
+            };
             editor.change_selections(None, cx, |selections| {
                 selections.select_anchor_ranges([selection.head()..selection.head()])
             });
             editor.insert_blocks(
                 [BlockProperties {
                     style: BlockStyle::Sticky,
-                    position: snapshot.anchor_before(Point::new(point_selection.head().row, 0)),
+                    position,
                     height: inline_assist_editor.read(cx).height_in_lines,
                     render: build_inline_assist_editor_renderer(
                         &inline_assist_editor,
                         gutter_dimensions,
                     ),
-                    disposition: if selection.reversed {
-                        BlockDisposition::Above
-                    } else {
-                        BlockDisposition::Below
-                    },
+                    disposition,
                 }],
                 Some(Autoscroll::Strategy(AutoscrollStrategy::Newest)),
                 cx,
@@ -952,7 +958,6 @@ pub struct Codegen {
     error: Option<anyhow::Error>,
     generation: Task<()>,
     diff: Diff,
-    idle: bool,
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
 }
@@ -1004,7 +1009,6 @@ impl Codegen {
             last_equal_ranges: Default::default(),
             transaction_id: Default::default(),
             error: Default::default(),
-            idle: true,
             generation: Task::ready(()),
             diff: Diff::default(),
             telemetry,
@@ -1037,10 +1041,6 @@ impl Codegen {
 
     pub fn last_equal_ranges(&self) -> &[Range<Anchor>] {
         &self.last_equal_ranges
-    }
-
-    pub fn idle(&self) -> bool {
-        self.idle
     }
 
     pub fn error(&self) -> Option<&anyhow::Error> {
@@ -1233,7 +1233,6 @@ impl Codegen {
                 let result = generate.await;
                 this.update(&mut cx, |this, cx| {
                     this.last_equal_ranges.clear();
-                    this.idle = true;
                     if let Err(error) = result {
                         this.error = Some(error);
                     }
@@ -1244,7 +1243,6 @@ impl Codegen {
             }
         });
         self.error.take();
-        self.idle = false;
         cx.notify();
     }
 
