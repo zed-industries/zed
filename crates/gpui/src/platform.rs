@@ -467,7 +467,7 @@ impl PlatformInputHandler {
         self.handler.replace_text_in_range(None, input, cx);
     }
 
-    pub fn bounds(&mut self, cx: &mut WindowContext) -> Option<Bounds<Pixels>> {
+    pub fn selected_bounds(&mut self, cx: &mut WindowContext) -> Option<Bounds<Pixels>> {
         let Some((pos, rev)) = self.handler.selected_text_range(true, cx) else {
             return None;
         };
