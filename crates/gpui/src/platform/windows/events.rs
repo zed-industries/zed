@@ -1228,18 +1228,17 @@ fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
 fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> {
     let mapped_code = unsafe { MapVirtualKeyW(code as u32, MAPVK_VK_TO_CHAR) };
 
-    match mapped_code {
+    let char = match mapped_code {
         0 => None,
-        raw_code => {
-            let char = char::from_u32(raw_code)?;
+        raw_code => char::from_u32(raw_code),
+    }?
+    .to_ascii_lowercase();
 
-            Some(Keystroke {
-                modifiers,
-                key: char.to_string(),
-                ime_key: None,
-            })
-        }
-    }
+    Some(Keystroke {
+        modifiers,
+        key: char.to_string(),
+        ime_key: None,
+    })
 }
 
 #[inline]
