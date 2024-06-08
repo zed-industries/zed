@@ -3407,8 +3407,15 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
-    pub fn update_ime_position(&self) {
-        self.window.platform_window.update_ime_position();
+    pub fn update_ime_position(&mut self) {
+        self.on_next_frame(|cx| {
+            if let Some(mut input_handler) = cx.window.platform_window.take_input_handler() {
+                if let Some(bounds) = input_handler.bounds(cx) {
+                    cx.window.platform_window.update_ime_position(bounds);
+                }
+                cx.window.platform_window.set_input_handler(input_handler);
+            }
+        });
     }
 
     /// Present a platform dialog.

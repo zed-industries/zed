@@ -283,28 +283,21 @@ impl WaylandClientStatePtr {
         }
     }
 
-    pub fn update_ime_position(&self) {
+    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
         if state.composing || state.text_input.is_none() {
             return;
         }
-        let Some(window) = state.keyboard_focused_window.clone() else {
-            return;
-        };
 
-        let text_input = state.text_input.take().unwrap();
-        drop(state);
-        if let Some(bounds) = window.get_ime_area() {
-            text_input.set_cursor_rectangle(
-                bounds.origin.x.0 as i32,
-                bounds.origin.y.0 as i32,
-                bounds.size.width.0 as i32,
-                bounds.size.height.0 as i32,
-            );
-            text_input.commit();
-        }
-        client.borrow_mut().text_input = Some(text_input);
+        let text_input = state.text_input.as_ref().unwrap();
+        text_input.set_cursor_rectangle(
+            bounds.origin.x.0 as i32,
+            bounds.origin.y.0 as i32,
+            bounds.size.width.0 as i32,
+            bounds.size.height.0 as i32,
+        );
+        text_input.commit();
     }
 
     pub fn drop_window(&self, surface_id: &ObjectId) {

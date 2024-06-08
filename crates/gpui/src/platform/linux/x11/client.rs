@@ -156,46 +156,38 @@ impl X11ClientStatePtr {
         }
     }
 
-    pub fn update_ime_position(&self) {
+    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let client = self.get_client();
         let mut state = client.0.borrow_mut();
         if state.composing || state.ximc.is_none() {
             return;
         }
-        let Some(window_id) = state.focused_window else {
-            return;
-        };
 
         let mut ximc = state.ximc.take().unwrap();
         let xim_handler = state.xim_handler.take().unwrap();
-        drop(state);
-        let window = client.get_window(window_id).unwrap();
-        if let Some(area) = window.get_ime_area() {
-            let ic_attributes = ximc
-                .build_ic_attributes()
-                .push(
-                    xim::AttributeName::InputStyle,
-                    xim::InputStyle::PREEDIT_CALLBACKS
-                        | xim::InputStyle::STATUS_NOTHING
-                        | xim::InputStyle::PREEDIT_POSITION,
-                )
-                .push(xim::AttributeName::ClientWindow, xim_handler.window)
-                .push(xim::AttributeName::FocusWindow, xim_handler.window)
-                .nested_list(xim::AttributeName::PreeditAttributes, |b| {
-                    b.push(
-                        xim::AttributeName::SpotLocation,
-                        xim::Point {
-                            x: u32::from(area.origin.x + area.size.width) as i16,
-                            y: u32::from(area.origin.y + area.size.height) as i16,
-                        },
-                    );
-                })
-                .build();
-            let _ = ximc
-                .set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes)
-                .log_err();
-        }
-        state = client.0.borrow_mut();
+        let ic_attributes = ximc
+            .build_ic_attributes()
+            .push(
+                xim::AttributeName::InputStyle,
+                xim::InputStyle::PREEDIT_CALLBACKS
+                    | xim::InputStyle::STATUS_NOTHING
+                    | xim::InputStyle::PREEDIT_POSITION,
+            )
+            .push(xim::AttributeName::ClientWindow, xim_handler.window)
+            .push(xim::AttributeName::FocusWindow, xim_handler.window)
+            .nested_list(xim::AttributeName::PreeditAttributes, |b| {
+                b.push(
+                    xim::AttributeName::SpotLocation,
+                    xim::Point {
+                        x: u32::from(bounds.origin.x + bounds.size.width) as i16,
+                        y: u32::from(bounds.origin.y + bounds.size.height) as i16,
+                    },
+                );
+            })
+            .build();
+        let _ = ximc
+            .set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes)
+            .log_err();
         state.ximc = Some(ximc);
         state.xim_handler = Some(xim_handler);
     }

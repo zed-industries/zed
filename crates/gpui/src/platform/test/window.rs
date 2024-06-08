@@ -270,7 +270,7 @@ impl PlatformWindow for TestWindow {
         false
     }
 
-    fn update_ime_position(&self) {}
+    fn update_ime_position(&mut self) {}
 }
 
 pub(crate) struct TestAtlasState {

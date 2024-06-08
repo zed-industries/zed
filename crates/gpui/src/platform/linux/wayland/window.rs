@@ -475,7 +475,7 @@ impl WaylandWindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some((range, reversed)) = input_handler.selected_text_range() {
+            if let Some((range, reversed)) = input_handler.selected_text_range(true) {
                 bounds = input_handler.bounds_for_range(if reversed {
                     range.start..range.start
                 } else {
@@ -863,16 +863,11 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().decoration_state == WaylandDecorationState::Client
     }
 
-    fn update_ime_position(&self) {
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let state = self.borrow();
         let client = state.client.clone();
-        state
-            .globals
-            .executor
-            .spawn(async move {
-                client.update_ime_position();
-            })
-            .detach();
+        drop(state);
+        client.update_ime_position(bounds);
     }
 }
 

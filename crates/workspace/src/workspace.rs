@@ -2554,7 +2554,7 @@ impl Workspace {
             }
             pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
-                cx.window_context().on_next_frame(|cx| {
+                cx.on_next_frame(|_, cx| {
                     cx.update_ime_position();
                 });
                 pane.model.update(cx, |pane, _| {
@@ -2584,7 +2584,7 @@ impl Workspace {
                 }
             }
             pane::Event::Focus => {
-                cx.window_context().on_next_frame(|cx| {
+                cx.on_next_frame(|_, cx| {
                     cx.update_ime_position();
                 });
                 self.handle_pane_focused(pane.clone(), cx);

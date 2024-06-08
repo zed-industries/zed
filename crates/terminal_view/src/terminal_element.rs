@@ -889,6 +889,7 @@ struct TerminalInputHandler {
 impl InputHandler for TerminalInputHandler {
     fn selected_text_range(
         &mut self,
+        _ignore_disabled_input: bool,
         cx: &mut WindowContext,
     ) -> Option<(std::ops::Range<usize>, bool)> {
         if self
