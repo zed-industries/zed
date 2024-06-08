@@ -160,7 +160,7 @@ impl ContextMenu {
             Some(
                 ContextMenuItem::Entry { handler, .. }
                 | ContextMenuItem::CustomEntry { handler, .. },
-            ) => (handler)(cx),
+            ) => (handler)(cx), // Default handler is responsible for dismissing on confirmation.
             _ => {
                 cx.emit(DismissEvent);
             }
