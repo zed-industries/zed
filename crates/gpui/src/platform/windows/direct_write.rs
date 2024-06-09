@@ -350,11 +350,15 @@ impl DirectWriteState {
 
     unsafe fn update_system_font_collection(&mut self) {
         let mut collection = std::mem::zeroed();
-        self.components
+        if self
+            .components
             .factory
             .GetSystemFontCollection(false, &mut collection, true)
-            .unwrap();
-        self.system_font_collection = collection.unwrap();
+            .log_err()
+            .is_some()
+        {
+            self.system_font_collection = collection.unwrap();
+        }
     }
 
     fn select_font(&mut self, target_font: &Font) -> FontId {
