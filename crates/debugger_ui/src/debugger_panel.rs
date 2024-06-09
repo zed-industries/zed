@@ -1,9 +1,15 @@
-use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, ViewContext};
+use gpui::{
+    actions, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView, View,
+    ViewContext, WeakView,
+};
 use ui::{
     div, h_flex, prelude, px, ButtonCommon, Element, IconButton, ParentElement, Pixels, Render,
-    Styled, Tooltip, WindowContext,
+    Styled, Tooltip, VisualContext, WindowContext,
 };
-use workspace::dock::{DockPosition, Panel, PanelEvent};
+use workspace::{
+    dock::{DockPosition, Panel, PanelEvent},
+    Workspace,
+};
 
 actions!(debug, [TogglePanel]);
 
@@ -24,6 +30,15 @@ impl DebugPanel {
             focus_handle: cx.focus_handle(),
             size: px(300.),
         }
+    }
+
+    pub async fn load(
+        workspace: WeakView<Workspace>,
+        mut cx: AsyncWindowContext,
+    ) -> anyhow::Result<View<Self>> {
+        workspace.update(&mut cx, |workspace, cx| {
+            cx.new_view(|cx| DebugPanel::new(workspace::dock::DockPosition::Bottom, cx))
+        })
     }
 }
 
