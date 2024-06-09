@@ -1,10 +1,13 @@
+use anyhow::Result;
 use gpui::{
-    actions, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView, View,
-    ViewContext, WeakView,
+    actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
+    View, ViewContext, WeakView,
 };
 use ui::{
-    div, h_flex, prelude, px, ButtonCommon, Element, IconButton, ParentElement, Pixels, Render,
-    Styled, Tooltip, VisualContext, WindowContext,
+    div, h_flex,
+    prelude::{IntoElement, Pixels, WindowContext},
+    px, ButtonCommon, Element, IconButton, IconName, ParentElement, Render, Styled, Tooltip,
+    VisualContext,
 };
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -35,9 +38,9 @@ impl DebugPanel {
     pub async fn load(
         workspace: WeakView<Workspace>,
         mut cx: AsyncWindowContext,
-    ) -> anyhow::Result<View<Self>> {
-        workspace.update(&mut cx, |workspace, cx| {
-            cx.new_view(|cx| DebugPanel::new(workspace::dock::DockPosition::Bottom, cx))
+    ) -> Result<View<Self>> {
+        workspace.update(&mut cx, |_, cx| {
+            cx.new_view(|cx| DebugPanel::new(DockPosition::Bottom, cx))
         })
     }
 }
@@ -55,41 +58,37 @@ impl Panel for DebugPanel {
         "DebugPanel"
     }
 
-    fn position(&self, _cx: &prelude::WindowContext) -> workspace::dock::DockPosition {
+    fn position(&self, _cx: &WindowContext) -> DockPosition {
         self.position
     }
 
-    fn position_is_valid(&self, _position: workspace::dock::DockPosition) -> bool {
+    fn position_is_valid(&self, _position: DockPosition) -> bool {
         true
     }
 
-    fn set_position(
-        &mut self,
-        position: workspace::dock::DockPosition,
-        _cx: &mut ViewContext<Self>,
-    ) {
+    fn set_position(&mut self, position: DockPosition, _cx: &mut ViewContext<Self>) {
         self.position = position;
         // TODO:
         // cx.update_global::<SettingsStore>(f)
     }
 
-    fn size(&self, _cx: &prelude::WindowContext) -> prelude::Pixels {
+    fn size(&self, _cx: &WindowContext) -> Pixels {
         self.size
     }
 
-    fn set_size(&mut self, size: Option<prelude::Pixels>, _cx: &mut ViewContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, _cx: &mut ViewContext<Self>) {
         self.size = size.unwrap();
     }
 
-    fn icon(&self, _cx: &prelude::WindowContext) -> Option<ui::IconName> {
+    fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
         None
     }
 
-    fn icon_tooltip(&self, _cx: &prelude::WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
         None
     }
 
-    fn toggle_action(&self) -> Box<dyn gpui::Action> {
+    fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(TogglePanel)
     }
 
@@ -111,34 +110,34 @@ impl Panel for DebugPanel {
 }
 
 impl Render for DebugPanel {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl prelude::IntoElement {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .child(
                 h_flex()
                     .p_2()
                     .gap_2()
                     .child(
-                        IconButton::new("debug-play", ui::IconName::Play)
+                        IconButton::new("debug-play", IconName::Play)
                             .tooltip(move |cx| Tooltip::text("Start debug", cx)),
                     )
                     .child(
-                        IconButton::new("debug-step-over", ui::IconName::Play)
+                        IconButton::new("debug-step-over", IconName::Play)
                             .tooltip(move |cx| Tooltip::text("Step over", cx)),
                     )
                     .child(
-                        IconButton::new("debug-go-in", ui::IconName::Play)
+                        IconButton::new("debug-go-in", IconName::Play)
                             .tooltip(move |cx| Tooltip::text("Go in", cx)),
                     )
                     .child(
-                        IconButton::new("debug-go-out", ui::IconName::Play)
+                        IconButton::new("debug-go-out", IconName::Play)
                             .tooltip(move |cx| Tooltip::text("Go out", cx)),
                     )
                     .child(
-                        IconButton::new("debug-restart", ui::IconName::Play)
+                        IconButton::new("debug-restart", IconName::Play)
                             .tooltip(move |cx| Tooltip::text("Restart", cx)),
                     )
                     .child(
-                        IconButton::new("debug-stop", ui::IconName::Play)
+                        IconButton::new("debug-stop", IconName::Play)
                             .tooltip(move |cx| Tooltip::text("Stop", cx)),
                     ),
             )
