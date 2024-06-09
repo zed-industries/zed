@@ -282,7 +282,6 @@ impl PickerDelegate for BranchListDelegate {
             });
             h_flex()
                 .px_3()
-                .h_full()
                 .justify_between()
                 .child(Label::new("Branches").size(LabelSize::Small))
                 .children(match_label)

@@ -13,8 +13,7 @@ use gpui::{
     VisualContext, WeakView, WindowContext,
 };
 use language::{
-    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
-    Point, SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, Point, SelectionGoal,
 };
 use multi_buffer::AnchorRangeExt;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
@@ -1008,6 +1007,25 @@ impl SearchableItem for Editor {
         self.has_background_highlights::<SearchWithinRange>()
     }
 
+    fn toggle_filtered_search_ranges(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
+        if self.has_filtered_search_ranges() {
+            self.previous_search_ranges = self
+                .clear_background_highlights::<SearchWithinRange>(cx)
+                .map(|(_, ranges)| ranges)
+        }
+
+        if !enabled {
+            return;
+        }
+
+        let ranges = self.selections.disjoint_anchor_ranges();
+        if ranges.iter().any(|range| range.start != range.end) {
+            self.set_search_within_ranges(&ranges, cx);
+        } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
+            self.set_search_within_ranges(&previous_search_ranges, cx)
+        }
+    }
+
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
         let snapshot = &self.snapshot(cx).buffer_snapshot;
@@ -1016,9 +1034,14 @@ impl SearchableItem for Editor {
         match setting {
             SeedQuerySetting::Never => String::new(),
             SeedQuerySetting::Selection | SeedQuerySetting::Always if !selection.is_empty() => {
-                snapshot
+                let text: String = snapshot
                     .text_for_range(selection.start..selection.end)
-                    .collect()
+                    .collect();
+                if text.contains('\n') {
+                    String::new()
+                } else {
+                    text
+                }
             }
             SeedQuerySetting::Selection => String::new(),
             SeedQuerySetting::Always => {
@@ -1135,58 +1158,64 @@ impl SearchableItem for Editor {
         let search_within_ranges = self
             .background_highlights
             .get(&TypeId::of::<SearchWithinRange>())
-            .map(|(_color, ranges)| {
-                ranges
-                    .iter()
-                    .map(|range| range.to_offset(&buffer))
-                    .collect::<Vec<_>>()
+            .map_or(vec![], |(_color, ranges)| {
+                ranges.iter().map(|range| range.clone()).collect::<Vec<_>>()
             });
+
         cx.background_executor().spawn(async move {
             let mut ranges = Vec::new();
+
             if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
-                if let Some(search_within_ranges) = search_within_ranges {
-                    for range in search_within_ranges {
-                        let offset = range.start;
-                        ranges.extend(
-                            query
-                                .search(excerpt_buffer, Some(range))
-                                .await
-                                .into_iter()
-                                .map(|range| {
-                                    buffer.anchor_after(range.start + offset)
-                                        ..buffer.anchor_before(range.end + offset)
-                                }),
-                        );
-                    }
+                let search_within_ranges = if search_within_ranges.is_empty() {
+                    vec![None]
                 } else {
-                    ranges.extend(query.search(excerpt_buffer, None).await.into_iter().map(
-                        |range| buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
-                    ));
+                    search_within_ranges
+                        .into_iter()
+                        .map(|range| Some(range.to_offset(&buffer)))
+                        .collect::<Vec<_>>()
+                };
+
+                for range in search_within_ranges {
+                    let buffer = &buffer;
+                    ranges.extend(
+                        query
+                            .search(excerpt_buffer, range.clone())
+                            .await
+                            .into_iter()
+                            .map(|matched_range| {
+                                let offset = range.clone().map(|r| r.start).unwrap_or(0);
+                                buffer.anchor_after(matched_range.start + offset)
+                                    ..buffer.anchor_before(matched_range.end + offset)
+                            }),
+                    );
                 }
             } else {
-                for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
-                    if let Some(next_excerpt) = excerpt.next {
-                        let excerpt_range =
-                            next_excerpt.range.context.to_offset(&next_excerpt.buffer);
-                        ranges.extend(
-                            query
-                                .search(&next_excerpt.buffer, Some(excerpt_range.clone()))
-                                .await
-                                .into_iter()
-                                .map(|range| {
-                                    let start = next_excerpt
-                                        .buffer
-                                        .anchor_after(excerpt_range.start + range.start);
-                                    let end = next_excerpt
-                                        .buffer
-                                        .anchor_before(excerpt_range.start + range.end);
-                                    buffer.anchor_in_excerpt(next_excerpt.id, start).unwrap()
-                                        ..buffer.anchor_in_excerpt(next_excerpt.id, end).unwrap()
-                                }),
-                        );
-                    }
+                let search_within_ranges = if search_within_ranges.is_empty() {
+                    vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())]
+                } else {
+                    search_within_ranges
+                };
+
+                for (excerpt_id, search_buffer, search_range) in
+                    buffer.excerpts_in_ranges(search_within_ranges)
+                {
+                    ranges.extend(
+                        query
+                            .search(&search_buffer, Some(search_range.clone()))
+                            .await
+                            .into_iter()
+                            .map(|match_range| {
+                                let start = search_buffer
+                                    .anchor_after(search_range.start + match_range.start);
+                                let end = search_buffer
+                                    .anchor_before(search_range.start + match_range.end);
+                                buffer.anchor_in_excerpt(excerpt_id, start).unwrap()
+                                    ..buffer.anchor_in_excerpt(excerpt_id, end).unwrap()
+                            }),
+                    );
                 }
-            }
+            };
+
             ranges
         })
     }

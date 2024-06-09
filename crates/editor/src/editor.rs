@@ -15,18 +15,17 @@
 pub mod actions;
 mod blame_entry_tooltip;
 mod blink_manager;
+mod debounced_delay;
 pub mod display_map;
 mod editor_settings;
 mod element;
-mod hunk_diff;
-mod inlay_hint_cache;
-
-mod debounced_delay;
 mod git;
 mod highlight_matching_bracket;
 mod hover_links;
 mod hover_popover;
+mod hunk_diff;
 mod indent_guides;
+mod inlay_hint_cache;
 mod inline_completion_provider;
 pub mod items;
 mod mouse_context_menu;
@@ -54,8 +53,7 @@ use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
-use editor_settings::CurrentLineHighlight;
-pub use editor_settings::EditorSettings;
+pub use editor_settings::{CurrentLineHighlight, EditorSettings};
 use element::LineWithInvisibles;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -113,7 +111,7 @@ use rpc::{proto::*, ErrorExt};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
 use std::ops::Not as _;
@@ -145,7 +143,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{OpenInTerminal, OpenTerminal, Toast};
+use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
 
@@ -481,7 +479,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
-    current_line_highlight: CurrentLineHighlight,
+    current_line_highlight: Option<CurrentLineHighlight>,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakView<Workspace>, Option<WorkspaceId>)>,
@@ -524,6 +522,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
 }
 
 #[derive(Clone)]
@@ -552,6 +551,20 @@ pub struct GutterDimensions {
     pub width: Pixels,
     pub margin: Pixels,
     pub git_blame_entries_width: Option<Pixels>,
+}
+
+impl GutterDimensions {
+    /// The full width of the space taken up by the gutter.
+    pub fn full_width(&self) -> Pixels {
+        self.margin + self.width
+    }
+
+    /// The width of the space reserved for the fold indicators,
+    /// use alongside 'justify_end' and `gutter_width` to
+    /// right align content with the line numbers
+    pub fn fold_area_width(&self) -> Pixels {
+        self.margin + self.right_padding
+    }
 }
 
 impl Default for GutterDimensions {
@@ -1755,7 +1768,7 @@ impl Editor {
             pending_rename: Default::default(),
             searchable: true,
             cursor_shape: Default::default(),
-            current_line_highlight: EditorSettings::get_global(cx).current_line_highlight,
+            current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
             workspace: None,
@@ -1812,6 +1825,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            previous_search_ranges: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -1979,7 +1993,9 @@ impl Editor {
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
             is_focused: self.focus_handle.is_focused(cx),
-            current_line_highlight: self.current_line_highlight,
+            current_line_highlight: self
+                .current_line_highlight
+                .unwrap_or_else(|| EditorSettings::get_global(cx).current_line_highlight),
             gutter_hovered: self.gutter_hovered,
         }
     }
@@ -2069,7 +2085,10 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_current_line_highlight(&mut self, current_line_highlight: CurrentLineHighlight) {
+    pub fn set_current_line_highlight(
+        &mut self,
+        current_line_highlight: Option<CurrentLineHighlight>,
+    ) {
         self.current_line_highlight = current_line_highlight;
     }
 
@@ -2800,6 +2819,9 @@ impl Editor {
                 }
 
                 if let Some(bracket_pair) = bracket_pair {
+                    let autoclose = self.use_autoclose
+                        && snapshot.settings_at(selection.start, cx).use_autoclose;
+
                     if selection.is_empty() {
                         if is_bracket_pair_start {
                             let prefix_len = bracket_pair.start.len() - text.len();
@@ -2820,8 +2842,6 @@ impl Editor {
                                         ),
                                         &bracket_pair.start[..prefix_len],
                                     ));
-                            let autoclose = self.use_autoclose
-                                && snapshot.settings_at(selection.start, cx).use_autoclose;
                             if autoclose
                                 && following_text_allows_autoclose
                                 && preceding_text_matches_prefix
@@ -2874,7 +2894,10 @@ impl Editor {
                     }
                     // If an opening bracket is 1 character long and is typed while
                     // text is selected, then surround that text with the bracket pair.
-                    else if is_bracket_pair_start && bracket_pair.start.chars().count() == 1 {
+                    else if autoclose
+                        && is_bracket_pair_start
+                        && bracket_pair.start.chars().count() == 1
+                    {
                         edits.push((selection.start..selection.start, text.clone()));
                         edits.push((
                             selection.end..selection.end,
@@ -2997,12 +3020,7 @@ impl Editor {
                 s.select(new_selections)
             });
 
-            if brace_inserted {
-                // If we inserted a brace while composing text (i.e. typing `"` on a
-                // Brazilian keyboard), exit the composing state because most likely
-                // the user wanted to surround the selection.
-                this.unmark_text(cx);
-            } else if EditorSettings::get_global(cx).use_on_type_format {
+            if !brace_inserted && EditorSettings::get_global(cx).use_on_type_format {
                 if let Some(on_type_format_task) =
                     this.trigger_on_type_formatting(text.to_string(), cx)
                 {
@@ -3792,6 +3810,9 @@ impl Editor {
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
             async move {
+                this.update(&mut cx, |this, _| {
+                    this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
+                })?;
                 let completions = completions.await.log_err();
                 let menu = if let Some(completions) = completions {
                     let mut menu = CompletionsMenu {
@@ -3830,7 +3851,6 @@ impl Editor {
                             let delay_ms = EditorSettings::get_global(cx)
                                 .completion_documentation_secondary_query_debounce;
                             let delay = Duration::from_millis(delay_ms);
-
                             editor
                                 .completion_documentation_pre_resolve_debounce
                                 .fire_new(delay, cx, |editor, cx| {
@@ -3851,8 +3871,6 @@ impl Editor {
                 };
 
                 this.update(&mut cx, |this, cx| {
-                    this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
-
                     let mut context_menu = this.context_menu.write();
                     match context_menu.as_ref() {
                         None => {}
@@ -9250,11 +9268,15 @@ impl Editor {
                 for (block_id, diagnostic) in &active_diagnostics.blocks {
                     new_styles.insert(
                         *block_id,
-                        diagnostic_block_renderer(diagnostic.clone(), is_valid),
+                        (
+                            None,
+                            diagnostic_block_renderer(diagnostic.clone(), is_valid),
+                        ),
                     );
                 }
-                self.display_map
-                    .update(cx, |display_map, _| display_map.replace_blocks(new_styles));
+                self.display_map.update(cx, |display_map, cx| {
+                    display_map.replace_blocks(new_styles, cx)
+                });
             }
         }
     }
@@ -9611,12 +9633,12 @@ impl Editor {
 
     pub fn replace_blocks(
         &mut self,
-        blocks: HashMap<BlockId, RenderBlock>,
+        blocks: HashMap<BlockId, (Option<u8>, RenderBlock)>,
         autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
     ) {
         self.display_map
-            .update(cx, |display_map, _| display_map.replace_blocks(blocks));
+            .update(cx, |display_map, cx| display_map.replace_blocks(blocks, cx));
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
@@ -9775,6 +9797,17 @@ impl Editor {
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
         cx.notify();
+    }
+
+    pub fn toggle_tab_bar(&mut self, _: &ToggleTabBar, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+        let fs = workspace.read(cx).app_state().fs.clone();
+        let current_show = TabBarSettings::get_global(cx).show;
+        update_settings_file::<TabBarSettings>(fs, cx, move |setting| {
+            setting.show = Some(!current_show);
+        });
     }
 
     pub fn toggle_indent_guides(&mut self, _: &ToggleIndentGuides, cx: &mut ViewContext<Self>) {
@@ -10243,6 +10276,27 @@ impl Editor {
         self.background_highlights_in_range(start..end, &snapshot, theme)
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn search_background_highlights(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<Range<Point>> {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+
+        let highlights = self
+            .background_highlights
+            .get(&TypeId::of::<items::BufferSearchHighlights>());
+
+        if let Some((_color, ranges)) = highlights {
+            ranges
+                .iter()
+                .map(|range| range.start.to_point(&snapshot)..range.end.to_point(&snapshot))
+                .collect_vec()
+        } else {
+            vec![]
+        }
+    }
+
     fn document_highlights_for_position<'a>(
         &'a self,
         position: Anchor,
@@ -10591,7 +10645,6 @@ impl Editor {
         let editor_settings = EditorSettings::get_global(cx);
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
-        self.current_line_highlight = editor_settings.current_line_highlight;
 
         if self.mode == EditorMode::Full {
             let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();

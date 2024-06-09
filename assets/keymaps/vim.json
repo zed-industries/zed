@@ -80,6 +80,7 @@
       "g shift-e": ["vim::PreviousWordEnd", { "ignorePunctuation": true }],
 
       "/": "vim::Search",
+      "g /": "pane::DeploySearch",
       "?": [
         "vim::Search",
         {
@@ -379,8 +380,11 @@
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
-      "> >": "vim::Indent",
-      "< <": "vim::Outdent",
+      ">": ["vim::PushOperator", "Indent"],
+      "<": ["vim::PushOperator", "Outdent"],
+      "g u": ["vim::PushOperator", "Lowercase"],
+      "g shift-u": ["vim::PushOperator", "Uppercase"],
+      "g ~": ["vim::PushOperator", "OppositeCase"],
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       // tree-sitter related commands
@@ -431,6 +435,27 @@
     }
   },
   {
+    "context": "Editor && vim_operator == gu",
+    "bindings": {
+      "g u": "vim::CurrentLine",
+      "u": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == gU",
+    "bindings": {
+      "g shift-u": "vim::CurrentLine",
+      "shift-u": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == g~",
+    "bindings": {
+      "g ~": "vim::CurrentLine",
+      "~": "vim::CurrentLine"
+    }
+  },
+  {
     "context": "Editor && vim_mode == normal && vim_operator == d",
     "bindings": {
       "s": ["vim::PushOperator", "DeleteSurrounds"]
@@ -457,6 +482,18 @@
     "context": "Editor && vim_operator == ys",
     "bindings": {
       "s": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == >",
+    "bindings": {
+      ">": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == <",
+    "bindings": {
+      "<": "vim::CurrentLine"
     }
   },
   {

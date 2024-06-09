@@ -81,3 +81,48 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
   }
 }
 ```
+
+
+## Using the Tailwind CSS Language Server with Ruby
+
+It's possible to use the [Tailwind CSS Language Server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in Ruby and ERB files.
+
+In order to do that, you need to configure the language server so that it knows about where to look for CSS classes in Ruby/ERB files by adding the following to your `settings.json`:
+
+```json
+{
+  "languages": {
+    "Ruby": {
+      "language_servers": ["tailwindcss-language-server", "..."]
+    }
+  },
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "includeLanguages": {
+          "erb": "html",
+          "ruby": "html"
+        },
+        "experimental": {
+          "classRegex": ["\\bclass:\\s*['\"]([^'\"]*)['\"]"]
+        }
+      }
+    }
+  }
+}
+```
+
+With these settings you will get completions for Tailwind CSS classes in HTML attributes inside ERB files and inside Ruby/ERB strings that are coming after a `class:` key. Examples:
+
+```ruby
+# Ruby file:
+def method
+  div(class: "pl-2 <completion here>") do
+    p(class: "mt-2 <completion here>") { "Hello World" }
+  end
+end
+
+# ERB file:
+<%= link_to "Hello", "/hello", class: "pl-2 <completion here>" %>
+<a href="/hello" class="pl-2 <completion here>">Hello</a>
+```

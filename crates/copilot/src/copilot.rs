@@ -1044,7 +1044,6 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use language::BufferId;
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
@@ -1256,17 +1255,6 @@ mod tests {
         }
 
         fn load(&self, _: &AppContext) -> Task<Result<String>> {
-            unimplemented!()
-        }
-
-        fn buffer_reloaded(
-            &self,
-            _: BufferId,
-            _: &clock::Global,
-            _: language::LineEnding,
-            _: Option<std::time::SystemTime>,
-            _: &mut AppContext,
-        ) {
             unimplemented!()
         }
     }

@@ -2437,7 +2437,7 @@ where
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
@@ -2449,7 +2449,7 @@ struct ScrollHandleState {
 /// A handle to the scrollable aspects of an element.
 /// Used for accessing scroll state, like the current scroll offset,
 /// and for mutating the scroll state, like scrolling to a specific child.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ScrollHandle(Rc<RefCell<ScrollHandleState>>);
 
 impl Default for ScrollHandle {
@@ -2524,6 +2524,14 @@ impl ScrollHandle {
                 scroll_offset.x = state.bounds.right() - bounds.right();
             }
         }
+    }
+
+    /// Set the offset explicitly. The offset is the distance from the top left of the
+    /// parent container to the top left of the first child.
+    /// As you scroll further down the offset becomes more negative.
+    pub fn set_offset(&self, mut position: Point<Pixels>) {
+        let state = self.0.borrow();
+        *state.offset.borrow_mut() = position;
     }
 
     /// Get the logical scroll top, based on a child index and a pixel offset.

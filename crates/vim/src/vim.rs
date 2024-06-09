@@ -534,7 +534,14 @@ impl Vim {
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
         if matches!(
             operator,
-            Operator::Change | Operator::Delete | Operator::Replace
+            Operator::Change
+                | Operator::Delete
+                | Operator::Replace
+                | Operator::Indent
+                | Operator::Outdent
+                | Operator::Lowercase
+                | Operator::Uppercase
+                | Operator::OppositeCase
         ) {
             self.start_recording(cx)
         };

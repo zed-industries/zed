@@ -25,6 +25,7 @@ actions!(
         ToggleIncludeIgnored,
         ToggleRegex,
         ToggleReplace,
+        ToggleSelection,
         SelectNextMatch,
         SelectPrevMatch,
         SelectAllMatches,
