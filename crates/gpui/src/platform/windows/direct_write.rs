@@ -1154,7 +1154,7 @@ fn get_font_identifier_and_font_struct(
     font_face: &IDWriteFontFace3,
     locale: &str,
 ) -> Option<(FontIdentifier, Font, bool)> {
-    let postscript_name = get_postscript_name(font_face, locale)?;
+    let postscript_name = get_postscript_name(font_face, locale).log_err()?;
     let localized_family_name = unsafe { font_face.GetFamilyNames().log_err() }?;
     let family_name = get_name(localized_family_name, locale).log_err()?;
     let weight = unsafe { font_face.GetWeight() };
@@ -1178,31 +1178,31 @@ fn get_font_identifier_and_font_struct(
 fn get_font_identifier(font_face: &IDWriteFontFace3, locale: &str) -> Option<FontIdentifier> {
     let weight = unsafe { font_face.GetWeight().0 };
     let style = unsafe { font_face.GetStyle().0 };
-    get_postscript_name(font_face, locale).map(|postscript_name| FontIdentifier {
-        postscript_name,
-        weight,
-        style,
-    })
+    get_postscript_name(font_face, locale)
+        .log_err()
+        .map(|postscript_name| FontIdentifier {
+            postscript_name,
+            weight,
+            style,
+        })
 }
 
 #[inline]
-fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Option<String> {
+fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Result<String> {
     let mut info = None;
     let mut exists = BOOL(0);
     unsafe {
-        font_face
-            .GetInformationalStrings(
-                DWRITE_INFORMATIONAL_STRING_POSTSCRIPT_NAME,
-                &mut info,
-                &mut exists,
-            )
-            .log_err();
-    }
+        font_face.GetInformationalStrings(
+            DWRITE_INFORMATIONAL_STRING_POSTSCRIPT_NAME,
+            &mut info,
+            &mut exists,
+        )?
+    };
     if !exists.as_bool() || info.is_none() {
-        return None;
+        return Err(anyhow!("No postscript name found for font face"));
     }
 
-    get_name(info.unwrap(), locale).log_err()
+    get_name(info.unwrap(), locale)
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
