@@ -496,7 +496,7 @@ impl ExtensionsPage {
                             )
                             .child(
                                 Label::new(format_download_count(extension.download_count))
-                                .size(LabelSize::Small),
+                                    .size(LabelSize::Small),
                             ),
                     ),
             )
