@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use ::util::ResultExt;
 use anyhow::Context;
+use itertools::Itertools;
 use windows::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
@@ -1063,7 +1064,7 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_INSERT => "insert",
         _ => return basic_vkcode_to_string(vk_code, modifiers),
     }
-    .to_string();
+    .to_owned();
 
     Some(Keystroke {
         modifiers,
@@ -1120,7 +1121,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
             return None;
         }
     }
-    .to_string();
+    .to_owned();
 
     Some(KeystrokeOrModifier::Keystroke(Keystroke {
         modifiers,
@@ -1137,7 +1138,7 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         let mut modifiers = current_modifiers();
         // for characters that use 'shift' to type it is expected that the
         // shift is not reported if the uppercase/lowercase are the same and instead only the key is reported
-        if first_char.to_lowercase().to_string() == first_char.to_uppercase().to_string() {
+        if first_char.to_ascii_lowercase() == first_char.to_ascii_lowercase() {
             modifiers.shift = false;
         }
         let key = match first_char {
@@ -1146,7 +1147,7 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         };
         Some(Keystroke {
             modifiers,
-            key,
+            key: key,
             ime_key: Some(first_char.to_string()),
         })
     }
