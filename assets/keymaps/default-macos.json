@@ -19,9 +19,6 @@
       "cmd-escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
-      "shift-enter": "picker::UseSelectedQuery",
-      "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
-      "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
@@ -159,6 +156,8 @@
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
       "cmd-alt-z": "editor::RevertSelectedHunks",
+      "cmd-'": "editor::ToggleHunkDiff",
+      "cmd-\"": "editor::ExpandAllHunkDiffs",
       "cmd-alt-g b": "editor::ToggleGitBlame"
     }
   },
@@ -170,10 +169,11 @@
       "cmd-shift-enter": "editor::NewlineAbove",
       "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
-      "cmd-f": [
+      "cmd-f": "buffer_search::Deploy",
+      "cmd-alt-f": [
         "buffer_search::Deploy",
         {
-          "focus": true
+          "replace_enabled": true
         }
       ],
       "cmd-e": [
@@ -208,10 +208,17 @@
     }
   },
   {
+    "context": "Markdown",
+    "bindings": {
+      "cmd-c": "markdown::Copy"
+    }
+  },
+  {
     "context": "AssistantPanel",
     "bindings": {
       "cmd-g": "search::SelectNextMatch",
-      "cmd-shift-g": "search::SelectPrevMatch"
+      "cmd-shift-g": "search::SelectPrevMatch",
+      "alt-m": "assistant::ToggleModelSelector"
     }
   },
   {
@@ -221,7 +228,9 @@
       "cmd-s": "workspace::Save",
       "cmd->": "assistant::QuoteSelection",
       "shift-enter": "assistant::Split",
-      "ctrl-r": "assistant::CycleMessageRole"
+      "ctrl-r": "assistant::CycleMessageRole",
+      "enter": "assistant::ConfirmCommand",
+      "alt-enter": "editor::Newline"
     }
   },
   {
@@ -232,7 +241,8 @@
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
-      "alt-tab": "search::CycleMode"
+      "cmd-f": "search::FocusSearch",
+      "cmd-alt-f": "search::ToggleReplace"
     }
   },
   {
@@ -253,10 +263,10 @@
     "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "alt-tab": "search::CycleMode",
+      "cmd-shift-f": "search::FocusSearch",
       "cmd-shift-h": "search::ToggleReplace",
-      "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-x": "search::ActivateTextMode"
+      "alt-cmd-g": "search::ToggleRegex",
+      "alt-cmd-x": "search::ToggleRegex"
     }
   },
   {
@@ -277,10 +287,9 @@
     "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "alt-tab": "search::CycleMode",
       "cmd-shift-h": "search::ToggleReplace",
-      "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-x": "search::ActivateTextMode"
+      "alt-cmd-g": "search::ToggleRegex",
+      "alt-cmd-x": "search::ToggleRegex"
     }
   },
   {
@@ -302,10 +311,9 @@
       "alt-enter": "search::SelectAllMatches",
       "alt-cmd-c": "search::ToggleCaseSensitive",
       "alt-cmd-w": "search::ToggleWholeWord",
-      "alt-tab": "search::CycleMode",
       "alt-cmd-f": "project_search::ToggleFilters",
-      "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-x": "search::ActivateTextMode"
+      "alt-cmd-g": "search::ToggleRegex",
+      "alt-cmd-x": "search::ToggleRegex"
     }
   },
   // Bindings from VS Code
@@ -436,6 +444,12 @@
       "cmd-j": "workspace::ToggleBottomDock",
       "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "pane::DeploySearch",
+      "cmd-shift-h": [
+        "pane::DeploySearch",
+        {
+          "replace_enabled": true
+        }
+      ],
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
@@ -505,6 +519,12 @@
     }
   },
   {
+    "context": "Editor && inline_completion && !showing_completions",
+    "bindings": {
+      "tab": "editor::AcceptInlineCompletion"
+    }
+  },
+  {
     "context": "Editor && showing_code_actions",
     "bindings": {
       "enter": "editor::ConfirmCodeAction"
@@ -535,6 +555,7 @@
     "context": "Editor && mode == full",
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
+      "shift-enter": "editor::ExpandExcerpts",
       "cmd-k enter": "editor::OpenExcerptsSplit",
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPrevHunk",
@@ -559,14 +580,16 @@
       "cmd-v": "project_panel::Paste",
       "cmd-alt-c": "project_panel::CopyPath",
       "alt-cmd-shift-c": "project_panel::CopyRelativePath",
-      "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
-      "backspace": "project_panel::Delete",
-      "delete": "project_panel::Delete",
-      "cmd-backspace": ["project_panel::Delete", { "skip_prompt": true }],
-      "cmd-delete": ["project_panel::Delete", { "skip_prompt": true }],
+      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "delete": ["project_panel::Trash", { "skip_prompt": false }],
+      "cmd-backspace": ["project_panel::Delete", { "skip_prompt": false }],
+      "cmd-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-cmd-r": "project_panel::RevealInFinder",
-      "alt-shift-f": "project_panel::NewSearchInDirectory"
+      "alt-shift-f": "project_panel::NewSearchInDirectory",
+      "shift-down": "menu::SelectNext",
+      "shift-up": "menu::SelectPrev",
+      "escape": "menu::Cancel"
     }
   },
   {
@@ -606,7 +629,20 @@
   },
   {
     "context": "TabSwitcher",
-    "bindings": { "ctrl-shift-tab": "menu::SelectPrev" }
+    "bindings": {
+      "ctrl-up": "menu::SelectPrev",
+      "ctrl-down": "menu::SelectNext",
+      "ctrl-shift-tab": "menu::SelectPrev",
+      "ctrl-backspace": "tab_switcher::CloseSelectedItem"
+    }
+  },
+  {
+    "context": "Picker",
+    "bindings": {
+      "alt-e": "picker::UseSelectedQuery",
+      "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
+      "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }]
+    }
   },
   {
     "context": "Terminal",

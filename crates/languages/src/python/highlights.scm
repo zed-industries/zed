@@ -44,9 +44,22 @@
   (float)
 ] @number
 
+; Variables
+(assignment
+  left: (identifier) @variable)
+
 (comment) @comment
 (string) @string
 (escape_sequence) @escape
+
+[
+  "("
+  ")"
+  "["
+  "]"
+  "{"
+  "}"
+] @punctuation.bracket
 
 (interpolation
   "{" @punctuation.special
@@ -96,6 +109,8 @@
   "is"
   "not"
   "or"
+  "is not"
+  "not in"
 ] @operator
 
 [

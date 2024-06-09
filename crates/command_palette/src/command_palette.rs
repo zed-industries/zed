@@ -12,7 +12,7 @@ use command_palette_hooks::{
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Global,
-    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    ParentElement, Render, Styled, Task, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 
@@ -362,7 +362,7 @@ impl PickerDelegate for CommandPaletteDelegate {
 
         self.matches.clear();
         self.commands.clear();
-        cx.update_global(|hit_counts: &mut HitCounts, _| {
+        HitCounts::update_global(cx, |hit_counts, _cx| {
             *hit_counts.0.entry(command.name).or_default() += 1;
         });
         let action = command.action;
@@ -477,7 +477,7 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
             editor.update(cx, |editor, cx| editor.focus(cx))
         });
 

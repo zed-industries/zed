@@ -35,10 +35,12 @@ envy = "0.4.2"
 futures.workspace = true
 google_ai.workspace = true
 hex.workspace = true
+http.workspace = true
 live_kit_server.workspace = true
 log.workspace = true
-nanoid = "0.4"
+nanoid.workspace = true
 open_ai.workspace = true
+supermaven_api.workspace = true
 parking_lot.workspace = true
 prometheus = "0.13"
 prost.workspace = true
@@ -63,8 +65,8 @@ tokio.workspace = true
 toml.workspace = true
 tower = "0.4"
 tower-http = { workspace = true, features = ["trace"] }
-tracing = "0.1.34"
-tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json", "registry", "tracing-log"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "registry", "tracing-log"] } # workaround for https://github.com/tokio-rs/tracing/issues/2927
 util.workspace = true
 uuid.workspace = true
 
@@ -82,17 +84,20 @@ env_logger.workspace = true
 file_finder.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
+git_hosting_providers.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 live_kit_client = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 menu.workspace = true
+multi_buffer = { workspace = true, features = ["test-support"] }
 node_runtime.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
+dev_server_projects.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 sea-orm = { version = "0.12.x", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
@@ -102,3 +107,4 @@ theme.workspace = true
 unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+headless.workspace = true

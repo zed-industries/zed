@@ -1,6 +1,6 @@
 use crate::{
-    black, fill, point, px, size, Bounds, ElementContext, Hsla, LineLayout, Pixels, Point, Result,
-    SharedString, StrikethroughStyle, UnderlineStyle, WrapBoundary, WrappedLineLayout,
+    black, fill, point, px, size, Bounds, Hsla, LineLayout, Pixels, Point, Result, SharedString,
+    StrikethroughStyle, UnderlineStyle, WindowContext, WrapBoundary, WrappedLineLayout,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -48,7 +48,7 @@ impl ShapedLine {
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> Result<()> {
         paint_line(
             origin,
@@ -86,7 +86,7 @@ impl WrappedLine {
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> Result<()> {
         paint_line(
             origin,
@@ -107,7 +107,7 @@ fn paint_line(
     line_height: Pixels,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
-    cx: &mut ElementContext,
+    cx: &mut WindowContext,
 ) -> Result<()> {
     let line_bounds = Bounds::new(origin, size(layout.width, line_height));
     cx.paint_layer(line_bounds, |cx| {

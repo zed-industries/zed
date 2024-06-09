@@ -77,6 +77,7 @@ mod element;
 mod elements;
 mod executor;
 mod geometry;
+mod global;
 mod input;
 mod interactive;
 mod key_dispatch;
@@ -125,6 +126,7 @@ pub use element::*;
 pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
+pub use global::*;
 pub use gpui_macros::{register_action, test, IntoElement, Render};
 pub use input::*;
 pub use interactive::*;
@@ -165,6 +167,19 @@ pub trait Context {
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>;
 
+    /// Reserve a slot for a model to be inserted later.
+    /// The returned [Reservation] allows you to obtain the [EntityId] for the future model.
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
+
+    /// Insert a new model in the app context based on a [Reservation] previously obtained from [`reserve_model`].
+    ///
+    /// [`reserve_model`]: Self::reserve_model
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>>;
+
     /// Update a model in the app context.
     fn update_model<T, R>(
         &mut self,
@@ -196,6 +211,17 @@ pub trait Context {
     ) -> Result<R>
     where
         T: 'static;
+}
+
+/// Returned by [Context::reserve_model] to later be passed to [Context::insert_model].
+/// Allows you to obtain the [EntityId] for a model before it is created.
+pub struct Reservation<T>(pub(crate) Slot<T>);
+
+impl<T: 'static> Reservation<T> {
+    /// Returns the [EntityId] that will be associated with the model once it is inserted.
+    pub fn entity_id(&self) -> EntityId {
+        self.0.entity_id()
+    }
 }
 
 /// This trait is used for the different visual contexts in GPUI that
@@ -301,24 +327,5 @@ impl<T> Flatten<T> for Result<Result<T>> {
 impl<T> Flatten<T> for Result<T> {
     fn flatten(self) -> Result<T> {
         self
-    }
-}
-
-/// A marker trait for types that can be stored in GPUI's global state.
-///
-/// Implement this on types you want to store in the context as a global.
-pub trait Global: 'static + Sized {
-    /// Access the global of the implementing type. Panics if a global for that type has not been assigned.
-    fn get(cx: &AppContext) -> &Self {
-        cx.global()
-    }
-
-    /// Updates the global of the implementing type with a closure. Unlike `global_mut`, this method provides
-    /// your closure with mutable access to the `AppContext` and the global simultaneously.
-    fn update<C, R>(cx: &mut C, f: impl FnOnce(&mut Self, &mut C) -> R) -> R
-    where
-        C: BorrowAppContext,
-    {
-        cx.update_global(f)
     }
 }

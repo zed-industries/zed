@@ -1,10 +1,10 @@
-use super::{BladeBelt, BladeBeltDescriptor};
 use crate::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
     Point, Size,
 };
 use anyhow::Result;
 use blade_graphics as gpu;
+use blade_util::{BufferBelt, BufferBeltDescriptor};
 use collections::FxHashMap;
 use etagere::BucketedAtlasAllocator;
 use parking_lot::Mutex;
@@ -22,12 +22,15 @@ struct PendingUpload {
 
 struct BladeAtlasState {
     gpu: Arc<gpu::Context>,
-    upload_belt: BladeBelt,
+    upload_belt: BufferBelt,
     storage: BladeAtlasStorage,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
     initializations: Vec<AtlasTextureId>,
     uploads: Vec<PendingUpload>,
 }
+
+#[cfg(gles)]
+unsafe impl Send for BladeAtlasState {}
 
 impl BladeAtlasState {
     fn destroy(&mut self) {
@@ -45,7 +48,7 @@ impl BladeAtlas {
     pub(crate) fn new(gpu: &Arc<gpu::Context>) -> Self {
         BladeAtlas(Mutex::new(BladeAtlasState {
             gpu: Arc::clone(gpu),
-            upload_belt: BladeBelt::new(BladeBeltDescriptor {
+            upload_belt: BufferBelt::new(BufferBeltDescriptor {
                 memory: gpu::Memory::Upload,
                 min_chunk_size: 0x10000,
                 alignment: 64, // Vulkan `optimalBufferCopyOffsetAlignment` on Intel XE
@@ -111,18 +114,20 @@ impl PlatformAtlas for BladeAtlas {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
-        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
-    ) -> Result<AtlasTile> {
+        build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> Result<Option<AtlasTile>> {
         let mut lock = self.0.lock();
         if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(tile.clone())
+            Ok(Some(tile.clone()))
         } else {
             profiling::scope!("new tile");
-            let (size, bytes) = build()?;
+            let Some((size, bytes)) = build()? else {
+                return Ok(None);
+            };
             let tile = lock.allocate(size, key.texture_kind());
             lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile.clone());
-            Ok(tile)
+            Ok(Some(tile))
         }
     }
 }
@@ -159,7 +164,7 @@ impl BladeAtlasState {
                 usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
             AtlasTextureKind::Polychrome => {
-                format = gpu::TextureFormat::Rgba8Unorm;
+                format = gpu::TextureFormat::Bgra8UnormSrgb;
                 usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
             AtlasTextureKind::Path => {
@@ -209,7 +214,7 @@ impl BladeAtlasState {
     }
 
     fn upload_texture(&mut self, id: AtlasTextureId, bounds: Bounds<DevicePixels>, bytes: &[u8]) {
-        let data = unsafe { self.upload_belt.alloc_data(bytes, &self.gpu) };
+        let data = self.upload_belt.alloc_bytes(bytes, &self.gpu);
         self.uploads.push(PendingUpload { id, bounds, data });
     }
 

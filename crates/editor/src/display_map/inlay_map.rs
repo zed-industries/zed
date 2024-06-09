@@ -2,7 +2,9 @@ use crate::{HighlightStyles, InlayId};
 use collections::{BTreeMap, BTreeSet};
 use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferRows, MultiBufferSnapshot, ToOffset};
+use multi_buffer::{
+    Anchor, MultiBufferChunks, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, ToOffset,
+};
 use std::{
     any::TypeId,
     cmp,
@@ -182,7 +184,7 @@ pub struct InlayBufferRows<'a> {
     transforms: Cursor<'a, Transform, (InlayPoint, Point)>,
     buffer_rows: MultiBufferRows<'a>,
     inlay_row: u32,
-    max_buffer_row: u32,
+    max_buffer_row: MultiBufferRow,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -282,7 +284,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 self.output_offset.0 += prefix.len();
                 let mut prefix = Chunk {
                     text: prefix,
-                    ..*chunk
+                    ..chunk.clone()
                 };
                 if !self.active_highlights.is_empty() {
                     let mut highlight_style = HighlightStyle::default();
@@ -375,7 +377,7 @@ impl<'a> InlayBufferRows<'a> {
         self.transforms.seek(&inlay_point, Bias::Left, &());
 
         let mut buffer_point = self.transforms.start().1;
-        let buffer_row = if row == 0 {
+        let buffer_row = MultiBufferRow(if row == 0 {
             0
         } else {
             match self.transforms.item() {
@@ -383,9 +385,9 @@ impl<'a> InlayBufferRows<'a> {
                     buffer_point += inlay_point.0 - self.transforms.start().0 .0;
                     buffer_point.row
                 }
-                _ => cmp::min(buffer_point.row + 1, self.max_buffer_row),
+                _ => cmp::min(buffer_point.row + 1, self.max_buffer_row.0),
             }
-        };
+        });
         self.inlay_row = inlay_point.row();
         self.buffer_rows.seek(buffer_row);
     }
@@ -986,17 +988,17 @@ impl InlaySnapshot {
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());
 
-        let max_buffer_row = self.buffer.max_point().row;
+        let max_buffer_row = MultiBufferRow(self.buffer.max_point().row);
         let mut buffer_point = cursor.start().1;
         let buffer_row = if row == 0 {
-            0
+            MultiBufferRow(0)
         } else {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
                     buffer_point += inlay_point.0 - cursor.start().0 .0;
-                    buffer_point.row
+                    MultiBufferRow(buffer_point.row)
                 }
-                _ => cmp::min(buffer_point.row + 1, max_buffer_row),
+                _ => cmp::min(MultiBufferRow(buffer_point.row + 1), max_buffer_row),
             }
         };
 
@@ -1695,38 +1697,39 @@ mod tests {
                 while inlay_indices.len() < inlay_highlight_count {
                     inlay_indices.insert(rng.gen_range(0..inlays.len()));
                 }
-                let new_highlights = inlay_indices
-                    .into_iter()
-                    .filter_map(|i| {
-                        let (_, inlay) = &inlays[i];
-                        let inlay_text_len = inlay.text.len();
-                        match inlay_text_len {
-                            0 => None,
-                            1 => Some(InlayHighlight {
-                                inlay: inlay.id,
-                                inlay_position: inlay.position,
-                                range: 0..1,
-                            }),
-                            n => {
-                                let inlay_text = inlay.text.to_string();
-                                let mut highlight_end = rng.gen_range(1..n);
-                                let mut highlight_start = rng.gen_range(0..highlight_end);
-                                while !inlay_text.is_char_boundary(highlight_end) {
-                                    highlight_end += 1;
-                                }
-                                while !inlay_text.is_char_boundary(highlight_start) {
-                                    highlight_start -= 1;
-                                }
-                                Some(InlayHighlight {
+                let new_highlights = TreeMap::from_ordered_entries(
+                    inlay_indices
+                        .into_iter()
+                        .filter_map(|i| {
+                            let (_, inlay) = &inlays[i];
+                            let inlay_text_len = inlay.text.len();
+                            match inlay_text_len {
+                                0 => None,
+                                1 => Some(InlayHighlight {
                                     inlay: inlay.id,
                                     inlay_position: inlay.position,
-                                    range: highlight_start..highlight_end,
-                                })
+                                    range: 0..1,
+                                }),
+                                n => {
+                                    let inlay_text = inlay.text.to_string();
+                                    let mut highlight_end = rng.gen_range(1..n);
+                                    let mut highlight_start = rng.gen_range(0..highlight_end);
+                                    while !inlay_text.is_char_boundary(highlight_end) {
+                                        highlight_end += 1;
+                                    }
+                                    while !inlay_text.is_char_boundary(highlight_start) {
+                                        highlight_start -= 1;
+                                    }
+                                    Some(InlayHighlight {
+                                        inlay: inlay.id,
+                                        inlay_position: inlay.position,
+                                        range: highlight_start..highlight_end,
+                                    })
+                                }
                             }
-                        }
-                    })
-                    .map(|highlight| (highlight.inlay, (HighlightStyle::default(), highlight)))
-                    .collect();
+                        })
+                        .map(|highlight| (highlight.inlay, (HighlightStyle::default(), highlight))),
+                );
                 log::info!("highlighting inlay ranges {new_highlights:?}");
                 inlay_highlights.insert(TypeId::of::<()>(), new_highlights);
             }

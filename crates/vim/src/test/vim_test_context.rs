@@ -56,7 +56,7 @@ impl VimTestContext {
 
     pub fn new_with_lsp(mut cx: EditorLspTestContext, enabled: bool) -> VimTestContext {
         cx.update(|cx| {
-            cx.update_global(|store: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
             });
             settings::KeymapFile::load_asset("keymaps/default-macos.json", cx).unwrap();
@@ -104,7 +104,7 @@ impl VimTestContext {
 
     pub fn enable_vim(&mut self) {
         self.cx.update(|cx| {
-            cx.update_global(|store: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(true));
             });
         })
@@ -112,7 +112,7 @@ impl VimTestContext {
 
     pub fn disable_vim(&mut self) {
         self.cx.update(|cx| {
-            cx.update_global(|store: &mut SettingsStore, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(false));
             });
         })
@@ -145,9 +145,9 @@ impl VimTestContext {
         assert_eq!(self.mode(), mode, "{}", self.assertion_context());
     }
 
-    pub fn assert_binding<const COUNT: usize>(
+    pub fn assert_binding(
         &mut self,
-        keystrokes: [&str; COUNT],
+        keystrokes: &str,
         initial_state: &str,
         initial_mode: Mode,
         state_after: &str,
@@ -160,9 +160,9 @@ impl VimTestContext {
         assert_eq!(self.active_operator(), None, "{}", self.assertion_context());
     }
 
-    pub fn assert_binding_normal<const COUNT: usize>(
+    pub fn assert_binding_normal(
         &mut self,
-        keystrokes: [&str; COUNT],
+        keystrokes: &str,
         initial_state: &str,
         state_after: &str,
     ) {

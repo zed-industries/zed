@@ -45,12 +45,13 @@ CREATE UNIQUE INDEX "index_rooms_on_channel_id" ON "rooms" ("channel_id");
 
 CREATE TABLE "projects" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "room_id" INTEGER REFERENCES rooms (id) ON DELETE CASCADE NOT NULL,
+    "room_id" INTEGER REFERENCES rooms (id) ON DELETE CASCADE,
     "host_user_id" INTEGER REFERENCES users (id),
     "host_connection_id" INTEGER,
     "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
     "unregistered" BOOLEAN NOT NULL DEFAULT FALSE,
-    "hosted_project_id" INTEGER REFERENCES hosted_projects (id)
+    "hosted_project_id" INTEGER REFERENCES hosted_projects (id),
+    "dev_server_project_id" INTEGER REFERENCES dev_server_projects(id)
 );
 CREATE INDEX "index_projects_on_host_connection_server_id" ON "projects" ("host_connection_server_id");
 CREATE INDEX "index_projects_on_host_connection_id_and_host_connection_server_id" ON "projects" ("host_connection_id", "host_connection_server_id");
@@ -404,8 +405,14 @@ CREATE UNIQUE INDEX uix_hosted_projects_on_channel_id_and_name ON hosted_project
 
 CREATE TABLE dev_servers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    channel_id INTEGER NOT NULL REFERENCES channels(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
     name TEXT NOT NULL,
+    ssh_connection_string TEXT,
     hashed_token TEXT NOT NULL
 );
-CREATE INDEX idx_dev_servers_on_channel_id ON dev_servers (channel_id);
+
+CREATE TABLE dev_server_projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dev_server_id INTEGER NOT NULL REFERENCES dev_servers(id),
+    path TEXT NOT NULL
+);

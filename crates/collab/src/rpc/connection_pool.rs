@@ -1,7 +1,7 @@
-use crate::db::{ChannelId, ChannelRole, UserId};
+use crate::db::{ChannelId, ChannelRole, DevServerId, PrincipalId, UserId};
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
-use rpc::ConnectionId;
+use rpc::{proto, ConnectionId};
 use semantic_version::SemanticVersion;
 use serde::Serialize;
 use std::fmt;
@@ -10,16 +10,18 @@ use tracing::instrument;
 #[derive(Default, Serialize)]
 pub struct ConnectionPool {
     connections: BTreeMap<ConnectionId, Connection>,
-    connected_users: BTreeMap<UserId, ConnectedUser>,
+    connected_users: BTreeMap<UserId, ConnectedPrincipal>,
+    connected_dev_servers: BTreeMap<DevServerId, ConnectionId>,
     channels: ChannelPool,
+    offline_dev_servers: HashSet<DevServerId>,
 }
 
 #[derive(Default, Serialize)]
-struct ConnectedUser {
+struct ConnectedPrincipal {
     connection_ids: HashSet<ConnectionId>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Copy, Clone, Debug, Serialize, PartialOrd, PartialEq, Eq, Ord)]
 pub struct ZedVersion(pub SemanticVersion);
 
 impl fmt::Display for ZedVersion {
@@ -30,13 +32,39 @@ impl fmt::Display for ZedVersion {
 
 impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
-        self.0 >= SemanticVersion::new(0, 127, 3)
+        self.0 >= SemanticVersion::new(0, 129, 2)
+    }
+
+    pub fn with_save_as() -> ZedVersion {
+        ZedVersion(SemanticVersion::new(0, 134, 0))
+    }
+}
+
+pub trait VersionedMessage {
+    fn required_host_version(&self) -> Option<ZedVersion> {
+        None
+    }
+}
+
+impl VersionedMessage for proto::SaveBuffer {
+    fn required_host_version(&self) -> Option<ZedVersion> {
+        if self.new_path.is_some() {
+            Some(ZedVersion::with_save_as())
+        } else {
+            None
+        }
+    }
+}
+
+impl VersionedMessage for proto::OpenNewBuffer {
+    fn required_host_version(&self) -> Option<ZedVersion> {
+        Some(ZedVersion::with_save_as())
     }
 }
 
 #[derive(Serialize)]
 pub struct Connection {
-    pub user_id: UserId,
+    pub principal_id: PrincipalId,
     pub admin: bool,
     pub zed_version: ZedVersion,
 }
@@ -46,6 +74,10 @@ impl ConnectionPool {
         self.connections.clear();
         self.connected_users.clear();
         self.channels.clear();
+    }
+
+    pub fn connection(&mut self, connection_id: ConnectionId) -> Option<&Connection> {
+        self.connections.get(&connection_id)
     }
 
     #[instrument(skip(self))]
@@ -59,13 +91,32 @@ impl ConnectionPool {
         self.connections.insert(
             connection_id,
             Connection {
-                user_id,
+                principal_id: PrincipalId::UserId(user_id),
                 admin,
                 zed_version,
             },
         );
         let connected_user = self.connected_users.entry(user_id).or_default();
         connected_user.connection_ids.insert(connection_id);
+    }
+
+    pub fn add_dev_server(
+        &mut self,
+        connection_id: ConnectionId,
+        dev_server_id: DevServerId,
+        zed_version: ZedVersion,
+    ) {
+        self.connections.insert(
+            connection_id,
+            Connection {
+                principal_id: PrincipalId::DevServerId(dev_server_id),
+                admin: false,
+                zed_version,
+            },
+        );
+
+        self.connected_dev_servers
+            .insert(dev_server_id, connection_id);
     }
 
     #[instrument(skip(self))]
@@ -75,15 +126,26 @@ impl ConnectionPool {
             .get_mut(&connection_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
 
-        let user_id = connection.user_id;
-        let connected_user = self.connected_users.get_mut(&user_id).unwrap();
-        connected_user.connection_ids.remove(&connection_id);
-        if connected_user.connection_ids.is_empty() {
-            self.connected_users.remove(&user_id);
-            self.channels.remove_user(&user_id);
+        match connection.principal_id {
+            PrincipalId::UserId(user_id) => {
+                let connected_user = self.connected_users.get_mut(&user_id).unwrap();
+                connected_user.connection_ids.remove(&connection_id);
+                if connected_user.connection_ids.is_empty() {
+                    self.connected_users.remove(&user_id);
+                    self.channels.remove_user(&user_id);
+                }
+            }
+            PrincipalId::DevServerId(dev_server_id) => {
+                self.connected_dev_servers.remove(&dev_server_id);
+                self.offline_dev_servers.remove(&dev_server_id);
+            }
         }
         self.connections.remove(&connection_id).unwrap();
         Ok(())
+    }
+
+    pub fn set_dev_server_offline(&mut self, dev_server_id: DevServerId) {
+        self.offline_dev_servers.insert(dev_server_id);
     }
 
     pub fn connections(&self) -> impl Iterator<Item = &Connection> {
@@ -108,6 +170,20 @@ impl ConnectionPool {
             .into_iter()
             .flat_map(|state| &state.connection_ids)
             .copied()
+    }
+
+    pub fn dev_server_status(&self, dev_server_id: DevServerId) -> proto::DevServerStatus {
+        if self.dev_server_connection_id(dev_server_id).is_some()
+            && !self.offline_dev_servers.contains(&dev_server_id)
+        {
+            proto::DevServerStatus::Online
+        } else {
+            proto::DevServerStatus::Offline
+        }
+    }
+
+    pub fn dev_server_connection_id(&self, dev_server_id: DevServerId) -> Option<ConnectionId> {
+        self.connected_dev_servers.get(&dev_server_id).copied()
     }
 
     pub fn channel_user_ids(
@@ -154,21 +230,38 @@ impl ConnectionPool {
     #[cfg(test)]
     pub fn check_invariants(&self) {
         for (connection_id, connection) in &self.connections {
-            assert!(self
-                .connected_users
-                .get(&connection.user_id)
-                .unwrap()
-                .connection_ids
-                .contains(connection_id));
+            match &connection.principal_id {
+                PrincipalId::UserId(user_id) => {
+                    assert!(self
+                        .connected_users
+                        .get(user_id)
+                        .unwrap()
+                        .connection_ids
+                        .contains(connection_id));
+                }
+                PrincipalId::DevServerId(dev_server_id) => {
+                    assert_eq!(
+                        self.connected_dev_servers.get(&dev_server_id).unwrap(),
+                        connection_id
+                    );
+                }
+            }
         }
 
         for (user_id, state) in &self.connected_users {
             for connection_id in &state.connection_ids {
                 assert_eq!(
-                    self.connections.get(connection_id).unwrap().user_id,
-                    *user_id
+                    self.connections.get(connection_id).unwrap().principal_id,
+                    PrincipalId::UserId(*user_id)
                 );
             }
+        }
+
+        for (dev_server_id, connection_id) in &self.connected_dev_servers {
+            assert_eq!(
+                self.connections.get(connection_id).unwrap().principal_id,
+                PrincipalId::DevServerId(*dev_server_id)
+            );
         }
     }
 }

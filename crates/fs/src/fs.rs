@@ -1,25 +1,24 @@
-pub mod repository;
-
 use anyhow::{anyhow, Result};
+use git::GitHostingProviderRegistry;
+
+#[cfg(target_os = "linux")]
+use ashpd::desktop::trash;
+#[cfg(target_os = "linux")]
+use std::{fs::File, os::fd::AsFd};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
-use git2::Repository as LibGitRepository;
-use parking_lot::Mutex;
-use repository::{GitRepository, RealGitRepository};
+use git::repository::{GitRepository, RealGitRepository};
 use rope::Rope;
-#[cfg(any(test, feature = "test-support"))]
-use smol::io::AsyncReadExt;
 use smol::io::AsyncWriteExt;
-use std::io::Write;
-use std::sync::Arc;
 use std::{
-    io,
+    io::{self, Write},
     path::{Component, Path, PathBuf},
     pin::Pin,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 use tempfile::{NamedTempFile, TempDir};
@@ -29,7 +28,11 @@ use util::{paths, ResultExt};
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
-use repository::{FakeGitRepositoryState, GitFileStatus};
+use git::repository::{FakeGitRepositoryState, GitFileStatus};
+#[cfg(any(test, feature = "test-support"))]
+use parking_lot::Mutex;
+#[cfg(any(test, feature = "test-support"))]
+use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
@@ -51,7 +54,13 @@ pub trait Fs: Send + Sync {
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.remove_dir(path, options).await
+    }
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
+    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.remove_file(path, options).await
+    }
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
@@ -72,7 +81,7 @@ pub trait Fs: Send + Sync {
         latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>;
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>>;
+    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
     #[cfg(any(test, feature = "test-support"))]
@@ -113,12 +122,19 @@ pub struct Metadata {
 
 #[derive(Default)]
 pub struct RealFs {
+    git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     git_binary_path: Option<PathBuf>,
 }
 
 impl RealFs {
-    pub fn new(git_binary_path: Option<PathBuf>) -> Self {
-        Self { git_binary_path }
+    pub fn new(
+        git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
+        git_binary_path: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            git_hosting_provider_registry,
+            git_binary_path,
+        }
     }
 }
 
@@ -237,6 +253,47 @@ impl Fs for RealFs {
             }
             Err(err) => Err(err)?,
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+        use cocoa::{
+            base::{id, nil},
+            foundation::{NSAutoreleasePool, NSString},
+        };
+        use objc::{class, msg_send, sel, sel_impl};
+
+        unsafe {
+            unsafe fn ns_string(string: &str) -> id {
+                NSString::alloc(nil).init_str(string).autorelease()
+            }
+
+            let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
+            let array: id = msg_send![class!(NSArray), arrayWithObject: url];
+            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+
+            let _: id = msg_send![workspace, recycleURLs: array completionHandler: nil];
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+        let file = File::open(path)?;
+        match trash::trash_file(&file.as_fd()).await {
+            Ok(_) => Ok(()),
+            Err(err) => Err(anyhow::Error::new(err)),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.trash_file(path, options).await
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.trash_file(path, options).await
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
@@ -376,7 +433,7 @@ impl Fs for RealFs {
         path: &Path,
         _latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>> {
-        use notify::{event::EventKind, Watcher};
+        use notify::{event::EventKind, event::ModifyKind, Watcher};
         // todo(linux): This spawns two threads, while the macOS impl
         // only spawns one. Can we use a OnceLock or some such to make
         // this better
@@ -404,6 +461,17 @@ impl Fs for RealFs {
                 if let Some(event) = event.ok() {
                     if event.paths.into_iter().any(|path| *path == watched_path) {
                         match event.kind {
+                            EventKind::Modify(ev) => {
+                                if matches!(ev, ModifyKind::Name(_)) {
+                                    file_watcher
+                                        .watch(
+                                            watched_path.as_path(),
+                                            notify::RecursiveMode::Recursive,
+                                        )
+                                        .log_err();
+                                    let _ = tx.try_send(vec![watched_path.clone()]).ok();
+                                }
+                            }
                             EventKind::Create(_) => {
                                 file_watcher
                                     .watch(watched_path.as_path(), notify::RecursiveMode::Recursive)
@@ -436,15 +504,13 @@ impl Fs for RealFs {
         })))
     }
 
-    fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
-        LibGitRepository::open(dotgit_path)
-            .log_err()
-            .map::<Arc<Mutex<dyn GitRepository>>, _>(|libgit_repository| {
-                Arc::new(Mutex::new(RealGitRepository::new(
-                    libgit_repository,
-                    self.git_binary_path.clone(),
-                )))
-            })
+    fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<dyn GitRepository>> {
+        let repo = git2::Repository::open(dotgit_path).log_err()?;
+        Some(Arc::new(RealGitRepository::new(
+            repo,
+            self.git_binary_path.clone(),
+            self.git_hosting_provider_registry.clone(),
+        )))
     }
 
     fn is_fake(&self) -> bool {
@@ -525,7 +591,7 @@ enum FakeFsEntry {
         inode: u64,
         mtime: SystemTime,
         entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
-        git_repo_state: Option<Arc<Mutex<repository::FakeGitRepositoryState>>>,
+        git_repo_state: Option<Arc<Mutex<git::repository::FakeGitRepositoryState>>>,
     },
     Symlink {
         target: PathBuf,
@@ -714,6 +780,15 @@ impl FakeFs {
         })?;
         state.emit_event([path]);
         Ok(())
+    }
+
+    pub fn read_file_sync(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
+        let path = path.as_ref();
+        let path = normalize_path(path);
+        let state = self.state.lock();
+        let entry = state.read_path(&path)?;
+        let entry = entry.lock();
+        entry.file_content(&path).cloned()
     }
 
     async fn load_internal(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
@@ -1409,7 +1484,7 @@ impl Fs for FakeFs {
         }))
     }
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
+    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {
         let state = self.state.lock();
         let entry = state.read_path(abs_dot_git).unwrap();
         let mut entry = entry.lock();
@@ -1417,7 +1492,7 @@ impl Fs for FakeFs {
             let state = git_repo_state
                 .get_or_insert_with(|| Arc::new(Mutex::new(FakeGitRepositoryState::default())))
                 .clone();
-            Some(repository::FakeGitRepository::open(state))
+            Some(git::repository::FakeGitRepository::open(state))
         } else {
             None
         }

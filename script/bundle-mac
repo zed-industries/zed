@@ -24,7 +24,7 @@ Build the application bundle for macOS.
 
 Options:
   -d    Compile in debug mode
-  -l    Compile for local architecture and copy bundle to /Applications, implies -d.
+  -l    Compile for local architecture and copy bundle to /Applications.
   -o    Open dir with the resulting DMG or launch the app itself in local mode.
   -i    Install the resulting DMG into /Applications in local mode. Noop without -l.
   -h    Display this help and exit.
@@ -44,10 +44,8 @@ do
         l)
             export CARGO_INCREMENTAL=true
             export CARGO_BUNDLE_SKIP_BUILD=true
-            build_flag=""
             local_arch=true
             local_only=true
-            target_dir="debug"
             ;;
         i) local_install=true;;
         h)

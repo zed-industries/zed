@@ -59,8 +59,18 @@ pub trait PickerDelegate: Sized + 'static {
         Vec::new()
     }
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
-
+    // Allows binding some optional effect to when the selection changes.
+    fn selected_index_changed(
+        &self,
+        _ix: usize,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
+        None
+    }
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+        "No matches".into()
+    }
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
 
     // Delegates that support this method (e.g. the CommandPalette) can chose to block on any background
@@ -76,11 +86,18 @@ pub trait PickerDelegate: Sized + 'static {
         false
     }
 
+    fn confirm_update_query(&mut self, _cx: &mut ViewContext<Picker<Self>>) -> Option<String> {
+        None
+    }
+
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     /// Instead of interacting with currently selected entry, treats editor input literally,
     /// performing some kind of action on it.
     fn confirm_input(&mut self, _secondary: bool, _: &mut ViewContext<Picker<Self>>) {}
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
+    fn should_dismiss(&self) -> bool {
+        true
+    }
     fn selected_as_query(&self) -> Option<String> {
         None
     }
@@ -214,13 +231,31 @@ impl<D: PickerDelegate> Picker<D> {
         self.focus_handle(cx).focus(cx);
     }
 
+    /// Handles the selecting an index, and passing the change to the delegate.
+    /// If `scroll_to_index` is true, the new selected index will be scrolled into view.
+    ///
+    /// If some effect is bound to `selected_index_changed`, it will be executed.
+    fn set_selected_index(&mut self, ix: usize, scroll_to_index: bool, cx: &mut ViewContext<Self>) {
+        let previous_index = self.delegate.selected_index();
+        self.delegate.set_selected_index(ix, cx);
+        let current_index = self.delegate.selected_index();
+
+        if previous_index != current_index {
+            if let Some(action) = self.delegate.selected_index_changed(ix, cx) {
+                action(cx);
+            }
+            if scroll_to_index {
+                self.scroll_to_item_index(ix);
+            }
+        }
+    }
+
     pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == count - 1 { 0 } else { index + 1 };
-            self.delegate.set_selected_index(ix, cx);
-            self.scroll_to_item_index(ix);
+            self.set_selected_index(ix, true, cx);
             cx.notify();
         }
     }
@@ -230,8 +265,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == 0 { count - 1 } else { index - 1 };
-            self.delegate.set_selected_index(ix, cx);
-            self.scroll_to_item_index(ix);
+            self.set_selected_index(ix, true, cx);
             cx.notify();
         }
     }
@@ -239,8 +273,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.delegate.set_selected_index(0, cx);
-            self.scroll_to_item_index(0);
+            self.set_selected_index(0, true, cx);
             cx.notify();
         }
     }
@@ -249,7 +282,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         if count > 0 {
             self.delegate.set_selected_index(count - 1, cx);
-            self.scroll_to_item_index(count - 1);
+            self.set_selected_index(count - 1, true, cx);
             cx.notify();
         }
     }
@@ -258,14 +291,15 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
-        self.delegate.set_selected_index(new_index, cx);
-        self.scroll_to_item_index(new_index);
+        self.set_selected_index(new_index, false, cx);
         cx.notify();
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        self.delegate.dismissed(cx);
-        cx.emit(DismissEvent);
+        if self.delegate.should_dismiss() {
+            self.delegate.dismissed(cx);
+            cx.emit(DismissEvent);
+        }
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
@@ -277,7 +311,7 @@ impl<D: PickerDelegate> Picker<D> {
             self.confirm_on_update = Some(false)
         } else {
             self.pending_update_matches.take();
-            self.delegate.confirm(false, cx);
+            self.do_confirm(false, cx);
         }
     }
 
@@ -289,7 +323,7 @@ impl<D: PickerDelegate> Picker<D> {
         {
             self.confirm_on_update = Some(true)
         } else {
-            self.delegate.confirm(true, cx);
+            self.do_confirm(true, cx);
         }
     }
 
@@ -307,8 +341,17 @@ impl<D: PickerDelegate> Picker<D> {
     fn handle_click(&mut self, ix: usize, secondary: bool, cx: &mut ViewContext<Self>) {
         cx.stop_propagation();
         cx.prevent_default();
-        self.delegate.set_selected_index(ix, cx);
-        self.delegate.confirm(secondary, cx);
+        self.set_selected_index(ix, false, cx);
+        self.do_confirm(secondary, cx)
+    }
+
+    fn do_confirm(&mut self, secondary: bool, cx: &mut ViewContext<Self>) {
+        if let Some(update_query) = self.delegate.confirm_update_query(cx) {
+            self.set_query(update_query, cx);
+            self.delegate.set_selected_index(0, cx);
+        } else {
+            self.delegate.confirm(secondary, cx)
+        }
     }
 
     fn on_input_editor_event(
@@ -382,7 +425,7 @@ impl<D: PickerDelegate> Picker<D> {
         self.scroll_to_item_index(index);
         self.pending_update_matches = None;
         if let Some(secondary) = self.confirm_on_update.take() {
-            self.delegate.confirm(secondary, cx);
+            self.do_confirm(secondary, cx);
         }
         cx.notify();
     }
@@ -418,7 +461,7 @@ impl<D: PickerDelegate> Picker<D> {
             .id(("item", ix))
             .cursor_pointer()
             .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
-                this.handle_click(ix, event.down.modifiers.command, cx)
+                this.handle_click(ix, event.down.modifiers.secondary(), cx)
             }))
             // As of this writing, GPUI intercepts `ctrl-[mouse-event]`s on macOS
             // and produces right mouse button events. This matches platforms norms
@@ -427,7 +470,9 @@ impl<D: PickerDelegate> Picker<D> {
             .on_mouse_up(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseUpEvent, cx| {
-                    this.handle_click(ix, event.modifiers.command, cx)
+                    // We specficially want to use the platform key here, as
+                    // ctrl will already be held down for the tab switcher.
+                    this.handle_click(ix, event.modifiers.platform, cx)
                 }),
             )
             .children(
@@ -522,7 +567,9 @@ impl<D: PickerDelegate> Render for Picker<D> {
                             .inset(true)
                             .spacing(ListItemSpacing::Sparse)
                             .disabled(true)
-                            .child(Label::new("No matches").color(Color::Muted)),
+                            .child(
+                                Label::new(self.delegate.no_matches_text(cx)).color(Color::Muted),
+                            ),
                     ),
                 )
             })

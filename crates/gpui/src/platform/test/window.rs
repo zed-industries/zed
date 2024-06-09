@@ -2,7 +2,7 @@ use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
     DispatchEventResult, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowParams,
+    WindowBackgroundAppearance, WindowBounds, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -112,11 +112,11 @@ impl PlatformWindow for TestWindow {
         self.0.lock().bounds
     }
 
-    fn is_maximized(&self) -> bool {
-        false
+    fn window_bounds(&self) -> WindowBounds {
+        WindowBounds::Windowed(self.bounds())
     }
 
-    fn is_minimized(&self) -> bool {
+    fn is_maximized(&self) -> bool {
         false
     }
 
@@ -132,8 +132,8 @@ impl PlatformWindow for TestWindow {
         WindowAppearance::Light
     }
 
-    fn display(&self) -> std::rc::Rc<dyn crate::PlatformDisplay> {
-        self.0.lock().display.clone()
+    fn display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
+        Some(self.0.lock().display.clone())
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -142,10 +142,6 @@ impl PlatformWindow for TestWindow {
 
     fn modifiers(&self) -> crate::Modifiers {
         crate::Modifiers::default()
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -159,8 +155,8 @@ impl PlatformWindow for TestWindow {
     fn prompt(
         &self,
         _level: crate::PromptLevel,
-        _msg: &str,
-        _detail: Option<&str>,
+        msg: &str,
+        detail: Option<&str>,
         _answers: &[&str],
     ) -> Option<futures::channel::oneshot::Receiver<usize>> {
         Some(
@@ -169,7 +165,7 @@ impl PlatformWindow for TestWindow {
                 .platform
                 .upgrade()
                 .expect("platform dropped")
-                .prompt(),
+                .prompt(msg, detail),
         )
     }
 
@@ -189,6 +185,8 @@ impl PlatformWindow for TestWindow {
     fn set_title(&mut self, title: &str) {
         self.0.lock().title = Some(title.to_owned());
     }
+
+    fn set_app_id(&mut self, _app_id: &str) {}
 
     fn set_background_appearance(&mut self, _background: WindowBackgroundAppearance) {
         unimplemented!()
@@ -233,10 +231,6 @@ impl PlatformWindow for TestWindow {
         self.0.lock().resize_callback = Some(callback)
     }
 
-    fn on_fullscreen(&self, _callback: Box<dyn FnMut(bool)>) {
-        unimplemented!()
-    }
-
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().moved_callback = Some(callback)
     }
@@ -248,10 +242,6 @@ impl PlatformWindow for TestWindow {
     fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
-
-    fn is_topmost_for_position(&self, _position: crate::Point<Pixels>) -> bool {
-        unimplemented!()
-    }
 
     fn draw(&self, _scene: &crate::Scene) {}
 
@@ -266,6 +256,18 @@ impl PlatformWindow for TestWindow {
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
         unimplemented!()
+    }
+
+    fn show_window_menu(&self, _position: Point<Pixels>) {
+        unimplemented!()
+    }
+
+    fn start_system_move(&self) {
+        unimplemented!()
+    }
+
+    fn should_render_window_controls(&self) -> bool {
+        false
     }
 }
 
@@ -289,24 +291,25 @@ impl PlatformAtlas for TestAtlas {
     fn get_or_insert_with<'a>(
         &self,
         key: &crate::AtlasKey,
-        build: &mut dyn FnMut() -> anyhow::Result<(
-            Size<crate::DevicePixels>,
-            std::borrow::Cow<'a, [u8]>,
-        )>,
-    ) -> anyhow::Result<crate::AtlasTile> {
+        build: &mut dyn FnMut() -> anyhow::Result<
+            Option<(Size<crate::DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
+        >,
+    ) -> anyhow::Result<Option<crate::AtlasTile>> {
         let mut state = self.0.lock();
         if let Some(tile) = state.tiles.get(key) {
-            return Ok(tile.clone());
+            return Ok(Some(tile.clone()));
         }
+        drop(state);
 
+        let Some((size, _)) = build()? else {
+            return Ok(None);
+        };
+
+        let mut state = self.0.lock();
         state.next_id += 1;
         let texture_id = state.next_id;
         state.next_id += 1;
         let tile_id = state.next_id;
-
-        drop(state);
-        let (size, _) = build()?;
-        let mut state = self.0.lock();
 
         state.tiles.insert(
             key.clone(),
@@ -324,6 +327,6 @@ impl PlatformAtlas for TestAtlas {
             },
         );
 
-        Ok(state.tiles[key].clone())
+        Ok(Some(state.tiles[key].clone()))
     }
 }

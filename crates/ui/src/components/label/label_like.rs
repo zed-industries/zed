@@ -33,6 +33,9 @@ pub trait LabelCommon {
 
     /// Sets the strikethrough property of the label.
     fn strikethrough(self, strikethrough: bool) -> Self;
+
+    /// Sets the italic property of the label.
+    fn italic(self, italic: bool) -> Self;
 }
 
 #[derive(IntoElement)]
@@ -41,6 +44,7 @@ pub struct LabelLike {
     line_height_style: LineHeightStyle,
     pub(crate) color: Color,
     strikethrough: bool,
+    italic: bool,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -51,6 +55,7 @@ impl LabelLike {
             line_height_style: LineHeightStyle::default(),
             color: Color::Default,
             strikethrough: false,
+            italic: false,
             children: SmallVec::new(),
         }
     }
@@ -76,10 +81,15 @@ impl LabelCommon for LabelLike {
         self.strikethrough = strikethrough;
         self
     }
+
+    fn italic(mut self, italic: bool) -> Self {
+        self.italic = italic;
+        self
+    }
 }
 
 impl ParentElement for LabelLike {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
@@ -98,14 +108,15 @@ impl RenderOnce for LabelLike {
                 )
             })
             .map(|this| match self.size {
-                LabelSize::Large => this.text_ui_lg(),
-                LabelSize::Default => this.text_ui(),
-                LabelSize::Small => this.text_ui_sm(),
-                LabelSize::XSmall => this.text_ui_xs(),
+                LabelSize::Large => this.text_ui_lg(cx),
+                LabelSize::Default => this.text_ui(cx),
+                LabelSize::Small => this.text_ui_sm(cx),
+                LabelSize::XSmall => this.text_ui_xs(cx),
             })
             .when(self.line_height_style == LineHeightStyle::UiLabel, |this| {
                 this.line_height(relative(1.))
             })
+            .when(self.italic, |this| this.italic())
             .text_color(self.color.color(cx))
             .children(self.children)
     }

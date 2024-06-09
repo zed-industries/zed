@@ -3,22 +3,33 @@ use crate::{
     tests::{rust_lang, TestServer},
 };
 use call::ActiveCall;
+use collections::HashMap;
 use editor::{
     actions::{
-        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Redo, Rename, RevertSelectedHunks,
-        ToggleCodeActions, Undo,
+        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
+        RevertSelectedHunks, ToggleCodeActions, Undo,
     },
-    test::editor_test_context::{AssertionContextManager, EditorTestContext},
+    display_map::DisplayRow,
+    test::{
+        editor_hunks,
+        editor_test_context::{AssertionContextManager, EditorTestContext},
+        expanded_hunks, expanded_hunks_background_highlights,
+    },
     Editor,
 };
 use futures::StreamExt;
-use gpui::{BorrowAppContext, TestAppContext, VisualContext, VisualTestContext};
+use git::diff::DiffHunkStatus;
+use gpui::{TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
     FakeLspAdapter,
 };
-use project::SERVER_PROGRESS_DEBOUNCE_TIMEOUT;
+use multi_buffer::MultiBufferRow;
+use project::{
+    project_settings::{InlineBlameSettings, ProjectSettings},
+    SERVER_PROGRESS_DEBOUNCE_TIMEOUT,
+};
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::SettingsStore;
@@ -31,7 +42,7 @@ use std::{
     },
 };
 use text::Point;
-use workspace::{Workspace, WorkspaceId};
+use workspace::Workspace;
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -69,19 +80,13 @@ async fn test_host_disconnect(
         .await
         .unwrap();
 
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     cx_a.background_executor.run_until_parked();
 
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let workspace_b = cx_b.add_window(|cx| {
-        Workspace::new(
-            WorkspaceId::default(),
-            project_b.clone(),
-            client_b.app_state.clone(),
-            cx,
-        )
-    });
+    let workspace_b = cx_b
+        .add_window(|cx| Workspace::new(None, project_b.clone(), client_b.app_state.clone(), cx));
     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
     let workspace_b_view = workspace_b.root_view(cx_b).unwrap();
 
@@ -190,7 +195,7 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
         .await
         .unwrap();
 
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
     // Open a buffer as client A
     let buffer_a = project_a
@@ -306,7 +311,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
     // Open a file in an editor as the guest.
     let buffer_b = project_b
@@ -435,6 +440,93 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
             "use d::SomeTrait;\nfn main() { a.first_method() }"
         );
     });
+
+    // Now we do a second completion, this time to ensure that documentation/snippets are
+    // resolved
+    editor_b.update(cx_b, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([46..46]));
+        editor.handle_input("; a", cx);
+        editor.handle_input(".", cx);
+    });
+
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "use d::SomeTrait;\nfn main() { a.first_method(); a. }"
+        );
+    });
+
+    let mut completion_response = fake_language_server
+        .handle_request::<lsp::request::Completion, _, _>(|params, _| async move {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(1, 32),
+            );
+
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "third_method(…)".into(),
+                    detail: Some("fn(&mut self, B, C, D) -> E".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        // no snippet placehodlers
+                        new_text: "third_method".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(1, 32),
+                            lsp::Position::new(1, 32),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    documentation: None,
+                    ..Default::default()
+                },
+            ])))
+        });
+
+    // The completion now gets a new `text_edit.new_text` when resolving the completion item
+    let mut resolve_completion_response = fake_language_server
+        .handle_request::<lsp::request::ResolveCompletionItem, _, _>(|params, _| async move {
+            assert_eq!(params.label, "third_method(…)");
+            Ok(lsp::CompletionItem {
+                label: "third_method(…)".into(),
+                detail: Some("fn(&mut self, B, C, D) -> E".into()),
+                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                    // Now it's a snippet
+                    new_text: "third_method($1, $2, $3)".to_string(),
+                    range: lsp::Range::new(lsp::Position::new(1, 32), lsp::Position::new(1, 32)),
+                })),
+                insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                documentation: Some(lsp::Documentation::String(
+                    "this is the documentation".into(),
+                )),
+                ..Default::default()
+            })
+        });
+
+    cx_b.executor().run_until_parked();
+
+    completion_response.next().await.unwrap();
+
+    editor_b.update(cx_b, |editor, cx| {
+        assert!(editor.context_menu_visible());
+        editor.context_menu_first(&ContextMenuFirst {}, cx);
+    });
+
+    resolve_completion_response.next().await.unwrap();
+    cx_b.executor().run_until_parked();
+
+    // When accepting the completion, the snippet is insert.
+    editor_b.update(cx_b, |editor, cx| {
+        assert!(editor.context_menu_visible());
+        editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx);
+        assert_eq!(
+            editor.text(cx),
+            "use d::SomeTrait;\nfn main() { a.first_method(); a.third_method(, , ) }"
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -476,7 +568,7 @@ async fn test_collaborating_with_code_actions(
         .unwrap();
 
     // Join the project as client B.
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
@@ -571,7 +663,7 @@ async fn test_collaborating_with_code_actions(
     editor_b.update(cx_b, |editor, cx| {
         editor.toggle_code_actions(
             &ToggleCodeActions {
-                deployed_from_indicator: false,
+                deployed_from_indicator: None,
             },
             cx,
         );
@@ -691,7 +783,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
@@ -732,8 +824,56 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
             6..9
         );
         rename.editor.update(cx, |rename_editor, cx| {
+            let rename_selection = rename_editor.selections.newest::<usize>(cx);
+            assert_eq!(
+                rename_selection.range(),
+                0..3,
+                "Rename that was triggered from zero selection caret, should propose the whole word."
+            );
             rename_editor.buffer().update(cx, |rename_buffer, cx| {
                 rename_buffer.edit([(0..3, "THREE")], None, cx);
+            });
+        });
+    });
+
+    // Cancel the rename, and repeat the same, but use selections instead of cursor movement
+    editor_b.update(cx_b, |editor, cx| {
+        editor.cancel(&editor::actions::Cancel, cx);
+    });
+    let prepare_rename = editor_b.update(cx_b, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([7..8]));
+        editor.rename(&Rename, cx).unwrap()
+    });
+
+    fake_language_server
+        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
+            assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
+            assert_eq!(params.position, lsp::Position::new(0, 8));
+            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                lsp::Position::new(0, 6),
+                lsp::Position::new(0, 9),
+            ))))
+        })
+        .next()
+        .await
+        .unwrap();
+    prepare_rename.await.unwrap();
+    editor_b.update(cx_b, |editor, cx| {
+        use editor::ToOffset;
+        let rename = editor.pending_rename().unwrap();
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let lsp_rename_start = rename.range.start.to_offset(&buffer);
+        let lsp_rename_end = rename.range.end.to_offset(&buffer);
+        assert_eq!(lsp_rename_start..lsp_rename_end, 6..9);
+        rename.editor.update(cx, |rename_editor, cx| {
+            let rename_selection = rename_editor.selections.newest::<usize>(cx);
+            assert_eq!(
+                rename_selection.range(),
+                1..2,
+                "Rename that was triggered from a selection, should have the same selection range in the rename proposal"
+            );
+            rename_editor.buffer().update(cx, |rename_buffer, cx| {
+                rename_buffer.edit([(0..lsp_rename_end - lsp_rename_start, "THREE")], None, cx);
             });
         });
     });
@@ -892,7 +1032,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
         .await
         .unwrap();
     executor.run_until_parked();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
     project_b.read_with(cx_b, |project, _| {
         let status = project.language_server_statuses().next().unwrap();
@@ -989,7 +1129,7 @@ async fn test_share_project(
         .unwrap();
     let client_b_peer_id = client_b.peer_id().unwrap();
     let project_b = client_b
-        .build_remote_project(initial_project.id, cx_b)
+        .build_dev_server_project(initial_project.id, cx_b)
         .await;
 
     let replica_id_b = project_b.read_with(cx_b, |project, _| project.replica_id());
@@ -1093,7 +1233,7 @@ async fn test_share_project(
         .await
         .unwrap();
     let _project_c = client_c
-        .build_remote_project(initial_project.id, cx_c)
+        .build_dev_server_project(initial_project.id, cx_c)
         .await;
 
     // Client B closes the editor, and client A sees client B's selections removed.
@@ -1153,7 +1293,7 @@ async fn test_on_input_format_from_host_to_guest(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
     // Open a file in an editor as the host.
     let buffer_a = project_a
@@ -1273,7 +1413,7 @@ async fn test_on_input_format_from_guest_to_host(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
     // Open a file in an editor as the guest.
     let buffer_b = project_b
@@ -1371,7 +1511,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     cx_b.update(editor::init);
 
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
@@ -1385,7 +1525,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         });
     });
     cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
@@ -1434,7 +1574,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap();
 
     // Client B joins the project
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -1633,7 +1773,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
     cx_b.update(editor::init);
 
     cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: false,
@@ -1647,7 +1787,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         });
     });
     cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
@@ -1694,7 +1834,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .await
         .unwrap();
 
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -1823,7 +1963,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
 }
 
 #[gpui::test]
-async fn test_multiple_types_reverts(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+async fn test_multiple_hunk_types_revert(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -1870,7 +2010,7 @@ struct Row10;"#};
         .await
         .unwrap();
 
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -1929,7 +2069,7 @@ struct Row10;"#};
             .as_singleton()
             .unwrap()
             .update(cx, |buffer, cx| {
-                buffer.set_diff_base(Some(base_text.to_string()), cx);
+                buffer.set_diff_base(Some(base_text.into()), cx);
             });
     });
     editor_cx_b.update_editor(|editor, cx| {
@@ -1939,14 +2079,14 @@ struct Row10;"#};
             .as_singleton()
             .unwrap()
             .update(cx, |buffer, cx| {
-                buffer.set_diff_base(Some(base_text.to_string()), cx);
+                buffer.set_diff_base(Some(base_text.into()), cx);
             });
     });
     cx_a.executor().run_until_parked();
     cx_b.executor().run_until_parked();
 
-    // client, selects a range in the updated buffer, and reverts it
-    // both host and the client observe the reverted state (with one hunk left, not covered by client's selection)
+    // the client selects a range in the updated buffer, expands it to see the diff for each hunk in the selection
+    // the host does not see the diffs toggled
     editor_cx_b.set_selections_state(indoc! {r#"«ˇstruct Row;
         struct Row0.1;
         struct Row0.2;
@@ -1958,11 +2098,128 @@ struct Row10;"#};
 
         struct R»ow9;
         struct Row1220;"#});
+    editor_cx_b
+        .update_editor(|editor, cx| editor.toggle_hunk_diff(&editor::actions::ToggleHunkDiff, cx));
+    cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
+    editor_cx_a.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(1)..DisplayRow(3)
+                ),
+                (
+                    "struct Row2;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(4)..DisplayRow(4)
+                ),
+                (
+                    "struct Row5;\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(6)..DisplayRow(7)
+                ),
+                (
+                    "struct Row8;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(9)..DisplayRow(9)
+                ),
+                (
+                    "struct Row10;".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(10)..DisplayRow(10),
+                ),
+            ]
+        );
+        assert_eq!(all_expanded_hunks, Vec::new());
+    });
+    editor_cx_b.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(1)..=DisplayRow(2), DisplayRow(8)..=DisplayRow(8)],
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "".to_string(),
+                    DiffHunkStatus::Added,
+                    DisplayRow(1)..DisplayRow(3)
+                ),
+                (
+                    "struct Row2;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(5)..DisplayRow(5)
+                ),
+                (
+                    "struct Row5;\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(8)..DisplayRow(9)
+                ),
+                (
+                    "struct Row8;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    DisplayRow(12)..DisplayRow(12)
+                ),
+                (
+                    "struct Row10;".to_string(),
+                    DiffHunkStatus::Modified,
+                    DisplayRow(13)..DisplayRow(13),
+                ),
+            ]
+        );
+        assert_eq!(all_expanded_hunks, &all_hunks[..all_hunks.len() - 1]);
+    });
+
+    // the client reverts the hunks, removing the expanded diffs too
+    // both host and the client observe the reverted state (with one hunk left, not covered by client's selection)
     editor_cx_b.update_editor(|editor, cx| {
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
     });
     cx_a.executor().run_until_parked();
     cx_b.executor().run_until_parked();
+    editor_cx_a.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "struct Row10;".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(10)..DisplayRow(10),
+            )]
+        );
+        assert_eq!(all_expanded_hunks, Vec::new());
+    });
+    editor_cx_b.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, cx),
+            vec![DisplayRow(5)..=DisplayRow(5)]
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "struct Row10;".to_string(),
+                DiffHunkStatus::Modified,
+                DisplayRow(10)..DisplayRow(10),
+            )]
+        );
+        assert_eq!(all_expanded_hunks, Vec::new());
+    });
     editor_cx_a.assert_editor_state(indoc! {r#"struct Row;
         struct Row1;
         struct Row2;
@@ -1999,6 +2256,26 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
 
     cx_a.update(editor::init);
     cx_b.update(editor::init);
+    // Turn inline-blame-off by default so no state is transferred without us explicitly doing so
+    let inline_blame_off_settings = Some(InlineBlameSettings {
+        enabled: false,
+        delay_ms: None,
+        min_column: None,
+    });
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |settings| {
+                settings.git.inline_blame = inline_blame_off_settings;
+            });
+        });
+    });
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |settings| {
+                settings.git.inline_blame = inline_blame_off_settings;
+            });
+        });
+    });
 
     client_a
         .fs()
@@ -2018,15 +2295,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             blame_entry("3a3a3a", 2..3),
             blame_entry("4c4c4c", 3..4),
         ],
-        permalinks: [
-            ("1b1b1b", "http://example.com/codehost/idx-0"),
-            ("0d0d0d", "http://example.com/codehost/idx-1"),
-            ("3a3a3a", "http://example.com/codehost/idx-2"),
-            ("4c4c4c", "http://example.com/codehost/idx-3"),
-        ]
-        .into_iter()
-        .map(|(sha, url)| (sha.parse().unwrap(), url.parse().unwrap()))
-        .collect(),
+        permalinks: HashMap::default(), // This field is deprecrated
         messages: [
             ("1b1b1b", "message for idx-0"),
             ("0d0d0d", "message for idx-1"),
@@ -2036,6 +2305,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .into_iter()
         .map(|(sha, message)| (sha.parse().unwrap(), message.into()))
         .collect(),
+        remote_url: Some("git@github.com:zed-industries/zed.git".to_string()),
     };
     client_a.fs().set_blame_for_repo(
         Path::new("/my-repo/.git"),
@@ -2060,7 +2330,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .unwrap();
 
     // Join the project as client B.
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
@@ -2084,7 +2354,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(Some), cx)
+                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
         });
 
@@ -2100,13 +2370,11 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
 
         blame.update(cx, |blame, _| {
             for (idx, entry) in entries.iter().flatten().enumerate() {
+                let details = blame.details_for_entry(entry).unwrap();
+                assert_eq!(details.message, format!("message for idx-{}", idx));
                 assert_eq!(
-                    blame.permalink_for_entry(entry).unwrap().to_string(),
-                    format!("http://example.com/codehost/idx-{}", idx)
-                );
-                assert_eq!(
-                    blame.message_for_entry(entry).unwrap(),
-                    format!("message for idx-{}", idx)
+                    details.permalink.unwrap().to_string(),
+                    format!("https://github.com/zed-industries/zed/commit/{}", entry.sha)
                 );
             }
         });
@@ -2125,7 +2393,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(Some), cx)
+                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
         });
 
@@ -2152,7 +2420,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         let blame = editor_b.blame().expect("editor_b should have blame now");
         let entries = blame.update(cx, |blame, cx| {
             blame
-                .blame_for_rows((0..4).map(Some), cx)
+                .blame_for_rows((0..4).map(MultiBufferRow).map(Some), cx)
                 .collect::<Vec<_>>()
         });
 

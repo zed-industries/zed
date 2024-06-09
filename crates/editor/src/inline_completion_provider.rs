@@ -3,6 +3,7 @@ use gpui::{AppContext, Model, ModelContext};
 use language::Buffer;
 
 pub trait InlineCompletionProvider: 'static + Sized {
+    fn name() -> &'static str;
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -24,13 +25,13 @@ pub trait InlineCompletionProvider: 'static + Sized {
         cx: &mut ModelContext<Self>,
     );
     fn accept(&mut self, cx: &mut ModelContext<Self>);
-    fn discard(&mut self, cx: &mut ModelContext<Self>);
-    fn active_completion_text(
-        &self,
+    fn discard(&mut self, should_report_inline_completion_event: bool, cx: &mut ModelContext<Self>);
+    fn active_completion_text<'a>(
+        &'a self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
-        cx: &AppContext,
-    ) -> Option<&str>;
+        cx: &'a AppContext,
+    ) -> Option<&'a str>;
 }
 
 pub trait InlineCompletionProviderHandle {
@@ -55,9 +56,9 @@ pub trait InlineCompletionProviderHandle {
         cx: &mut AppContext,
     );
     fn accept(&self, cx: &mut AppContext);
-    fn discard(&self, cx: &mut AppContext);
+    fn discard(&self, should_report_inline_completion_event: bool, cx: &mut AppContext);
     fn active_completion_text<'a>(
-        &self,
+        &'a self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
@@ -105,12 +106,14 @@ where
         self.update(cx, |this, cx| this.accept(cx))
     }
 
-    fn discard(&self, cx: &mut AppContext) {
-        self.update(cx, |this, cx| this.discard(cx))
+    fn discard(&self, should_report_inline_completion_event: bool, cx: &mut AppContext) {
+        self.update(cx, |this, cx| {
+            this.discard(should_report_inline_completion_event, cx)
+        })
     }
 
     fn active_completion_text<'a>(
-        &self,
+        &'a self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,

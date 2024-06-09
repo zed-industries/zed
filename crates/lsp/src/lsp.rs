@@ -4,7 +4,7 @@ pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, FutureExt};
+use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
@@ -22,14 +22,15 @@ use smol::process::windows::CommandExt;
 use std::{
     ffi::OsString,
     fmt,
-    future::Future,
     io::Write,
     path::PathBuf,
+    pin::Pin,
     str::{self, FromStr as _},
     sync::{
         atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
     },
+    task::Poll,
     time::{Duration, Instant},
 };
 use std::{path::Path, process::Stdio};
@@ -78,6 +79,7 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
+    working_dir: PathBuf,
     server: Arc<Mutex<Option<Child>>>,
 }
 
@@ -137,8 +139,16 @@ struct AnyResponse<'a> {
 struct Response<T> {
     jsonrpc: &'static str,
     id: RequestId,
-    result: Option<T>,
-    error: Option<Error>,
+    #[serde(flatten)]
+    value: LspResult<T>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LspResult<T> {
+    #[serde(rename = "result")]
+    Ok(Option<T>),
+    Error(Option<Error>),
 }
 
 /// Language server protocol RPC notification message.
@@ -166,6 +176,37 @@ struct AnyNotification<'a> {
 #[derive(Debug, Serialize, Deserialize)]
 struct Error {
     message: String,
+}
+
+pub trait LspRequestFuture<O>: Future<Output = O> {
+    fn id(&self) -> i32;
+}
+
+struct LspRequest<F> {
+    id: i32,
+    request: F,
+}
+
+impl<F> LspRequest<F> {
+    pub fn new(id: i32, request: F) -> Self {
+        Self { id, request }
+    }
+}
+
+impl<F: Future> Future for LspRequest<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: This is standard pin projection, we're pinned so our fields must be pinned.
+        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().request) };
+        inner.poll(cx)
+    }
+}
+
+impl<F: Future> LspRequestFuture<F::Output> for LspRequest<F> {
+    fn id(&self) -> i32 {
+        self.id
+    }
 }
 
 /// Experimental: Informs the end user about the state of the server
@@ -222,7 +263,7 @@ impl LanguageServer {
         let mut command = process::Command::new(&binary.path);
         command
             .current_dir(working_dir)
-            .args(binary.arguments)
+            .args(&binary.arguments)
             .envs(binary.env.unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -230,7 +271,12 @@ impl LanguageServer {
             .kill_on_drop(true);
         #[cfg(windows)]
         command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-        let mut server = command.spawn()?;
+        let mut server = command.spawn().with_context(|| {
+            format!(
+                "failed to spawn command. path: {:?}, working directory: {:?}, args: {:?}",
+                binary.path, working_dir, &binary.arguments
+            )
+        })?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
@@ -243,6 +289,7 @@ impl LanguageServer {
             stderr_capture,
             Some(server),
             root_path,
+            working_dir,
             code_action_kinds,
             cx,
             move |notification| {
@@ -277,6 +324,7 @@ impl LanguageServer {
         stderr_capture: Arc<Mutex<Option<String>>>,
         server: Option<Child>,
         root_path: &Path,
+        working_dir: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
         on_unhandled_notification: F,
@@ -348,6 +396,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
+            working_dir: working_dir.to_path_buf(),
             server: Arc::new(Mutex::new(server)),
         }
     }
@@ -403,24 +452,27 @@ impl LanguageServer {
             }
 
             if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
-                if let Some(handler) = notification_handlers.lock().get_mut(msg.method) {
+                let mut notification_handlers = notification_handlers.lock();
+                if let Some(handler) = notification_handlers.get_mut(msg.method) {
                     handler(
                         msg.id,
                         msg.params.map(|params| params.get()).unwrap_or("null"),
                         cx.clone(),
                     );
                 } else {
+                    drop(notification_handlers);
                     on_unhandled_notification(msg);
                 }
             } else if let Ok(AnyResponse {
                 id, error, result, ..
             }) = serde_json::from_slice(&buffer)
             {
+                let mut response_handlers = response_handlers.lock();
                 if let Some(handler) = response_handlers
-                    .lock()
                     .as_mut()
                     .and_then(|handlers| handlers.remove(&id))
                 {
+                    drop(response_handlers);
                     if let Some(error) = error {
                         handler(Err(error));
                     } else if let Some(result) = result {
@@ -521,7 +573,7 @@ impl LanguageServer {
         options: Option<Value>,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
-        let root_uri = Url::from_file_path(&self.root_path).unwrap();
+        let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: None,
@@ -556,6 +608,7 @@ impl LanguageServer {
                             ResourceOperationKind::Delete,
                         ]),
                         document_changes: Some(true),
+                        snippet_edit_support: Some(true),
                         ..WorkspaceEditClientCapabilities::default()
                     }),
                     ..Default::default()
@@ -667,6 +720,7 @@ impl LanguageServer {
                 }
             }),
             locale: None,
+            ..Default::default()
         };
 
         cx.spawn(|_| async move {
@@ -835,16 +889,14 @@ impl LanguageServer {
                                             Ok(result) => Response {
                                                 jsonrpc: JSON_RPC_VERSION,
                                                 id,
-                                                result: Some(result),
-                                                error: None,
+                                                value: LspResult::Ok(Some(result)),
                                             },
                                             Err(error) => Response {
                                                 jsonrpc: JSON_RPC_VERSION,
                                                 id,
-                                                result: None,
-                                                error: Some(Error {
+                                                value: LspResult::Error(Some(Error {
                                                     message: error.to_string(),
-                                                }),
+                                                })),
                                             },
                                         };
                                         if let Some(response) =
@@ -916,7 +968,7 @@ impl LanguageServer {
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
-    ) -> impl Future<Output = Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
@@ -935,7 +987,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
-    ) -> impl 'static + Future<Output = anyhow::Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
@@ -984,7 +1036,7 @@ impl LanguageServer {
         let outbound_tx = outbound_tx.downgrade();
         let mut timeout = executor.timer(LSP_REQUEST_TIMEOUT).fuse();
         let started = Instant::now();
-        async move {
+        LspRequest::new(id, async move {
             handle_response?;
             send?;
 
@@ -1014,7 +1066,7 @@ impl LanguageServer {
                     anyhow::bail!("LSP request timeout");
                 }
             }
-        }
+        })
     }
 
     /// Sends a RPC notification to the language server.
@@ -1126,6 +1178,7 @@ impl FakeLanguageServer {
             Arc::new(Mutex::new(None)),
             None,
             Path::new("/"),
+            Path::new("/"),
             None,
             cx.clone(),
             |_| {},
@@ -1141,6 +1194,7 @@ impl FakeLanguageServer {
                     None::<async_pipe::PipeReader>,
                     Arc::new(Mutex::new(None)),
                     None,
+                    Path::new("/"),
                     Path::new("/"),
                     None,
                     cx,
@@ -1470,5 +1524,28 @@ mod tests {
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Int(2);
         assert_eq!(notification.id, Some(expected_id));
+    }
+
+    #[test]
+    fn test_serialize_has_no_nulls() {
+        // Ensure we're not setting both result and error variants. (ticket #10595)
+        let no_tag = Response::<u32> {
+            jsonrpc: "",
+            id: RequestId::Int(0),
+            value: LspResult::Ok(None),
+        };
+        assert_eq!(
+            serde_json::to_string(&no_tag).unwrap(),
+            "{\"jsonrpc\":\"\",\"id\":0,\"result\":null}"
+        );
+        let no_tag = Response::<u32> {
+            jsonrpc: "",
+            id: RequestId::Int(0),
+            value: LspResult::Error(None),
+        };
+        assert_eq!(
+            serde_json::to_string(&no_tag).unwrap(),
+            "{\"jsonrpc\":\"\",\"id\":0,\"error\":null}"
+        );
     }
 }

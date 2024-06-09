@@ -2,17 +2,18 @@ use anyhow;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectPanelDockPosition {
     Left,
     Right,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ProjectPanelSettings {
+    pub button: bool,
     pub default_width: Pixels,
     pub dock: ProjectPanelDockPosition,
     pub file_icons: bool,
@@ -20,10 +21,15 @@ pub struct ProjectPanelSettings {
     pub git_status: bool,
     pub indent_size: f32,
     pub auto_reveal_entries: bool,
+    pub auto_fold_dirs: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct ProjectPanelSettingsContent {
+    /// Whether to show the project panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
     /// Customise default width (in pixels) taken by project panel
     ///
     /// Default: 240
@@ -54,6 +60,11 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub auto_reveal_entries: Option<bool>,
+    /// Whether to fold directories automatically
+    /// when directory has only one directory inside.
+    ///
+    /// Default: false
+    pub auto_fold_dirs: Option<bool>,
 }
 
 impl Settings for ProjectPanelSettings {
@@ -62,10 +73,9 @@ impl Settings for ProjectPanelSettings {
     type FileContent = ProjectPanelSettingsContent;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
 }

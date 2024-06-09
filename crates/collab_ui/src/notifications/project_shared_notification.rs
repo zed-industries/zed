@@ -26,7 +26,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             };
 
             for screen in cx.displays() {
-                let options = notification_window_options(screen, window_size);
+                let options = notification_window_options(screen, window_size, cx);
                 let window = cx.open_window(options, |cx| {
                     cx.new_view(|_| {
                         ProjectSharedNotification::new(
@@ -58,7 +58,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             }
         }
 
-        room::Event::Left { .. } => {
+        room::Event::RoomLeft { .. } => {
             for (_, windows) in notification_windows.drain() {
                 for window in windows {
                     window
@@ -121,10 +121,7 @@ impl Render for ProjectSharedNotification {
         // TODO: Is there a better place for us to initialize the font?
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);
-            (
-                theme_settings.ui_font.family.clone(),
-                theme_settings.ui_font_size,
-            )
+            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
         };
 
         cx.set_rem_size(ui_font_size);

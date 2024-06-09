@@ -141,7 +141,7 @@ impl Selectable for ListItem {
 }
 
 impl ParentElement for ListItem {
-    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
@@ -157,11 +157,11 @@ impl RenderOnce for ListItem {
                 this.ml(self.indent_level as f32 * self.indent_step_size)
                     .px_2()
             })
-            .when(!self.inset, |this| {
+            .when(!self.inset && !self.disabled, |this| {
                 this
                     // TODO: Add focus state
                     // .when(self.state == InteractionState::Focused, |this| {
-                    //     this.border()
+                    //     this.border_1()
                     //         .border_color(cx.theme().colors().border_focused)
                     // })
                     .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
@@ -186,7 +186,7 @@ impl RenderOnce for ListItem {
                         this
                             // TODO: Add focus state
                             // .when(self.state == InteractionState::Focused, |this| {
-                            //     this.border()
+                            //     this.border_1()
                             //         .border_color(cx.theme().colors().border_focused)
                             // })
                             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))

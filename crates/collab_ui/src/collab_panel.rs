@@ -16,10 +16,10 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement,
     AppContext, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement,
-    IntoElement, ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext,
-    VisualContext, WeakView, WhiteSpace,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, InteractiveElement, IntoElement,
+    ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
+    Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
+    WeakView, WhiteSpace,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -279,7 +279,7 @@ impl CollabPanel {
                     this.update_entries(true, cx)
                 }));
             this.subscriptions
-                .push(cx.observe(&this.channel_store, |this, _, cx| {
+                .push(cx.observe(&this.channel_store, move |this, _, cx| {
                     this.update_entries(true, cx)
                 }));
             this.subscriptions
@@ -604,7 +604,7 @@ impl CollabPanel {
                 }
 
                 for (name, id) in hosted_projects {
-                    self.entries.push(ListEntry::HostedProject { id, name })
+                    self.entries.push(ListEntry::HostedProject { id, name });
                 }
             }
         }
@@ -1408,6 +1408,11 @@ impl CollabPanel {
             });
         }
 
+        if self.context_menu.is_some() {
+            self.context_menu.take();
+            cx.notify();
+        }
+
         self.update_entries(false, cx);
     }
 
@@ -1534,7 +1539,6 @@ impl CollabPanel {
                     } => {
                         // todo()
                     }
-
                     ListEntry::OutgoingRequest(_) => {}
                     ListEntry::ChannelEditor { .. } => {}
                 }
@@ -1565,11 +1569,28 @@ impl CollabPanel {
 
                     *pending_name = Some(channel_name.clone());
 
-                    self.channel_store
-                        .update(cx, |channel_store, cx| {
-                            channel_store.create_channel(&channel_name, *location, cx)
+                    let create = self.channel_store.update(cx, |channel_store, cx| {
+                        channel_store.create_channel(&channel_name, *location, cx)
+                    });
+                    if location.is_none() {
+                        cx.spawn(|this, mut cx| async move {
+                            let channel_id = create.await?;
+                            this.update(&mut cx, |this, cx| {
+                                this.show_channel_modal(
+                                    channel_id,
+                                    channel_modal::Mode::InviteMembers,
+                                    cx,
+                                )
+                            })
                         })
-                        .detach();
+                        .detach_and_prompt_err(
+                            "Failed to create channel",
+                            cx,
+                            |_, _| None,
+                        );
+                    } else {
+                        create.detach_and_prompt_err("Failed to create channel", cx, |_, _| None);
+                    }
                     cx.notify();
                 }
                 ChannelEditingState::Rename {
@@ -1855,12 +1876,8 @@ impl CollabPanel {
         let workspace = self.workspace.clone();
         let user_store = self.user_store.clone();
         let channel_store = self.channel_store.clone();
-        let members = self.channel_store.update(cx, |channel_store, cx| {
-            channel_store.get_channel_member_details(channel_id, cx)
-        });
 
         cx.spawn(|_, mut cx| async move {
-            let members = members.await?;
             workspace.update(&mut cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |cx| {
                     ChannelModal::new(
@@ -1868,7 +1885,6 @@ impl CollabPanel {
                         channel_store.clone(),
                         channel_id,
                         mode,
-                        members,
                         cx,
                     )
                 });
@@ -2145,12 +2161,15 @@ impl CollabPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
+        self.channel_store.update(cx, |channel_store, _| {
+            channel_store.initialize();
+        });
         v_flex()
             .size_full()
             .child(list(self.list_state.clone()).size_full())
             .child(
                 v_flex()
-                    .child(div().mx_2().border_primary(cx).border_t())
+                    .child(div().mx_2().border_primary(cx).border_t_1())
                     .child(
                         v_flex()
                             .p_2()
@@ -2172,9 +2191,9 @@ impl CollabPanel {
                 cx.theme().colors().text
             },
             font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features,
+            font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,
@@ -2519,7 +2538,9 @@ impl CollabPanel {
         const FACEPILE_LIMIT: usize = 3;
         let participants = self.channel_store.read(cx).channel_participants(channel_id);
 
-        let face_pile = if !participants.is_empty() {
+        let face_pile = if participants.is_empty() {
+            None
+        } else {
             let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
             let result = FacePile::new(
                 participants
@@ -2540,8 +2561,6 @@ impl CollabPanel {
             );
 
             Some(result)
-        } else {
-            None
         };
 
         let width = self.width.unwrap_or(px(240.));
@@ -2945,10 +2964,10 @@ struct DraggedChannelView {
 }
 
 impl Render for DraggedChannelView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_flex()
-            .font(ui_font)
+            .font_family(ui_font)
             .bg(cx.theme().colors().background)
             .w(self.width)
             .p_1()
@@ -2971,6 +2990,7 @@ impl Render for DraggedChannelView {
 struct JoinChannelTooltip {
     channel_store: Model<ChannelStore>,
     channel_id: ChannelId,
+    #[allow(unused)]
     has_notes_notification: bool,
 }
 
@@ -2984,12 +3004,6 @@ impl Render for JoinChannelTooltip {
 
             container
                 .child(Label::new("Join channel"))
-                .children(self.has_notes_notification.then(|| {
-                    h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Info))
-                        .child(Label::new("Unread notes"))
-                }))
                 .children(participants.iter().map(|participant| {
                     h_flex()
                         .gap_2()

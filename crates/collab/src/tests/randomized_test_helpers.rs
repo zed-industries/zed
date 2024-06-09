@@ -533,7 +533,7 @@ impl<T: RandomizedTest> TestPlan<T> {
                 deterministic.finish_waiting();
                 server.allow_connections();
 
-                for project in client.remote_projects().iter() {
+                for project in client.dev_server_projects().iter() {
                     project.read_with(&client_cx, |project, _| {
                         assert!(
                             project.is_disconnected(),

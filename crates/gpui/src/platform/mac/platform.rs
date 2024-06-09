@@ -1,9 +1,9 @@
 use super::{events::key_to_native, BoolExt};
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu,
-    MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowParams,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+    Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
+    WindowAppearance, WindowParams,
 };
 use anyhow::{anyhow, bail};
 use block::ConcreteBlock;
@@ -20,7 +20,7 @@ use cocoa::{
     },
 };
 use core_foundation::{
-    base::{CFType, CFTypeRef, OSStatus, TCFType as _},
+    base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType as _},
     boolean::CFBoolean,
     data::CFData,
     dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
@@ -65,10 +65,6 @@ unsafe fn build_classes() {
     APP_CLASS = {
         let mut decl = ClassDecl::new("GPUIApplication", class!(NSApplication)).unwrap();
         decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
-        decl.add_method(
-            sel!(sendEvent:),
-            send_event as extern "C" fn(&mut Object, Sel, id),
-        );
         decl.register()
     };
 
@@ -82,14 +78,6 @@ unsafe fn build_classes() {
         decl.add_method(
             sel!(applicationShouldHandleReopen:hasVisibleWindows:),
             should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool),
-        );
-        decl.add_method(
-            sel!(applicationDidBecomeActive:),
-            did_become_active as extern "C" fn(&mut Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(applicationDidResignActive:),
-            did_resign_active as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
             sel!(applicationWillTerminate:),
@@ -133,6 +121,10 @@ unsafe fn build_classes() {
             menu_will_open as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
+            sel!(applicationDockMenu:),
+            handle_dock_menu as extern "C" fn(&mut Object, Sel, id) -> id,
+        );
+        decl.add_method(
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
@@ -151,17 +143,15 @@ pub(crate) struct MacPlatformState {
     pasteboard: id,
     text_hash_pasteboard_type: id,
     metadata_pasteboard_type: id,
-    become_active: Option<Box<dyn FnMut()>>,
-    resign_active: Option<Box<dyn FnMut()>>,
     reopen: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
-    event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
     menu_actions: Vec<Box<dyn Action>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
+    dock_menu: Option<id>,
 }
 
 impl Default for MacPlatform {
@@ -181,17 +171,15 @@ impl MacPlatform {
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
             metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
-            become_active: None,
-            resign_active: None,
             reopen: None,
             quit: None,
-            event: None,
             menu_command: None,
             validate_menu_command: None,
             will_open_menu: None,
             menu_actions: Default::default(),
             open_urls: None,
             finish_launching: None,
+            dock_menu: None,
         }))
     }
 
@@ -244,6 +232,27 @@ impl MacPlatform {
         application_menu
     }
 
+    unsafe fn create_dock_menu(
+        &self,
+        menu_items: Vec<MenuItem>,
+        delegate: id,
+        actions: &mut Vec<Box<dyn Action>>,
+        keymap: &Keymap,
+    ) -> id {
+        let dock_menu = NSMenu::new(nil);
+        dock_menu.setDelegate_(delegate);
+        for item_config in menu_items {
+            dock_menu.addItem_(Self::create_menu_item(
+                item_config,
+                delegate,
+                actions,
+                keymap,
+            ));
+        }
+
+        dock_menu
+    }
+
     unsafe fn create_menu_item(
         item: MenuItem,
         delegate: id,
@@ -279,7 +288,7 @@ impl MacPlatform {
                         let mut mask = NSEventModifierFlags::empty();
                         for (modifier, flag) in &[
                             (
-                                keystroke.modifiers.command,
+                                keystroke.modifiers.platform,
                                 NSEventModifierFlags::NSCommandKeyMask,
                             ),
                             (
@@ -414,7 +423,7 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn restart(&self) {
+    fn restart(&self, _binary_path: Option<PathBuf>) {
         use std::os::unix::process::CommandExt as _;
 
         let app_pid = std::process::id().to_string();
@@ -485,10 +494,6 @@ impl Platform for MacPlatform {
         MacDisplay::all()
             .map(|screen| Rc::new(screen) as Rc<_>)
             .collect()
-    }
-
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        MacDisplay::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -570,6 +575,7 @@ impl Platform for MacPlatform {
                     let _ = done_tx.send(result);
                 }
             });
+            let block = block.copy();
             let _: () = msg_send![workspace, setDefaultApplicationAtURL: app toOpenURLsWithScheme: scheme completionHandler: block];
         }
 
@@ -593,6 +599,7 @@ impl Platform for MacPlatform {
                     panel.setCanChooseDirectories_(options.directories.to_objc());
                     panel.setCanChooseFiles_(options.files.to_objc());
                     panel.setAllowsMultipleSelection_(options.multiple.to_objc());
+                    panel.setCanCreateDirectories(true.to_objc());
                     panel.setResolvesAliases_(false.to_objc());
                     let done_tx = Cell::new(Some(done_tx));
                     let block = ConcreteBlock::new(move |response: NSModalResponse| {
@@ -678,24 +685,12 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().become_active = Some(callback);
-    }
-
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().resign_active = Some(callback);
-    }
-
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().reopen = Some(callback);
-    }
-
-    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.0.lock().event = Some(callback);
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
@@ -764,6 +759,18 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let mut state = self.0.lock();
+            let actions = &mut state.menu_actions;
+            let new = self.create_dock_menu(menu, app.delegate(), actions, keymap);
+            if let Some(old) = state.dock_menu.replace(new) {
+                CFRelease(old as _)
+            }
+        }
+    }
+
     fn add_recent_document(&self, path: &Path) {
         if let Some(path_str) = path.to_str() {
             unsafe {
@@ -814,12 +821,11 @@ impl Platform for MacPlatform {
                 CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
                 CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
                 CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+                CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
                 CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
                 CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
                 CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::DisappearingItem => {
-                    msg_send![class!(NSCursor), disappearingItemCursor]
-                }
+                CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
                 CursorStyle::IBeamCursorForVerticalLayout => {
                     msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
                 }
@@ -1049,24 +1055,6 @@ unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
     &*(platform_ptr as *const MacPlatform)
 }
 
-extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
-    unsafe {
-        if let Some(event) = PlatformInput::from_native(native_event, None) {
-            let platform = get_mac_platform(this);
-            let mut lock = platform.0.lock();
-            if let Some(mut callback) = lock.event.take() {
-                drop(lock);
-                let result = callback(event);
-                platform.0.lock().event.get_or_insert(callback);
-                if !result {
-                    return;
-                }
-            }
-        }
-        msg_send![super(this, class!(NSApplication)), sendEvent: native_event]
-    }
-}
-
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
@@ -1088,26 +1076,6 @@ extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_wi
             callback();
             platform.0.lock().reopen.get_or_insert(callback);
         }
-    }
-}
-
-extern "C" fn did_become_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_mac_platform(this) };
-    let mut lock = platform.0.lock();
-    if let Some(mut callback) = lock.become_active.take() {
-        drop(lock);
-        callback();
-        platform.0.lock().become_active.get_or_insert(callback);
-    }
-}
-
-extern "C" fn did_resign_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_mac_platform(this) };
-    let mut lock = platform.0.lock();
-    if let Some(mut callback) = lock.resign_active.take() {
-        drop(lock);
-        callback();
-        platform.0.lock().resign_active.get_or_insert(callback);
     }
 }
 
@@ -1193,6 +1161,18 @@ extern "C" fn menu_will_open(this: &mut Object, _: Sel, _: id) {
             drop(lock);
             callback();
             platform.0.lock().will_open_menu.get_or_insert(callback);
+        }
+    }
+}
+
+extern "C" fn handle_dock_menu(this: &mut Object, _: Sel, _: id) -> id {
+    unsafe {
+        let platform = get_mac_platform(this);
+        let mut state = platform.0.lock();
+        if let Some(id) = state.dock_menu {
+            id
+        } else {
+            nil
         }
     }
 }

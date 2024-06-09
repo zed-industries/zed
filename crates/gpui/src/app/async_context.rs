@@ -1,10 +1,12 @@
 use crate::{
     AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext, Context,
-    DismissEvent, FocusableView, ForegroundExecutor, Global, Model, ModelContext, Render, Result,
-    Task, View, ViewContext, VisualContext, WindowContext, WindowHandle,
+    DismissEvent, FocusableView, ForegroundExecutor, Global, Model, ModelContext, PromptLevel,
+    Render, Reservation, Result, Task, View, ViewContext, VisualContext, WindowContext,
+    WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
+use futures::channel::oneshot;
 use std::{future::Future, rc::Weak};
 
 /// An async-friendly version of [AppContext] with a static lifetime so it can be held across `await` points in async code.
@@ -23,16 +25,35 @@ impl Context for AsyncAppContext {
     fn new_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
-    ) -> Self::Result<Model<T>>
-    where
-        T: 'static,
-    {
+    ) -> Self::Result<Model<T>> {
         let app = self
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app = app.borrow_mut();
         Ok(app.new_model(build_model))
+    }
+
+    fn reserve_model<T: 'static>(&mut self) -> Result<Reservation<T>> {
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut app = app.borrow_mut();
+        Ok(app.reserve_model())
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Result<Model<T>> {
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut app = app.borrow_mut();
+        Ok(app.insert_model(reservation, build_model))
     }
 
     fn update_model<T: 'static, R>(
@@ -263,6 +284,21 @@ impl AsyncWindowContext {
     {
         self.foreground_executor.spawn(f(self.clone()))
     }
+
+    /// Present a platform dialog.
+    /// The provided message will be presented, along with buttons for each answer.
+    /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
+    pub fn prompt(
+        &mut self,
+        level: PromptLevel,
+        message: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        self.window
+            .update(self, |_, cx| cx.prompt(level, message, detail, answers))
+            .unwrap_or_else(|_| oneshot::channel().1)
+    }
 }
 
 impl Context for AsyncWindowContext {
@@ -278,6 +314,19 @@ impl Context for AsyncWindowContext {
         self.window.update(self, |_, cx| cx.new_model(build_model))
     }
 
+    fn reserve_model<T: 'static>(&mut self) -> Result<Reservation<T>> {
+        self.window.update(self, |_, cx| cx.reserve_model())
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        self.window
+            .update(self, |_, cx| cx.insert_model(reservation, build_model))
+    }
+
     fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
@@ -285,13 +334,6 @@ impl Context for AsyncWindowContext {
     ) -> Result<R> {
         self.window
             .update(self, |_, cx| cx.update_model(handle, update))
-    }
-
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
-    where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
-    {
-        self.app.update_window(window, update)
     }
 
     fn read_model<T, R>(
@@ -303,6 +345,13 @@ impl Context for AsyncWindowContext {
         T: 'static,
     {
         self.app.read_model(handle, read)
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+    {
+        self.app.update_window(window, update)
     }
 
     fn read_window<T, R>(

@@ -52,7 +52,7 @@ pub enum Event {
     RemoteProjectInvitationDiscarded {
         project_id: u64,
     },
-    Left {
+    RoomLeft {
         channel_id: Option<ChannelId>,
     },
 }
@@ -366,9 +366,6 @@ impl Room {
 
     pub(crate) fn leave(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         cx.notify();
-        cx.emit(Event::Left {
-            channel_id: self.channel_id(),
-        });
         self.leave_internal(cx)
     }
 
@@ -1185,7 +1182,7 @@ impl Room {
         cx.emit(Event::RemoteProjectJoined { project_id: id });
         cx.spawn(move |this, mut cx| async move {
             let project =
-                Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;
+                Project::in_room(id, client, user_store, language_registry, fs, cx.clone()).await?;
 
             this.update(&mut cx, |this, cx| {
                 this.joined_projects.retain(|project| {
@@ -1206,14 +1203,25 @@ impl Room {
         project: Model<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<u64>> {
-        if let Some(project_id) = project.read(cx).remote_id() {
-            return Task::ready(Ok(project_id));
-        }
+        let request = if let Some(dev_server_project_id) = project.read(cx).dev_server_project_id()
+        {
+            self.client.request(proto::ShareProject {
+                room_id: self.id(),
+                worktrees: vec![],
+                dev_server_project_id: Some(dev_server_project_id.0),
+            })
+        } else {
+            if let Some(project_id) = project.read(cx).remote_id() {
+                return Task::ready(Ok(project_id));
+            }
 
-        let request = self.client.request(proto::ShareProject {
-            room_id: self.id(),
-            worktrees: project.read(cx).worktree_metadata_protos(cx),
-        });
+            self.client.request(proto::ShareProject {
+                room_id: self.id(),
+                worktrees: project.read(cx).worktree_metadata_protos(cx),
+                dev_server_project_id: None,
+            })
+        };
+
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;
 

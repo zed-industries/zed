@@ -78,12 +78,14 @@ impl ChatPanel {
         let fs = workspace.app_state().fs.clone();
         let client = workspace.app_state().client.clone();
         let channel_store = ChannelStore::global(cx);
+        let user_store = workspace.app_state().user_store.clone();
         let languages = workspace.app_state().languages.clone();
 
         let input_editor = cx.new_view(|cx| {
             MessageEditor::new(
                 languages.clone(),
-                channel_store.clone(),
+                user_store.clone(),
+                None,
                 cx.new_view(|cx| Editor::auto_height(4, cx)),
                 cx,
             )
@@ -156,7 +158,7 @@ impl ChatPanel {
                             }
                         }
                     }
-                    room::Event::Left { channel_id } => {
+                    room::Event::RoomLeft { channel_id } => {
                         if channel_id == &this.channel_id(cx) {
                             cx.emit(PanelEvent::Close)
                         }
@@ -231,18 +233,12 @@ impl ChatPanel {
 
     fn set_active_chat(&mut self, chat: Model<ChannelChat>, cx: &mut ViewContext<Self>) {
         if self.active_chat.as_ref().map(|e| &e.0) != Some(&chat) {
-            let channel_id = chat.read(cx).channel_id;
-            {
-                self.markdown_data.clear();
-                let chat = chat.read(cx);
-                self.message_list.reset(chat.message_count());
-
-                let channel_name = chat.channel(cx).map(|channel| channel.name.clone());
-                self.message_editor.update(cx, |editor, cx| {
-                    editor.set_channel(channel_id, channel_name, cx);
-                    editor.clear_reply_to_message_id();
-                });
-            };
+            self.markdown_data.clear();
+            self.message_list.reset(chat.read(cx).message_count());
+            self.message_editor.update(cx, |editor, cx| {
+                editor.set_channel_chat(chat.clone(), cx);
+                editor.clear_reply_to_message_id();
+            });
             let subscription = cx.subscribe(&chat, Self::channel_did_change);
             self.active_chat = Some((chat, subscription));
             self.acknowledge_last_message(cx);
@@ -314,7 +310,7 @@ impl ChatPanel {
             None => {
                 return div().child(
                     h_flex()
-                        .text_ui_xs()
+                        .text_ui_xs(cx)
                         .my_0p5()
                         .px_0p5()
                         .gap_x_1()
@@ -349,7 +345,7 @@ impl ChatPanel {
         div().child(
             h_flex()
                 .id(message_element_id)
-                .text_ui_xs()
+                .text_ui_xs(cx)
                 .my_0p5()
                 .px_0p5()
                 .gap_x_1()
@@ -494,7 +490,7 @@ impl ChatPanel {
                         |this| {
                             this.child(
                                 h_flex()
-                                    .text_ui_sm()
+                                    .text_ui_sm(cx)
                                     .child(
                                         div().absolute().child(
                                             Avatar::new(message.sender.avatar_uri.clone())
@@ -531,12 +527,14 @@ impl ChatPanel {
                                 &self.languages,
                                 self.client.id(),
                                 &message,
+                                self.local_timezone,
+                                cx,
                             )
                         });
                         el.child(
                             v_flex()
                                 .w_full()
-                                .text_ui_sm()
+                                .text_ui_sm(cx)
                                 .id(element_id)
                                 .child(text.element("body".into(), cx)),
                         )
@@ -559,7 +557,7 @@ impl ChatPanel {
                                 div()
                                     .px_1()
                                     .rounded_md()
-                                    .text_ui_xs()
+                                    .text_ui_xs(cx)
                                     .bg(cx.theme().colors().background)
                                     .child("New messages"),
                             )
@@ -569,7 +567,7 @@ impl ChatPanel {
             )
             .child(
                 self.render_popover_buttons(&cx, message_id, can_delete_message, can_edit_message)
-                    .neg_mt_2p5(),
+                    .mt_neg_2p5(),
             )
     }
 
@@ -615,6 +613,8 @@ impl ChatPanel {
                             .child(
                                 IconButton::new(("reply", message_id), IconName::ReplyArrowRight)
                                     .on_click(cx.listener(move |this, _, cx| {
+                                        this.cancel_edit_message(cx);
+
                                         this.message_editor.update(cx, |editor, cx| {
                                             editor.set_reply_to_message_id(message_id);
                                             editor.focus_handle(cx).focus(cx);
@@ -636,6 +636,8 @@ impl ChatPanel {
                                     IconButton::new(("edit", message_id), IconName::Pencil)
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.message_editor.update(cx, |editor, cx| {
+                                                editor.clear_reply_to_message_id();
+
                                                 let message = this
                                                     .active_chat()
                                                     .and_then(|active_chat| {
@@ -740,6 +742,8 @@ impl ChatPanel {
         language_registry: &Arc<LanguageRegistry>,
         current_user_id: u64,
         message: &channel::ChannelMessage,
+        local_timezone: UtcOffset,
+        cx: &AppContext,
     ) -> RichText {
         let mentions = message
             .mentions
@@ -750,24 +754,39 @@ impl ChatPanel {
             })
             .collect::<Vec<_>>();
 
-        const MESSAGE_UPDATED: &str = " (edited)";
+        const MESSAGE_EDITED: &str = " (edited)";
 
         let mut body = message.body.clone();
 
         if message.edited_at.is_some() {
-            body.push_str(MESSAGE_UPDATED);
+            body.push_str(MESSAGE_EDITED);
         }
 
-        let mut rich_text = rich_text::render_rich_text(body, &mentions, language_registry, None);
+        let mut rich_text = RichText::new(body, &mentions, language_registry);
 
         if message.edited_at.is_some() {
+            let range = (rich_text.text.len() - MESSAGE_EDITED.len())..rich_text.text.len();
             rich_text.highlights.push((
-                (rich_text.text.len() - MESSAGE_UPDATED.len())..rich_text.text.len(),
+                range.clone(),
                 Highlight::Highlight(HighlightStyle {
-                    fade_out: Some(0.8),
+                    color: Some(cx.theme().colors().text_muted),
                     ..Default::default()
                 }),
             ));
+
+            if let Some(edit_timestamp) = message.edited_at {
+                let edit_timestamp_text = time_format::format_localized_timestamp(
+                    edit_timestamp,
+                    OffsetDateTime::now_utc(),
+                    local_timezone,
+                    time_format::TimestampFormat::Absolute,
+                );
+
+                rich_text.custom_ranges.push(range);
+                rich_text.set_tooltip_builder_for_custom_ranges(move |_, _, cx| {
+                    Some(Tooltip::text(edit_timestamp_text.clone(), cx))
+                })
+            }
         }
         rich_text
     }
@@ -909,6 +928,10 @@ impl ChatPanel {
 
 impl Render for ChatPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let channel_id = self
+            .active_chat
+            .as_ref()
+            .map(|(c, _)| c.read(cx).channel_id);
         let message_editor = self.message_editor.read(cx);
 
         let reply_to_message_id = message_editor.reply_to_message_id();
@@ -975,7 +998,7 @@ impl Render for ChatPanel {
                 el.child(
                     h_flex()
                         .px_2()
-                        .text_ui_xs()
+                        .text_ui_xs(cx)
                         .justify_between()
                         .border_t_1()
                         .border_color(cx.theme().colors().border)
@@ -1018,6 +1041,7 @@ impl Render for ChatPanel {
                             .child(
                                 div().flex_shrink().overflow_hidden().child(
                                     h_flex()
+                                        .id(("reply-preview", reply_to_message_id))
                                         .child(Label::new("Replying to ").size(LabelSize::Small))
                                         .child(
                                             div().font_weight(FontWeight::BOLD).child(
@@ -1027,7 +1051,20 @@ impl Render for ChatPanel {
                                                 ))
                                                 .size(LabelSize::Small),
                                             ),
-                                        ),
+                                        )
+                                        .when_some(channel_id, |this, channel_id| {
+                                            this.cursor_pointer().on_click(cx.listener(
+                                                move |chat_panel, _, cx| {
+                                                    chat_panel
+                                                        .select_channel(
+                                                            channel_id,
+                                                            reply_to_message_id.into(),
+                                                            cx,
+                                                        )
+                                                        .detach_and_log_err(cx)
+                                                },
+                                            ))
+                                        }),
                                 ),
                             )
                             .child(
@@ -1154,7 +1191,13 @@ mod tests {
             edited_at: None,
         };
 
-        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+        let message = ChatPanel::render_markdown_with_mentions(
+            &language_registry,
+            102,
+            &message,
+            UtcOffset::UTC,
+            cx,
+        );
 
         // Note that the "'" was replaced with ’ due to smart punctuation.
         let (body, ranges) = marked_text_ranges("«hi», «@abc», let’s «call» «@fgh»", false);
@@ -1202,7 +1245,13 @@ mod tests {
             edited_at: None,
         };
 
-        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+        let message = ChatPanel::render_markdown_with_mentions(
+            &language_registry,
+            102,
+            &message,
+            UtcOffset::UTC,
+            cx,
+        );
 
         // Note that the "'" was replaced with ’ due to smart punctuation.
         let (body, ranges) =
@@ -1243,7 +1292,13 @@ mod tests {
             edited_at: None,
         };
 
-        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+        let message = ChatPanel::render_markdown_with_mentions(
+            &language_registry,
+            102,
+            &message,
+            UtcOffset::UTC,
+            cx,
+        );
 
         // Note that the "'" was replaced with ’ due to smart punctuation.
         let (body, ranges) = marked_text_ranges(

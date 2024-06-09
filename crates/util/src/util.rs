@@ -1,8 +1,7 @@
 pub mod arc_cow;
 pub mod fs;
-pub mod github;
-pub mod http;
 pub mod paths;
+pub mod serde;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -35,33 +34,147 @@ macro_rules! debug_panic {
     };
 }
 
+#[macro_export]
+macro_rules! with_clone {
+    ($i:ident, move ||$l:expr) => {{
+        let $i = $i.clone();
+        move || {
+            $l
+        }
+    }};
+    ($i:ident, move |$($k:pat_param),*|$l:expr) => {{
+        let $i = $i.clone();
+        move |$( $k ),*| {
+            $l
+        }
+    }};
+
+    (($($i:ident),+), move ||$l:expr) => {{
+        let ($($i),+) = ($($i.clone()),+);
+        move || {
+            $l
+        }
+    }};
+    (($($i:ident),+), move |$($k:pat_param),*|$l:expr) => {{
+        let ($($i),+) = ($($i.clone()),+);
+        move |$( $k ),*| {
+            $l
+        }
+    }};
+}
+
+mod test_with_clone {
+
+    // If this test compiles, it works
+    #[test]
+    fn test() {
+        let x = "String".to_string();
+        let y = std::sync::Arc::new(5);
+
+        fn no_arg(f: impl FnOnce()) {
+            f()
+        }
+
+        no_arg(with_clone!(x, move || {
+            drop(x);
+        }));
+
+        no_arg(with_clone!((x, y), move || {
+            drop(x);
+            drop(y);
+        }));
+
+        fn one_arg(f: impl FnOnce(usize)) {
+            f(1)
+        }
+
+        one_arg(with_clone!(x, move |_| {
+            drop(x);
+        }));
+        one_arg(with_clone!((x, y), move |b| {
+            drop(x);
+            drop(y);
+            println!("{}", b);
+        }));
+
+        fn two_arg(f: impl FnOnce(usize, bool)) {
+            f(5, true)
+        }
+
+        two_arg(with_clone!((x, y), move |a, b| {
+            drop(x);
+            drop(y);
+            println!("{}{}", a, b)
+        }));
+        two_arg(with_clone!((x, y), move |a, _| {
+            drop(x);
+            drop(y);
+            println!("{}", a)
+        }));
+        two_arg(with_clone!((x, y), move |_, b| {
+            drop(x);
+            drop(y);
+            println!("{}", b)
+        }));
+
+        struct Example {
+            z: usize,
+        }
+
+        fn destructuring_example(f: impl FnOnce(Example)) {
+            f(Example { z: 10 })
+        }
+
+        destructuring_example(with_clone!(x, move |Example { z }| {
+            drop(x);
+            println!("{}", z);
+        }));
+
+        let a_long_variable_1 = "".to_string();
+        let a_long_variable_2 = "".to_string();
+        let a_long_variable_3 = "".to_string();
+        let a_long_variable_4 = "".to_string();
+        two_arg(with_clone!(
+            (
+                x,
+                y,
+                a_long_variable_1,
+                a_long_variable_2,
+                a_long_variable_3,
+                a_long_variable_4
+            ),
+            move |a, b| {
+                drop(x);
+                drop(y);
+                drop(a_long_variable_1);
+                drop(a_long_variable_2);
+                drop(a_long_variable_3);
+                drop(a_long_variable_4);
+                println!("{}{}", a, b)
+            }
+        ));
+
+        fn single_expression_body(f: impl FnOnce(usize) -> usize) -> usize {
+            f(20)
+        }
+
+        let _result = single_expression_body(with_clone!(y, move |z| *y + z));
+
+        // Explicitly move all variables
+        drop(x);
+        drop(y);
+        drop(a_long_variable_1);
+        drop(a_long_variable_2);
+        drop(a_long_variable_3);
+        drop(a_long_variable_4);
+    }
+}
+
 pub fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
         None => s,
         Some((idx, _)) => &s[..idx],
     }
-}
-
-pub fn http_proxy_from_env() -> Option<isahc::http::Uri> {
-    macro_rules! try_env {
-        ($($env:literal),+) => {
-            $(
-                if let Ok(env) = std::env::var($env) {
-                    return env.parse::<isahc::http::Uri>().ok();
-                }
-            )+
-        };
-    }
-
-    try_env!(
-        "ALL_PROXY",
-        "all_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "HTTP_PROXY",
-        "http_proxy"
-    );
-    None
 }
 
 /// Removes characters from the end of the string if its length is greater than `max_chars` and
@@ -127,6 +240,32 @@ where
             }
             start_index = index;
         }
+    }
+}
+
+/// Parse the result of calling `usr/bin/env` with no arguments
+pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
+    let mut current_key: Option<String> = None;
+    let mut current_value: Option<String> = None;
+
+    for line in env.split_terminator('\n') {
+        if let Some(separator_index) = line.find('=') {
+            if &line[..separator_index] != "" {
+                if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
+                    f(key, value)
+                }
+                current_key = Some(line[..separator_index].to_string());
+                current_value = Some(line[separator_index + 1..].to_string());
+                continue;
+            };
+        }
+        if let Some(value) = current_value.as_mut() {
+            value.push('\n');
+            value.push_str(line);
+        }
+    }
+    if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
+        f(key, value)
     }
 }
 
@@ -367,6 +506,7 @@ impl<F: FnOnce()> Drop for Deferred<F> {
 }
 
 /// Run the given function when the returned value is dropped (unless it's cancelled).
+#[must_use]
 pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
     Deferred(Some(f))
 }
@@ -424,16 +564,6 @@ pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
     match A::get(path).unwrap().data {
         Cow::Borrowed(bytes) => Cow::Borrowed(std::str::from_utf8(bytes).unwrap()),
         Cow::Owned(bytes) => Cow::Owned(String::from_utf8(bytes).unwrap()),
-    }
-}
-
-// copy unstable standard feature option unzip
-// https://github.com/rust-lang/rust/issues/87800
-// Remove when this ship in Rust 1.66 or 1.67
-pub fn unzip_option<T, U>(option: Option<(T, U)>) -> (Option<T>, Option<U>) {
-    match option {
-        Some((a, b)) => (Some(a), Some(b)),
-        None => (None, None),
     }
 }
 
@@ -507,9 +637,8 @@ pub struct NumericPrefixWithSuffix<'a>(i32, &'a str);
 
 impl<'a> NumericPrefixWithSuffix<'a> {
     pub fn from_numeric_prefixed_str(str: &'a str) -> Option<Self> {
-        let mut chars = str.chars();
-        let prefix: String = chars.by_ref().take_while(|c| c.is_ascii_digit()).collect();
-        let remainder = chars.as_str();
+        let i = str.chars().take_while(|c| c.is_ascii_digit()).count();
+        let (prefix, remainder) = str.split_at(i);
 
         match prefix.parse::<i32>() {
             Ok(prefix) => Some(NumericPrefixWithSuffix(prefix, remainder)),
@@ -588,6 +717,57 @@ mod tests {
         assert_eq!(truncate_and_trailoff("èèèèèè", 7), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 6), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 5), "èèèèè…");
+    }
+
+    #[test]
+    fn test_numeric_prefix_str_method() {
+        let target = "1a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, "a"))
+        );
+
+        let target = "12ab";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, "ab"))
+        );
+
+        let target = "12_ab";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, "_ab"))
+        );
+
+        let target = "1_2ab";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, "_2ab"))
+        );
+
+        let target = "1.2";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, ".2"))
+        );
+
+        let target = "1.2_a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, ".2_a"))
+        );
+
+        let target = "12.2_a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, ".2_a"))
+        );
+
+        let target = "12a.2_a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, "a.2_a"))
+        );
     }
 
     #[test]

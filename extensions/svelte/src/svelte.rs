@@ -1,5 +1,5 @@
 use std::{env, fs};
-use zed_extension_api::{self as zed, Result};
+use zed_extension_api::{self as zed, serde_json, Result};
 
 struct SvelteExtension {
     did_find_server: bool,
@@ -13,14 +13,14 @@ impl SvelteExtension {
         fs::metadata(SERVER_PATH).map_or(false, |stat| stat.is_file())
     }
 
-    fn server_script_path(&mut self, config: zed::LanguageServerConfig) -> Result<String> {
+    fn server_script_path(&mut self, id: &zed::LanguageServerId) -> Result<String> {
         let server_exists = self.server_exists();
         if self.did_find_server && server_exists {
             return Ok(SERVER_PATH.to_string());
         }
 
         zed::set_language_server_installation_status(
-            &config.name,
+            id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
         let version = zed::npm_package_latest_version(PACKAGE_NAME)?;
@@ -29,7 +29,7 @@ impl SvelteExtension {
             || zed::npm_package_installed_version(PACKAGE_NAME)?.as_ref() != Some(&version)
         {
             zed::set_language_server_installation_status(
-                &config.name,
+                id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
             let result = zed::npm_install_package(PACKAGE_NAME, &version);
@@ -63,10 +63,10 @@ impl zed::Extension for SvelteExtension {
 
     fn language_server_command(
         &mut self,
-        config: zed::LanguageServerConfig,
+        id: &zed::LanguageServerId,
         _: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let server_path = self.server_script_path(config)?;
+        let server_path = self.server_script_path(id)?;
         Ok(zed::Command {
             command: zed::node_binary_path()?,
             args: vec![
@@ -83,10 +83,10 @@ impl zed::Extension for SvelteExtension {
 
     fn language_server_initialization_options(
         &mut self,
-        _: zed::LanguageServerConfig,
+        _: &zed::LanguageServerId,
         _: &zed::Worktree,
-    ) -> Result<Option<String>> {
-        let config = r#"{
+    ) -> Result<Option<serde_json::Value>> {
+        let config = serde_json::json!({
           "inlayHints": {
             "parameterNames": {
               "enabled": "all",
@@ -109,17 +109,15 @@ impl zed::Extension for SvelteExtension {
               "enabled": true
             }
           }
-        }"#;
+        });
 
-        Ok(Some(format!(
-            r#"{{
-                "provideFormatter": true,
-                "configuration": {{
-                    "typescript": {config},
-                    "javascript": {config}
-                }}
-            }}"#
-        )))
+        Ok(Some(serde_json::json!({
+            "provideFormatter": true,
+            "configuration": {
+                "typescript": config,
+                "javascript": config
+            }
+        })))
     }
 }
 

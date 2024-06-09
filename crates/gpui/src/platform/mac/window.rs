@@ -4,7 +4,8 @@ use crate::{
     DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowKind, WindowParams,
+    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind,
+    WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -31,13 +32,9 @@ use objc::{
     sel, sel_impl,
 };
 use parking_lot::Mutex;
-use raw_window_handle::{
-    AppKitDisplayHandle, AppKitWindowHandle, DisplayHandle, HasDisplayHandle, HasWindowHandle,
-    RawWindowHandle, WindowHandle,
-};
+use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
-    any::Any,
     cell::Cell,
     ffi::{c_void, CStr},
     mem,
@@ -268,10 +265,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
-        sel!(windowWillExitFullScreen:),
-        window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
         sel!(windowDidMove:),
         window_did_move as extern "C" fn(&Object, Sel, id),
     );
@@ -314,14 +307,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         sel!(concludeDragOperation:),
         conclude_drag_operation as extern "C" fn(&Object, Sel, id),
     );
-    decl.add_method(
-        sel!(windowDidMiniaturize:),
-        window_did_miniaturize as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowDidDeminiaturize:),
-        window_did_deminiaturize as extern "C" fn(&Object, Sel, id),
-    );
 
     decl.register()
 }
@@ -337,16 +322,13 @@ struct MacWindowState {
     handle: AnyWindowHandle,
     executor: ForegroundExecutor,
     native_window: id,
-    native_window_was_closed: bool,
     native_view: NonNull<Object>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
-    kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    fullscreen_callback: Option<Box<dyn FnMut(bool)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
@@ -363,7 +345,7 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
-    minimized: bool,
+    fullscreen_restore_bounds: Bounds<DevicePixels>,
 }
 
 impl MacWindowState {
@@ -420,6 +402,15 @@ impl MacWindowState {
 
     fn start_display_link(&mut self) {
         self.stop_display_link();
+        unsafe {
+            if !self
+                .native_window
+                .occlusionState()
+                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+            {
+                return;
+            }
+        }
         let display_id = unsafe { display_id_for_screen(self.native_window.screen()) };
         if let Some(mut display_link) =
             DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step).log_err()
@@ -439,10 +430,6 @@ impl MacWindowState {
             let screen_size = self.native_window.screen().visibleFrame().into();
             bounds.size == screen_size
         }
-    }
-
-    fn is_minimized(&self) -> bool {
-        self.minimized
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -501,13 +488,11 @@ impl MacWindowState {
         }
     }
 
-    fn to_screen_ns_point(&self, point: Point<Pixels>) -> NSPoint {
-        unsafe {
-            let point = NSPoint::new(
-                point.x.into(),
-                (self.content_size().height - point.y).into(),
-            );
-            msg_send![self.native_window, convertPointToScreen: point]
+    fn window_bounds(&self) -> WindowBounds {
+        if self.is_fullscreen() {
+            WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
+        } else {
+            WindowBounds::Windowed(self.bounds())
         }
     }
 }
@@ -605,6 +590,10 @@ impl MacWindow {
                 registerForDraggedTypes:
                     NSArray::arrayWithObject(nil, NSFilenamesPboardType)
             ];
+            let () = msg_send![
+                native_window,
+                setReleasedWhenClosed: NO
+            ];
 
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
@@ -622,7 +611,6 @@ impl MacWindow {
                 handle,
                 executor,
                 native_window,
-                native_window_was_closed: false,
                 native_view: NonNull::new_unchecked(native_view),
                 display_link: None,
                 renderer: renderer::new_renderer(
@@ -630,13 +618,12 @@ impl MacWindow {
                     native_window as *mut _,
                     native_view as *mut _,
                     window_size,
+                    window_background != WindowBackgroundAppearance::Opaque,
                 ),
-                kind,
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
                 resize_callback: None,
-                fullscreen_callback: None,
                 moved_callback: None,
                 should_close_callback: None,
                 close_callback: None,
@@ -653,7 +640,7 @@ impl MacWindow {
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
                 first_mouse: false,
-                minimized: false,
+                fullscreen_restore_bounds: Bounds::default(),
             })));
 
             (*native_window).set_ivar(
@@ -770,19 +757,17 @@ impl Drop for MacWindow {
         this.renderer.destroy();
         let window = this.native_window;
         this.display_link.take();
-        if !this.native_window_was_closed {
-            unsafe {
-                this.native_window.setDelegate_(nil);
-            }
-
-            this.executor
-                .spawn(async move {
-                    unsafe {
-                        window.close();
-                    }
-                })
-                .detach();
+        unsafe {
+            this.native_window.setDelegate_(nil);
         }
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.close();
+                    window.autorelease();
+                }
+            })
+            .detach();
     }
 }
 
@@ -791,12 +776,12 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().bounds()
     }
 
-    fn is_maximized(&self) -> bool {
-        self.0.as_ref().lock().is_maximized()
+    fn window_bounds(&self) -> WindowBounds {
+        self.0.as_ref().lock().window_bounds()
     }
 
-    fn is_minimized(&self) -> bool {
-        self.0.as_ref().lock().is_minimized()
+    fn is_maximized(&self) -> bool {
+        self.0.as_ref().lock().is_maximized()
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -814,7 +799,7 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn display(&self) -> Rc<dyn PlatformDisplay> {
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         unsafe {
             let screen = self.0.lock().native_window.screen();
             let device_description: id = msg_send![screen, deviceDescription];
@@ -825,7 +810,7 @@ impl PlatformWindow for MacWindow {
 
             let screen_number: u32 = msg_send![screen_number, unsignedIntValue];
 
-            Rc::new(MacDisplay(screen_number))
+            Some(Rc::new(MacDisplay(screen_number)))
         }
     }
 
@@ -853,14 +838,10 @@ impl PlatformWindow for MacWindow {
                 control,
                 alt,
                 shift,
-                command,
+                platform: command,
                 function,
             }
         }
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -981,8 +962,13 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn set_app_id(&mut self, _app_id: &str) {}
+
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
-        let this = self.0.as_ref().lock();
+        let mut this = self.0.as_ref().lock();
+        this.renderer
+            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+
         let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
             80
         } else {
@@ -995,6 +981,8 @@ impl PlatformWindow for MacWindow {
         };
         unsafe {
             this.native_window.setOpaque_(opaque);
+            // Shadows for transparent windows cause artifacts and performance issues
+            this.native_window.setHasShadow_(opaque);
             let clear_color = if opaque == YES {
                 NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 1f64)
             } else {
@@ -1088,10 +1076,6 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().resize_callback = Some(callback);
     }
 
-    fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.as_ref().lock().fullscreen_callback = Some(callback);
-    }
-
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().lock().moved_callback = Some(callback);
     }
@@ -1108,31 +1092,6 @@ impl PlatformWindow for MacWindow {
         self.0.lock().appearance_changed_callback = Some(callback);
     }
 
-    fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool {
-        let self_borrow = self.0.lock();
-        let self_handle = self_borrow.handle;
-
-        unsafe {
-            let app = NSApplication::sharedApplication(nil);
-
-            // Convert back to screen coordinates
-            let screen_point = self_borrow.to_screen_ns_point(position);
-
-            let window_number: NSInteger = msg_send![class!(NSWindow), windowNumberAtPoint:screen_point belowWindowWithWindowNumber:0];
-            let top_most_window: id = msg_send![app, windowWithWindowNumber: window_number];
-
-            let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
-            let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
-            if is_panel == YES || is_window == YES {
-                let topmost_window = get_window_state(&*top_most_window).lock().handle;
-                topmost_window == self_handle
-            } else {
-                // Someone else's window is on top
-                false
-            }
-        }
-    }
-
     fn draw(&self, scene: &crate::Scene) {
         let mut this = self.0.lock();
         this.renderer.draw(scene);
@@ -1141,27 +1100,35 @@ impl PlatformWindow for MacWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
     }
+
+    fn show_window_menu(&self, _position: Point<Pixels>) {}
+
+    fn start_system_move(&self) {}
+
+    fn should_render_window_controls(&self) -> bool {
+        false
+    }
 }
 
-impl HasWindowHandle for MacWindow {
-    fn window_handle(
-        &self,
-    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+impl rwh::HasWindowHandle for MacWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
         // SAFETY: The AppKitWindowHandle is a wrapper around a pointer to an NSView
         unsafe {
-            Ok(WindowHandle::borrow_raw(RawWindowHandle::AppKit(
-                AppKitWindowHandle::new(self.0.lock().native_view.cast()),
+            Ok(rwh::WindowHandle::borrow_raw(rwh::RawWindowHandle::AppKit(
+                rwh::AppKitWindowHandle::new(self.0.lock().native_view.cast()),
             )))
         }
     }
 }
 
-impl HasDisplayHandle for MacWindow {
-    fn display_handle(
-        &self,
-    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+impl rwh::HasDisplayHandle for MacWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         // SAFETY: This is a no-op on macOS
-        unsafe { Ok(DisplayHandle::borrow_raw(AppKitDisplayHandle::new().into())) }
+        unsafe {
+            Ok(rwh::DisplayHandle::borrow_raw(
+                rwh::AppKitDisplayHandle::new().into(),
+            ))
+        }
     }
 }
 
@@ -1343,7 +1310,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_state = unsafe { get_window_state(this) };
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
-    let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
     let window_height = lock.content_size().height;
     let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
 
@@ -1429,8 +1395,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 }
             }
 
-            PlatformInput::MouseMove(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
-
             PlatformInput::MouseUp(MouseUpEvent { .. }) => {
                 lock.synthetic_drag_counter += 1;
             }
@@ -1506,21 +1470,9 @@ extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
 }
 
 extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
-    window_fullscreen_changed(this, true);
-}
-
-extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
-    window_fullscreen_changed(this, false);
-}
-
-fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    if let Some(mut callback) = lock.fullscreen_callback.take() {
-        drop(lock);
-        callback(is_fullscreen);
-        window_state.lock().fullscreen_callback = Some(callback);
-    }
+    lock.fullscreen_restore_bounds = lock.bounds();
 }
 
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
@@ -1592,7 +1544,6 @@ extern "C" fn close_window(this: &Object, _: Sel) {
         let close_callback = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
-            lock.native_window_was_closed = true;
             lock.close_callback.take()
         };
 
@@ -1848,16 +1799,17 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
-    if send_new_event(&window_state, {
-        let position = drag_event_position(&window_state, dragging_info);
-        let paths = external_paths_from_event(dragging_info);
-        PlatformInput::FileDrop(FileDropEvent::Entered { position, paths })
-    }) {
-        window_state.lock().external_files_dragged = true;
-        NSDragOperationCopy
-    } else {
-        NSDragOperationNone
+    let position = drag_event_position(&window_state, dragging_info);
+    let paths = external_paths_from_event(dragging_info);
+    if let Some(event) =
+        paths.map(|paths| PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }))
+    {
+        if send_new_event(&window_state, event) {
+            window_state.lock().external_files_dragged = true;
+            return NSDragOperationCopy;
+        }
     }
+    NSDragOperationNone
 }
 
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
@@ -1895,10 +1847,13 @@ extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -
     }
 }
 
-fn external_paths_from_event(dragging_info: *mut Object) -> ExternalPaths {
+fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths> {
     let mut paths = SmallVec::new();
     let pasteboard: id = unsafe { msg_send![dragging_info, draggingPasteboard] };
     let filenames = unsafe { NSPasteboard::propertyListForType(pasteboard, NSFilenamesPboardType) };
+    if filenames == nil {
+        return None;
+    }
     for file in unsafe { filenames.iter() } {
         let path = unsafe {
             let f = NSString::UTF8String(file);
@@ -1906,7 +1861,7 @@ fn external_paths_from_event(dragging_info: *mut Object) -> ExternalPaths {
         };
         paths.push(PathBuf::from(path))
     }
-    ExternalPaths(paths)
+    Some(ExternalPaths(paths))
 }
 
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
@@ -1915,18 +1870,6 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Exited),
     );
-}
-
-extern "C" fn window_did_miniaturize(this: &Object, _: Sel, _: id) {
-    let window_state = unsafe { get_window_state(this) };
-
-    window_state.lock().minimized = true;
-}
-
-extern "C" fn window_did_deminiaturize(this: &Object, _: Sel, _: id) {
-    let window_state = unsafe { get_window_state(this) };
-
-    window_state.lock().minimized = false;
 }
 
 async fn synthetic_drag(

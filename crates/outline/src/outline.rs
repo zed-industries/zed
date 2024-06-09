@@ -98,6 +98,8 @@ struct OutlineViewDelegate {
     last_query: String,
 }
 
+enum OutlineRowHighlights {}
+
 impl OutlineViewDelegate {
     fn new(
         outline_view: WeakView<OutlineView>,
@@ -140,8 +142,9 @@ impl OutlineViewDelegate {
             self.active_editor.update(cx, |active_editor, cx| {
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 active_editor.highlight_rows::<OutlineRowHighlights>(
-                    outline_item.range.clone(),
+                    outline_item.range.start..=outline_item.range.end,
                     Some(cx.theme().colors().editor_highlighted_line_background),
+                    true,
                     cx,
                 );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
@@ -149,8 +152,6 @@ impl OutlineViewDelegate {
         }
     }
 }
-
-enum OutlineRowHighlights {}
 
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
@@ -243,7 +244,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 .and_then(|highlights| highlights.into_iter().next().map(|(rows, _)| rows.clone()))
             {
                 active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                    s.select_ranges([rows.start..rows.start])
+                    s.select_ranges([*rows.start()..*rows.start()])
                 });
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 active_editor.focus(cx);
@@ -274,7 +275,7 @@ impl PickerDelegate for OutlineViewDelegate {
         let text_style = TextStyle {
             color: cx.theme().colors().text,
             font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features,
+            font_features: settings.buffer_font.features.clone(),
             font_size: settings.buffer_font_size(cx).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
@@ -306,7 +307,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 .selected(selected)
                 .child(
                     div()
-                        .text_ui()
+                        .text_ui(cx)
                         .pl(rems(outline_item.depth as f32))
                         .child(styled_text),
                 ),
@@ -316,14 +317,13 @@ impl PickerDelegate for OutlineViewDelegate {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
     use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use serde_json::json;
     use workspace::{AppState, Workspace};
-
-    use super::*;
 
     #[gpui::test]
     async fn test_outline_view_row_highlights(cx: &mut TestAppContext) {
@@ -482,7 +482,11 @@ mod tests {
 
     fn highlighted_display_rows(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
         editor.update(cx, |editor, cx| {
-            editor.highlighted_display_rows(cx).into_keys().collect()
+            editor
+                .highlighted_display_rows(cx)
+                .into_keys()
+                .map(|r| r.0)
+                .collect()
         })
     }
 

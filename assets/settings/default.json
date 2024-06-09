@@ -1,5 +1,18 @@
 {
-  // The name of the Zed theme to use for the UI
+  // The name of the Zed theme to use for the UI.
+  //
+  // The theme can also be set to follow system preferences:
+  //
+  // "theme": {
+  //   "mode": "system",
+  //   "light": "One Light",
+  //   "dark": "One Dark"
+  // }
+  //
+  // Where `mode` is one of:
+  // - "system": Use the theme that corresponds to the system's appearance
+  // - "light": Use the theme indicated by the "light" field
+  // - "dark": Use the theme indicated by the "dark" field
   "theme": "One Dark",
   // The name of a base set of key bindings to use.
   // This setting can take four values, each named after another
@@ -12,8 +25,8 @@
   "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
   "features": {
-    // Show Copilot icon in status bar
-    "copilot": true
+    // Which inline completion provider to use.
+    "inline_completion_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Mono",
@@ -24,6 +37,8 @@
   },
   // The default font size for text in the editor
   "buffer_font_size": 15,
+  // The weight of the editor font in standard CSS units from 100 to 900.
+  "buffer_font_weight": 400,
   // Set the buffer's line height.
   // May take 3 values:
   //  1. Use a line height that's comfortable for reading (1.618)
@@ -36,29 +51,65 @@
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  "ui_font_family": "Zed Sans",
+  "ui_font_family": ".SystemUIFont",
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
     "calt": false
   },
+  // The weight of the UI font in standard CSS units from 100 to 900.
+  "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
+  // Centered layout related settings.
+  "centered_layout": {
+    // The relative width of the left padding of the central pane from the
+    // workspace when the centered layout is used.
+    "left_padding": 0.2,
+    // The relative width of the right padding of the central pane from the
+    // workspace when the centered layout is used.
+    "right_padding": 0.2
+  },
   // The key to use for adding multiple cursors
-  // Currently "alt" or "cmd" are supported.
+  // Currently "alt" or "cmd_or_ctrl"  (also aliased as
+  // "cmd" and "ctrl") are supported.
   "multi_cursor_modifier": "alt",
-  // Whether to enable vim modes and key bindings
+  // Whether to enable vim modes and key bindings.
   "vim_mode": false,
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
+  // Whether to restore last closed project when fresh Zed instance is opened.
+  "restore_on_startup": "last_workspace",
+  // Size of the drop target in the editor.
+  "drop_target_size": 0.2,
+  // Whether the window should be closed when using 'close active item' on a window with no tabs.
+  // May take 3 values:
+  //  1. Use the current platform's convention
+  //         "when_closing_with_no_tabs": "platform_default"
+  //  2. Always close the window:
+  //         "when_closing_with_no_tabs": "close_window",
+  //  3. Never close the window
+  //         "when_closing_with_no_tabs": "keep_window_open",
+  "when_closing_with_no_tabs": "platform_default",
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
+  // How to highlight the current line in the editor.
+  //
+  // 1. Don't highlight the current line:
+  //    "none"
+  // 2. Highlight the gutter area:
+  //    "gutter"
+  // 3. Highlight the editor area:
+  //    "line"
+  // 4. Highlight the full line (default):
+  //    "all"
+  "current_line_highlight": "all",
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
@@ -69,7 +120,7 @@
   // documentation when not included in original completion list.
   "completion_documentation_secondary_query_debounce": 300,
   // Whether to show wrap guides in the editor. Setting this to true will
-  // show a guide at the 'preferred_line_length' value if softwrap is set to
+  // show a guide at the 'preferred_line_length' value if 'soft_wrap' is set to
   // 'preferred_line_length', and will show any additional guides as specified
   // by the 'wrap_guides' setting.
   "show_wrap_guides": true,
@@ -77,6 +128,8 @@
   "wrap_guides": [],
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
+  // The default number of lines to expand excerpts in the multibuffer by.
+  "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
   "private_files": [
     "**/.env*",
@@ -89,8 +142,9 @@
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
-  // Whether to automatically type closing characters for you. For example,
-  // when you type (, Zed will automatically add a closing ) at the correct position.
+  // Whether to automatically add matching closing characters when typing
+  // opening parenthesis, bracket, brace, single or double quote characters.
+  // For example, when you type (, Zed will add a closing ) at the correct position.
   "use_autoclose": true,
   // Controls how the editor handles the autoclosed characters.
   // When set to `false`(default), skipping over and auto-removing of the closing characters
@@ -116,7 +170,7 @@
     // Join calls with the microphone live by default
     "mute_on_join": false,
     // Share your project when you are the first to join a channel
-    "share_on_join": true
+    "share_on_join": false
   },
   // Toolbar related settings
   "toolbar": {
@@ -140,12 +194,14 @@
     // 4. Never show the scrollbar:
     //    "never"
     "show": "auto",
+    // Whether to show cursor positions in the scrollbar.
+    "cursors": true,
     // Whether to show git diff indicators in the scrollbar.
     "git_diff": true,
-    // Whether to show selections in the scrollbar.
-    "selections": true,
-    // Whether to show symbols selections in the scrollbar.
-    "symbols_selections": true,
+    // Whether to show buffer search results in the scrollbar.
+    "search_results": true,
+    // Whether to show selected symbol occurrences in the scrollbar.
+    "selected_symbol": true,
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
@@ -166,8 +222,30 @@
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
+  "indent_guides": {
+    /// Whether to show indent guides in the editor.
+    "enabled": true,
+    /// The width of the indent guides in pixels, between 1 and 10.
+    "line_width": 1,
+    /// Determines how indent guides are colored.
+    /// This setting can take the following three values:
+    ///
+    /// 1. "disabled"
+    /// 2. "fixed"
+    /// 3. "indent_aware"
+    "coloring": "fixed",
+    /// Determines how indent guide backgrounds are colored.
+    /// This setting can take the following two values:
+    ///
+    /// 1. "disabled"
+    /// 2. "indent_aware"
+    "background_coloring": "disabled"
+  },
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
+  // Scroll sensitivity multiplier. This multiplier is applied
+  // to both the horizontal and vertical delta values while scrolling.
+  "scroll_sensitivity": 1.0,
   "relative_line_numbers": false,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -196,6 +274,8 @@
     "scroll_debounce_ms": 50
   },
   "project_panel": {
+    // Whether to show the project panel button in the status bar
+    "button": true,
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
@@ -211,7 +291,10 @@
     // Whether to reveal it in the project panel automatically,
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
-    "auto_reveal_entries": true
+    "auto_reveal_entries": true,
+    /// Whether to fold directories automatically
+    /// when a directory has only one directory inside.
+    "auto_fold_dirs": false
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -258,19 +341,24 @@
     // AI provider.
     "provider": {
       "name": "openai",
-      // The default model to use when starting new conversations. This
+      // The default model to use when creating new contexts. This
       // setting can take three values:
       //
       // 1. "gpt-3.5-turbo"
       // 2. "gpt-4"
       // 3. "gpt-4-turbo-preview"
-      "default_model": "gpt-4-turbo-preview"
+      // 4. "gpt-4o"
+      "default_model": "gpt-4o"
     }
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
+  // The list of language servers to use (or disable) for all languages.
+  //
+  // This is typically customized on a per-language basis.
+  "language_servers": ["..."],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -283,12 +371,31 @@
   // 4. Save when idle for a certain amount of time:
   //     "autosave": { "after_delay": {"milliseconds": 500} },
   "autosave": "off",
+  // Settings related to the editor's tab bar.
+  "tab_bar": {
+    // Whether or not to show the tab bar in the editor
+    "show": true,
+    // Whether or not to show the navigation history buttons.
+    "show_nav_history_buttons": true
+  },
   // Settings related to the editor's tabs
   "tabs": {
     // Show git status colors in the editor tabs.
     "git_status": false,
     // Position of the close button on the editor tabs.
     "close_position": "right"
+  },
+  // Settings related to preview tabs.
+  "preview_tabs": {
+    // Whether preview tabs should be enabled.
+    // Preview tabs allow you to open files in preview mode, where they close automatically
+    // when you switch to another file unless you explicitly pin them.
+    // This is useful for quickly viewing files without cluttering your workspace.
+    "enabled": true,
+    // Whether to open tabs in preview mode when selected from the file finder.
+    "enable_preview_from_file_finder": false,
+    // Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
+    "enable_preview_from_code_navigation": false
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -299,6 +406,8 @@
   // when saving it.
   "ensure_final_newline_on_save": true,
   // Whether or not to perform a buffer format before saving
+  //
+  // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
   // How to perform a buffer format. This setting can take 4 values:
   //
@@ -322,11 +431,13 @@
   //
   // 1. Do not soft wrap.
   //      "soft_wrap": "none",
-  // 2. Soft wrap lines that overflow the editor:
+  // 2. Prefer a single line generally, unless an overly long line is encountered.
+  //      "soft_wrap": "prefer_line",
+  // 3. Soft wrap lines that overflow the editor:
   //      "soft_wrap": "editor_width",
-  // 3. Soft wrap lines at the preferred line length
+  // 4. Soft wrap lines at the preferred line length
   //      "soft_wrap": "preferred_line_length",
-  "soft_wrap": "none",
+  "soft_wrap": "prefer_line",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
@@ -369,7 +480,15 @@
     //      "git_gutter": "tracked_files"
     // 2. Hide the gutter
     //      "git_gutter": "hide"
-    "git_gutter": "tracked_files"
+    "git_gutter": "tracked_files",
+    // Control whether the git blame information is shown inline,
+    // in the currently focused line.
+    "inline_blame": {
+      "enabled": true
+      // Sets a delay after which the inline blame information is shown.
+      // Delay is restarted with every cursor movement.
+      // "delay_ms": 600
+    }
   },
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
@@ -403,7 +522,7 @@
     //         }
     //     }
     "shell": "system",
-    // Where to dock terminals panel. Can be 'left', 'right', 'bottom'.
+    // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
     // Default width when the terminal is docked to the left or right.
     "default_width": 640,
@@ -458,6 +577,8 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
+    // Whether to show the terminal button in the status bar
+    "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
     // environment. Use `:` to separate multiple values.
     "env": {
@@ -484,7 +605,7 @@
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
         "directories": [".env", "env", ".venv", "venv"],
-        // Can also be 'csh', 'fish', and `nushell`
+        // Can also be `csh`, `fish`, and `nushell`
         "activate_script": "default"
       }
     },
@@ -503,38 +624,13 @@
     // Existing terminals will not pick up this change until they are recreated.
     // "max_scroll_history_lines": 10000,
   },
-  // Settings specific to our elixir integration
-  "elixir": {
-    // Change the LSP zed uses for elixir.
-    // Note that changing this setting requires a restart of Zed
-    // to take effect.
-    //
-    // May take 3 values:
-    //  1. Use the standard ElixirLS, this is the default
-    //         "lsp": "elixir_ls"
-    //  2. Use the experimental NextLs
-    //         "lsp": "next_ls",
-    //  3. Use a language server installed locally on your machine:
-    //         "lsp": {
-    //           "local": {
-    //             "path": "~/next-ls/bin/start",
-    //             "arguments": ["--stdio"]
-    //            }
-    //          },
-    //
-    "lsp": "elixir_ls"
-  },
-  // Settings specific to our deno integration
-  "deno": {
-    "enable": false
-  },
   "code_actions_on_format": {},
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
   // use those languages.
   //
   // For example, to treat files like `foo.notjs` as JavaScript,
-  // and 'Embargo.lock' as TOML:
+  // and `Embargo.lock` as TOML:
   //
   // {
   //   "JavaScript": ["notjs"],
@@ -542,61 +638,162 @@
   // }
   //
   "file_types": {},
+  // The extensions that Zed should automatically install on startup.
+  //
+  // If you don't want any of these extensions, add this field to your settings
+  // and change the value to `false`.
+  "auto_install_extensions": {
+    "html": true
+  },
   // Different settings for specific languages.
   "languages": {
-    "Plain Text": {
-      "soft_wrap": "preferred_line_length"
+    "Astro": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-astro"]
+      }
+    },
+    "Blade": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "C": {
+      "format_on_save": "off"
+    },
+    "C++": {
+      "format_on_save": "off"
+    },
+    "CSS": {
+      "prettier": {
+        "allowed": true
+      }
     },
     "Elixir": {
-      "tab_size": 2
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "Gleam": {
       "tab_size": 2
     },
     "Go": {
-      "tab_size": 4,
-      "hard_tabs": true,
       "code_actions_on_format": {
         "source.organizeImports": true
       }
     },
-    "Markdown": {
-      "tab_size": 2,
-      "soft_wrap": "preferred_line_length"
+    "GraphQL": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "HEEX": {
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "HTML": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Java": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-java"]
+      }
     },
     "JavaScript": {
-      "tab_size": 2
-    },
-    "Terraform": {
-      "tab_size": 2
-    },
-    "TypeScript": {
-      "tab_size": 2
-    },
-    "TSX": {
-      "tab_size": 2
-    },
-    "YAML": {
-      "tab_size": 2
+      "prettier": {
+        "allowed": true
+      }
     },
     "JSON": {
-      "tab_size": 2
+      "prettier": {
+        "allowed": true
+      }
     },
-    "OCaml": {
-      "tab_size": 2
+    "Make": {
+      "hard_tabs": true
     },
-    "OCaml Interface": {
-      "tab_size": 2
+    "Markdown": {
+      "format_on_save": "off",
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "PHP": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["@prettier/plugin-php"]
+      }
     },
     "Prisma": {
       "tab_size": 2
+    },
+    "Ruby": {
+      "language_servers": ["solargraph", "!ruby-lsp", "..."]
+    },
+    "SCSS": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "SQL": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-sql"]
+      }
+    },
+    "Svelte": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-svelte"]
+      }
+    },
+    "TSX": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Twig": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "TypeScript": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "Vue.js": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "XML": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["@prettier/plugin-xml"]
+      }
+    },
+    "YAML": {
+      "prettier": {
+        "allowed": true
+      }
     }
   },
   // Zed's Prettier integration settings.
-  // If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
-  // project has no other Prettier installed.
+  // Allows to enable/disable formatting with Prettier
+  // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
-    // Use regular Prettier json configuration:
+    // // Whether to consider prettier formatter or not when attempting to format a file.
+    // "allowed": false,
+    //
+    // // Use regular Prettier json configuration.
+    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
+    // // the project has no other Prettier installed.
+    // "plugins": [],
+    //
+    // // Use regular Prettier json configuration.
+    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
+    // // the project has no other Prettier installed.
     // "trailingComma": "es5",
     // "tabWidth": 4,
     // "semi": false,
@@ -642,5 +839,29 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
-  }
+  },
+  // Task-related settings.
+  "task": {
+    // Whether to show task status indicator in the status bar. Default: true
+    "show_status_indicator": true
+  },
+  // Whether to show full labels in line indicator or short ones
+  //
+  // Values:
+  //   - `short`: "2 s, 15 l, 32 c"
+  //   - `long`: "2 selections, 15 lines, 32 characters"
+  // Default: long
+  "line_indicator_format": "long",
+  // Set a proxy to use. The proxy protocol is specified by the URI scheme.
+  //
+  // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
+  // `socks5h`. `http` will be used when no scheme is specified.
+  //
+  // By default no proxy will be used, or Zed will try get proxy settings from
+  // environment variables.
+  //
+  // Examples:
+  //   - "proxy": "socks5://localhost:10808"
+  //   - "proxy": "http://127.0.0.1:10809"
+  "proxy": null
 }

@@ -1,14 +1,13 @@
 use crate::commit::get_messages;
-use crate::permalink::{build_commit_permalink, parse_git_remote_url, BuildCommitPermalinkParams};
-use crate::Oid;
+use crate::{parse_git_remote_url, BuildCommitPermalinkParams, GitHostingProviderRegistry, Oid};
 use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::{ops::Range, path::Path};
 use text::Rope;
-use time;
 use time::macros::format_description;
 use time::OffsetDateTime;
 use time::UtcOffset;
@@ -21,6 +20,7 @@ pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
     pub permalinks: HashMap<Oid, Url>,
+    pub remote_url: Option<String>,
 }
 
 impl Blame {
@@ -30,6 +30,7 @@ impl Blame {
         path: &Path,
         content: &Rope,
         remote_url: Option<String>,
+        provider_registry: Arc<GitHostingProviderRegistry>,
     ) -> Result<Self> {
         let output = run_git_blame(git_binary, working_directory, path, &content)?;
         let mut entries = parse_git_blame(&output)?;
@@ -37,16 +38,22 @@ impl Blame {
 
         let mut permalinks = HashMap::default();
         let mut unique_shas = HashSet::default();
-        let parsed_remote_url = remote_url.as_deref().and_then(parse_git_remote_url);
+        let parsed_remote_url = remote_url
+            .as_deref()
+            .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
         for entry in entries.iter_mut() {
             unique_shas.insert(entry.sha);
-            if let Some(remote) = parsed_remote_url.as_ref() {
+            // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
+            // now do the parsing.
+            if let Some((provider, remote)) = parsed_remote_url.as_ref() {
                 permalinks.entry(entry.sha).or_insert_with(|| {
-                    build_commit_permalink(BuildCommitPermalinkParams {
+                    provider.build_commit_permalink(
                         remote,
-                        sha: entry.sha.to_string().as_str(),
-                    })
+                        BuildCommitPermalinkParams {
+                            sha: entry.sha.to_string().as_str(),
+                        },
+                    )
                 });
             }
         }
@@ -59,9 +66,13 @@ impl Blame {
             entries,
             permalinks,
             messages,
+            remote_url,
         })
     }
 }
+
+const GIT_BLAME_NO_COMMIT_ERROR: &'static str = "fatal: no such ref: HEAD";
+const GIT_BLAME_NO_PATH: &'static str = "fatal: no such path";
 
 fn run_git_blame(
     git_binary: &Path,
@@ -69,7 +80,9 @@ fn run_git_blame(
     path: &Path,
     contents: &Rope,
 ) -> Result<String> {
-    let child = Command::new(git_binary)
+    let mut child = Command::new(git_binary);
+
+    child
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")
@@ -78,6 +91,15 @@ fn run_git_blame(
         .arg(path.as_os_str())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+    }
+
+    let child = child
         .spawn()
         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
 
@@ -97,6 +119,10 @@ fn run_git_blame(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let trimmed = stderr.trim();
+        if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
+            return Ok(String::new());
+        }
         return Err(anyhow!("git blame process failed: {}", stderr));
     }
 
@@ -233,15 +259,21 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
                     .get(&new_entry.sha)
                     .and_then(|slot| entries.get(*slot))
                 {
-                    new_entry.author = existing_entry.author.clone();
-                    new_entry.author_mail = existing_entry.author_mail.clone();
+                    new_entry.author.clone_from(&existing_entry.author);
+                    new_entry
+                        .author_mail
+                        .clone_from(&existing_entry.author_mail);
                     new_entry.author_time = existing_entry.author_time;
-                    new_entry.author_tz = existing_entry.author_tz.clone();
-                    new_entry.committer = existing_entry.committer.clone();
-                    new_entry.committer_mail = existing_entry.committer_mail.clone();
+                    new_entry.author_tz.clone_from(&existing_entry.author_tz);
+                    new_entry.committer.clone_from(&existing_entry.committer);
+                    new_entry
+                        .committer_mail
+                        .clone_from(&existing_entry.committer_mail);
                     new_entry.committer_time = existing_entry.committer_time;
-                    new_entry.committer_tz = existing_entry.committer_tz.clone();
-                    new_entry.summary = existing_entry.summary.clone();
+                    new_entry
+                        .committer_tz
+                        .clone_from(&existing_entry.committer_tz);
+                    new_entry.summary.clone_from(&existing_entry.summary);
                 }
 
                 current_entry.replace(new_entry);
@@ -314,8 +346,10 @@ mod tests {
         path.push("golden");
         path.push(format!("{}.json", golden_filename));
 
-        let have_json =
+        let mut have_json =
             serde_json::to_string_pretty(&entries).expect("could not serialize entries to JSON");
+        // We always want to save with a trailing newline.
+        have_json.push('\n');
 
         let update = std::env::var("UPDATE_GOLDEN")
             .map(|val| val.to_ascii_lowercase() == "true")

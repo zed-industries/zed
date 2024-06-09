@@ -1,0 +1,62 @@
+[package]
+name = "semantic_index"
+description = "Process, chunk, and embed text as vectors for semantic search."
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/semantic_index.rs"
+
+[[example]]
+name = "index"
+path = "examples/index.rs"
+crate-type = ["bin"]
+
+[dependencies]
+anyhow.workspace = true
+client.workspace = true
+clock.workspace = true
+collections.workspace = true
+fs.workspace = true
+futures.workspace = true
+futures-batch.workspace = true
+gpui.workspace = true
+language.workspace = true
+log.workspace = true
+heed.workspace = true
+http.workspace = true
+open_ai.workspace = true
+parking_lot.workspace = true
+project.workspace = true
+settings.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+smol.workspace = true
+theme.workspace = true
+tree-sitter.workspace = true
+ui. workspace = true
+util. workspace = true
+unindent.workspace = true
+workspace.workspace = true
+worktree.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+client = { workspace = true, features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
+futures.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+languages.workspace = true
+project = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+util = { workspace = true, features = ["test-support"] }
+worktree = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }

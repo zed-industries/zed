@@ -29,14 +29,16 @@ pub enum ComponentStory {
     ListHeader,
     ListItem,
     OverflowScroll,
+    Picker,
     Scroll,
     Tab,
     TabBar,
+    Text,
     TitleBar,
     ToggleButton,
-    Text,
+    ToolStrip,
     ViewportUnits,
-    Picker,
+    WithRemSize,
 }
 
 impl ComponentStory {
@@ -67,7 +69,9 @@ impl ComponentStory {
             Self::TabBar => cx.new_view(|_| ui::TabBarStory).into(),
             Self::TitleBar => cx.new_view(|_| ui::TitleBarStory).into(),
             Self::ToggleButton => cx.new_view(|_| ui::ToggleButtonStory).into(),
+            Self::ToolStrip => cx.new_view(|_| ui::ToolStripStory).into(),
             Self::ViewportUnits => cx.new_view(|_| crate::stories::ViewportUnitsStory).into(),
+            Self::WithRemSize => cx.new_view(|_| crate::stories::WithRemSizeStory).into(),
             Self::Picker => PickerStory::new(cx).into(),
         }
     }

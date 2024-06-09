@@ -5,11 +5,13 @@ use crate::{
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
     RELOAD_DEBOUNCE_DURATION,
 };
+use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, TestAppContext};
+use http::{FakeHttpClient, Response};
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
@@ -22,10 +24,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use util::{
-    http::{FakeHttpClient, Response},
-    test::temp_tree,
-};
+use util::test::temp_tree;
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -158,6 +157,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .into_iter()
                         .collect(),
                         language_servers: BTreeMap::default(),
+                        slash_commands: BTreeMap::default(),
                     }),
                     dev: false,
                 },
@@ -181,6 +181,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         languages: Default::default(),
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
+                        slash_commands: BTreeMap::default(),
                     }),
                     dev: false,
                 },
@@ -252,6 +253,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let slash_command_registry = SlashCommandRegistry::new();
     let node_runtime = FakeNodeRuntime::new();
 
     let store = cx.new_model(|cx| {
@@ -264,6 +266,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             node_runtime.clone(),
             language_registry.clone(),
             theme_registry.clone(),
+            slash_command_registry.clone(),
             cx,
         )
     });
@@ -335,6 +338,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 languages: Default::default(),
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
+                slash_commands: BTreeMap::default(),
             }),
             dev: false,
         },
@@ -384,6 +388,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             node_runtime.clone(),
             language_registry.clone(),
             theme_registry.clone(),
+            slash_command_registry,
             cx,
         )
     });
@@ -462,6 +467,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
 
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let slash_command_registry = SlashCommandRegistry::new();
     let node_runtime = FakeNodeRuntime::new();
 
     let mut status_updates = language_registry.language_server_binary_statuses();
@@ -543,6 +549,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
             node_runtime,
             language_registry.clone(),
             theme_registry.clone(),
+            slash_command_registry,
             cx,
         )
     });
@@ -619,6 +626,53 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         ]
     );
 
+    // The extension creates custom labels for completion items.
+    fake_server.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        Ok(Some(lsp::CompletionResponse::Array(vec![
+            lsp::CompletionItem {
+                label: "foo".into(),
+                kind: Some(lsp::CompletionItemKind::FUNCTION),
+                detail: Some("fn() -> Result(Nil, Error)".into()),
+                ..Default::default()
+            },
+            lsp::CompletionItem {
+                label: "bar.baz".into(),
+                kind: Some(lsp::CompletionItemKind::FUNCTION),
+                detail: Some("fn(List(a)) -> a".into()),
+                ..Default::default()
+            },
+            lsp::CompletionItem {
+                label: "Quux".into(),
+                kind: Some(lsp::CompletionItemKind::CONSTRUCTOR),
+                detail: Some("fn(String) -> T".into()),
+                ..Default::default()
+            },
+            lsp::CompletionItem {
+                label: "my_string".into(),
+                kind: Some(lsp::CompletionItemKind::CONSTANT),
+                detail: Some("String".into()),
+                ..Default::default()
+            },
+        ])))
+    });
+
+    let completion_labels = project
+        .update(cx, |project, cx| project.completions(&buffer, 0, cx))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.label.text)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        completion_labels,
+        [
+            "foo: fn() -> Result(Nil, Error)".to_string(),
+            "bar.baz: fn(List(a)) -> a".to_string(),
+            "Quux: fn(String) -> T".to_string(),
+            "my_string: String".to_string(),
+        ]
+    );
+
     // Simulate a new version of the language server being released
     language_server_version.lock().version = "v2.0.0".into();
     language_server_version.lock().binary_contents = "the-new-binary-contents".into();
@@ -669,6 +723,7 @@ fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
+        release_channel::init("0.0.0", cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         Project::init_settings(cx);
         ExtensionSettings::register(cx);

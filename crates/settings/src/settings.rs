@@ -2,13 +2,16 @@ mod keymap_file;
 mod settings_file;
 mod settings_store;
 
+use gpui::AppContext;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str};
 use util::asset_str;
 
 pub use keymap_file::KeymapFile;
 pub use settings_file::*;
-pub use settings_store::{Settings, SettingsJsonSchemaParams, SettingsLocation, SettingsStore};
+pub use settings_store::{
+    Settings, SettingsJsonSchemaParams, SettingsLocation, SettingsSources, SettingsStore,
+};
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]
@@ -16,6 +19,14 @@ pub use settings_store::{Settings, SettingsJsonSchemaParams, SettingsLocation, S
 #[include = "keymaps/*"]
 #[exclude = "*.DS_Store"]
 pub struct SettingsAssets;
+
+pub fn init(cx: &mut AppContext) {
+    let mut settings = SettingsStore::default();
+    settings
+        .set_default_settings(&default_settings(), cx)
+        .unwrap();
+    cx.set_global(settings);
+}
 
 pub fn default_settings() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/default.json")

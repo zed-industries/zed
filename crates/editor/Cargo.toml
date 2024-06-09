@@ -19,6 +19,7 @@ test-support = [
     "gpui/test-support",
     "multi_buffer/test-support",
     "project/test-support",
+    "theme/test-support",
     "util/test-support",
     "workspace/test-support",
     "tree-sitter-rust",
@@ -39,6 +40,7 @@ futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true
+http.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -60,6 +62,7 @@ smallvec.workspace = true
 smol.workspace = true
 snippet.workspace = true
 sum_tree.workspace = true
+task.workspace = true
 text.workspace = true
 time.workspace = true
 time_format.workspace = true
@@ -84,9 +87,11 @@ release_channel.workspace = true
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
 tree-sitter-html.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }

@@ -1,5 +1,11 @@
 [
   {
+    "context": "ProjectPanel || Editor",
+    "bindings": {
+      "ctrl-6": "pane::AlternateFile"
+    }
+  },
+  {
     "context": "Editor && VimControl && !VimWaiting && !menu",
     "bindings": {
       "i": [
@@ -73,8 +79,17 @@
       ],
       "g shift-e": ["vim::PreviousWordEnd", { "ignorePunctuation": true }],
 
-      "n": "search::SelectNextMatch",
-      "shift-n": "search::SelectPrevMatch",
+      "/": "vim::Search",
+      "?": [
+        "vim::Search",
+        {
+          "backwards": true
+        }
+      ],
+      "*": "vim::MoveToNext",
+      "#": "vim::MoveToPrev",
+      "n": "vim::MoveToNextMatch",
+      "shift-n": "vim::MoveToPrevMatch",
       "%": "vim::Matching",
       "f": [
         "vim::PushOperator",
@@ -108,6 +123,9 @@
           }
         }
       ],
+      "m": ["vim::PushOperator", "Mark"],
+      "'": ["vim::PushOperator", { "Jump": { "line": true } }],
+      "`": ["vim::PushOperator", { "Jump": { "line": false } }],
       ";": "vim::RepeatFind",
       ",": "vim::RepeatFindReversed",
       "ctrl-o": "pane::GoBack",
@@ -119,6 +137,7 @@
       "shift-v": "vim::ToggleVisualLine",
       "ctrl-v": "vim::ToggleVisualBlock",
       "ctrl-q": "vim::ToggleVisualBlock",
+      "shift-k": "editor::Hover",
       "shift-r": "vim::ToggleReplace",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "ctrl-f": "vim::PageDown",
@@ -136,9 +155,12 @@
       "g shift-t": "pane::ActivatePrevItem",
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToTypeDefinition",
+      "g cmd-d": "editor::GoToImplementation",
       "g x": "editor::OpenUrl",
-      "g n": "vim::SelectNext",
-      "g shift-n": "vim::SelectPrevious",
+      "g n": "vim::SelectNextMatch",
+      "g shift-n": "vim::SelectPreviousMatch",
+      "g l": "vim::SelectNext",
+      "g shift-l": "vim::SelectPrevious",
       "g >": [
         "editor::SelectNext",
         {
@@ -223,6 +245,11 @@
           "displayLines": true
         }
       ],
+      "g ]": "editor::GoToDiagnostic",
+      "g [": "editor::GoToPrevDiagnostic",
+      "g i": ["workspace::SendKeystrokes", "` ^ i"],
+      "g ,": "vim::ChangeListNewer",
+      "g ;": "vim::ChangeListOlder",
       "shift-h": "vim::WindowTop",
       "shift-m": "vim::WindowMiddle",
       "shift-l": "vim::WindowBottom",
@@ -349,15 +376,6 @@
       ],
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
-      "/": "vim::Search",
-      "?": [
-        "vim::Search",
-        {
-          "backwards": true
-        }
-      ],
-      "*": "vim::MoveToNext",
-      "#": "vim::MoveToPrev",
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
@@ -365,6 +383,19 @@
       "< <": "vim::Outdent",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
+      // tree-sitter related commands
+      "[ x": "editor::SelectLargerSyntaxNode",
+      "] x": "editor::SelectSmallerSyntaxNode",
+      "] d": "editor::GoToDiagnostic",
+      "[ d": "editor::GoToPrevDiagnostic",
+      "] c": "editor::GoToHunk",
+      "[ c": "editor::GoToPrevHunk"
+    }
+  },
+  {
+    "context": "Editor && vim_mode == visual && vim_operator == none && !VimWaiting",
+    "bindings": {
+      // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode"
     }
@@ -383,15 +414,49 @@
     }
   },
   {
+    "context": "Editor && vim_mode == normal && vim_operator == c",
+    "bindings": {
+      "s": [
+        "vim::PushOperator",
+        {
+          "ChangeSurrounds": {}
+        }
+      ]
+    }
+  },
+  {
     "context": "Editor && vim_operator == d",
     "bindings": {
       "d": "vim::CurrentLine"
     }
   },
   {
+    "context": "Editor && vim_mode == normal && vim_operator == d",
+    "bindings": {
+      "s": ["vim::PushOperator", "DeleteSurrounds"]
+    }
+  },
+  {
     "context": "Editor && vim_operator == y",
     "bindings": {
       "y": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_mode == normal && vim_operator == y",
+    "bindings": {
+      "s": [
+        "vim::PushOperator",
+        {
+          "AddSurrounds": {}
+        }
+      ]
+    }
+  },
+  {
+    "context": "Editor && vim_operator == ys",
+    "bindings": {
+      "s": "vim::CurrentLine"
     }
   },
   {
@@ -433,8 +498,8 @@
       "shift-o": "vim::OtherEnd",
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
-      "shift-d": "vim::VisualDelete",
-      "shift-x": "vim::VisualDelete",
+      "shift-d": "vim::VisualDeleteLine",
+      "shift-x": "vim::VisualDeleteLine",
       "y": "vim::VisualYank",
       "shift-y": "vim::VisualYank",
       "p": "vim::Paste",
@@ -503,6 +568,18 @@
     }
   },
   {
+    "context": "Editor && vim_mode == normal",
+    "bindings": {
+      "g c c": "editor::ToggleComments"
+    }
+  },
+  {
+    "context": "Editor && vim_mode == visual",
+    "bindings": {
+      "g c": "editor::ToggleComments"
+    }
+  },
+  {
     "context": "Editor && vim_mode == insert",
     "bindings": {
       "escape": "vim::NormalBefore",
@@ -547,6 +624,12 @@
     }
   },
   {
+    "context": "EmptyPane || SharedScreen",
+    "bindings": {
+      ":": "command_palette::Toggle"
+    }
+  },
+  {
     // netrw compatibility
     "context": "ProjectPanel && not_editing",
     "bindings": {
@@ -554,18 +637,22 @@
       "%": "project_panel::NewFile",
       "/": "project_panel::NewSearchInDirectory",
       "d": "project_panel::NewDirectory",
-      "enter": "project_panel::Open",
+      "enter": "project_panel::OpenPermanent",
       "escape": "project_panel::ToggleFocus",
       "h": "project_panel::CollapseSelectedEntry",
       "j": "menu::SelectNext",
       "k": "menu::SelectPrev",
       "l": "project_panel::ExpandSelectedEntry",
-      "o": "project_panel::Open",
+      "o": "project_panel::OpenPermanent",
       "shift-d": "project_panel::Delete",
       "shift-r": "project_panel::Rename",
-      "t": "project_panel::Open",
-      "v": "project_panel::Open",
-      "x": "project_panel::RevealInFinder"
+      "t": "project_panel::OpenPermanent",
+      "v": "project_panel::OpenPermanent",
+      "p": "project_panel::Open",
+      "x": "project_panel::RevealInFinder",
+      "shift-g": "menu::SelectLast",
+      "g g": "menu::SelectFirst",
+      "-": "project_panel::SelectParent"
     }
   }
 ]

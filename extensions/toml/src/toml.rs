@@ -1,4 +1,5 @@
 use std::fs;
+use zed::LanguageServerId;
 use zed_extension_api::{self as zed, Result};
 
 struct TomlExtension {
@@ -6,7 +7,10 @@ struct TomlExtension {
 }
 
 impl TomlExtension {
-    fn language_server_binary_path(&mut self, config: zed::LanguageServerConfig) -> Result<String> {
+    fn language_server_binary_path(
+        &mut self,
+        language_server_id: &LanguageServerId,
+    ) -> Result<String> {
         if let Some(path) = &self.cached_binary_path {
             if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
                 return Ok(path.clone());
@@ -14,7 +18,7 @@ impl TomlExtension {
         }
 
         zed::set_language_server_installation_status(
-            &config.name,
+            &language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
         let release = zed::latest_github_release(
@@ -27,7 +31,7 @@ impl TomlExtension {
 
         let (platform, arch) = zed::current_platform();
         let asset_name = format!(
-            "taplo-full-{os}-{arch}.{extension}",
+            "taplo-full-{os}-{arch}.gz",
             arch = match arch {
                 zed::Architecture::Aarch64 => "aarch64",
                 zed::Architecture::X86 => "x86",
@@ -38,10 +42,6 @@ impl TomlExtension {
                 zed::Os::Linux => "linux",
                 zed::Os::Windows => "windows",
             },
-            extension = match platform {
-                zed::Os::Mac | zed::Os::Linux => "gz",
-                zed::Os::Windows => "zip",
-            }
         );
 
         let asset = release
@@ -54,23 +54,28 @@ impl TomlExtension {
         fs::create_dir_all(&version_dir)
             .map_err(|err| format!("failed to create directory '{version_dir}': {err}"))?;
 
-        let binary_path = format!("{version_dir}/taplo");
+        let binary_path = format!(
+            "{version_dir}/{bin_name}",
+            bin_name = match platform {
+                zed::Os::Windows => "taplo.exe",
+                zed::Os::Mac | zed::Os::Linux => "taplo",
+            }
+        );
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
-                &config.name,
+                &language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
             zed::download_file(
                 &asset.download_url,
                 &binary_path,
-                match platform {
-                    zed::Os::Mac | zed::Os::Linux => zed::DownloadedFileType::Gzip,
-                    zed::Os::Windows => zed::DownloadedFileType::Zip,
-                },
+                zed::DownloadedFileType::Gzip,
             )
             .map_err(|err| format!("failed to download file: {err}"))?;
+
+            zed::make_file_executable(&binary_path)?;
 
             let entries = fs::read_dir(".")
                 .map_err(|err| format!("failed to list working directory {err}"))?;
@@ -96,11 +101,11 @@ impl zed::Extension for TomlExtension {
 
     fn language_server_command(
         &mut self,
-        config: zed::LanguageServerConfig,
+        language_server_id: &LanguageServerId,
         _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         Ok(zed::Command {
-            command: self.language_server_binary_path(config)?,
+            command: self.language_server_binary_path(language_server_id)?,
             args: vec!["lsp".to_string(), "stdio".to_string()],
             env: Default::default(),
         })

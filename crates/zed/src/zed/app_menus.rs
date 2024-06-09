@@ -67,8 +67,8 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::os_action("Copy", editor::actions::Copy, OsAction::Copy),
                 MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
                 MenuItem::separator(),
-                MenuItem::action("Find", search::buffer_search::Deploy { focus: true }),
-                MenuItem::action("Find In Project", workspace::NewSearch),
+                MenuItem::action("Find", search::buffer_search::Deploy::find()),
+                MenuItem::action("Find In Project", workspace::DeploySearch::find()),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Toggle Line Comment",
@@ -138,7 +138,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::separator(),
                 MenuItem::action("Command Palette...", command_palette::Toggle),
                 MenuItem::separator(),
-                MenuItem::action("Go to File...", file_finder::Toggle),
+                MenuItem::action("Go to File...", file_finder::Toggle::default()),
                 // MenuItem::action("Go to Symbol in Project", project_symbols::Toggle),
                 MenuItem::action("Go to Symbol in Editor...", outline::Toggle),
                 MenuItem::action("Go to Line/Column...", go_to_line::Toggle),
@@ -177,6 +177,12 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                     "Zed Twitter",
                     super::OpenBrowser {
                         url: "https://twitter.com/zeddotdev".into(),
+                    },
+                ),
+                MenuItem::action(
+                    "Join the Team",
+                    super::OpenBrowser {
+                        url: "https://zed.dev/jobs".into(),
                     },
                 ),
             ],

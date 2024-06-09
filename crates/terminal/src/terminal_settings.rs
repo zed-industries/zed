@@ -1,5 +1,5 @@
 use collections::HashMap;
-use gpui::{px, AbsoluteLength, AppContext, FontFeatures, Pixels};
+use gpui::{px, AbsoluteLength, AppContext, FontFeatures, FontWeight, Pixels};
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, RootSchema, Schema, SchemaObject},
@@ -7,7 +7,7 @@ use schemars::{
 };
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::SettingsJsonSchemaParams;
+use settings::{SettingsJsonSchemaParams, SettingsSources};
 use std::path::PathBuf;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -31,11 +31,13 @@ pub struct TerminalSettings {
     pub font_family: Option<String>,
     pub line_height: TerminalLineHeight,
     pub font_features: Option<FontFeatures>,
+    pub font_weight: Option<FontWeight>,
     pub env: HashMap<String, String>,
     pub blinking: TerminalBlink,
     pub alternate_scroll: AlternateScroll,
     pub option_as_meta: bool,
     pub copy_on_select: bool,
+    pub button: bool,
     pub dock: TerminalDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
@@ -113,6 +115,8 @@ pub struct TerminalSettingsContent {
     /// Default: comfortable
     pub line_height: Option<TerminalLineHeight>,
     pub font_features: Option<FontFeatures>,
+    /// Sets the terminal's font weight in CSS weight units 0-900.
+    pub font_weight: Option<f32>,
     /// Any key-value pairs added to this list will be added to the terminal's
     /// environment. Use `:` to separate multiple values.
     ///
@@ -138,6 +142,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: false
     pub copy_on_select: Option<bool>,
+    /// Whether to show the terminal button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
     pub dock: Option<TerminalDockPosition>,
     /// Default width when the terminal is docked to the left or right.
     ///
@@ -171,12 +179,12 @@ impl settings::Settings for TerminalSettings {
     type FileContent = TerminalSettingsContent;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
+
     fn json_schema(
         generator: &mut SchemaGenerator,
         params: &SettingsJsonSchemaParams,
@@ -236,7 +244,7 @@ impl TerminalLineHeight {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBlink {
     /// Never blink the cursor, ignoring the terminal mode.

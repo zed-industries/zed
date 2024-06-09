@@ -3,6 +3,12 @@
 (self) @variable.special
 (field_identifier) @property
 
+(trait_item name: (type_identifier) @type.interface)
+(impl_item trait: (type_identifier) @type.interface)
+(abstract_type trait: (type_identifier) @type.interface)
+(dynamic_type trait: (type_identifier) @type.interface)
+(trait_bounds (type_identifier) @type.interface)
+
 (call_expression
   function: [
     (identifier) @function
@@ -59,6 +65,16 @@
   ">" @punctuation.bracket)
 
 [
+  ";"
+  ","
+  "::"
+] @punctuation.delimiter
+
+[
+  "#"
+] @punctuation.special
+
+[
   "as"
   "async"
   "await"
@@ -70,11 +86,11 @@
   "else"
   "enum"
   "extern"
-  "for"
   "fn"
+  "for"
   "if"
-  "in"
   "impl"
+  "in"
   "let"
   "loop"
   "macro_rules!"
@@ -88,11 +104,13 @@
   "struct"
   "trait"
   "type"
+  "union"
+  "unsafe"
   "use"
   "where"
   "while"
-  "union"
-  "unsafe"
+  "yield"
+  (crate)
   (mutable_specifier)
   (super)
 ] @keyword
@@ -114,3 +132,50 @@
   (line_comment)
   (block_comment)
 ] @comment
+
+[
+  "!"
+  "!="
+  "%"
+  "%="
+  "&"
+  "&="
+  "&&"
+  "*"
+  "*="
+  "*"
+  "+"
+  "+="
+  ","
+  "-"
+  "-="
+  "->"
+  "."
+  ".."
+  "..="
+  "..."
+  "/"
+  "/="
+  ":"
+  ";"
+  "<<"
+  "<<="
+  "<"
+  "<="
+  "="
+  "=="
+  "=>"
+  ">"
+  ">="
+  ">>"
+  ">>="
+  "@"
+  "^"
+  "^="
+  "|"
+  "|="
+  "||"
+  "?"
+] @operator
+
+(lifetime) @lifetime

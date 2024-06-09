@@ -5,8 +5,11 @@ use gpui::*;
 struct Assets {}
 
 impl AssetSource for Assets {
-    fn load(&self, path: &str) -> Result<std::borrow::Cow<'static, [u8]>> {
-        std::fs::read(path).map(Into::into).map_err(Into::into)
+    fn load(&self, path: &str) -> Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        std::fs::read(path)
+            .map(Into::into)
+            .map_err(Into::into)
+            .map(|result| Some(result))
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
@@ -63,7 +66,11 @@ fn main() {
         .with_assets(Assets {})
         .run(|cx: &mut AppContext| {
             let options = WindowOptions {
-                bounds: Some(Bounds::centered(None, size(px(300.), px(300.)), cx)),
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(300.), px(300.)),
+                    cx,
+                ))),
                 ..Default::default()
             };
             cx.open_window(options, |cx| {

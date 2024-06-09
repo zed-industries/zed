@@ -1,0 +1,15 @@
+id = "elm"
+name = "Elm"
+description = "Elm support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Quinn Wilton <quinn@quinnwilton.com>", "Andrey Kuzmin <hi@unsoundscapes.com>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.elm-language-server]
+name = "elm-language-server"
+language = "Elm"
+
+[grammars.elm]
+repository = "https://github.com/elm-tooling/tree-sitter-elm"
+commit = "09dbf221d7491dc8d8839616b27c21b9c025c457"

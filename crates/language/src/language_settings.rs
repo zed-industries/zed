@@ -1,17 +1,19 @@
 //! Provides `language`-related settings.
 
-use crate::{File, Language};
+use crate::{File, Language, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use globset::GlobMatcher;
+use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
+use itertools::{Either, Itertools};
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject},
     JsonSchema,
 };
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation};
+use settings::{Settings, SettingsLocation, SettingsSources};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
+use util::serde::default_true;
 
 impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
     fn into(self) -> SettingsLocation<'a> {
@@ -49,11 +51,11 @@ pub fn all_language_settings<'a>(
 /// The settings for all languages.
 #[derive(Debug, Clone)]
 pub struct AllLanguageSettings {
-    /// The settings for GitHub Copilot.
-    pub copilot: CopilotSettings,
+    /// The inline completion settings.
+    pub inline_completions: InlineCompletionSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
-    pub(crate) file_types: HashMap<Arc<str>, Vec<String>>,
+    pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
 }
 
 /// The settings for a particular language.
@@ -76,6 +78,8 @@ pub struct LanguageSettings {
     pub show_wrap_guides: bool,
     /// Character counts at which to show wrap guides in the editor.
     pub wrap_guides: Vec<usize>,
+    /// Indent guide related settings.
+    pub indent_guides: IndentGuideSettings,
     /// Whether or not to perform a buffer format before saving.
     pub format_on_save: FormatOnSave,
     /// Whether or not to remove any trailing whitespace from lines of a buffer
@@ -87,14 +91,19 @@ pub struct LanguageSettings {
     /// How to perform a buffer format.
     pub formatter: Formatter,
     /// Zed's Prettier integration settings.
-    /// If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
-    /// the project has no other Prettier installed.
-    pub prettier: HashMap<String, serde_json::Value>,
+    pub prettier: PrettierSettings,
     /// Whether to use language servers to provide code intelligence.
     pub enable_language_server: bool,
-    /// Controls whether Copilot provides suggestion immediately (true)
-    /// or waits for a `copilot::Toggle` (false).
-    pub show_copilot_suggestions: bool,
+    /// The list of language servers to use (or disable) for this language.
+    ///
+    /// This array should consist of language server IDs, as well as the following
+    /// special tokens:
+    /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
+    /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
+    pub language_servers: Vec<Arc<str>>,
+    /// Controls whether inline completions are shown immediately (true)
+    /// or manually by triggering `editor::ShowInlineCompletion` (false).
+    pub show_inline_completions: bool,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
@@ -109,24 +118,82 @@ pub struct LanguageSettings {
     pub code_actions_on_format: HashMap<String, bool>,
 }
 
-/// The settings for [GitHub Copilot](https://github.com/features/copilot).
+impl LanguageSettings {
+    /// A token representing the rest of the available language servers.
+    const REST_OF_LANGUAGE_SERVERS: &'static str = "...";
+
+    /// Returns the customized list of language servers from the list of
+    /// available language servers.
+    pub fn customized_language_servers(
+        &self,
+        available_language_servers: &[LanguageServerName],
+    ) -> Vec<LanguageServerName> {
+        Self::resolve_language_servers(&self.language_servers, available_language_servers)
+    }
+
+    pub(crate) fn resolve_language_servers(
+        configured_language_servers: &[Arc<str>],
+        available_language_servers: &[LanguageServerName],
+    ) -> Vec<LanguageServerName> {
+        let (disabled_language_servers, enabled_language_servers): (Vec<Arc<str>>, Vec<Arc<str>>) =
+            configured_language_servers.iter().partition_map(
+                |language_server| match language_server.strip_prefix('!') {
+                    Some(disabled) => Either::Left(disabled.into()),
+                    None => Either::Right(language_server.clone()),
+                },
+            );
+
+        let rest = available_language_servers
+            .into_iter()
+            .filter(|&available_language_server| {
+                !disabled_language_servers.contains(&&available_language_server.0)
+                    && !enabled_language_servers.contains(&&available_language_server.0)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        enabled_language_servers
+            .into_iter()
+            .flat_map(|language_server| {
+                if language_server.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
+                    rest.clone()
+                } else {
+                    vec![LanguageServerName(language_server.clone())]
+                }
+            })
+            .collect::<Vec<_>>()
+    }
+}
+
+/// The provider that supplies inline completions.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineCompletionProvider {
+    None,
+    #[default]
+    Copilot,
+    Supermaven,
+}
+
+/// The settings for inline completions, such as [GitHub Copilot](https://github.com/features/copilot)
+/// or [Supermaven](https://supermaven.com).
 #[derive(Clone, Debug, Default)]
-pub struct CopilotSettings {
-    /// Whether Copilot is enabled.
-    pub feature_enabled: bool,
-    /// A list of globs representing files that Copilot should be disabled for.
+pub struct InlineCompletionSettings {
+    /// The provider that supplies inline completions.
+    pub provider: InlineCompletionProvider,
+    /// A list of globs representing files that inline completions should be disabled for.
     pub disabled_globs: Vec<GlobMatcher>,
 }
 
 /// The settings for all languages.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
     pub features: Option<FeaturesContent>,
-    /// The settings for GitHub Copilot.
-    #[serde(default)]
-    pub copilot: Option<CopilotSettingsContent>,
+    /// The inline completion settings.
+    #[serde(default, alias = "copilot")]
+    pub inline_completions: Option<InlineCompletionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
@@ -140,7 +207,7 @@ pub struct AllLanguageSettingsContent {
 }
 
 /// The settings for a particular language.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
@@ -177,6 +244,9 @@ pub struct LanguageSettingsContent {
     /// Default: []
     #[serde(default)]
     pub wrap_guides: Option<Vec<usize>>,
+    /// Indent guide related settings.
+    #[serde(default)]
+    pub indent_guides: Option<IndentGuideSettings>,
     /// Whether or not to perform a buffer format before saving.
     ///
     /// Default: on
@@ -200,23 +270,33 @@ pub struct LanguageSettingsContent {
     #[serde(default)]
     pub formatter: Option<Formatter>,
     /// Zed's Prettier integration settings.
-    /// If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
-    /// the project has no other Prettier installed.
+    /// Allows to enable/disable formatting with Prettier
+    /// and configure default Prettier, used when no project-level Prettier installation is found.
     ///
-    /// Default: {}
+    /// Default: off
     #[serde(default)]
-    pub prettier: Option<HashMap<String, serde_json::Value>>,
+    pub prettier: Option<PrettierSettings>,
     /// Whether to use language servers to provide code intelligence.
     ///
     /// Default: true
     #[serde(default)]
     pub enable_language_server: Option<bool>,
-    /// Controls whether Copilot provides suggestion immediately (true)
-    /// or waits for a `copilot::Toggle` (false).
+    /// The list of language servers to use (or disable) for this language.
+    ///
+    /// This array should consist of language server IDs, as well as the following
+    /// special tokens:
+    /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
+    /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
+    ///
+    /// Default: ["..."]
+    #[serde(default)]
+    pub language_servers: Option<Vec<Arc<str>>>,
+    /// Controls whether inline completions are shown immediately (true)
+    /// or manually by triggering `editor::ShowInlineCompletion` (false).
     ///
     /// Default: true
-    #[serde(default)]
-    pub show_copilot_suggestions: Option<bool>,
+    #[serde(default, alias = "show_copilot_suggestions")]
+    pub show_inline_completions: Option<bool>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
@@ -241,26 +321,29 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: false
     pub always_treat_brackets_as_autoclosed: Option<bool>,
-    /// Which code actions to run on save
+    /// Which code actions to run on save after the formatter.
+    /// These are not run if formatting is off.
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
     pub code_actions_on_format: Option<HashMap<String, bool>>,
 }
 
-/// The contents of the GitHub Copilot settings.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct CopilotSettingsContent {
-    /// A list of globs representing files that Copilot should be disabled for.
+/// The contents of the inline completion settings.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct InlineCompletionSettingsContent {
+    /// A list of globs representing files that inline completions should be disabled for.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
 }
 
 /// The settings for enabling/disabling features.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
     /// Whether the GitHub Copilot feature is enabled.
     pub copilot: Option<bool>,
+    /// Determines which inline completion provider to use.
+    pub inline_completion_provider: Option<InlineCompletionProvider>,
 }
 
 /// Controls the soft-wrapping behavior in the editor.
@@ -269,6 +352,8 @@ pub struct FeaturesContent {
 pub enum SoftWrap {
     /// Do not soft wrap.
     None,
+    /// Prefer a single line generally, unless an overly long line is encountered.
+    PreferLine,
     /// Soft wrap lines that overflow the editor
     EditorWidth,
     /// Soft wrap lines at the preferred line length
@@ -292,6 +377,8 @@ pub enum FormatOnSave {
         /// The arguments to pass to the program.
         arguments: Arc<[String]>,
     },
+    /// Files should be formatted using code actions executed by language servers.
+    CodeActions(HashMap<String, bool>),
 }
 
 /// Controls how whitespace should be displayedin the editor.
@@ -325,6 +412,61 @@ pub enum Formatter {
         /// The arguments to pass to the program.
         arguments: Arc<[String]>,
     },
+    /// Files should be formatted using code actions executed by language servers.
+    CodeActions(HashMap<String, bool>),
+}
+
+/// The settings for indent guides.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct IndentGuideSettings {
+    /// Whether to display indent guides in the editor.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// The width of the indent guides in pixels, between 1 and 10.
+    ///
+    /// Default: 1
+    #[serde(default = "line_width")]
+    pub line_width: u32,
+    /// Determines how indent guides are colored.
+    ///
+    /// Default: Fixed
+    #[serde(default)]
+    pub coloring: IndentGuideColoring,
+    /// Determines how indent guide backgrounds are colored.
+    ///
+    /// Default: Disabled
+    #[serde(default)]
+    pub background_coloring: IndentGuideBackgroundColoring,
+}
+
+fn line_width() -> u32 {
+    1
+}
+
+/// Determines how indent guides are colored.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentGuideColoring {
+    /// Do not render any lines for indent guides.
+    Disabled,
+    /// Use the same color for all indentation levels.
+    #[default]
+    Fixed,
+    /// Use a different color for each indentation level.
+    IndentAware,
+}
+
+/// Determines how indent guide backgrounds are colored.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentGuideBackgroundColoring {
+    /// Do not render any background for indent guides.
+    #[default]
+    Disabled,
+    /// Use a different color for each indentation level.
+    IndentAware,
 }
 
 /// The settings for inlay hints.
@@ -366,10 +508,6 @@ pub struct InlayHintSettings {
     pub scroll_debounce_ms: u64,
 }
 
-fn default_true() -> bool {
-    true
-}
-
 fn edit_debounce_ms() -> u64 {
     700
 }
@@ -406,29 +544,29 @@ impl AllLanguageSettings {
         &self.defaults
     }
 
-    /// Returns whether GitHub Copilot is enabled for the given path.
-    pub fn copilot_enabled_for_path(&self, path: &Path) -> bool {
+    /// Returns whether inline completions are enabled for the given path.
+    pub fn inline_completions_enabled_for_path(&self, path: &Path) -> bool {
         !self
-            .copilot
+            .inline_completions
             .disabled_globs
             .iter()
             .any(|glob| glob.is_match(path))
     }
 
-    /// Returns whether GitHub Copilot is enabled for the given language and path.
-    pub fn copilot_enabled(&self, language: Option<&Arc<Language>>, path: Option<&Path>) -> bool {
-        if !self.copilot.feature_enabled {
-            return false;
-        }
-
+    /// Returns whether inline completions are enabled for the given language and path.
+    pub fn inline_completions_enabled(
+        &self,
+        language: Option<&Arc<Language>>,
+        path: Option<&Path>,
+    ) -> bool {
         if let Some(path) = path {
-            if !self.copilot_enabled_for_path(path) {
+            if !self.inline_completions_enabled_for_path(path) {
                 return false;
             }
         }
 
         self.language(language.map(|l| l.name()).as_deref())
-            .show_copilot_suggestions
+            .show_inline_completions
     }
 }
 
@@ -468,11 +606,9 @@ impl settings::Settings for AllLanguageSettings {
 
     type FileContent = AllLanguageSettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_settings: &[&Self::FileContent],
-        _: &mut AppContext,
-    ) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        let default_value = sources.default;
+
         // A default is provided for all settings.
         let mut defaults: LanguageSettings =
             serde_json::from_value(serde_json::to_value(&default_value.defaults)?)?;
@@ -484,27 +620,35 @@ impl settings::Settings for AllLanguageSettings {
             languages.insert(language_name.clone(), language_settings);
         }
 
-        let mut copilot_enabled = default_value
+        let mut copilot_enabled = default_value.features.as_ref().and_then(|f| f.copilot);
+        let mut inline_completion_provider = default_value
             .features
             .as_ref()
-            .and_then(|f| f.copilot)
-            .ok_or_else(Self::missing_default)?;
-        let mut copilot_globs = default_value
-            .copilot
+            .and_then(|f| f.inline_completion_provider);
+        let mut completion_globs = default_value
+            .inline_completions
             .as_ref()
             .and_then(|c| c.disabled_globs.as_ref())
             .ok_or_else(Self::missing_default)?;
 
-        for user_settings in user_settings {
+        let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
+        for user_settings in sources.customizations() {
             if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
-                copilot_enabled = copilot;
+                copilot_enabled = Some(copilot);
+            }
+            if let Some(provider) = user_settings
+                .features
+                .as_ref()
+                .and_then(|f| f.inline_completion_provider)
+            {
+                inline_completion_provider = Some(provider);
             }
             if let Some(globs) = user_settings
-                .copilot
+                .inline_completions
                 .as_ref()
                 .and_then(|f| f.disabled_globs.as_ref())
             {
-                copilot_globs = globs;
+                completion_globs = globs;
             }
 
             // A user's global settings override the default global settings and
@@ -523,22 +667,28 @@ impl settings::Settings for AllLanguageSettings {
                     user_language_settings,
                 );
             }
-        }
 
-        let mut file_types: HashMap<Arc<str>, Vec<String>> = HashMap::default();
-        for user_file_types in user_settings.iter().map(|s| &s.file_types) {
-            for (language, suffixes) in user_file_types {
-                file_types
-                    .entry(language.clone())
-                    .or_default()
-                    .extend_from_slice(suffixes);
+            for (language, suffixes) in &user_settings.file_types {
+                let mut builder = GlobSetBuilder::new();
+
+                for suffix in suffixes {
+                    builder.add(Glob::new(suffix)?);
+                }
+
+                file_types.insert(language.clone(), builder.build()?);
             }
         }
 
         Ok(Self {
-            copilot: CopilotSettings {
-                feature_enabled: copilot_enabled,
-                disabled_globs: copilot_globs
+            inline_completions: InlineCompletionSettings {
+                provider: if let Some(provider) = inline_completion_provider {
+                    provider
+                } else if copilot_enabled.unwrap_or(true) {
+                    InlineCompletionProvider::Copilot
+                } else {
+                    InlineCompletionProvider::None
+                },
+                disabled_globs: completion_globs
                     .iter()
                     .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
@@ -607,6 +757,12 @@ impl settings::Settings for AllLanguageSettings {
 }
 
 fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent) {
+    fn merge<T>(target: &mut T, value: Option<T>) {
+        if let Some(value) = value {
+            *target = value;
+        }
+    }
+
     merge(&mut settings.tab_size, src.tab_size);
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
@@ -617,6 +773,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     );
     merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
     merge(&mut settings.wrap_guides, src.wrap_guides.clone());
+    merge(&mut settings.indent_guides, src.indent_guides);
     merge(
         &mut settings.code_actions_on_format,
         src.code_actions_on_format.clone(),
@@ -641,9 +798,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         &mut settings.enable_language_server,
         src.enable_language_server,
     );
+    merge(&mut settings.language_servers, src.language_servers.clone());
     merge(
-        &mut settings.show_copilot_suggestions,
-        src.show_copilot_suggestions,
+        &mut settings.show_inline_completions,
+        src.show_inline_completions,
     );
     merge(&mut settings.show_whitespaces, src.show_whitespaces);
     merge(
@@ -651,9 +809,113 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.extend_comment_on_newline,
     );
     merge(&mut settings.inlay_hints, src.inlay_hints);
-    fn merge<T>(target: &mut T, value: Option<T>) {
-        if let Some(value) = value {
-            *target = value;
+}
+
+/// Allows to enable/disable formatting with Prettier
+/// and configure default Prettier, used when no project-level Prettier installation is found.
+/// Prettier formatting is disabled by default.
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrettierSettings {
+    /// Enables or disables formatting with Prettier for a given language.
+    #[serde(default)]
+    pub allowed: bool,
+
+    /// Forces Prettier integration to use a specific parser name when formatting files with the language.
+    #[serde(default)]
+    pub parser: Option<String>,
+
+    /// Forces Prettier integration to use specific plugins when formatting files with the language.
+    /// The default Prettier will be installed with these plugins.
+    #[serde(default)]
+    pub plugins: HashSet<String>,
+
+    /// Default Prettier options, in the format as in package.json section for Prettier.
+    /// If project installs Prettier via its package.json, these options will be ignored.
+    #[serde(flatten)]
+    pub options: HashMap<String, serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    pub fn test_resolve_language_servers() {
+        fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
+            names
+                .into_iter()
+                .copied()
+                .map(|name| LanguageServerName(name.into()))
+                .collect::<Vec<_>>()
         }
+
+        let available_language_servers = language_server_names(&[
+            "typescript-language-server",
+            "biome",
+            "deno",
+            "eslint",
+            "tailwind",
+        ]);
+
+        // A value of just `["..."]` is the same as taking all of the available language servers.
+        assert_eq!(
+            LanguageSettings::resolve_language_servers(
+                &[LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()],
+                &available_language_servers,
+            ),
+            available_language_servers
+        );
+
+        // Referencing one of the available language servers will change its order.
+        assert_eq!(
+            LanguageSettings::resolve_language_servers(
+                &[
+                    "biome".into(),
+                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into(),
+                    "deno".into()
+                ],
+                &available_language_servers
+            ),
+            language_server_names(&[
+                "biome",
+                "typescript-language-server",
+                "eslint",
+                "tailwind",
+                "deno",
+            ])
+        );
+
+        // Negating an available language server removes it from the list.
+        assert_eq!(
+            LanguageSettings::resolve_language_servers(
+                &[
+                    "deno".into(),
+                    "!typescript-language-server".into(),
+                    "!biome".into(),
+                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()
+                ],
+                &available_language_servers
+            ),
+            language_server_names(&["deno", "eslint", "tailwind"])
+        );
+
+        // Adding a language server not in the list of available language servers adds it to the list.
+        assert_eq!(
+            LanguageSettings::resolve_language_servers(
+                &[
+                    "my-cool-language-server".into(),
+                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()
+                ],
+                &available_language_servers
+            ),
+            language_server_names(&[
+                "my-cool-language-server",
+                "typescript-language-server",
+                "biome",
+                "deno",
+                "eslint",
+                "tailwind",
+            ])
+        );
     }
 }

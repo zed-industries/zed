@@ -307,7 +307,6 @@ impl ScrollDelta {
 }
 
 /// A mouse exit event from the platform, generated when the mouse leaves the window.
-/// The position generated should be just outside of the window's bounds.
 #[derive(Clone, Debug, Default)]
 pub struct MouseExitEvent {
     /// The position of the mouse relative to the window.
@@ -441,8 +440,8 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, div, Element, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
-        Keystroke, ParentElement, Render, TestAppContext, VisualContext,
+        self as gpui, div, FocusHandle, InteractiveElement, IntoElement, KeyBinding, Keystroke,
+        ParentElement, Render, TestAppContext, VisualContext,
     };
 
     struct TestView {
@@ -454,7 +453,7 @@ mod test {
     actions!(test, [TestAction]);
 
     impl Render for TestView {
-        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
+        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
             div().id("testview").child(
                 div()
                     .key_context("parent")

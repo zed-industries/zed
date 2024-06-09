@@ -1,6 +1,6 @@
 use crate::{size, DevicePixels, Result, SharedString, Size};
-use anyhow::anyhow;
-use image::RgbaImage;
+
+use image::{Bgra, ImageBuffer};
 use std::{
     borrow::Cow,
     fmt,
@@ -11,18 +11,15 @@ use std::{
 /// A source of assets for this app to use.
 pub trait AssetSource: 'static + Send + Sync {
     /// Load the given asset from the source path.
-    fn load(&self, path: &str) -> Result<Cow<'static, [u8]>>;
+    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>>;
 
     /// List the assets at the given path.
     fn list(&self, path: &str) -> Result<Vec<SharedString>>;
 }
 
 impl AssetSource for () {
-    fn load(&self, path: &str) -> Result<Cow<'static, [u8]>> {
-        Err(anyhow!(
-            "get called on empty asset provider with \"{}\"",
-            path
-        ))
+    fn load(&self, _path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        Ok(None)
     }
 
     fn list(&self, _path: &str) -> Result<Vec<SharedString>> {
@@ -43,12 +40,12 @@ pub(crate) struct RenderImageParams {
 pub struct ImageData {
     /// The ID associated with this image
     pub id: ImageId,
-    data: RgbaImage,
+    data: ImageBuffer<Bgra<u8>, Vec<u8>>,
 }
 
 impl ImageData {
     /// Create a new image from the given data.
-    pub fn new(data: RgbaImage) -> Self {
+    pub fn new(data: ImageBuffer<Bgra<u8>, Vec<u8>>) -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
         Self {

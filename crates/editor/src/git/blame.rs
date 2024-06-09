@@ -1,11 +1,15 @@
+use std::{sync::Arc, time::Duration};
+
 use anyhow::Result;
 use collections::HashMap;
 use git::{
     blame::{Blame, BlameEntry},
-    Oid,
+    parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
-use language::{Bias, Buffer, BufferSnapshot, Edit};
+use http::HttpClient;
+use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
+use multi_buffer::MultiBufferRow;
 use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
@@ -44,23 +48,68 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
     }
 }
 
+#[derive(Clone)]
+pub struct GitRemote {
+    pub host: Arc<dyn GitHostingProvider + Send + Sync + 'static>,
+    pub owner: String,
+    pub repo: String,
+}
+
+impl std::fmt::Debug for GitRemote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitRemote")
+            .field("host", &self.host.name())
+            .field("owner", &self.owner)
+            .field("repo", &self.repo)
+            .finish()
+    }
+}
+
+impl GitRemote {
+    pub fn host_supports_avatars(&self) -> bool {
+        self.host.supports_avatars()
+    }
+
+    pub async fn avatar_url(&self, commit: Oid, client: Arc<dyn HttpClient>) -> Option<Url> {
+        self.host
+            .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
+            .await
+            .ok()
+            .flatten()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CommitDetails {
+    pub message: String,
+    pub parsed_message: ParsedMarkdown,
+    pub permalink: Option<Url>,
+    pub pull_request: Option<PullRequest>,
+    pub remote: Option<GitRemote>,
+}
+
 pub struct GitBlame {
     project: Model<Project>,
     buffer: Model<Buffer>,
     entries: SumTree<GitBlameEntry>,
-    permalinks: HashMap<Oid, Url>,
-    messages: HashMap<Oid, String>,
+    commit_details: HashMap<Oid, CommitDetails>,
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
+    focused: bool,
     generated: bool,
-    _refresh_subscription: Subscription,
+    changed_while_blurred: bool,
+    user_triggered: bool,
+    regenerate_on_edit_task: Task<Result<()>>,
+    _regenerate_subscriptions: Vec<Subscription>,
 }
 
 impl GitBlame {
     pub fn new(
         buffer: Model<Buffer>,
         project: Model<Project>,
+        user_triggered: bool,
+        focused: bool,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let entries = SumTree::from_item(
@@ -71,7 +120,19 @@ impl GitBlame {
             &(),
         );
 
-        let refresh_subscription = cx.subscribe(&project, {
+        let buffer_subscriptions = cx.subscribe(&buffer, |this, buffer, event, cx| match event {
+            language::Event::DirtyChanged => {
+                if !buffer.read(cx).is_dirty() {
+                    this.generate(cx);
+                }
+            }
+            language::Event::Edited => {
+                this.regenerate_on_edit(cx);
+            }
+            _ => {}
+        });
+
+        let project_subscription = cx.subscribe(&project, {
             let buffer = buffer.clone();
 
             move |this, _, event, cx| match event {
@@ -102,11 +163,14 @@ impl GitBlame {
             buffer_snapshot,
             entries,
             buffer_edits,
-            permalinks: HashMap::default(),
-            messages: HashMap::default(),
+            user_triggered,
+            focused,
+            changed_while_blurred: false,
+            commit_details: HashMap::default(),
             task: Task::ready(Ok(())),
             generated: false,
-            _refresh_subscription: refresh_subscription,
+            regenerate_on_edit_task: Task::ready(Ok(())),
+            _regenerate_subscriptions: vec![buffer_subscriptions, project_subscription],
         };
         this.generate(cx);
         this
@@ -116,17 +180,13 @@ impl GitBlame {
         self.generated
     }
 
-    pub fn permalink_for_entry(&self, entry: &BlameEntry) -> Option<Url> {
-        self.permalinks.get(&entry.sha).cloned()
-    }
-
-    pub fn message_for_entry(&self, entry: &BlameEntry) -> Option<String> {
-        self.messages.get(&entry.sha).cloned()
+    pub fn details_for_entry(&self, entry: &BlameEntry) -> Option<CommitDetails> {
+        self.commit_details.get(&entry.sha).cloned()
     }
 
     pub fn blame_for_rows<'a>(
         &'a mut self,
-        rows: impl 'a + IntoIterator<Item = Option<u32>>,
+        rows: impl 'a + IntoIterator<Item = Option<MultiBufferRow>>,
         cx: &mut ModelContext<Self>,
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
@@ -134,9 +194,21 @@ impl GitBlame {
         let mut cursor = self.entries.cursor::<u32>();
         rows.into_iter().map(move |row| {
             let row = row?;
-            cursor.seek_forward(&row, Bias::Right, &());
+            cursor.seek_forward(&row.0, Bias::Right, &());
             cursor.item()?.blame.clone()
         })
+    }
+
+    pub fn blur(&mut self, _: &mut ModelContext<Self>) {
+        self.focused = false;
+    }
+
+    pub fn focus(&mut self, cx: &mut ModelContext<Self>) {
+        self.focused = true;
+        if self.changed_while_blurred {
+            self.changed_while_blurred = false;
+            self.generate(cx);
+        }
     }
 
     fn sync(&mut self, cx: &mut ModelContext<Self>) {
@@ -251,12 +323,18 @@ impl GitBlame {
     }
 
     fn generate(&mut self, cx: &mut ModelContext<Self>) {
+        if !self.focused {
+            self.changed_while_blurred = true;
+            return;
+        }
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
+        let languages = self.project.read(cx).languages().clone();
+        let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
-            let (entries, permalinks, messages) = cx
+            let result = cx
                 .background_executor()
                 .spawn({
                     let snapshot = snapshot.clone();
@@ -265,58 +343,177 @@ impl GitBlame {
                             entries,
                             permalinks,
                             messages,
+                            remote_url,
                         } = blame.await?;
 
-                        let mut current_row = 0;
-                        let mut entries = SumTree::from_iter(
-                            entries.into_iter().flat_map(|entry| {
-                                let mut entries = SmallVec::<[GitBlameEntry; 2]>::new();
+                        let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
+                        let commit_details = parse_commit_messages(
+                            messages,
+                            remote_url,
+                            &permalinks,
+                            provider_registry,
+                            &languages,
+                        )
+                        .await;
 
-                                if entry.range.start > current_row {
-                                    let skipped_rows = entry.range.start - current_row;
-                                    entries.push(GitBlameEntry {
-                                        rows: skipped_rows,
-                                        blame: None,
-                                    });
-                                }
-                                entries.push(GitBlameEntry {
-                                    rows: entry.range.len() as u32,
-                                    blame: Some(entry.clone()),
-                                });
-
-                                current_row = entry.range.end;
-                                entries
-                            }),
-                            &(),
-                        );
-
-                        let max_row = snapshot.max_point().row;
-                        if max_row >= current_row {
-                            entries.push(
-                                GitBlameEntry {
-                                    rows: (max_row + 1) - current_row,
-                                    blame: None,
-                                },
-                                &(),
-                            );
-                        }
-
-                        anyhow::Ok((entries, permalinks, messages))
+                        anyhow::Ok((entries, commit_details))
                     }
                 })
-                .await?;
+                .await;
 
-            this.update(&mut cx, |this, cx| {
-                this.buffer_edits = buffer_edits;
-                this.buffer_snapshot = snapshot;
-                this.entries = entries;
-                this.permalinks = permalinks;
-                this.messages = messages;
-                this.generated = true;
-                cx.notify();
+            this.update(&mut cx, |this, cx| match result {
+                Ok((entries, commit_details)) => {
+                    this.buffer_edits = buffer_edits;
+                    this.buffer_snapshot = snapshot;
+                    this.entries = entries;
+                    this.commit_details = commit_details;
+                    this.generated = true;
+                    cx.notify();
+                }
+                Err(error) => this.project.update(cx, |_, cx| {
+                    if this.user_triggered {
+                        log::error!("failed to get git blame data: {error:?}");
+                        let notification = format!("{:#}", error).trim().to_string();
+                        cx.emit(project::Event::Notification(notification));
+                    } else {
+                        // If we weren't triggered by a user, we just log errors in the background, instead of sending
+                        // notifications.
+                        // Except for `NoRepositoryError`, which can  happen often if a user has inline-blame turned on
+                        // and opens a non-git file.
+                        if error.downcast_ref::<project::NoRepositoryError>().is_none() {
+                            log::error!("failed to get git blame data: {error:?}");
+                        }
+                    }
+                }),
             })
         });
     }
+
+    fn regenerate_on_edit(&mut self, cx: &mut ModelContext<Self>) {
+        self.regenerate_on_edit_task = cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
+                .await;
+
+            this.update(&mut cx, |this, cx| {
+                this.generate(cx);
+            })
+        })
+    }
+}
+
+const REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(2);
+
+fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree<GitBlameEntry> {
+    let mut current_row = 0;
+    let mut entries = SumTree::from_iter(
+        entries.into_iter().flat_map(|entry| {
+            let mut entries = SmallVec::<[GitBlameEntry; 2]>::new();
+
+            if entry.range.start > current_row {
+                let skipped_rows = entry.range.start - current_row;
+                entries.push(GitBlameEntry {
+                    rows: skipped_rows,
+                    blame: None,
+                });
+            }
+            entries.push(GitBlameEntry {
+                rows: entry.range.len() as u32,
+                blame: Some(entry.clone()),
+            });
+
+            current_row = entry.range.end;
+            entries
+        }),
+        &(),
+    );
+
+    if max_row >= current_row {
+        entries.push(
+            GitBlameEntry {
+                rows: (max_row + 1) - current_row,
+                blame: None,
+            },
+            &(),
+        );
+    }
+
+    entries
+}
+
+async fn parse_commit_messages(
+    messages: impl IntoIterator<Item = (Oid, String)>,
+    remote_url: Option<String>,
+    deprecated_permalinks: &HashMap<Oid, Url>,
+    provider_registry: Arc<GitHostingProviderRegistry>,
+    languages: &Arc<LanguageRegistry>,
+) -> HashMap<Oid, CommitDetails> {
+    let mut commit_details = HashMap::default();
+
+    let parsed_remote_url = remote_url
+        .as_deref()
+        .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
+
+    for (oid, message) in messages {
+        let parsed_message = parse_markdown(&message, &languages).await;
+
+        let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
+            Some(provider.build_commit_permalink(
+                git_remote,
+                git::BuildCommitPermalinkParams {
+                    sha: oid.to_string().as_str(),
+                },
+            ))
+        } else {
+            // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
+            // now do the parsing. This is here for backwards compatibility, so that
+            // when an old peer sends a client no `parsed_remote_url` but `deprecated_permalinks`,
+            // we fall back to that.
+            deprecated_permalinks.get(&oid).cloned()
+        };
+
+        let remote = parsed_remote_url
+            .as_ref()
+            .map(|(provider, remote)| GitRemote {
+                host: provider.clone(),
+                owner: remote.owner.to_string(),
+                repo: remote.repo.to_string(),
+            });
+
+        let pull_request = parsed_remote_url
+            .as_ref()
+            .and_then(|(provider, remote)| provider.extract_pull_request(remote, &message));
+
+        commit_details.insert(
+            oid,
+            CommitDetails {
+                message,
+                parsed_message,
+                permalink,
+                remote,
+                pull_request,
+            },
+        );
+    }
+
+    commit_details
+}
+
+async fn parse_markdown(text: &str, language_registry: &Arc<LanguageRegistry>) -> ParsedMarkdown {
+    let mut parsed_message = ParsedMarkdown::default();
+
+    markdown::parse_markdown_block(
+        text,
+        language_registry,
+        None,
+        &mut parsed_message.text,
+        &mut parsed_message.highlights,
+        &mut parsed_message.region_ranges,
+        &mut parsed_message.regions,
+    )
+    .await;
+
+    parsed_message
 }
 
 #[cfg(test)]
@@ -336,7 +533,7 @@ mod tests {
         ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {
             assert_eq!(
                 $blame
-                    .blame_for_rows($rows.map(Some), $cx)
+                    .blame_for_rows($rows.map(MultiBufferRow).map(Some), $cx)
                     .collect::<Vec<_>>(),
                 $expected
             );
@@ -356,6 +553,55 @@ mod tests {
             Project::init_settings(cx);
 
             crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_blame_error_notifications(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/my-repo",
+            json!({
+                ".git": {},
+                "file.txt": r#"
+                    irrelevant contents
+                "#
+                .unindent()
+            }),
+        )
+        .await;
+
+        // Creating a GitBlame without a corresponding blame state
+        // will result in an error.
+
+        let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/my-repo/file.txt", cx)
+            })
+            .await
+            .unwrap();
+
+        let blame =
+            cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), true, true, cx));
+
+        let event = project.next_event(cx).await;
+        assert_eq!(
+            event,
+            project::Event::Notification(
+                "Failed to blame \"file.txt\": failed to get blame for \"file.txt\"".to_string()
+            )
+        );
+
+        blame.update(cx, |blame, cx| {
+            assert_eq!(
+                blame
+                    .blame_for_rows((0..1).map(MultiBufferRow).map(Some), cx)
+                    .collect::<Vec<_>>(),
+                vec![None]
+            );
         });
     }
 
@@ -408,7 +654,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
         cx.executor().run_until_parked();
 
@@ -416,7 +662,7 @@ mod tests {
             // All lines
             assert_eq!(
                 blame
-                    .blame_for_rows((0..8).map(Some), cx)
+                    .blame_for_rows((0..8).map(MultiBufferRow).map(Some), cx)
                     .collect::<Vec<_>>(),
                 vec![
                     Some(blame_entry("1b1b1b", 0..1)),
@@ -432,7 +678,7 @@ mod tests {
             // Subset of lines
             assert_eq!(
                 blame
-                    .blame_for_rows((1..4).map(Some), cx)
+                    .blame_for_rows((1..4).map(MultiBufferRow).map(Some), cx)
                     .collect::<Vec<_>>(),
                 vec![
                     Some(blame_entry("0d0d0d", 1..2)),
@@ -443,7 +689,7 @@ mod tests {
             // Subset of lines, with some not displayed
             assert_eq!(
                 blame
-                    .blame_for_rows(vec![Some(1), None, None], cx)
+                    .blame_for_rows(vec![Some(MultiBufferRow(1)), None, None], cx)
                     .collect::<Vec<_>>(),
                 vec![Some(blame_entry("0d0d0d", 1..2)), None, None]
             );
@@ -488,7 +734,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
         cx.executor().run_until_parked();
 
@@ -637,7 +883,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
         cx.executor().run_until_parked();
         git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
 

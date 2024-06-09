@@ -77,7 +77,7 @@ unsafe fn read_modifiers(native_event: id) -> Modifiers {
         control,
         alt,
         shift,
-        command,
+        platform: command,
         function,
     }
 }
@@ -323,7 +323,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             control,
             alt,
             shift,
-            command,
+            platform: command,
             function,
         },
         key,

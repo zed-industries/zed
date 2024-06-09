@@ -1,10 +1,12 @@
+use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
+    pub current_line_highlight: CurrentLineHighlight,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub show_completion_documentation: bool,
@@ -14,12 +16,27 @@ pub struct EditorSettings {
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
     pub vertical_scroll_margin: f32,
+    pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
+    pub expand_excerpt_lines: u32,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CurrentLineHighlight {
+    // Don't highlight the current line.
+    None,
+    // Highlight the gutter area.
+    Gutter,
+    // Highlight the editor area.
+    Line,
+    // Highlight the full line.
+    All,
 }
 
 /// When to populate a new search's query based on the text under the cursor.
@@ -56,9 +73,10 @@ pub struct Toolbar {
 pub struct Scrollbar {
     pub show: ShowScrollbar,
     pub git_diff: bool,
-    pub selections: bool,
-    pub symbols_selections: bool,
+    pub selected_symbol: bool,
+    pub search_results: bool,
     pub diagnostics: bool,
+    pub cursors: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -92,7 +110,8 @@ pub enum ShowScrollbar {
 #[serde(rename_all = "snake_case")]
 pub enum MultiCursorModifier {
     Alt,
-    Cmd,
+    #[serde(alias = "cmd", alias = "ctrl")]
+    CmdOrCtrl,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -101,6 +120,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub cursor_blink: Option<bool>,
+    /// How to highlight the current line in the editor.
+    ///
+    /// Default: all
+    pub current_line_highlight: Option<CurrentLineHighlight>,
     /// Whether to show the informational hover box when moving the mouse
     /// over symbols in the editor.
     ///
@@ -136,6 +159,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 3.
     pub vertical_scroll_margin: Option<f32>,
+    /// Scroll sensitivity multiplier. This multiplier is applied
+    /// to both the horizontal and vertical delta values while scrolling.
+    ///
+    /// Default: 1.0
+    pub scroll_sensitivity: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
     ///
     /// Default: false
@@ -154,6 +182,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub redact_private_values: Option<bool>,
+
+    /// How many lines to expand the multibuffer excerpts by default
+    ///
+    /// Default: 3
+    pub expand_excerpt_lines: Option<u32>,
 
     /// What to do when multibuffer is double clicked in some of its excerpts
     /// (parts of singleton buffers).
@@ -176,7 +209,7 @@ pub struct ToolbarContent {
 }
 
 /// Scrollbar related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ScrollbarContent {
     /// When to show the scrollbar in the editor.
     ///
@@ -186,18 +219,22 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub git_diff: Option<bool>,
-    /// Whether to show buffer search result markers in the scrollbar.
+    /// Whether to show buffer search result indicators in the scrollbar.
     ///
     /// Default: true
-    pub selections: Option<bool>,
-    /// Whether to show symbols highlighted markers in the scrollbar.
+    pub search_results: Option<bool>,
+    /// Whether to show selected symbol occurrences in the scrollbar.
     ///
     /// Default: true
-    pub symbols_selections: Option<bool>,
+    pub selected_symbol: Option<bool>,
     /// Whether to show diagnostic indicators in the scrollbar.
     ///
     /// Default: true
     pub diagnostics: Option<bool>,
+    /// Whether to show cursor positions in the scrollbar.
+    ///
+    /// Default: true
+    pub cursors: Option<bool>,
 }
 
 /// Gutter related settings
@@ -223,10 +260,9 @@ impl Settings for EditorSettings {
     type FileContent = EditorSettingsContent;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut gpui::AppContext,
+        sources: SettingsSources<Self::FileContent>,
+        _: &mut AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
 }

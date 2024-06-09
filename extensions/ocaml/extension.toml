@@ -1,0 +1,21 @@
+id = "ocaml"
+name = "OCaml"
+description = "OCaml support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Rashid Almheiri <69181766+huwaireb@users.noreply.github.com>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.ocamllsp]
+name = "ocamllsp"
+languages = ["OCaml", "OCaml Interface"]
+
+[grammars.ocaml]
+repository = "https://github.com/tree-sitter/tree-sitter-ocaml"
+commit = "0b12614ded3ec7ed7ab7933a9ba4f695ba4c342e"
+path = "grammars/ocaml"
+
+[grammars.ocaml_interface]
+repository = "https://github.com/tree-sitter/tree-sitter-ocaml"
+commit = "0b12614ded3ec7ed7ab7933a9ba4f695ba4c342e"
+path = "grammars/interface"

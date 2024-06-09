@@ -5,6 +5,15 @@
     {
       "name": "Gruvbox Dark",
       "appearance": "dark",
+      "accents": [
+        "#cc241dff",
+        "#98971aff",
+        "#d79921ff",
+        "#458588ff",
+        "#b16286ff",
+        "#689d6aff",
+        "#d65d0eff"
+      ],
       "style": {
         "border": "#5b534dff",
         "border.variant": "#494340ff",
@@ -111,7 +120,7 @@
         "hint": "#8c957dff",
         "hint.background": "#1e2321ff",
         "hint.border": "#303a36ff",
-        "ignored": "#c5b597ff",
+        "ignored": "#998b78ff",
         "ignored.background": "#4c4642ff",
         "ignored.border": "#5b534dff",
         "info": "#83a598ff",
@@ -379,6 +388,15 @@
     {
       "name": "Gruvbox Dark Hard",
       "appearance": "dark",
+      "accents": [
+        "#cc241dff",
+        "#98971aff",
+        "#d79921ff",
+        "#458588ff",
+        "#b16286ff",
+        "#689d6aff",
+        "#d65d0eff"
+      ],
       "style": {
         "border": "#5b534dff",
         "border.variant": "#494340ff",
@@ -485,7 +503,7 @@
         "hint": "#6a695bff",
         "hint.background": "#1e2321ff",
         "hint.border": "#303a36ff",
-        "ignored": "#c5b597ff",
+        "ignored": "#998b78ff",
         "ignored.background": "#4c4642ff",
         "ignored.border": "#5b534dff",
         "info": "#83a598ff",
@@ -753,6 +771,15 @@
     {
       "name": "Gruvbox Dark Soft",
       "appearance": "dark",
+      "accents": [
+        "#cc241dff",
+        "#98971aff",
+        "#d79921ff",
+        "#458588ff",
+        "#b16286ff",
+        "#689d6aff",
+        "#d65d0eff"
+      ],
       "style": {
         "border": "#5b534dff",
         "border.variant": "#494340ff",
@@ -859,7 +886,7 @@
         "hint": "#8c957dff",
         "hint.background": "#1e2321ff",
         "hint.border": "#303a36ff",
-        "ignored": "#c5b597ff",
+        "ignored": "#998b78ff",
         "ignored.background": "#4c4642ff",
         "ignored.border": "#5b534dff",
         "info": "#83a598ff",
@@ -1127,6 +1154,15 @@
     {
       "name": "Gruvbox Light",
       "appearance": "light",
+      "accents": [
+        "#cc241dff",
+        "#98971aff",
+        "#d79921ff",
+        "#458588ff",
+        "#b16286ff",
+        "#689d6aff",
+        "#d65d0eff"
+      ],
       "style": {
         "border": "#c8b899ff",
         "border.variant": "#ddcca7ff",
@@ -1233,7 +1269,7 @@
         "hint": "#677562ff",
         "hint.background": "#d2dee2ff",
         "hint.border": "#adc5ccff",
-        "ignored": "#5f5650ff",
+        "ignored": "#897b6eff",
         "ignored.background": "#d9c8a4ff",
         "ignored.border": "#c8b899ff",
         "info": "#0b6678ff",
@@ -1501,6 +1537,15 @@
     {
       "name": "Gruvbox Light Hard",
       "appearance": "light",
+      "accents": [
+        "#cc241dff",
+        "#98971aff",
+        "#d79921ff",
+        "#458588ff",
+        "#b16286ff",
+        "#689d6aff",
+        "#d65d0eff"
+      ],
       "style": {
         "border": "#c8b899ff",
         "border.variant": "#ddcca7ff",
@@ -1607,7 +1652,7 @@
         "hint": "#677562ff",
         "hint.background": "#d2dee2ff",
         "hint.border": "#adc5ccff",
-        "ignored": "#5f5650ff",
+        "ignored": "#897b6eff",
         "ignored.background": "#d9c8a4ff",
         "ignored.border": "#c8b899ff",
         "info": "#0b6678ff",
@@ -1875,6 +1920,15 @@
     {
       "name": "Gruvbox Light Soft",
       "appearance": "light",
+      "accents": [
+        "#cc241dff",
+        "#98971aff",
+        "#d79921ff",
+        "#458588ff",
+        "#b16286ff",
+        "#689d6aff",
+        "#d65d0eff"
+      ],
       "style": {
         "border": "#c8b899ff",
         "border.variant": "#ddcca7ff",
@@ -1981,7 +2035,7 @@
         "hint": "#677562ff",
         "hint.background": "#d2dee2ff",
         "hint.border": "#adc5ccff",
-        "ignored": "#5f5650ff",
+        "ignored": "#897b6eff",
         "ignored.background": "#d9c8a4ff",
         "ignored.border": "#c8b899ff",
         "info": "#0b6678ff",

@@ -16,39 +16,40 @@ doctest = false
 test-support = ["clock/test-support", "collections/test-support", "gpui/test-support", "rpc/test-support"]
 
 [dependencies]
-chrono = { workspace = true, features = ["serde"] }
-clock.workspace = true
-collections.workspace = true
-gpui.workspace = true
-util.workspace = true
-release_channel.workspace = true
-rpc.workspace = true
-text.workspace = true
-settings.workspace = true
-feature_flags.workspace = true
-
 anyhow.workspace = true
 async-recursion = "0.3"
 async-tungstenite = { version = "0.16", features = ["async-std", "async-native-tls"] }
+async-native-tls = { version = "0.5.0", features = ["vendored"] }
+chrono = { workspace = true, features = ["serde"] }
+clock.workspace = true
+collections.workspace = true
+feature_flags.workspace = true
 futures.workspace = true
+gpui.workspace = true
+http.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-once_cell = "1.19.0"
+once_cell.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true
+release_channel.workspace = true
+rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+settings.workspace = true
 sha2.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
 telemetry_events.workspace = true
 tempfile.workspace = true
+text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
 url.workspace = true
+util.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
@@ -57,3 +58,11 @@ gpui = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+async-native-tls = {"version" = "0.5.0", features = ["vendored"]}
+# This is an indirect dependency of async-tungstenite that is included
+# here so we can vendor libssl with the feature flag.
+[package.metadata.cargo-machete]
+ignored = ["async-native-tls"]

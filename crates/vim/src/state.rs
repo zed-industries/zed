@@ -1,6 +1,7 @@
 use std::{fmt::Display, ops::Range, sync::Arc};
 
-use crate::motion::Motion;
+use crate::surrounds::SurroundsType;
+use crate::{motion::Motion, object::Object};
 use collections::HashMap;
 use editor::Anchor;
 use gpui::{Action, KeyContext};
@@ -55,6 +56,11 @@ pub enum Operator {
     Object { around: bool },
     FindForward { before: bool },
     FindBackward { after: bool },
+    AddSurrounds { target: Option<SurroundsType> },
+    ChangeSurrounds { target: Option<Object> },
+    DeleteSurrounds,
+    Mark,
+    Jump { line: bool },
 }
 
 #[derive(Default, Clone)]
@@ -69,6 +75,10 @@ pub struct EditorState {
 
     pub operator_stack: Vec<Operator>,
     pub replacements: Vec<(Range<editor::Anchor>, String)>,
+
+    pub marks: HashMap<String, Vec<Anchor>>,
+    pub change_list: Vec<Vec<Anchor>>,
+    pub change_list_position: Option<usize>,
 
     pub current_tx: Option<TransactionId>,
     pub current_anchor: Option<Selection<Anchor>>,
@@ -134,21 +144,15 @@ impl Clone for ReplayableAction {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default, Debug)]
 pub struct SearchState {
     pub direction: Direction,
     pub count: usize,
     pub initial_query: String,
-}
 
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            direction: Direction::Next,
-            count: 1,
-            initial_query: "".to_string(),
-        }
-    }
+    pub prior_selections: Vec<Range<Anchor>>,
+    pub prior_operator: Option<Operator>,
+    pub prior_mode: Mode,
 }
 
 impl EditorState {
@@ -174,7 +178,10 @@ impl EditorState {
         }
         matches!(
             self.operator_stack.last(),
-            Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. })
+            Some(Operator::FindForward { .. })
+                | Some(Operator::FindBackward { .. })
+                | Some(Operator::Mark)
+                | Some(Operator::Jump { .. })
         )
     }
 
@@ -196,7 +203,7 @@ impl EditorState {
     }
 
     pub fn keymap_context_layer(&self) -> KeyContext {
-        let mut context = KeyContext::default();
+        let mut context = KeyContext::new_with_defaults();
         context.set(
             "vim_mode",
             match self.mode {
@@ -253,15 +260,26 @@ impl Operator {
             Operator::FindForward { before: true } => "t",
             Operator::FindBackward { after: false } => "F",
             Operator::FindBackward { after: true } => "T",
+            Operator::AddSurrounds { .. } => "ys",
+            Operator::ChangeSurrounds { .. } => "cs",
+            Operator::DeleteSurrounds => "ds",
+            Operator::Mark => "m",
+            Operator::Jump { line: true } => "'",
+            Operator::Jump { line: false } => "`",
         }
     }
 
     pub fn context_flags(&self) -> &'static [&'static str] {
         match self {
-            Operator::Object { .. } => &["VimObject"],
-            Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace => {
-                &["VimWaiting"]
-            }
+            Operator::Object { .. } | Operator::ChangeSurrounds { target: None } => &["VimObject"],
+            Operator::FindForward { .. }
+            | Operator::Mark
+            | Operator::Jump { .. }
+            | Operator::FindBackward { .. }
+            | Operator::Replace
+            | Operator::AddSurrounds { target: Some(_) }
+            | Operator::ChangeSurrounds { .. }
+            | Operator::DeleteSurrounds => &["VimWaiting"],
             _ => &[],
         }
     }

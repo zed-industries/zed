@@ -1,6 +1,6 @@
 use gpui::{AnyView, DefiniteLength};
 
-use crate::{prelude::*, IconPosition, KeyBinding};
+use crate::{prelude::*, ElevationIndex, IconPosition, KeyBinding, Spacing};
 use crate::{
     ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label, LineHeightStyle,
 };
@@ -340,11 +340,16 @@ impl ButtonCommon for Button {
         self.base = self.base.tooltip(tooltip);
         self
     }
+
+    fn layer(mut self, elevation: ElevationIndex) -> Self {
+        self.base = self.base.layer(elevation);
+        self
+    }
 }
 
 impl RenderOnce for Button {
     #[allow(refining_impl_trait)]
-    fn render(self, _cx: &mut WindowContext) -> ButtonLike {
+    fn render(self, cx: &mut WindowContext) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 
@@ -363,7 +368,7 @@ impl RenderOnce for Button {
 
         self.base.child(
             h_flex()
-                .gap_1()
+                .gap(Spacing::Small.rems(cx))
                 .when(self.icon_position == Some(IconPosition::Start), |this| {
                     this.children(self.icon.map(|icon| {
                         ButtonIcon::new(icon)
@@ -376,7 +381,7 @@ impl RenderOnce for Button {
                 })
                 .child(
                     h_flex()
-                        .gap_2()
+                        .gap(Spacing::Medium.rems(cx))
                         .justify_between()
                         .child(
                             Label::new(label)

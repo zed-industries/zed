@@ -18,7 +18,7 @@ impl AlacModifiers {
             ks.modifiers.alt,
             ks.modifiers.control,
             ks.modifiers.shift,
-            ks.modifiers.command,
+            ks.modifiers.platform,
         ) {
             (false, false, false, false) => AlacModifiers::None,
             (true, false, false, false) => AlacModifiers::Alt,
@@ -56,6 +56,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
         ("tab", AlacModifiers::Shift) => Some("\x1b[Z".to_string()),
         ("backspace", AlacModifiers::Alt) => Some("\x1b\x7f".to_string()),
         ("backspace", AlacModifiers::Shift) => Some("\x7f".to_string()),
+        ("space", AlacModifiers::Ctrl) => Some("\x00".to_string()),
         ("home", AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
             Some("\x1b[1;2H".to_string())
         }
@@ -336,7 +337,7 @@ mod test {
                 control: false,
                 alt: false,
                 shift: false,
-                command: false,
+                platform: false,
                 function: false,
             },
             key: "🖖🏻".to_string(), //2 char string

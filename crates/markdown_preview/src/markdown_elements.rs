@@ -2,14 +2,13 @@ use gpui::{
     px, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle,
 };
 use language::HighlightId;
-use std::{ops::Range, path::PathBuf};
+use std::{fmt::Display, ops::Range, path::PathBuf};
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ParsedMarkdownElement {
     Heading(ParsedMarkdownHeading),
-    /// An ordered or unordered list of items.
-    List(ParsedMarkdownList),
+    ListItem(ParsedMarkdownListItem),
     Table(ParsedMarkdownTable),
     BlockQuote(ParsedMarkdownBlockQuote),
     CodeBlock(ParsedMarkdownCodeBlock),
@@ -22,13 +21,17 @@ impl ParsedMarkdownElement {
     pub fn source_range(&self) -> Range<usize> {
         match self {
             Self::Heading(heading) => heading.source_range.clone(),
-            Self::List(list) => list.source_range.clone(),
+            Self::ListItem(list_item) => list_item.source_range.clone(),
             Self::Table(table) => table.source_range.clone(),
             Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
             Self::CodeBlock(code_block) => code_block.source_range.clone(),
             Self::Paragraph(text) => text.source_range.clone(),
             Self::HorizontalRule(range) => range.clone(),
         }
+    }
+
+    pub fn is_list_item(&self) -> bool {
+        matches!(self, Self::ListItem(_))
     }
 }
 
@@ -40,25 +43,19 @@ pub struct ParsedMarkdown {
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
-pub struct ParsedMarkdownList {
-    pub source_range: Range<usize>,
-    pub children: Vec<ParsedMarkdownListItem>,
-}
-
-#[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownListItem {
+    pub source_range: Range<usize>,
     /// How many indentations deep this item is.
     pub depth: u16,
     pub item_type: ParsedMarkdownListItemType,
-    pub contents: Vec<Box<ParsedMarkdownElement>>,
+    pub content: Vec<ParsedMarkdownElement>,
 }
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ParsedMarkdownListItemType {
     Ordered(u64),
-    Task(bool),
+    Task(bool, Range<usize>),
     Unordered,
 }
 
@@ -129,7 +126,7 @@ impl ParsedMarkdownTableRow {
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownBlockQuote {
     pub source_range: Range<usize>,
-    pub children: Vec<Box<ParsedMarkdownElement>>,
+    pub children: Vec<ParsedMarkdownElement>,
 }
 
 #[derive(Debug)]
@@ -226,7 +223,9 @@ pub enum Link {
     },
     /// A link to a path on the filesystem.
     Path {
-        /// The path to the item.
+        /// The path as provided in the Markdown document.
+        display_path: PathBuf,
+        /// The absolute path to the item.
         path: PathBuf,
     },
 }
@@ -239,16 +238,32 @@ impl Link {
 
         let path = PathBuf::from(&text);
         if path.is_absolute() && path.exists() {
-            return Some(Link::Path { path });
+            return Some(Link::Path {
+                display_path: path.clone(),
+                path,
+            });
         }
 
         if let Some(file_location_directory) = file_location_directory {
+            let display_path = path;
             let path = file_location_directory.join(text);
             if path.exists() {
-                return Some(Link::Path { path });
+                return Some(Link::Path { display_path, path });
             }
         }
 
         None
+    }
+}
+
+impl Display for Link {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Link::Web { url } => write!(f, "{}", url),
+            Link::Path {
+                display_path,
+                path: _,
+            } => write!(f, "{}", display_path.display()),
+        }
     }
 }

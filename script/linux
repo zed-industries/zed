@@ -1,9 +1,9 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -ex
 
 # install the wasm toolchain
-rustup target add wasm32-wasi
+which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 # if sudo is not installed, define an empty alias
 maysudo=$(command -v sudo || command -v doas || true)
@@ -13,6 +13,8 @@ maysudo=$(command -v sudo || command -v doas || true)
 apt=$(command -v apt-get || true)
 if [[ -n $apt ]]; then
   deps=(
+    gcc
+    g++
     libasound2-dev
     libfontconfig-dev
     libwayland-dev
@@ -20,6 +22,7 @@ if [[ -n $apt ]]; then
     libssl-dev
     libzstd-dev
     libvulkan1
+    libgit2-dev
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -38,6 +41,11 @@ if [[ -n $dnf ]]; then
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
+    # Perl dependencies are needed for openssl-sys crate see https://docs.rs/openssl/latest/openssl/
+    perl-FindBin
+    perl-IPC-Cmd
+    perl-File-Compare
+    perl-File-Copy
     vulkan-loader
   )
 
@@ -50,7 +58,7 @@ if [[ -n $dnf ]]; then
   exit 0
 fi
 
-# openSuse
+# openSUSE
 # https://software.opensuse.org/
 zyp=$(command -v zypper || true)
 if [[ -n $zyp ]]; then
@@ -61,7 +69,7 @@ if [[ -n $zyp ]]; then
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
-    vulkan-loader
+    libvulkan1
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
@@ -78,6 +86,7 @@ if [[ -n $pacman ]]; then
     libxkbcommon-x11
     openssl
     zstd
+    pkgconf
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
@@ -98,6 +107,24 @@ if [[ -n $xbps ]]; then
     vulkan-loader
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
+  exit 0
+fi
+
+# Gentoo
+# https://packages.gentoo.org/
+emerge=$(command -v emerge || true)
+if [[ -n $emerge ]]; then
+  deps=(
+    app-arch/zstd
+    dev-libs/openssl
+    dev-libs/wayland
+    media-libs/alsa-lib
+    media-libs/fontconfig
+    media-libs/vulkan-loader
+    x11-libs/libxcb
+    x11-libs/libxkbcommon
+  )
+  $maysudo "$emerge" -u "${deps[@]}"
   exit 0
 fi
 

@@ -1,8 +1,6 @@
 use crate::{insert::NormalBefore, Vim, VimModeSetting};
 use editor::{Editor, EditorEvent};
-use gpui::{
-    Action, AppContext, BorrowAppContext, Entity, EntityId, View, ViewContext, WindowContext,
-};
+use gpui::{Action, AppContext, Entity, EntityId, UpdateGlobal, View, ViewContext, WindowContext};
 use settings::{Settings, SettingsStore};
 
 pub fn init(cx: &mut AppContext) {
@@ -42,21 +40,28 @@ fn focused(editor: View<Editor>, cx: &mut WindowContext) {
 
 fn blurred(editor: View<Editor>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
+        if !vim.enabled {
+            return;
+        }
         if let Some(previous_editor) = vim.active_editor.clone() {
             vim.stop_recording_immediately(NormalBefore.boxed_clone());
             if previous_editor
                 .upgrade()
                 .is_some_and(|previous| previous == editor.clone())
             {
-                vim.sync_vim_settings(cx);
                 vim.clear_operator(cx);
             }
         }
+        editor.update(cx, |editor, cx| {
+            if editor.use_modal_editing() {
+                editor.set_cursor_shape(language::CursorShape::Hollow, cx);
+            }
+        });
     });
 }
 
 fn released(entity_id: EntityId, cx: &mut AppContext) {
-    cx.update_global(|vim: &mut Vim, _| {
+    Vim::update_global(cx, |vim, _cx| {
         if vim
             .active_editor
             .as_ref()
@@ -74,14 +79,14 @@ mod test {
     use crate::{test::VimTestContext, Vim};
     use editor::Editor;
     use gpui::{Context, Entity, VisualTestContext};
-    use language::{Buffer, BufferId};
+    use language::Buffer;
 
     // regression test for blur called with a different active editor
     #[gpui::test]
     async fn test_blur_focus(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        let buffer = cx.new_model(|_| Buffer::new(0, BufferId::new(1).unwrap(), "a = 1\nb = 2\n"));
+        let buffer = cx.new_model(|cx| Buffer::local("a = 1\nb = 2\n", cx));
         let window2 = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
         let editor2 = cx
             .update(|cx| {
@@ -116,7 +121,7 @@ mod test {
         let mut cx1 = VisualTestContext::from_window(cx.window, &cx);
         let editor1 = cx.editor.clone();
 
-        let buffer = cx.new_model(|_| Buffer::new(0, BufferId::new(1).unwrap(), "a = 1\nb = 2\n"));
+        let buffer = cx.new_model(|cx| Buffer::local("a = 1\nb = 2\n", cx));
         let (editor2, cx2) = cx.add_window_view(|cx| Editor::for_buffer(buffer, None, cx));
 
         editor2.update(cx2, |_, cx| {

@@ -1,38 +1,49 @@
 use std::fs;
+use zed::LanguageServerId;
 use zed_extension_api::{self as zed, Result};
 
 struct ZigExtension {
     cached_binary_path: Option<String>,
 }
 
+#[derive(Clone)]
+struct ZlsBinary {
+    path: String,
+    environment: Option<Vec<(String, String)>>,
+}
+
 impl ZigExtension {
-    fn language_server_binary_path(
+    fn language_server_binary(
         &mut self,
-        config: zed::LanguageServerConfig,
+        language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
-    ) -> Result<String> {
+    ) -> Result<ZlsBinary> {
+        if let Some(path) = worktree.which("zls") {
+            let environment = worktree.shell_env();
+            return Ok(ZlsBinary {
+                path,
+                environment: Some(environment),
+            });
+        }
+
         if let Some(path) = &self.cached_binary_path {
-            if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
-                return Ok(path.clone());
+            if fs::metadata(&path).map_or(false, |stat| stat.is_file()) {
+                return Ok(ZlsBinary {
+                    path: path.clone(),
+                    environment: None,
+                });
             }
         }
 
-        if let Some(path) = worktree.which("zls") {
-            self.cached_binary_path = Some(path.clone());
-            return Ok(path);
-        }
-
         zed::set_language_server_installation_status(
-            &config.name,
+            &language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
-        let release = zed::latest_github_release(
-            "zigtools/zls",
-            zed::GithubReleaseOptions {
-                require_assets: true,
-                pre_release: false,
-            },
-        )?;
+        // We're pinning ZLS to a release that has `.tar.gz` assets, since the latest release does not have
+        // them, at time of writing.
+        //
+        // ZLS tracking issue: https://github.com/zigtools/zls/issues/1879
+        let release = zed::github_release_by_tag_name("zigtools/zls", "0.11.0")?;
 
         let (platform, arch) = zed::current_platform();
         let asset_name = format!(
@@ -64,7 +75,7 @@ impl ZigExtension {
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
-                &config.name,
+                &language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
@@ -78,6 +89,8 @@ impl ZigExtension {
             )
             .map_err(|e| format!("failed to download file: {e}"))?;
 
+            zed::make_file_executable(&binary_path)?;
+
             let entries =
                 fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
             for entry in entries {
@@ -89,7 +102,10 @@ impl ZigExtension {
         }
 
         self.cached_binary_path = Some(binary_path.clone());
-        Ok(binary_path)
+        Ok(ZlsBinary {
+            path: binary_path,
+            environment: None,
+        })
     }
 }
 
@@ -102,13 +118,14 @@ impl zed::Extension for ZigExtension {
 
     fn language_server_command(
         &mut self,
-        config: zed::LanguageServerConfig,
+        language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
+        let zls_binary = self.language_server_binary(language_server_id, worktree)?;
         Ok(zed::Command {
-            command: self.language_server_binary_path(config, worktree)?,
+            command: zls_binary.path,
             args: vec![],
-            env: Default::default(),
+            env: zls_binary.environment.unwrap_or_default(),
         })
     }
 }

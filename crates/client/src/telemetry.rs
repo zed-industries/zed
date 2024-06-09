@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use futures::Future;
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
+use http::{self, HttpClient, HttpClientWithUrl, Method};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -12,14 +13,13 @@ use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
+use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CopilotEvent, CpuEvent,
-    EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, MemoryEvent,
-    SettingEvent,
+    ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CpuEvent, EditEvent,
+    EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent,
+    MemoryEvent, SettingEvent,
 };
 use tempfile::NamedTempFile;
-use util::http::{self, HttpClient, HttpClientWithUrl, Method};
 #[cfg(not(debug_assertions))]
 use util::ResultExt;
 use util::TryFutureExt;
@@ -171,40 +171,38 @@ impl Telemetry {
         drop(state);
 
         let this = self.clone();
-        cx.spawn(|_| async move {
-            // Avoiding calling `System::new_all()`, as there have been crashes related to it
-            let refresh_kind = RefreshKind::new()
-                .with_memory(MemoryRefreshKind::everything()) // For memory usage
-                .with_processes(ProcessRefreshKind::everything()) // For process usage
-                .with_cpu(CpuRefreshKind::everything()); // For core count
+        cx.background_executor()
+            .spawn(async move {
+                let mut system = System::new_with_specifics(
+                    RefreshKind::new().with_cpu(CpuRefreshKind::everything()),
+                );
 
-            let mut system = System::new_with_specifics(refresh_kind);
-
-            // Avoiding calling `refresh_all()`, just update what we need
-            system.refresh_specifics(refresh_kind);
-
-            // Waiting some amount of time before the first query is important to get a reasonable value
-            // https://docs.rs/sysinfo/0.29.10/sysinfo/trait.ProcessExt.html#tymethod.cpu_usage
-            const DURATION_BETWEEN_SYSTEM_EVENTS: Duration = Duration::from_secs(4 * 60);
-
-            loop {
-                smol::Timer::after(DURATION_BETWEEN_SYSTEM_EVENTS).await;
-
-                system.refresh_specifics(refresh_kind);
-
+                let refresh_kind = ProcessRefreshKind::new().with_cpu().with_memory();
                 let current_process = Pid::from_u32(std::process::id());
-                let Some(process) = system.processes().get(&current_process) else {
-                    let process = current_process;
-                    log::error!("Failed to find own process {process:?} in system process table");
-                    // TODO: Fire an error telemetry event
-                    return;
-                };
+                system.refresh_process_specifics(current_process, refresh_kind);
 
-                this.report_memory_event(process.memory(), process.virtual_memory());
-                this.report_cpu_event(process.cpu_usage(), system.cpus().len() as u32);
-            }
-        })
-        .detach();
+                // Waiting some amount of time before the first query is important to get a reasonable value
+                // https://docs.rs/sysinfo/0.29.10/sysinfo/trait.ProcessExt.html#tymethod.cpu_usage
+                const DURATION_BETWEEN_SYSTEM_EVENTS: Duration = Duration::from_secs(4 * 60);
+
+                loop {
+                    smol::Timer::after(DURATION_BETWEEN_SYSTEM_EVENTS).await;
+
+                    let current_process = Pid::from_u32(std::process::id());
+                    system.refresh_process_specifics(current_process, refresh_kind);
+                    let Some(process) = system.process(current_process) else {
+                        log::error!(
+                            "Failed to find own process {current_process:?} in system process table"
+                        );
+                        // TODO: Fire an error telemetry event
+                        return;
+                    };
+
+                    this.report_memory_event(process.memory(), process.virtual_memory());
+                    this.report_cpu_event(process.cpu_usage(), system.cpus().len() as u32);
+                }
+            })
+            .detach();
     }
 
     pub fn set_authenticated_user_info(
@@ -219,7 +217,7 @@ impl Telemetry {
         }
 
         let metrics_id: Option<Arc<str>> = metrics_id.map(|id| id.into());
-        state.metrics_id = metrics_id.clone();
+        state.metrics_id.clone_from(&metrics_id);
         state.is_staff = Some(is_staff);
         drop(state);
     }
@@ -243,14 +241,14 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_copilot_event(
+    pub fn report_inline_completion_event(
         self: &Arc<Self>,
-        suggestion_id: Option<String>,
+        provider: String,
         suggestion_accepted: bool,
         file_extension: Option<String>,
     ) {
-        let event = Event::Copilot(CopilotEvent {
-            suggestion_id,
+        let event = Event::InlineCompletion(InlineCompletionEvent {
+            provider,
             suggestion_accepted,
             file_extension,
         });
@@ -263,11 +261,15 @@ impl Telemetry {
         conversation_id: Option<String>,
         kind: AssistantKind,
         model: String,
+        response_latency: Option<Duration>,
+        error_message: Option<String>,
     ) {
         let event = Event::Assistant(AssistantEvent {
             conversation_id,
             kind,
             model: model.to_string(),
+            response_latency,
+            error_message,
         });
 
         self.report_event(event)
@@ -421,7 +423,7 @@ impl Telemetry {
             return;
         }
 
-        let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
+        if ZED_CLIENT_CHECKSUM_SEED.is_none() {
             return;
         };
 
@@ -466,15 +468,9 @@ impl Telemetry {
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
 
-                    let mut summer = Sha256::new();
-                    summer.update(checksum_seed);
-                    summer.update(&json_bytes);
-                    summer.update(checksum_seed);
-                    let mut checksum = String::new();
-                    for byte in summer.finalize().as_slice() {
-                        use std::fmt::Write;
-                        write!(&mut checksum, "{:02x}", byte).unwrap();
-                    }
+                    let Some(checksum) = calculate_json_checksum(&json_bytes) else {
+                        return Ok(());
+                    };
 
                     let request = http::Request::builder()
                         .method(Method::POST)
@@ -505,7 +501,7 @@ mod tests {
     use chrono::TimeZone;
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
-    use util::http::FakeHttpClient;
+    use http::FakeHttpClient;
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
@@ -656,4 +652,22 @@ mod tests {
             && telemetry.state.lock().flush_events_task.is_none()
             && telemetry.state.lock().first_event_date_time.is_none()
     }
+}
+
+pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
+    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
+        return None;
+    };
+
+    let mut summer = Sha256::new();
+    summer.update(checksum_seed);
+    summer.update(&json);
+    summer.update(checksum_seed);
+    let mut checksum = String::new();
+    for byte in summer.finalize().as_slice() {
+        use std::fmt::Write;
+        write!(&mut checksum, "{:02x}", byte).unwrap();
+    }
+
+    Some(checksum)
 }

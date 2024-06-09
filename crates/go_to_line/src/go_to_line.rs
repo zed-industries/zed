@@ -1,10 +1,12 @@
 pub mod cursor_position;
 
+use cursor_position::LineIndicatorFormat;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
 };
+use settings::Settings;
 use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::{h_flex, prelude::*, v_flex, Label};
@@ -14,6 +16,7 @@ use workspace::ModalView;
 actions!(go_to_line, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
+    LineIndicatorFormat::register(cx);
     cx.observe_new_views(GoToLine::register).detach();
 }
 
@@ -117,8 +120,9 @@ impl GoToLine {
                 let anchor = snapshot.buffer_snapshot.anchor_before(point);
                 active_editor.clear_row_highlights::<GoToLineRowHighlights>();
                 active_editor.highlight_rows::<GoToLineRowHighlights>(
-                    anchor..anchor,
+                    anchor..=anchor,
                     Some(cx.theme().colors().editor_highlighted_line_background),
+                    true,
                     cx,
                 );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
@@ -216,15 +220,13 @@ impl Render for GoToLine {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
+    use super::*;
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
     use project::{FakeFs, Project};
     use serde_json::json;
+    use std::sync::Arc;
     use workspace::{AppState, Workspace};
-
-    use super::*;
 
     #[gpui::test]
     async fn test_go_to_line_view_row_highlights(cx: &mut TestAppContext) {
@@ -345,7 +347,11 @@ mod tests {
 
     fn highlighted_display_rows(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
         editor.update(cx, |editor, cx| {
-            editor.highlighted_display_rows(cx).into_keys().collect()
+            editor
+                .highlighted_display_rows(cx)
+                .into_keys()
+                .map(|r| r.0)
+                .collect()
         })
     }
 

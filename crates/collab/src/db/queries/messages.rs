@@ -1,7 +1,8 @@
 use super::*;
 use rpc::Notification;
-use sea_orm::TryInsertResult;
+use sea_orm::{SelectColumns, TryInsertResult};
 use time::OffsetDateTime;
+use util::ResultExt;
 
 impl Database {
     /// Inserts a record representing a user joining the chat for a given channel.
@@ -250,7 +251,7 @@ impl Database {
                 .await?;
 
             let mut is_participant = false;
-            let mut participant_connection_ids = Vec::new();
+            let mut participant_connection_ids = HashSet::default();
             let mut participant_user_ids = Vec::new();
             while let Some(row) = rows.next().await {
                 let row = row?;
@@ -258,7 +259,7 @@ impl Database {
                     is_participant = true;
                 }
                 participant_user_ids.push(row.user_id);
-                participant_connection_ids.push(row.connection());
+                participant_connection_ids.insert(row.connection());
             }
             drop(rows);
 
@@ -335,13 +336,9 @@ impl Database {
                 }
             }
 
-            let mut channel_members = self.get_channel_participants(&channel, &tx).await?;
-            channel_members.retain(|member| !participant_user_ids.contains(member));
-
             Ok(CreatedChannelMessage {
                 message_id,
                 participant_connection_ids,
-                channel_members,
                 notifications,
             })
         })
@@ -480,13 +477,20 @@ impl Database {
         Ok(results)
     }
 
+    fn get_notification_kind_id_by_name(&self, notification_kind: &str) -> Option<i32> {
+        self.notification_kinds_by_id
+            .iter()
+            .find(|(_, kind)| **kind == notification_kind)
+            .map(|kind| kind.0 .0)
+    }
+
     /// Removes the channel message with the given ID.
     pub async fn remove_channel_message(
         &self,
         channel_id: ChannelId,
         message_id: MessageId,
         user_id: UserId,
-    ) -> Result<Vec<ConnectionId>> {
+    ) -> Result<(Vec<ConnectionId>, Vec<NotificationId>)> {
         self.transaction(|tx| async move {
             let mut rows = channel_chat_participant::Entity::find()
                 .filter(channel_chat_participant::Column::ChannelId.eq(channel_id))
@@ -531,7 +535,29 @@ impl Database {
                 }
             }
 
-            Ok(participant_connection_ids)
+            let notification_kind_id =
+                self.get_notification_kind_id_by_name("ChannelMessageMention");
+
+            let existing_notifications = notification::Entity::find()
+                .filter(notification::Column::EntityId.eq(message_id))
+                .filter(notification::Column::Kind.eq(notification_kind_id))
+                .select_column(notification::Column::Id)
+                .all(&*tx)
+                .await?;
+
+            let existing_notification_ids = existing_notifications
+                .into_iter()
+                .map(|notification| notification.id)
+                .collect();
+
+            // remove all the mention notifications for this message
+            notification::Entity::delete_many()
+                .filter(notification::Column::EntityId.eq(message_id))
+                .filter(notification::Column::Kind.eq(notification_kind_id))
+                .exec(&*tx)
+                .await?;
+
+            Ok((participant_connection_ids, existing_notification_ids))
         })
         .await
     }
@@ -629,14 +655,44 @@ impl Database {
                     .await?;
             }
 
-            let mut mentioned_user_ids = mentions.iter().map(|m| m.user_id).collect::<HashSet<_>>();
+            let mut update_mention_user_ids = HashSet::default();
+            let mut new_mention_user_ids =
+                mentions.iter().map(|m| m.user_id).collect::<HashSet<_>>();
             // Filter out users that were mentioned before
-            for mention in old_mentions {
-                mentioned_user_ids.remove(&mention.user_id.to_proto());
+            for mention in &old_mentions {
+                if new_mention_user_ids.contains(&mention.user_id.to_proto()) {
+                    update_mention_user_ids.insert(mention.user_id.to_proto());
+                }
+
+                new_mention_user_ids.remove(&mention.user_id.to_proto());
+            }
+
+            let notification_kind_id =
+                self.get_notification_kind_id_by_name("ChannelMessageMention");
+
+            let existing_notifications = notification::Entity::find()
+                .filter(notification::Column::EntityId.eq(message_id))
+                .filter(notification::Column::Kind.eq(notification_kind_id))
+                .all(&*tx)
+                .await?;
+
+            // determine which notifications should be updated or deleted
+            let mut deleted_notification_ids = HashSet::default();
+            let mut updated_mention_notifications = Vec::new();
+            for notification in existing_notifications {
+                if update_mention_user_ids.contains(&notification.recipient_id.to_proto()) {
+                    if let Some(notification) =
+                        self::notifications::model_to_proto(self, notification).log_err()
+                    {
+                        updated_mention_notifications.push(notification);
+                    }
+                } else {
+                    deleted_notification_ids.insert(notification.id);
+                }
             }
 
             let mut notifications = Vec::new();
-            for mentioned_user in mentioned_user_ids {
+            for mentioned_user in new_mention_user_ids {
                 notifications.extend(
                     self.create_notification(
                         UserId::from_proto(mentioned_user),
@@ -658,6 +714,10 @@ impl Database {
                 notifications,
                 reply_to_message_id: channel_message.reply_to_message_id,
                 timestamp: channel_message.sent_at,
+                deleted_mention_notification_ids: deleted_notification_ids
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                updated_mention_notifications,
             })
         })
         .await

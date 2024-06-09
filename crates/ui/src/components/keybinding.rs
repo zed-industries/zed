@@ -66,18 +66,25 @@ impl KeyBinding {
 impl RenderOnce for KeyBinding {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
+            .debug_selector(|| {
+                format!(
+                    "KEY_BINDING-{}",
+                    self.key_binding
+                        .keystrokes()
+                        .iter()
+                        .map(|k| k.key.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            })
+            .gap(rems(0.125))
             .flex_none()
-            .gap_2()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
                 let key_icon = Self::icon_for_key(keystroke);
 
                 h_flex()
                     .flex_none()
-                    .map(|el| match self.platform_style {
-                        PlatformStyle::Mac => el.gap_0p5(),
-                        PlatformStyle::Linux | PlatformStyle::Windows => el,
-                    })
-                    .p_0p5()
+                    .py_0p5()
                     .rounded_sm()
                     .text_color(cx.theme().colors().text_muted)
                     .when(keystroke.modifiers.function, |el| {
@@ -102,7 +109,7 @@ impl RenderOnce for KeyBinding {
                             el.child(Key::new("Alt")).child(Key::new("+"))
                         }
                     })
-                    .when(keystroke.modifiers.command, |el| {
+                    .when(keystroke.modifiers.platform, |el| {
                         match self.platform_style {
                             PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Command)),
                             PlatformStyle::Linux => {
@@ -149,7 +156,7 @@ impl RenderOnce for Key {
                 }
             })
             .h(rems_from_px(14.))
-            .text_ui()
+            .text_ui(cx)
             .line_height(relative(1.))
             .text_color(cx.theme().colors().text_muted)
             .child(self.key.clone())
@@ -169,11 +176,9 @@ pub struct KeyIcon {
 
 impl RenderOnce for KeyIcon {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        div().w(rems_from_px(14.)).child(
-            Icon::new(self.icon)
-                .size(IconSize::Small)
-                .color(Color::Muted),
-        )
+        Icon::new(self.icon)
+            .size(IconSize::Small)
+            .color(Color::Muted)
     }
 }
 

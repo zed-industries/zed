@@ -528,6 +528,35 @@ where
             },
         }
     }
+    /// Returns a new `Size` with the minimum width and height from `self` and `other`.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - A reference to another `Size` to compare with `self`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Size;
+    /// let size1 = Size { width: 30, height: 40 };
+    /// let size2 = Size { width: 50, height: 20 };
+    /// let min_size = size1.min(&size2);
+    /// assert_eq!(min_size, Size { width: 30, height: 20 });
+    /// ```
+    pub fn min(&self, other: &Self) -> Self {
+        Size {
+            width: if self.width >= other.width {
+                other.width.clone()
+            } else {
+                self.width.clone()
+            },
+            height: if self.height >= other.height {
+                other.height.clone()
+            } else {
+                self.height.clone()
+            },
+        }
+    }
 }
 
 impl<T> Sub for Size<T>
@@ -1228,6 +1257,7 @@ where
     ///     origin: Point { x: 15.0, y: 15.0 },
     ///     size: Size { width: 15.0, height: 30.0 },
     /// });
+    /// ```
     pub fn map<U>(&self, f: impl Fn(T) -> U) -> Bounds<U>
     where
         U: Clone + Default + Debug,
@@ -1254,6 +1284,7 @@ where
     ///     origin: Point { x: 15.0, y: 15.0 },
     ///     size: Size { width: 10.0, height: 20.0 },
     /// });
+    /// ```
     pub fn map_origin(self, f: impl Fn(Point<T>) -> Point<T>) -> Bounds<T> {
         Bounds {
             origin: f(self.origin),

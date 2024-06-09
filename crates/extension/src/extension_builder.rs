@@ -6,6 +6,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::io::BufReader;
 use futures::AsyncReadExt;
+use http::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
 use std::{
     env, fs, mem,
@@ -13,7 +14,6 @@ use std::{
     process::{Command, Stdio},
     sync::Arc,
 };
-use util::http::{self, AsyncBody, HttpClient};
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 use wit_component::ComponentEncoder;
@@ -67,7 +67,7 @@ impl ExtensionBuilder {
     pub fn new(cache_dir: PathBuf) -> Self {
         Self {
             cache_dir,
-            http: http::client(),
+            http: http::client(None),
         }
     }
 

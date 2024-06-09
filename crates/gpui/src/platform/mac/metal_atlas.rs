@@ -2,7 +2,7 @@ use crate::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
     Point, Size,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
@@ -31,7 +31,7 @@ impl MetalAtlas {
         &self,
         size: Size<DevicePixels>,
         texture_kind: AtlasTextureKind,
-    ) -> AtlasTile {
+    ) -> Option<AtlasTile> {
         self.0.lock().allocate(size, texture_kind)
     }
 
@@ -60,36 +60,45 @@ impl PlatformAtlas for MetalAtlas {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
-        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
-    ) -> Result<AtlasTile> {
+        build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> Result<Option<AtlasTile>> {
         let mut lock = self.0.lock();
         if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(tile.clone())
+            Ok(Some(tile.clone()))
         } else {
-            let (size, bytes) = build()?;
-            let tile = lock.allocate(size, key.texture_kind());
+            let Some((size, bytes)) = build()? else {
+                return Ok(None);
+            };
+            let tile = lock
+                .allocate(size, key.texture_kind())
+                .ok_or_else(|| anyhow!("failed to allocate"))?;
             let texture = lock.texture(tile.texture_id);
             texture.upload(tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile.clone());
-            Ok(tile)
+            Ok(Some(tile))
         }
     }
 }
 
 impl MetalAtlasState {
-    fn allocate(&mut self, size: Size<DevicePixels>, texture_kind: AtlasTextureKind) -> AtlasTile {
+    fn allocate(
+        &mut self,
+        size: Size<DevicePixels>,
+        texture_kind: AtlasTextureKind,
+    ) -> Option<AtlasTile> {
         let textures = match texture_kind {
             AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
             AtlasTextureKind::Path => &mut self.path_textures,
         };
+
         textures
             .iter_mut()
             .rev()
             .find_map(|texture| texture.allocate(size))
-            .unwrap_or_else(|| {
+            .or_else(|| {
                 let texture = self.push_texture(size, texture_kind);
-                texture.allocate(size).unwrap()
+                texture.allocate(size)
             })
     }
 
@@ -102,8 +111,12 @@ impl MetalAtlasState {
             width: DevicePixels(1024),
             height: DevicePixels(1024),
         };
-
-        let size = min_size.max(&DEFAULT_ATLAS_SIZE);
+        // Max texture size on all modern Apple GPUs. Anything bigger than that crashes in validateWithDevice.
+        const MAX_ATLAS_SIZE: Size<DevicePixels> = Size {
+            width: DevicePixels(16384),
+            height: DevicePixels(16384),
+        };
+        let size = min_size.min(&MAX_ATLAS_SIZE).max(&DEFAULT_ATLAS_SIZE);
         let texture_descriptor = metal::TextureDescriptor::new();
         texture_descriptor.set_width(size.width.into());
         texture_descriptor.set_height(size.height.into());
@@ -115,7 +128,7 @@ impl MetalAtlasState {
                 usage = metal::MTLTextureUsage::ShaderRead;
             }
             AtlasTextureKind::Polychrome => {
-                pixel_format = metal::MTLPixelFormat::RGBA8Unorm;
+                pixel_format = metal::MTLPixelFormat::BGRA8Unorm;
                 usage = metal::MTLTextureUsage::ShaderRead;
             }
             AtlasTextureKind::Path => {

@@ -56,7 +56,10 @@ impl Connection {
 
             for (index, migration) in migrations.iter().enumerate() {
                 if let Some((_, _, completed_migration)) = completed_migrations.get(index) {
-                    if completed_migration != migration {
+                    if completed_migration == migration {
+                        // Migration already run. Continue
+                        continue;
+                    } else {
                         return Err(anyhow!(formatdoc! {"
                             Migration changed for {} at step {}
 
@@ -65,9 +68,6 @@ impl Connection {
 
                             Proposed migration:
                             {}", domain, index, completed_migration, migration}));
-                    } else {
-                        // Migration already run. Continue
-                        continue;
                     }
                 }
 

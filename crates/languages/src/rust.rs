@@ -3,6 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
 use gpui::AsyncAppContext;
+use http::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
@@ -10,16 +11,15 @@ use project::project_settings::ProjectSettings;
 use regex::Regex;
 use settings::Settings;
 use smol::fs::{self, File};
-use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, sync::Arc};
-use task::{
-    static_source::{Definition, TaskDefinitions},
-    TaskVariables,
+use std::{
+    any::Any,
+    borrow::Cow,
+    env::consts,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
-use util::{
-    fs::remove_matching,
-    github::{latest_github_release, GitHubLspBinaryVersion},
-    maybe, ResultExt,
-};
+use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::{fs::remove_matching, maybe, ResultExt};
 
 pub struct RustLspAdapter;
 
@@ -322,77 +322,162 @@ impl LspAdapter for RustLspAdapter {
 
 pub(crate) struct RustContextProvider;
 
+const RUST_PACKAGE_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_PACKAGE"));
+
 impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
-        location: Location,
+        _: &TaskVariables,
+        location: &Location,
         cx: &mut gpui::AppContext,
     ) -> Result<TaskVariables> {
-        let mut context = SymbolContextProvider.build_context(location.clone(), cx)?;
-
-        if let Some(path) = location.buffer.read(cx).file().and_then(|file| {
-            let local_file = file.as_local()?.abs_path(cx);
-            local_file.parent().map(PathBuf::from)
-        }) {
-            let Some(pkgid) = std::process::Command::new("cargo")
-                .current_dir(path)
-                .arg("pkgid")
-                .output()
-                .log_err()
-            else {
-                return Ok(context);
-            };
-            let package_name = String::from_utf8(pkgid.stdout)
-                .map(|name| name.trim().to_owned())
-                .ok();
-
-            if let Some(package_name) = package_name {
-                context.0.insert("ZED_PACKAGE".to_owned(), package_name);
-            }
-        }
-
-        Ok(context)
-    }
-    fn associated_tasks(&self) -> Option<TaskDefinitions> {
-        Some(TaskDefinitions(vec![
-            Definition {
-                label: "Rust: Test current crate".to_owned(),
-                command: "cargo".into(),
-                args: vec!["test".into(), "-p".into(), "$ZED_PACKAGE".into()],
-                ..Default::default()
+        let local_abs_path = location
+            .buffer
+            .read(cx)
+            .file()
+            .and_then(|file| Some(file.as_local()?.abs_path(cx)));
+        Ok(
+            if let Some(package_name) = local_abs_path
+                .as_deref()
+                .and_then(|local_abs_path| local_abs_path.parent())
+                .and_then(human_readable_package_name)
+            {
+                TaskVariables::from_iter(Some((RUST_PACKAGE_TASK_VARIABLE.clone(), package_name)))
+            } else {
+                TaskVariables::default()
             },
-            Definition {
-                label: "Rust: Test current function".to_owned(),
+        )
+    }
+
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
+        Some(TaskTemplates(vec![
+            TaskTemplate {
+                label: format!(
+                    "cargo check -p {}",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
+                command: "cargo".into(),
+                args: vec![
+                    "check".into(),
+                    "-p".into(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "cargo check --workspace --all-targets".into(),
+                command: "cargo".into(),
+                args: vec!["check".into(), "--workspace".into(), "--all-targets".into()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "cargo test -p {} {} -- --nocapture",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                ),
                 command: "cargo".into(),
                 args: vec![
                     "test".into(),
                     "-p".into(),
-                    "$ZED_PACKAGE".into(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
                     "--".into(),
-                    "$ZED_SYMBOL".into(),
+                    "--nocapture".into(),
                 ],
-                ..Default::default()
+                tags: vec!["rust-test".to_owned()],
+                ..TaskTemplate::default()
             },
-            Definition {
-                label: "Rust: cargo run".into(),
+            TaskTemplate {
+                label: format!(
+                    "cargo test -p {} {}",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Stem.template_value(),
+                ),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "-p".into(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Stem.template_value(),
+                ],
+                tags: vec!["rust-mod-test".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "cargo test -p {}",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value()
+                ),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "-p".into(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "cargo run".into(),
                 command: "cargo".into(),
                 args: vec!["run".into()],
-                ..Default::default()
+                ..TaskTemplate::default()
             },
-            Definition {
-                label: "Rust: cargo check current crate".into(),
+            TaskTemplate {
+                label: "cargo clean".into(),
                 command: "cargo".into(),
-                args: vec!["check".into(), "-p".into(), "$ZED_PACKAGE".into()],
-                ..Default::default()
-            },
-            Definition {
-                label: "Rust: cargo check workspace".into(),
-                command: "cargo".into(),
-                args: vec!["check".into(), "--workspace".into()],
-                ..Default::default()
+                args: vec!["clean".into()],
+                ..TaskTemplate::default()
             },
         ]))
     }
+}
+
+fn human_readable_package_name(package_directory: &Path) -> Option<String> {
+    let pkgid = String::from_utf8(
+        std::process::Command::new("cargo")
+            .current_dir(package_directory)
+            .arg("pkgid")
+            .output()
+            .log_err()?
+            .stdout,
+    )
+    .ok()?;
+    Some(package_name_from_pkgid(&pkgid)?.to_owned())
+}
+
+// For providing local `cargo check -p $pkgid` task, we do not need most of the information we have returned.
+// Output example in the root of Zed project:
+// ```bash
+// ❯ cargo pkgid zed
+// path+file:///absolute/path/to/project/zed/crates/zed#0.131.0
+// ```
+// Another variant, if a project has a custom package name or hyphen in the name:
+// ```
+// path+file:///absolute/path/to/project/custom-package#my-custom-package@0.1.0
+// ```
+//
+// Extracts the package name from the output according to the spec:
+// https://doc.rust-lang.org/cargo/reference/pkgid-spec.html#specification-grammar
+fn package_name_from_pkgid(pkgid: &str) -> Option<&str> {
+    fn split_off_suffix(input: &str, suffix_start: char) -> &str {
+        match input.rsplit_once(suffix_start) {
+            Some((without_suffix, _)) => without_suffix,
+            None => input,
+        }
+    }
+
+    let (version_prefix, version_suffix) = pkgid.trim().rsplit_once('#')?;
+    let package_name = match version_suffix.rsplit_once('@') {
+        Some((custom_package_name, _version)) => custom_package_name,
+        None => {
+            let host_and_path = split_off_suffix(version_prefix, '?');
+            let (_, package_name) = host_and_path.rsplit_once('/')?;
+            package_name
+        }
+    };
+    Some(package_name)
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
@@ -422,7 +507,6 @@ mod tests {
     use gpui::{BorrowAppContext, Context, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
-    use text::BufferId;
     use theme::SyntaxTheme;
 
     #[gpui::test]
@@ -639,8 +723,7 @@ mod tests {
         let language = crate::language("rust", tree_sitter_rust::language());
 
         cx.new_model(|cx| {
-            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
-                .with_language(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
             // indent between braces
             buffer.set_text("fn a() {}", cx);
@@ -694,5 +777,21 @@ mod tests {
 
             buffer
         });
+    }
+
+    #[test]
+    fn test_package_name_from_pkgid() {
+        for (input, expected) in [
+            (
+                "path+file:///absolute/path/to/project/zed/crates/zed#0.131.0",
+                "zed",
+            ),
+            (
+                "path+file:///absolute/path/to/project/custom-package#my-custom-package@0.1.0",
+                "my-custom-package",
+            ),
+        ] {
+            assert_eq!(package_name_from_pkgid(input), Some(expected));
+        }
     }
 }

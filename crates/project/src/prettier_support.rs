@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Context;
+use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use fs::Fs;
 use futures::{
@@ -14,7 +14,7 @@ use futures::{
 use gpui::{AsyncAppContext, Model, ModelContext, Task, WeakModel};
 use language::{
     language_settings::{Formatter, LanguageSettings},
-    Buffer, Language, LanguageServerName, LocalFile,
+    Buffer, LanguageServerName, LocalFile,
 };
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
@@ -25,18 +25,12 @@ use crate::{
     Event, File, FormatOperation, PathChange, Project, ProjectEntryId, Worktree, WorktreeId,
 };
 
-pub fn prettier_plugins_for_language<'a>(
-    language: &'a Arc<Language>,
+pub fn prettier_plugins_for_language(
     language_settings: &LanguageSettings,
-) -> Option<&'a Vec<Arc<str>>> {
+) -> Option<&HashSet<String>> {
     match &language_settings.formatter {
-        Formatter::Prettier { .. } | Formatter::Auto => {}
-        Formatter::LanguageServer | Formatter::External { .. } => return None,
-    };
-    if language.prettier_parser_name().is_some() {
-        Some(language.prettier_plugins())
-    } else {
-        None
+        Formatter::Prettier { .. } | Formatter::Auto => Some(&language_settings.prettier.plugins),
+        Formatter::LanguageServer | Formatter::External { .. } | Formatter::CodeActions(_) => None,
     }
 }
 
@@ -44,51 +38,49 @@ pub(super) async fn format_with_prettier(
     project: &WeakModel<Project>,
     buffer: &Model<Buffer>,
     cx: &mut AsyncAppContext,
-) -> Option<FormatOperation> {
-    if let Some((prettier_path, prettier_task)) = project
+) -> Option<Result<FormatOperation>> {
+    let prettier_instance = project
         .update(cx, |project, cx| {
             project.prettier_instance_for_buffer(buffer, cx)
         })
         .ok()?
-        .await
-    {
-        match prettier_task.await {
-            Ok(prettier) => {
-                let buffer_path = buffer
-                    .update(cx, |buffer, cx| {
-                        File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
-                    })
-                    .ok()?;
-                match prettier.format(buffer, buffer_path, cx).await {
-                    Ok(new_diff) => return Some(FormatOperation::Prettier(new_diff)),
-                    Err(e) => {
-                        match prettier_path {
-                            Some(prettier_path) => log::error!(
-                                "Prettier instance from path {prettier_path:?} failed to format a buffer: {e:#}"
-                            ),
-                            None => log::error!(
-                                "Default prettier instance failed to format a buffer: {e:#}"
-                            ),
-                        }
-                    }
-                }
-            }
-            Err(e) => project
+        .await;
+
+    let Some((prettier_path, prettier_task)) = prettier_instance else {
+        return None;
+    };
+
+    let prettier_description = match prettier_path.as_ref() {
+        Some(path) => format!("prettier at {path:?}"),
+        None => "default prettier instance".to_string(),
+    };
+
+    match prettier_task.await {
+        Ok(prettier) => {
+            let buffer_path = buffer
+                .update(cx, |buffer, cx| {
+                    File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
+                })
+                .ok()
+                .flatten();
+
+            let format_result = prettier
+                .format(buffer, buffer_path, cx)
+                .await
+                .map(FormatOperation::Prettier)
+                .with_context(|| format!("{} failed to format buffer", prettier_description));
+
+            Some(format_result)
+        }
+        Err(error) => {
+            project
                 .update(cx, |project, _| {
                     let instance_to_update = match prettier_path {
-                        Some(prettier_path) => {
-                            log::error!(
-                            "Prettier instance from path {prettier_path:?} failed to spawn: {e:#}"
-                        );
-                            project.prettier_instances.get_mut(&prettier_path)
-                        }
-                        None => {
-                            log::error!("Default prettier instance failed to spawn: {e:#}");
-                            match &mut project.default_prettier.prettier {
-                                PrettierInstallation::NotInstalled { .. } => None,
-                                PrettierInstallation::Installed(instance) => Some(instance),
-                            }
-                        }
+                        Some(prettier_path) => project.prettier_instances.get_mut(&prettier_path),
+                        None => match &mut project.default_prettier.prettier {
+                            PrettierInstallation::NotInstalled { .. } => None,
+                            PrettierInstallation::Installed(instance) => Some(instance),
+                        },
                     };
 
                     if let Some(instance) = instance_to_update {
@@ -96,11 +88,14 @@ pub(super) async fn format_with_prettier(
                         instance.prettier = None;
                     }
                 })
-                .ok()?,
+                .log_err();
+
+            Some(Err(anyhow!(
+                "{} failed to spawn: {error:#}",
+                prettier_description
+            )))
         }
     }
-
-    None
 }
 
 pub struct DefaultPrettier {
@@ -108,6 +103,7 @@ pub struct DefaultPrettier {
     installed_plugins: HashSet<Arc<str>>,
 }
 
+#[derive(Debug)]
 pub enum PrettierInstallation {
     NotInstalled {
         attempts: usize,
@@ -119,7 +115,7 @@ pub enum PrettierInstallation {
 
 pub type PrettierTask = Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PrettierInstance {
     attempt: usize,
     prettier: Option<PrettierTask>,
@@ -293,20 +289,15 @@ fn start_prettier(
 ) -> PrettierTask {
     cx.spawn(|project, mut cx| async move {
         log::info!("Starting prettier at path {prettier_dir:?}");
-        let language_registry = project.update(&mut cx, |project, _| project.languages.clone())?;
-        let new_server_id = language_registry.next_language_server_id();
+        let new_server_id = project.update(&mut cx, |project, _| {
+            project.languages.next_language_server_id()
+        })?;
 
-        let new_prettier = Prettier::start(
-            new_server_id,
-            prettier_dir,
-            node,
-            language_registry,
-            cx.clone(),
-        )
-        .await
-        .context("default prettier spawn")
-        .map(Arc::new)
-        .map_err(Arc::new)?;
+        let new_prettier = Prettier::start(new_server_id, prettier_dir, node, cx.clone())
+            .await
+            .context("default prettier spawn")
+            .map(Arc::new)
+            .map_err(Arc::new)?;
         register_new_prettier(&project, &new_prettier, worktree_id, new_server_id, &mut cx);
         Ok(new_prettier)
     })
@@ -524,10 +515,7 @@ impl Project {
         }
         let buffer = buffer.read(cx);
         let buffer_file = buffer.file();
-        let Some(buffer_language) = buffer.language() else {
-            return Task::ready(None);
-        };
-        if buffer_language.prettier_parser_name().is_none() {
+        if buffer.language().is_none() {
             return Task::ready(None);
         }
         let Some(node) = self.node.clone() else {

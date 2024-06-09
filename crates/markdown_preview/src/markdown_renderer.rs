@@ -1,20 +1,26 @@
 use crate::markdown_elements::{
     HeadingLevel, Link, ParsedMarkdown, ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock,
-    ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownList, ParsedMarkdownListItemType,
-    ParsedMarkdownTable, ParsedMarkdownTableAlignment, ParsedMarkdownTableRow, ParsedMarkdownText,
+    ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem,
+    ParsedMarkdownListItemType, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
+    ParsedMarkdownTableRow, ParsedMarkdownText,
 };
 use gpui::{
     div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, InteractiveText, IntoElement, ParentElement, SharedString, Styled,
-    StyledText, TextStyle, WeakView, WindowContext,
+    HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Modifiers, ParentElement,
+    SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
 use std::{
     ops::{Mul, Range},
     sync::Arc,
 };
 use theme::{ActiveTheme, SyntaxTheme};
-use ui::{h_flex, v_flex, Checkbox, Selection};
+use ui::{
+    h_flex, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
+    StatefulInteractiveElement, Tooltip,
+};
 use workspace::Workspace;
+
+type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowContext)>>;
 
 pub struct RenderContext {
     workspace: Option<WeakView<Workspace>>,
@@ -27,6 +33,7 @@ pub struct RenderContext {
     code_span_background_color: Hsla,
     syntax_theme: Arc<SyntaxTheme>,
     indent: usize,
+    checkbox_clicked_callback: Option<CheckboxClickedCallback>,
 }
 
 impl RenderContext {
@@ -44,7 +51,16 @@ impl RenderContext {
             text_muted_color: theme.colors().text_muted,
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
+            checkbox_clicked_callback: None,
         }
+    }
+
+    pub fn with_checkbox_clicked_callback(
+        mut self,
+        callback: impl Fn(bool, Range<usize>, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
+        self
     }
 
     fn next_id(&mut self, span: &Range<usize>) -> ElementId {
@@ -95,7 +111,7 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
     match block {
         Paragraph(text) => render_markdown_paragraph(text, cx),
         Heading(heading) => render_markdown_heading(heading, cx),
-        List(list) => render_markdown_list(list, cx),
+        ListItem(list_item) => render_markdown_list_item(list_item, cx),
         Table(table) => render_markdown_table(table, cx),
         BlockQuote(block_quote) => render_markdown_block_quote(block_quote, cx),
         CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
@@ -131,45 +147,77 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .into_any()
 }
 
-fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> AnyElement {
+fn render_markdown_list_item(
+    parsed: &ParsedMarkdownListItem,
+    cx: &mut RenderContext,
+) -> AnyElement {
     use ParsedMarkdownListItemType::*;
 
-    let mut items = vec![];
-    for item in &parsed.children {
-        let padding = rems((item.depth - 1) as f32 * 0.25);
+    let padding = rems((parsed.depth - 1) as f32);
 
-        let bullet = match item.item_type {
-            Ordered(order) => format!("{}.", order).into_any_element(),
-            Unordered => "•".into_any_element(),
-            Task(checked) => div()
-                .mt(px(3.))
-                .child(Checkbox::new(
+    let bullet = match &parsed.item_type {
+        Ordered(order) => format!("{}.", order).into_any_element(),
+        Unordered => "•".into_any_element(),
+        Task(checked, range) => div()
+            .id(cx.next_id(range))
+            .mt(px(3.))
+            .child(
+                Checkbox::new(
                     "checkbox",
-                    if checked {
+                    if *checked {
                         Selection::Selected
                     } else {
                         Selection::Unselected
                     },
-                ))
-                .into_any_element(),
-        };
-        let bullet = div().mr_2().child(bullet);
+                )
+                .when_some(
+                    cx.checkbox_clicked_callback.clone(),
+                    |this, callback| {
+                        this.on_click({
+                            let range = range.clone();
+                            move |selection, cx| {
+                                let checked = match selection {
+                                    Selection::Selected => true,
+                                    Selection::Unselected => false,
+                                    _ => return,
+                                };
 
-        let contents: Vec<AnyElement> = item
-            .contents
-            .iter()
-            .map(|c| render_markdown_block(c.as_ref(), cx))
-            .collect();
+                                if cx.modifiers().secondary() {
+                                    callback(checked, range.clone(), cx);
+                                }
+                            }
+                        })
+                    },
+                ),
+            )
+            .hover(|s| s.cursor_pointer())
+            .tooltip(|cx| {
+                let secondary_modifier = Keystroke {
+                    key: "".to_string(),
+                    modifiers: Modifiers::secondary_key(),
+                    ime_key: None,
+                };
+                Tooltip::text(
+                    format!("{}-click to toggle the checkbox", secondary_modifier),
+                    cx,
+                )
+            })
+            .into_any_element(),
+    };
+    let bullet = div().mr_2().child(bullet);
 
-        let item = h_flex()
-            .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
-            .items_start()
-            .children(vec![bullet, div().children(contents).pr_4().w_full()]);
+    let contents: Vec<AnyElement> = parsed
+        .content
+        .iter()
+        .map(|c| render_markdown_block(c, cx))
+        .collect();
 
-        items.push(item);
-    }
+    let item = h_flex()
+        .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
+        .items_start()
+        .children(vec![bullet, div().children(contents).pr_4().w_full()]);
 
-    cx.with_common_p(div()).children(items).into_any()
+    cx.with_common_p(item).into_any()
 }
 
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
@@ -328,11 +376,26 @@ fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> 
         element_id,
         StyledText::new(parsed.contents.clone()).with_highlights(&cx.text_style, highlights),
     )
+    .tooltip({
+        let links = links.clone();
+        let link_ranges = link_ranges.clone();
+        move |idx, cx| {
+            for (ix, range) in link_ranges.iter().enumerate() {
+                if range.contains(&idx) {
+                    return Some(LinkPreview::new(&links[ix].to_string(), cx));
+                }
+            }
+            None
+        }
+    })
     .on_click(
         link_ranges,
         move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
             Link::Web { url } => window_cx.open_url(url),
-            Link::Path { path } => {
+            Link::Path {
+                path,
+                display_path: _,
+            } => {
                 if let Some(workspace) = &workspace {
                     _ = workspace.update(window_cx, |workspace, cx| {
                         workspace.open_abs_path(path.clone(), false, cx).detach();

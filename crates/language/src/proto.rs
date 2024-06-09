@@ -1,9 +1,6 @@
 //! Handles conversions of `language` items to and from the [`rpc`] protocol.
 
-use crate::{
-    diagnostic_set::DiagnosticEntry, CodeAction, CodeLabel, Completion, CursorShape, Diagnostic,
-    Language, LanguageRegistry,
-};
+use crate::{diagnostic_set::DiagnosticEntry, CursorShape, Diagnostic};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use lsp::{DiagnosticSeverity, LanguageServerId};
@@ -12,11 +9,6 @@ use std::{ops::Range, sync::Arc};
 use text::*;
 
 pub use proto::{BufferState, Operation};
-
-/// Serializes a [`RopeFingerprint`] to be sent over RPC.
-pub fn serialize_fingerprint(fingerprint: RopeFingerprint) -> String {
-    fingerprint.to_hex()
-}
 
 /// Deserializes a `[text::LineEnding]` from the RPC representation.
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
@@ -463,85 +455,6 @@ pub fn lamport_timestamp_for_operation(operation: &proto::Operation) -> Option<c
     Some(clock::Lamport {
         replica_id: replica_id as ReplicaId,
         value,
-    })
-}
-
-/// Serializes a [`Completion`] to be sent over RPC.
-pub fn serialize_completion(completion: &Completion) -> proto::Completion {
-    proto::Completion {
-        old_start: Some(serialize_anchor(&completion.old_range.start)),
-        old_end: Some(serialize_anchor(&completion.old_range.end)),
-        new_text: completion.new_text.clone(),
-        server_id: completion.server_id.0 as u64,
-        lsp_completion: serde_json::to_vec(&completion.lsp_completion).unwrap(),
-    }
-}
-
-/// Deserializes a [`Completion`] from the RPC representation.
-pub async fn deserialize_completion(
-    completion: proto::Completion,
-    language: Option<Arc<Language>>,
-    language_registry: &Arc<LanguageRegistry>,
-) -> Result<Completion> {
-    let old_start = completion
-        .old_start
-        .and_then(deserialize_anchor)
-        .ok_or_else(|| anyhow!("invalid old start"))?;
-    let old_end = completion
-        .old_end
-        .and_then(deserialize_anchor)
-        .ok_or_else(|| anyhow!("invalid old end"))?;
-    let lsp_completion = serde_json::from_slice(&completion.lsp_completion)?;
-
-    let mut label = None;
-    if let Some(language) = language {
-        if let Some(adapter) = language_registry.lsp_adapters(&language).first() {
-            label = adapter
-                .label_for_completion(&lsp_completion, &language)
-                .await;
-        }
-    }
-
-    Ok(Completion {
-        old_range: old_start..old_end,
-        new_text: completion.new_text,
-        label: label.unwrap_or_else(|| {
-            CodeLabel::plain(
-                lsp_completion.label.clone(),
-                lsp_completion.filter_text.as_deref(),
-            )
-        }),
-        documentation: None,
-        server_id: LanguageServerId(completion.server_id as usize),
-        lsp_completion,
-    })
-}
-
-/// Serializes a [`CodeAction`] to be sent over RPC.
-pub fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
-    proto::CodeAction {
-        server_id: action.server_id.0 as u64,
-        start: Some(serialize_anchor(&action.range.start)),
-        end: Some(serialize_anchor(&action.range.end)),
-        lsp_action: serde_json::to_vec(&action.lsp_action).unwrap(),
-    }
-}
-
-/// Deserializes a [`CodeAction`] from the RPC representation.
-pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> {
-    let start = action
-        .start
-        .and_then(deserialize_anchor)
-        .ok_or_else(|| anyhow!("invalid start"))?;
-    let end = action
-        .end
-        .and_then(deserialize_anchor)
-        .ok_or_else(|| anyhow!("invalid end"))?;
-    let lsp_action = serde_json::from_slice(&action.lsp_action)?;
-    Ok(CodeAction {
-        server_id: LanguageServerId(action.server_id as usize),
-        range: start..end,
-        lsp_action,
     })
 }
 

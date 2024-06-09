@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageServerName;
 use semantic_version::SemanticVersion;
@@ -74,6 +74,8 @@ pub struct ExtensionManifest {
     pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
     #[serde(default)]
     pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
+    #[serde(default)]
+    pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -98,7 +100,41 @@ pub struct GrammarManifestEntry {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageServerManifestEntry {
-    pub language: Arc<str>,
+    /// Deprecated in favor of `languages`.
+    #[serde(default)]
+    language: Option<Arc<str>>,
+    /// The list of languages this language server should work with.
+    #[serde(default)]
+    languages: Vec<Arc<str>>,
+    #[serde(default)]
+    pub language_ids: HashMap<String, String>,
+    #[serde(default)]
+    pub code_action_kinds: Option<Vec<lsp::CodeActionKind>>,
+}
+
+impl LanguageServerManifestEntry {
+    /// Returns the list of languages for the language server.
+    ///
+    /// Prefer this over accessing the `language` or `languages` fields directly,
+    /// as we currently support both.
+    ///
+    /// We can replace this with just field access for the `languages` field once
+    /// we have removed `language`.
+    pub fn languages(&self) -> impl IntoIterator<Item = Arc<str>> + '_ {
+        let language = if self.languages.is_empty() {
+            self.language.clone()
+        } else {
+            None
+        };
+        self.languages.iter().cloned().chain(language)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct SlashCommandManifestEntry {
+    pub description: String,
+    pub tooltip_text: String,
+    pub requires_argument: bool,
 }
 
 impl ExtensionManifest {
@@ -163,5 +199,6 @@ fn manifest_from_old_manifest(
             .map(|grammar_name| (grammar_name, Default::default()))
             .collect(),
         language_servers: Default::default(),
+        slash_commands: BTreeMap::default(),
     }
 }

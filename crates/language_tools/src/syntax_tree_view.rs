@@ -11,7 +11,7 @@ use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
 use ui::{h_flex, popover_menu, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
 use workspace::{
-    item::{Item, ItemHandle},
+    item::{Item, ItemHandle, TabContentParams},
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
@@ -337,7 +337,7 @@ impl Render for SyntaxTreeView {
                                             tree_view.update_editor_with_range_for_descendant_ix(descendant_ix, cx, |editor, range, cx| {
                                                 editor.clear_background_highlights::<Self>(cx);
                                                 editor.highlight_background::<Self>(
-                                                    vec![range],
+                                                    &[range],
                                                     |theme| theme.editor_document_highlight_write_background,
                                                     cx,
                                                 );
@@ -365,7 +365,7 @@ impl Render for SyntaxTreeView {
             rendered = rendered.child(
                 canvas(
                     move |bounds, cx| {
-                        list.layout(bounds.origin, bounds.size.into(), cx);
+                        list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
                         list
                     },
                     |_, mut list, cx| list.paint(cx),
@@ -391,9 +391,9 @@ impl Item for SyntaxTreeView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext<'_>) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> AnyElement {
         Label::new("Syntax Tree")
-            .color(if selected {
+            .color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted
@@ -407,7 +407,7 @@ impl Item for SyntaxTreeView {
 
     fn clone_on_split(
         &self,
-        _: workspace::WorkspaceId,
+        _: Option<workspace::WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>>
     where

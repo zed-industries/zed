@@ -32,28 +32,27 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                 };
 
                 for screen in unique_screens {
-                    let options = notification_window_options(screen, window_size);
-                    let window = cx
-                        .open_window(options, |cx| {
-                            cx.new_view(|_| {
-                                IncomingCallNotification::new(
-                                    incoming_call.clone(),
-                                    app_state.clone(),
-                                )
+                    if let Some(options) = cx
+                        .update(|cx| notification_window_options(screen, window_size, cx))
+                        .log_err()
+                    {
+                        let window = cx
+                            .open_window(options, |cx| {
+                                cx.new_view(|_| {
+                                    IncomingCallNotification::new(
+                                        incoming_call.clone(),
+                                        app_state.clone(),
+                                    )
+                                })
                             })
-                        })
-                        .unwrap();
-                    notification_windows.push(window);
+                            .unwrap();
+                        notification_windows.push(window);
+                    }
                 }
             }
         }
     })
     .detach();
-}
-
-#[derive(Clone, PartialEq)]
-struct RespondToCall {
-    accept: bool,
 }
 
 struct IncomingCallNotificationState {
@@ -117,10 +116,7 @@ impl Render for IncomingCallNotification {
         // TODO: Is there a better place for us to initialize the font?
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);
-            (
-                theme_settings.ui_font.family.clone(),
-                theme_settings.ui_font_size,
-            )
+            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
         };
 
         cx.set_rem_size(ui_font_size);

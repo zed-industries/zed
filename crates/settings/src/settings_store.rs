@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global};
+use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, UpdateGlobal};
 use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
@@ -29,14 +29,7 @@ pub trait Settings: 'static + Send + Sync {
 
     /// The logic for combining together values from one or more JSON files into the
     /// final value for this setting.
-    ///
-    /// The user values are ordered from least specific (the global settings file)
-    /// to most specific (the innermost local settings file).
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        cx: &mut AppContext,
-    ) -> Result<Self>
+    fn load(sources: SettingsSources<Self::FileContent>, cx: &mut AppContext) -> Result<Self>
     where
         Self: Sized;
 
@@ -48,31 +41,6 @@ pub trait Settings: 'static + Send + Sync {
         generator.root_schema_for::<Self::FileContent>()
     }
 
-    fn json_merge(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-    ) -> Result<Self::FileContent> {
-        let mut merged = serde_json::Value::Null;
-        for value in [default_value].iter().chain(user_values) {
-            merge_non_null_json_value_into(serde_json::to_value(value).unwrap(), &mut merged);
-        }
-        Ok(serde_json::from_value(merged)?)
-    }
-
-    fn load_via_json_merge(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-    ) -> Result<Self>
-    where
-        Self: DeserializeOwned,
-    {
-        let mut merged = serde_json::Value::Null;
-        for value in [default_value].iter().chain(user_values) {
-            merge_non_null_json_value_into(serde_json::to_value(value).unwrap(), &mut merged);
-        }
-        Ok(serde_json::from_value(merged)?)
-    }
-
     fn missing_default() -> anyhow::Error {
         anyhow::anyhow!("missing default")
     }
@@ -81,7 +49,7 @@ pub trait Settings: 'static + Send + Sync {
     where
         Self: Sized,
     {
-        cx.update_global(|store: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store.register_setting::<Self>(cx);
         });
     }
@@ -119,6 +87,57 @@ pub trait Settings: 'static + Send + Sync {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SettingsSources<'a, T> {
+    /// The default Zed settings.
+    pub default: &'a T,
+    /// Settings provided by extensions.
+    pub extensions: Option<&'a T>,
+    /// The user settings.
+    pub user: Option<&'a T>,
+    /// The user settings for the current release channel.
+    pub release_channel: Option<&'a T>,
+    /// The project settings, ordered from least specific to most specific.
+    pub project: &'a [&'a T],
+}
+
+impl<'a, T: Serialize> SettingsSources<'a, T> {
+    /// Returns an iterator over the default settings as well as all settings customizations.
+    pub fn defaults_and_customizations(&self) -> impl Iterator<Item = &T> {
+        [self.default].into_iter().chain(self.customizations())
+    }
+
+    /// Returns an iterator over all of the settings customizations.
+    pub fn customizations(&self) -> impl Iterator<Item = &T> {
+        self.extensions
+            .into_iter()
+            .chain(self.user)
+            .chain(self.release_channel)
+            .chain(self.project.iter().copied())
+    }
+
+    /// Returns the settings after performing a JSON merge of the provided customizations.
+    ///
+    /// Customizations later in the iterator win out over the earlier ones.
+    pub fn json_merge_with<O: DeserializeOwned>(
+        customizations: impl Iterator<Item = &'a T>,
+    ) -> Result<O> {
+        let mut merged = serde_json::Value::Null;
+        for value in customizations {
+            merge_non_null_json_value_into(serde_json::to_value(value).unwrap(), &mut merged);
+        }
+        Ok(serde_json::from_value(merged)?)
+    }
+
+    /// Returns the settings after performing a JSON merge of the customizations into the
+    /// default settings.
+    ///
+    /// More-specific customizations win out over the less-specific ones.
+    pub fn json_merge<O: DeserializeOwned>(&'a self) -> Result<O> {
+        Self::json_merge_with(self.defaults_and_customizations())
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct SettingsLocation<'a> {
     pub worktree_id: usize,
@@ -136,6 +155,7 @@ pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
+    raw_extension_settings: serde_json::Value,
     raw_local_settings: BTreeMap<(usize, Arc<Path>), serde_json::Value>,
     tab_size_callback: Option<(
         TypeId,
@@ -151,6 +171,7 @@ impl Default for SettingsStore {
             setting_values: Default::default(),
             raw_default_settings: serde_json::json!({}),
             raw_user_settings: serde_json::json!({}),
+            raw_extension_settings: serde_json::json!({}),
             raw_local_settings: Default::default(),
             tab_size_callback: Default::default(),
         }
@@ -169,8 +190,7 @@ trait AnySettingValue: 'static + Send + Sync {
     fn deserialize_setting(&self, json: &serde_json::Value) -> Result<DeserializedSetting>;
     fn load_setting(
         &self,
-        default_value: &DeserializedSetting,
-        custom: &[DeserializedSetting],
+        sources: SettingsSources<DeserializedSetting>,
         cx: &mut AppContext,
     ) -> Result<Box<dyn Any>>;
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
@@ -187,6 +207,13 @@ trait AnySettingValue: 'static + Send + Sync {
 struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {
+    pub fn update<C, R>(cx: &mut C, f: impl FnOnce(&mut Self, &mut C) -> R) -> R
+    where
+        C: BorrowAppContext,
+    {
+        cx.update_global(f)
+    }
+
     /// Add a new type of setting to the store.
     pub fn register_setting<T: Settings>(&mut self, cx: &mut AppContext) {
         let setting_type_id = TypeId::of::<T>();
@@ -204,29 +231,35 @@ impl SettingsStore {
             .deserialize_setting(&self.raw_default_settings)
             .log_err()
         {
-            let mut user_values_stack = Vec::new();
-
-            if let Some(user_settings) = setting_value
+            let user_value = setting_value
                 .deserialize_setting(&self.raw_user_settings)
-                .log_err()
-            {
-                user_values_stack = vec![user_settings];
-            }
+                .log_err();
 
+            let mut release_channel_value = None;
             if let Some(release_settings) = &self
                 .raw_user_settings
                 .get(release_channel::RELEASE_CHANNEL.dev_name())
             {
-                if let Some(release_settings) = setting_value
+                release_channel_value = setting_value
                     .deserialize_setting(release_settings)
-                    .log_err()
-                {
-                    user_values_stack.push(release_settings);
-                }
+                    .log_err();
             }
 
+            let extension_value = setting_value
+                .deserialize_setting(&self.raw_extension_settings)
+                .log_err();
+
             if let Some(setting) = setting_value
-                .load_setting(&default_settings, &user_values_stack, cx)
+                .load_setting(
+                    SettingsSources {
+                        default: &default_settings,
+                        release_channel: release_channel_value.as_ref(),
+                        extensions: extension_value.as_ref(),
+                        user: user_value.as_ref(),
+                        project: &[],
+                    },
+                    cx,
+                )
                 .context("A default setting must be added to the `default.json` file")
                 .log_err()
             {
@@ -397,7 +430,11 @@ impl SettingsStore {
         user_settings_content: &str,
         cx: &mut AppContext,
     ) -> Result<()> {
-        let settings: serde_json::Value = parse_json_with_comments(user_settings_content)?;
+        let settings: serde_json::Value = if user_settings_content.is_empty() {
+            parse_json_with_comments("{}")?
+        } else {
+            parse_json_with_comments(user_settings_content)?
+        };
         if settings.is_object() {
             self.raw_user_settings = settings;
             self.recompute_values(None, cx)?;
@@ -415,14 +452,31 @@ impl SettingsStore {
         settings_content: Option<&str>,
         cx: &mut AppContext,
     ) -> Result<()> {
-        if let Some(content) = settings_content {
-            self.raw_local_settings
-                .insert((root_id, path.clone()), parse_json_with_comments(content)?);
+        if settings_content.is_some_and(|content| !content.is_empty()) {
+            self.raw_local_settings.insert(
+                (root_id, path.clone()),
+                parse_json_with_comments(settings_content.unwrap())?,
+            );
         } else {
             self.raw_local_settings.remove(&(root_id, path.clone()));
         }
         self.recompute_values(Some((root_id, &path)), cx)?;
         Ok(())
+    }
+
+    pub fn set_extension_settings<T: Serialize>(
+        &mut self,
+        content: T,
+        cx: &mut AppContext,
+    ) -> Result<()> {
+        let settings: serde_json::Value = serde_json::to_value(content)?;
+        if settings.is_object() {
+            self.raw_extension_settings = settings;
+            self.recompute_values(None, cx)?;
+            Ok(())
+        } else {
+            Err(anyhow!("settings must be an object"))
+        }
     }
 
     /// Add or remove a set of local settings via a JSON string.
@@ -551,22 +605,20 @@ impl SettingsStore {
         cx: &mut AppContext,
     ) -> Result<()> {
         // Reload the global and local values for every setting.
-        let mut user_settings_stack = Vec::<DeserializedSetting>::new();
+        let mut project_settings_stack = Vec::<DeserializedSetting>::new();
         let mut paths_stack = Vec::<Option<(usize, &Path)>>::new();
         for setting_value in self.setting_values.values_mut() {
             let default_settings = setting_value.deserialize_setting(&self.raw_default_settings)?;
 
-            user_settings_stack.clear();
-            paths_stack.clear();
+            let extension_settings = setting_value
+                .deserialize_setting(&self.raw_extension_settings)
+                .log_err();
 
-            if let Some(user_settings) = setting_value
+            let user_settings = setting_value
                 .deserialize_setting(&self.raw_user_settings)
-                .log_err()
-            {
-                user_settings_stack.push(user_settings);
-                paths_stack.push(None);
-            }
+                .log_err();
 
+            let mut release_channel_settings = None;
             if let Some(release_settings) = &self
                 .raw_user_settings
                 .get(release_channel::RELEASE_CHANNEL.dev_name())
@@ -575,15 +627,25 @@ impl SettingsStore {
                     .deserialize_setting(release_settings)
                     .log_err()
                 {
-                    user_settings_stack.push(release_settings);
-                    paths_stack.push(None);
+                    release_channel_settings = Some(release_settings);
                 }
             }
 
             // If the global settings file changed, reload the global value for the field.
+            project_settings_stack.clear();
+            paths_stack.clear();
             if changed_local_path.is_none() {
                 if let Some(value) = setting_value
-                    .load_setting(&default_settings, &user_settings_stack, cx)
+                    .load_setting(
+                        SettingsSources {
+                            default: &default_settings,
+                            extensions: extension_settings.as_ref(),
+                            user: user_settings.as_ref(),
+                            release_channel: release_channel_settings.as_ref(),
+                            project: &[],
+                        },
+                        cx,
+                    )
                     .log_err()
                 {
                     setting_value.set_global_value(value);
@@ -597,7 +659,7 @@ impl SettingsStore {
                     if let Some((prev_root_id, prev_path)) = prev_entry {
                         if root_id != prev_root_id || !path.starts_with(prev_path) {
                             paths_stack.pop();
-                            user_settings_stack.pop();
+                            project_settings_stack.pop();
                             continue;
                         }
                     }
@@ -608,7 +670,7 @@ impl SettingsStore {
                     setting_value.deserialize_setting(local_settings).log_err()
                 {
                     paths_stack.push(Some((*root_id, path.as_ref())));
-                    user_settings_stack.push(local_settings);
+                    project_settings_stack.push(local_settings);
 
                     // If a local settings file changed, then avoid recomputing local
                     // settings for any path outside of that directory.
@@ -619,7 +681,16 @@ impl SettingsStore {
                     }
 
                     if let Some(value) = setting_value
-                        .load_setting(&default_settings, &user_settings_stack, cx)
+                        .load_setting(
+                            SettingsSources {
+                                default: &default_settings,
+                                extensions: extension_settings.as_ref(),
+                                user: user_settings.as_ref(),
+                                release_channel: release_channel_settings.as_ref(),
+                                project: &project_settings_stack.iter().collect::<Vec<_>>(),
+                            },
+                            cx,
+                        )
                         .log_err()
                     {
                         setting_value.set_local_value(*root_id, path.clone(), value);
@@ -660,16 +731,30 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
 
     fn load_setting(
         &self,
-        default_value: &DeserializedSetting,
-        user_values: &[DeserializedSetting],
+        values: SettingsSources<DeserializedSetting>,
         cx: &mut AppContext,
     ) -> Result<Box<dyn Any>> {
-        let default_value = default_value.0.downcast_ref::<T::FileContent>().unwrap();
-        let values: SmallVec<[&T::FileContent; 6]> = user_values
-            .iter()
-            .map(|value| value.0.downcast_ref().unwrap())
-            .collect();
-        Ok(Box::new(T::load(default_value, &values, cx)?))
+        Ok(Box::new(T::load(
+            SettingsSources {
+                default: values.default.0.downcast_ref::<T::FileContent>().unwrap(),
+                extensions: values
+                    .extensions
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
+                user: values
+                    .user
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
+                release_channel: values
+                    .release_channel
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
+                project: values
+                    .project
+                    .iter()
+                    .map(|value| value.0.downcast_ref().unwrap())
+                    .collect::<SmallVec<[_; 3]>>()
+                    .as_slice(),
+            },
+            cx,
+        )?))
     }
 
     fn deserialize_setting(&self, mut json: &serde_json::Value) -> Result<DeserializedSetting> {
@@ -1277,12 +1362,8 @@ mod tests {
         const KEY: Option<&'static str> = Some("user");
         type FileContent = UserSettingsJson;
 
-        fn load(
-            default_value: &UserSettingsJson,
-            user_values: &[&UserSettingsJson],
-            _: &mut AppContext,
-        ) -> Result<Self> {
-            Self::load_via_json_merge(default_value, user_values)
+        fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+            sources.json_merge()
         }
     }
 
@@ -1293,12 +1374,8 @@ mod tests {
         const KEY: Option<&'static str> = Some("turbo");
         type FileContent = Option<bool>;
 
-        fn load(
-            default_value: &Option<bool>,
-            user_values: &[&Option<bool>],
-            _: &mut AppContext,
-        ) -> Result<Self> {
-            Self::load_via_json_merge(default_value, user_values)
+        fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+            sources.json_merge()
         }
     }
 
@@ -1321,12 +1398,8 @@ mod tests {
 
         type FileContent = MultiKeySettingsJson;
 
-        fn load(
-            default_value: &MultiKeySettingsJson,
-            user_values: &[&MultiKeySettingsJson],
-            _: &mut AppContext,
-        ) -> Result<Self> {
-            Self::load_via_json_merge(default_value, user_values)
+        fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+            sources.json_merge()
         }
     }
 
@@ -1354,12 +1427,8 @@ mod tests {
 
         type FileContent = JournalSettingsJson;
 
-        fn load(
-            default_value: &JournalSettingsJson,
-            user_values: &[&JournalSettingsJson],
-            _: &mut AppContext,
-        ) -> Result<Self> {
-            Self::load_via_json_merge(default_value, user_values)
+        fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+            sources.json_merge()
         }
     }
 
@@ -1380,8 +1449,8 @@ mod tests {
 
         type FileContent = Self;
 
-        fn load(default_value: &Self, user_values: &[&Self], _: &mut AppContext) -> Result<Self> {
-            Self::load_via_json_merge(default_value, user_values)
+        fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+            sources.json_merge()
         }
     }
 }

@@ -1,6 +1,7 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, Effect, Entity, EntityId,
-    EventEmitter, Model, Subscription, Task, View, WeakModel, WindowContext, WindowHandle,
+    EventEmitter, Model, Reservation, Subscription, Task, View, WeakModel, WindowContext,
+    WindowHandle,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -229,19 +230,24 @@ impl<'a, T> Context for ModelContext<'a, T> {
         self.app.new_model(build_model)
     }
 
+    fn reserve_model<U: 'static>(&mut self) -> Reservation<U> {
+        self.app.reserve_model()
+    }
+
+    fn insert_model<U: 'static>(
+        &mut self,
+        reservation: Reservation<U>,
+        build_model: impl FnOnce(&mut ModelContext<'_, U>) -> U,
+    ) -> Self::Result<Model<U>> {
+        self.app.insert_model(reservation, build_model)
+    }
+
     fn update_model<U: 'static, R>(
         &mut self,
         handle: &Model<U>,
         update: impl FnOnce(&mut U, &mut ModelContext<'_, U>) -> R,
     ) -> R {
         self.app.update_model(handle, update)
-    }
-
-    fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>
-    where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> R,
-    {
-        self.app.update_window(window, update)
     }
 
     fn read_model<U, R>(
@@ -253,6 +259,13 @@ impl<'a, T> Context for ModelContext<'a, T> {
         U: 'static,
     {
         self.app.read_model(handle, read)
+    }
+
+    fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> R,
+    {
+        self.app.update_window(window, update)
     }
 
     fn read_window<U, R>(

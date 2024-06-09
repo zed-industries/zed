@@ -2,7 +2,7 @@ use crate::{settings_store::SettingsStore, Settings};
 use anyhow::{Context, Result};
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui::{AppContext, BackgroundExecutor, BorrowAppContext};
+use gpui::{AppContext, BackgroundExecutor, UpdateGlobal};
 use std::{io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
 
@@ -70,7 +70,7 @@ pub fn handle_settings_file_changes(
         .background_executor()
         .block(user_settings_file_rx.next())
         .unwrap();
-    cx.update_global(|store: &mut SettingsStore, cx| {
+    SettingsStore::update_global(cx, |store, cx| {
         store
             .set_user_settings(&user_settings_content, cx)
             .log_err();
@@ -116,11 +116,7 @@ pub fn update_settings_file<T: Settings>(
             store.new_text_for_update::<T>(old_text, update)
         })?;
         let initial_path = paths::SETTINGS.as_path();
-        if !fs.is_file(initial_path).await {
-            fs.atomic_write(initial_path.to_path_buf(), new_text)
-                .await
-                .with_context(|| format!("Failed to write settings to file {:?}", initial_path))?;
-        } else {
+        if fs.is_file(initial_path).await {
             let resolved_path = fs.canonicalize(initial_path).await.with_context(|| {
                 format!("Failed to canonicalize settings path {:?}", initial_path)
             })?;
@@ -128,6 +124,10 @@ pub fn update_settings_file<T: Settings>(
             fs.atomic_write(resolved_path.clone(), new_text)
                 .await
                 .with_context(|| format!("Failed to write settings to file {:?}", resolved_path))?;
+        } else {
+            fs.atomic_write(initial_path.to_path_buf(), new_text)
+                .await
+                .with_context(|| format!("Failed to write settings to file {:?}", initial_path))?;
         }
 
         anyhow::Ok(())

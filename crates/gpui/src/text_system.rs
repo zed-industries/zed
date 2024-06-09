@@ -7,6 +7,8 @@ pub use font_features::*;
 pub use line::*;
 pub use line_layout::*;
 pub use line_wrapper::*;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
@@ -115,6 +117,17 @@ impl TextSystem {
                 .insert(font.clone(), clone_font_id_result(&font_id));
             font_id
         }
+    }
+
+    /// Get the Font for the Font Id.
+    pub fn get_font_for_id(&self, id: FontId) -> Option<Font> {
+        let lock = self.font_ids_by_font.read();
+        lock.iter()
+            .filter_map(|(font, result)| match result {
+                Ok(font_id) if *font_id == id => Some(font.clone()),
+                _ => None,
+            })
+            .next()
     }
 
     /// Resolves the specified font, falling back to the default font stack if
@@ -298,6 +311,10 @@ impl WindowTextSystem {
 
     pub(crate) fn reuse_layouts(&self, index: Range<LineLayoutIndex>) {
         self.line_layout_cache.reuse_layouts(index)
+    }
+
+    pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {
+        self.line_layout_cache.truncate_layouts(index)
     }
 
     /// Shape the given line, at the given font_size, for painting to the screen.
@@ -539,7 +556,7 @@ impl DerefMut for LineWrapperHandle {
 
 /// The degree of blackness or stroke thickness of a font. This value ranges from 100.0 to 900.0,
 /// with 400.0 as normal.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Deserialize, Serialize, JsonSchema)]
 pub struct FontWeight(pub f32);
 
 impl Default for FontWeight {
@@ -664,6 +681,8 @@ impl Hash for RenderEmojiParams {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Font {
     /// The font family name.
+    ///
+    /// The special name ".SystemUIFont" is used to identify the system UI font, which varies based on platform.
     pub family: SharedString,
 
     /// The font features to use.

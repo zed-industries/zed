@@ -1,0 +1,20 @@
+id = "emmet"
+name = "Emmet"
+description = "Emmet support"
+version = "0.0.3"
+schema_version = 1
+authors = ["Piotr Osiewicz <piotr@zed.dev>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.emmet-language-server]
+name = "Emmet Language Server"
+language = "HTML"
+languages = ["HTML", "PHP", "ERB", "JavaScript", "TSX", "CSS"]
+
+[language_servers.emmet-language-server.language_ids]
+"HTML" = "html"
+"PHP" = "php"
+"ERB" = "eruby"
+"JavaScript" = "javascriptreact"
+"TSX" = "typescriptreact"
+"CSS" = "css"

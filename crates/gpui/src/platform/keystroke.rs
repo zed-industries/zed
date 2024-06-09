@@ -37,7 +37,7 @@ impl Keystroke {
                             control: self.modifiers.control,
                             alt: false,
                             shift: false,
-                            command: false,
+                            platform: false,
                             function: false,
                         },
                         key: ime_key.to_string(),
@@ -62,7 +62,7 @@ impl Keystroke {
         let mut control = false;
         let mut alt = false;
         let mut shift = false;
-        let mut command = false;
+        let mut platform = false;
         let mut function = false;
         let mut key = None;
         let mut ime_key = None;
@@ -73,8 +73,8 @@ impl Keystroke {
                 "ctrl" => control = true,
                 "alt" => alt = true,
                 "shift" => shift = true,
-                "cmd" => command = true,
                 "fn" => function = true,
+                "cmd" | "super" | "win" => platform = true,
                 _ => {
                     if let Some(next) = components.peek() {
                         if next.is_empty() && source.ends_with('-') {
@@ -101,7 +101,7 @@ impl Keystroke {
                 control,
                 alt,
                 shift,
-                command,
+                platform,
                 function,
             },
             key,
@@ -114,7 +114,7 @@ impl Keystroke {
     /// be able to simulate typing "space", etc.
     pub fn with_simulated_ime(mut self) -> Self {
         if self.ime_key.is_none()
-            && !self.modifiers.command
+            && !self.modifiers.platform
             && !self.modifiers.control
             && !self.modifiers.function
             && !self.modifiers.alt
@@ -147,8 +147,15 @@ impl std::fmt::Display for Keystroke {
         if self.modifiers.alt {
             f.write_char('⌥')?;
         }
-        if self.modifiers.command {
+        if self.modifiers.platform {
+            #[cfg(target_os = "macos")]
             f.write_char('⌘')?;
+
+            #[cfg(target_os = "linux")]
+            f.write_char('❖')?;
+
+            #[cfg(target_os = "windows")]
+            f.write_char('⊞')?;
         }
         if self.modifiers.shift {
             f.write_char('⇧')?;
@@ -188,7 +195,8 @@ pub struct Modifiers {
 
     /// The command key, on macos
     /// the windows key, on windows
-    pub command: bool,
+    /// the super key, on linux
+    pub platform: bool,
 
     /// The function key
     pub function: bool,
@@ -197,7 +205,22 @@ pub struct Modifiers {
 impl Modifiers {
     /// Returns true if any modifier key is pressed
     pub fn modified(&self) -> bool {
-        self.control || self.alt || self.shift || self.command || self.function
+        self.control || self.alt || self.shift || self.platform || self.function
+    }
+
+    /// Whether the semantically 'secondary' modifier key is pressed
+    /// On macos, this is the command key
+    /// On windows and linux, this is the control key
+    pub fn secondary(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            return self.platform;
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            return self.control;
+        }
     }
 
     /// helper method for Modifiers with no modifiers
@@ -205,10 +228,45 @@ impl Modifiers {
         Default::default()
     }
 
-    /// helper method for Modifiers with just command
+    /// helper method for Modifiers with just the command key
     pub fn command() -> Modifiers {
         Modifiers {
-            command: true,
+            platform: true,
+            ..Default::default()
+        }
+    }
+
+    /// A helper method for Modifiers with just the secondary key pressed
+    pub fn secondary_key() -> Modifiers {
+        #[cfg(target_os = "macos")]
+        {
+            Modifiers {
+                platform: true,
+                ..Default::default()
+            }
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            Modifiers {
+                control: true,
+                ..Default::default()
+            }
+        }
+    }
+
+    /// helper method for Modifiers with just the windows key
+    pub fn windows() -> Modifiers {
+        Modifiers {
+            platform: true,
+            ..Default::default()
+        }
+    }
+
+    /// helper method for Modifiers with just the super key
+    pub fn super_key() -> Modifiers {
+        Modifiers {
+            platform: true,
             ..Default::default()
         }
     }
@@ -233,7 +291,7 @@ impl Modifiers {
     pub fn command_shift() -> Modifiers {
         Modifiers {
             shift: true,
-            command: true,
+            platform: true,
             ..Default::default()
         }
     }
@@ -243,7 +301,7 @@ impl Modifiers {
         (other.control || !self.control)
             && (other.alt || !self.alt)
             && (other.shift || !self.shift)
-            && (other.command || !self.command)
+            && (other.platform || !self.platform)
             && (other.function || !self.function)
     }
 }

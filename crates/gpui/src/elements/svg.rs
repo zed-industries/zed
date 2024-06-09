@@ -1,7 +1,7 @@
 use crate::{
-    geometry::Negate as _, point, px, radians, size, Bounds, Element, ElementContext, Hitbox,
+    geometry::Negate as _, point, px, radians, size, Bounds, Element, GlobalElementId, Hitbox,
     InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString,
-    Size, StyleRefinement, Styled, TransformationMatrix,
+    Size, StyleRefinement, Styled, TransformationMatrix, WindowContext,
 };
 use util::ResultExt;
 
@@ -37,37 +37,47 @@ impl Svg {
 }
 
 impl Element for Svg {
-    type BeforeLayout = ();
-    type AfterLayout = Option<Hitbox>;
+    type RequestLayoutState = ();
+    type PrepaintState = Option<Hitbox>;
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
+    fn id(&self) -> Option<crate::ElementId> {
+        self.interactivity.element_id.clone()
+    }
+
+    fn request_layout(
+        &mut self,
+        global_id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id = self
             .interactivity
-            .before_layout(cx, |style, cx| cx.request_layout(&style, None));
+            .request_layout(global_id, cx, |style, cx| cx.request_layout(style, None));
         (layout_id, ())
     }
 
-    fn after_layout(
+    fn prepaint(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
-        _before_layout: &mut Self::BeforeLayout,
-        cx: &mut ElementContext,
+        _request_layout: &mut Self::RequestLayoutState,
+        cx: &mut WindowContext,
     ) -> Option<Hitbox> {
         self.interactivity
-            .after_layout(bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
+            .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
     }
 
     fn paint(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
-        _before_layout: &mut Self::BeforeLayout,
+        _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) where
         Self: Sized,
     {
         self.interactivity
-            .paint(bounds, hitbox.as_ref(), cx, |style, cx| {
+            .paint(global_id, bounds, hitbox.as_ref(), cx, |style, cx| {
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                     let transformation = self
                         .transformation

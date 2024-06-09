@@ -3,6 +3,7 @@ pub(crate) mod wit;
 use crate::ExtensionManifest;
 use anyhow::{anyhow, bail, Context as _, Result};
 use fs::{normalize_path, Fs};
+use futures::future::LocalBoxFuture;
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -11,15 +12,16 @@ use futures::{
     future::BoxFuture,
     Future, FutureExt, StreamExt as _,
 };
-use gpui::BackgroundExecutor;
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
+use http::HttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
+use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::http::HttpClient;
 use wasmtime::{
     component::{Component, ResourceTable},
     Engine, Store,
@@ -29,11 +31,14 @@ use wit::Extension;
 
 pub(crate) struct WasmHost {
     engine: Engine,
+    release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
     node_runtime: Arc<dyn NodeRuntime>,
     pub(crate) language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     pub(crate) work_dir: PathBuf,
+    _main_thread_message_task: Task<()>,
+    main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
 
 #[derive(Clone)]
@@ -50,6 +55,9 @@ pub(crate) struct WasmState {
     ctx: wasi::WasiCtx,
     pub(crate) host: Arc<WasmHost>,
 }
+
+type MainThreadCall =
+    Box<dyn Send + for<'a> FnOnce(&'a mut AsyncAppContext) -> LocalBoxFuture<'a, ()>>;
 
 type ExtensionCall = Box<
     dyn Send + for<'a> FnOnce(&'a mut Extension, &'a mut Store<WasmState>) -> BoxFuture<'a, ()>,
@@ -75,7 +83,14 @@ impl WasmHost {
         node_runtime: Arc<dyn NodeRuntime>,
         language_registry: Arc<LanguageRegistry>,
         work_dir: PathBuf,
+        cx: &mut AppContext,
     ) -> Arc<Self> {
+        let (tx, mut rx) = mpsc::unbounded::<MainThreadCall>();
+        let task = cx.spawn(|mut cx| async move {
+            while let Some(message) = rx.next().await {
+                message(&mut cx).await;
+            }
+        });
         Arc::new(Self {
             engine: wasm_engine(),
             fs,
@@ -83,6 +98,9 @@ impl WasmHost {
             http_client,
             node_runtime,
             language_registry,
+            release_channel: ReleaseChannel::global(cx),
+            _main_thread_message_task: task,
+            main_thread_message_tx: tx,
         })
     }
 
@@ -91,9 +109,9 @@ impl WasmHost {
         wasm_bytes: Vec<u8>,
         manifest: Arc<ExtensionManifest>,
         executor: BackgroundExecutor,
-    ) -> impl 'static + Future<Output = Result<WasmExtension>> {
+    ) -> Task<Result<WasmExtension>> {
         let this = self.clone();
-        async move {
+        executor.clone().spawn(async move {
             let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
 
             let component = Component::from_binary(&this.engine, &wasm_bytes)
@@ -109,8 +127,13 @@ impl WasmHost {
                 },
             );
 
-            let (mut extension, instance) =
-                Extension::instantiate_async(&mut store, zed_api_version, &component).await?;
+            let (mut extension, instance) = Extension::instantiate_async(
+                &mut store,
+                this.release_channel,
+                zed_api_version,
+                &component,
+            )
+            .await?;
 
             extension
                 .call_init_extension(&mut store)
@@ -132,7 +155,7 @@ impl WasmHost {
                 tx,
                 zed_api_version,
             })
-        }
+        })
     }
 
     async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<wasi::WasiCtx> {
@@ -183,13 +206,15 @@ pub fn parse_wasm_extension_version(
     extension_id: &str,
     wasm_bytes: &[u8],
 ) -> Result<SemanticVersion> {
+    let mut version = None;
+
     for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
-        if let wasmparser::Payload::CustomSection(s) = part? {
+        if let wasmparser::Payload::CustomSection(s) =
+            part.context("error parsing wasm extension")?
+        {
             if s.name() == "zed:api-version" {
-                let version = parse_wasm_extension_version_custom_section(s.data());
-                if let Some(version) = version {
-                    return Ok(version);
-                } else {
+                version = parse_wasm_extension_version_custom_section(s.data());
+                if version.is_none() {
                     bail!(
                         "extension {} has invalid zed:api-version section: {:?}",
                         extension_id,
@@ -199,7 +224,13 @@ pub fn parse_wasm_extension_version(
             }
         }
     }
-    bail!("extension {} has no zed:api-version section", extension_id)
+
+    // The reason we wait until we're done parsing all of the Wasm bytes to return the version
+    // is to work around a panic that can happen inside of Wasmtime when the bytes are invalid.
+    //
+    // By parsing the entirety of the Wasm bytes before we return, we're able to detect this problem
+    // earlier as an `Err` rather than as a panic.
+    version.ok_or_else(|| anyhow!("extension {} has no zed:api-version section", extension_id))
 }
 
 fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVersion> {
@@ -238,6 +269,26 @@ impl WasmExtension {
 }
 
 impl WasmState {
+    fn on_main_thread<T, Fn>(&self, f: Fn) -> impl 'static + Future<Output = T>
+    where
+        T: 'static + Send,
+        Fn: 'static + Send + for<'a> FnOnce(&'a mut AsyncAppContext) -> LocalBoxFuture<'a, T>,
+    {
+        let (return_tx, return_rx) = oneshot::channel();
+        self.host
+            .main_thread_message_tx
+            .clone()
+            .unbounded_send(Box::new(move |cx| {
+                async {
+                    let result = f(cx).await;
+                    return_tx.send(result).ok();
+                }
+                .boxed_local()
+            }))
+            .expect("main thread message channel should not be closed yet");
+        async move { return_rx.await.expect("main thread message channel") }
+    }
+
     fn work_dir(&self) -> PathBuf {
         self.host.work_dir.join(self.manifest.id.as_ref())
     }

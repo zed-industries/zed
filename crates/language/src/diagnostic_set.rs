@@ -1,4 +1,4 @@
-use crate::Diagnostic;
+use crate::{range_to_lsp, Diagnostic};
 use collections::HashMap;
 use lsp::LanguageServerId;
 use std::{
@@ -51,7 +51,7 @@ pub struct Summary {
     count: usize,
 }
 
-impl<T> DiagnosticEntry<T> {
+impl DiagnosticEntry<PointUtf16> {
     /// Returns a raw LSP diagnostic ssed to provide diagnostic context to LSP
     /// codeAction request
     pub fn to_lsp_diagnostic_stub(&self) -> lsp::Diagnostic {
@@ -61,9 +61,14 @@ impl<T> DiagnosticEntry<T> {
             .clone()
             .map(lsp::NumberOrString::String);
 
+        let range = range_to_lsp(self.range.clone());
+
         lsp::Diagnostic {
             code,
+            range,
             severity: Some(self.diagnostic.severity),
+            source: self.diagnostic.source.clone(),
+            message: self.diagnostic.message.clone(),
             ..Default::default()
         }
     }

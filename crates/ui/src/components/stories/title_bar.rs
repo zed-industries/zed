@@ -1,4 +1,4 @@
-use gpui::Render;
+use gpui::{NoAction, Render};
 use story::{StoryContainer, StoryItem, StorySection};
 
 use crate::{prelude::*, PlatformStyle, TitleBar};
@@ -19,7 +19,7 @@ impl Render for TitleBarStory {
                 StorySection::new().child(
                     StoryItem::new(
                         "Default (macOS)",
-                        TitleBar::new("macos")
+                        TitleBar::new("macos", Box::new(NoAction))
                             .platform_style(PlatformStyle::Mac)
                             .map(add_sample_children),
                     )
@@ -31,7 +31,7 @@ impl Render for TitleBarStory {
                 StorySection::new().child(
                     StoryItem::new(
                         "Default (Linux)",
-                        TitleBar::new("linux")
+                        TitleBar::new("linux", Box::new(NoAction))
                             .platform_style(PlatformStyle::Linux)
                             .map(add_sample_children),
                     )
@@ -43,7 +43,7 @@ impl Render for TitleBarStory {
                 StorySection::new().child(
                     StoryItem::new(
                         "Default (Windows)",
-                        TitleBar::new("windows")
+                        TitleBar::new("windows", Box::new(NoAction))
                             .platform_style(PlatformStyle::Windows)
                             .map(add_sample_children),
                     )

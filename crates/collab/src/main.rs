@@ -6,8 +6,8 @@ use axum::{
     Extension, Router,
 };
 use collab::{
-    api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor, AppState,
-    Config, RateLimiter, Result,
+    api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor,
+    rpc::ResultExt, AppState, Config, RateLimiter, Result,
 };
 use db::Database;
 use std::{
@@ -23,7 +23,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::{
     filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt, Layer,
 };
-use util::ResultExt;
+use util::ResultExt as _;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
@@ -90,6 +90,7 @@ async fn main() -> Result<()> {
             };
 
             if is_collab {
+                state.db.purge_old_embeddings().await.trace_err();
                 RateLimiter::save_periodically(state.rate_limiter.clone(), state.executor.clone());
             }
 

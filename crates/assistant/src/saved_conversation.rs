@@ -106,6 +106,11 @@ impl SavedConversationMetadata {
                 .and_then(|name| name.to_str())
                 .zip(metadata)
             {
+                // This is used to filter out conversations saved by the new assistant.
+                if !re.is_match(file_name) {
+                    continue;
+                }
+
                 let title = re.replace(file_name, "");
                 conversations.push(Self {
                     title: title.into_owned(),

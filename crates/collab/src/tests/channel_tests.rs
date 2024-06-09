@@ -99,7 +99,7 @@ async fn test_core_channels(
         .channel_store()
         .update(cx_a, |store, cx| {
             assert!(!store.has_pending_channel_invite(channel_a_id, client_b.user_id().unwrap()));
-            store.get_channel_member_details(channel_a_id, cx)
+            store.fuzzy_search_members(channel_a_id, "".to_string(), 10, cx)
         })
         .await
         .unwrap();
@@ -1022,6 +1022,8 @@ async fn test_channel_link_notifications(
         })
         .await
         .unwrap();
+
+    executor.run_until_parked();
 
     // the new channel shows for b and c
     assert_channels_list_shape(

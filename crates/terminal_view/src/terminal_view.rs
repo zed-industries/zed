@@ -14,6 +14,7 @@ use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, Fs, LocalWorktree, Metadata, Project};
 use settings::SettingsStore;
+use task::TerminalWorkDir;
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -23,10 +24,10 @@ use terminal::{
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, TaskStatus, Terminal,
 };
 use terminal_element::TerminalElement;
-use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label};
+use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent},
+    item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
@@ -90,7 +91,7 @@ pub struct TerminalView {
     blinking_paused: bool,
     blink_epoch: usize,
     can_navigate_to_selected_word: bool,
-    workspace_id: WorkspaceId,
+    workspace_id: Option<WorkspaceId>,
     show_title: bool,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
@@ -134,14 +135,14 @@ impl TerminalView {
                     cx,
                 )
             });
-            workspace.add_item_to_active_pane(Box::new(view), cx)
+            workspace.add_item_to_active_pane(Box::new(view), None, cx)
         }
     }
 
     pub fn new(
         terminal: Model<Terminal>,
         workspace: WeakView<Workspace>,
-        workspace_id: WorkspaceId,
+        workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let workspace_handle = workspace.clone();
@@ -185,7 +186,7 @@ impl TerminalView {
         self.has_bell
     }
 
-    pub fn clear_bel(&mut self, cx: &mut ViewContext<TerminalView>) {
+    pub fn clear_bell(&mut self, cx: &mut ViewContext<TerminalView>) {
         self.has_bell = false;
         cx.emit(Event::Wakeup);
     }
@@ -222,21 +223,21 @@ impl TerminalView {
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
-        if !self
+        if self
             .terminal
             .read(cx)
             .last_content
             .mode
             .contains(TermMode::ALT_SCREEN)
         {
-            cx.show_character_palette();
-        } else {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &Keystroke::parse("ctrl-cmd-space").unwrap(),
                     TerminalSettings::get_global(cx).option_as_meta,
                 )
             });
+        } else {
+            cx.show_character_palette();
         }
     }
 
@@ -282,7 +283,7 @@ impl TerminalView {
             cx.spawn(|this, mut cx| async move {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
                 this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
-                    .log_err();
+                    .ok();
             })
             .detach();
         }
@@ -332,7 +333,7 @@ impl TerminalView {
     }
 
     fn send_text(&mut self, text: &SendText, cx: &mut ViewContext<Self>) {
-        self.clear_bel(cx);
+        self.clear_bell(cx);
         self.terminal.update(cx, |term, _| {
             term.input(text.0.to_string());
         });
@@ -340,7 +341,7 @@ impl TerminalView {
 
     fn send_keystroke(&mut self, text: &SendKeystroke, cx: &mut ViewContext<Self>) {
         if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
-            self.clear_bel(cx);
+            self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
             });
@@ -348,7 +349,7 @@ impl TerminalView {
     }
 
     fn dispatch_context(&self, cx: &AppContext) -> KeyContext {
-        let mut dispatch_context = KeyContext::default();
+        let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("Terminal");
 
         let mode = self.terminal.read(cx).last_content.mode;
@@ -457,15 +458,16 @@ fn subscribe_for_terminal_events(
                 if terminal.task().is_none() {
                     if let Some(cwd) = terminal.get_cwd() {
                         let item_id = cx.entity_id();
-                        let workspace_id = this.workspace_id;
-                        cx.background_executor()
-                            .spawn(async move {
-                                TERMINAL_DB
-                                    .save_working_directory(item_id.as_u64(), workspace_id, cwd)
-                                    .await
-                                    .log_err();
-                            })
-                            .detach();
+                        if let Some(workspace_id) = this.workspace_id {
+                            cx.background_executor()
+                                .spawn(async move {
+                                    TERMINAL_DB
+                                        .save_working_directory(item_id.as_u64(), workspace_id, cwd)
+                                        .await
+                                        .log_err();
+                                })
+                                .detach();
+                        }
                     }
                 }
             }
@@ -700,7 +702,7 @@ pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<Re
 
 impl TerminalView {
     fn key_down(&mut self, event: &KeyDownEvent, cx: &mut ViewContext<Self>) {
-        self.clear_bel(cx);
+        self.clear_bell(cx);
         self.pause_cursor_blinking(cx);
 
         self.terminal.update(cx, |term, cx| {
@@ -783,32 +785,62 @@ impl Item for TerminalView {
         Some(self.terminal().read(cx).title(false).into())
     }
 
-    fn tab_content(
-        &self,
-        _detail: Option<usize>,
-        selected: bool,
-        cx: &WindowContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
-        let icon = match terminal.task() {
+
+        let (icon, icon_color, rerun_btn) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Unknown => IconName::ExclamationTriangle,
-                TaskStatus::Running => IconName::Play,
+                TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning, None),
+                TaskStatus::Running => (IconName::Play, Color::Disabled, None),
                 TaskStatus::Completed { success } => {
+                    let task_id = terminal_task.id.clone();
+                    let rerun_btn = IconButton::new("rerun-icon", IconName::Rerun)
+                        .icon_size(IconSize::Small)
+                        .size(ButtonSize::Compact)
+                        .icon_color(Color::Default)
+                        .shape(ui::IconButtonShape::Square)
+                        .tooltip(|cx| Tooltip::text("Rerun task", cx))
+                        .on_click(move |_, cx| {
+                            cx.dispatch_action(Box::new(tasks_ui::Rerun {
+                                task_id: Some(task_id.clone()),
+                                ..Default::default()
+                            }));
+                        });
+
                     if *success {
-                        IconName::Check
+                        (IconName::Check, Color::Success, Some(rerun_btn))
                     } else {
-                        IconName::XCircle
+                        (IconName::XCircle, Color::Error, Some(rerun_btn))
                     }
                 }
             },
-            None => IconName::Terminal,
+            None => (IconName::Terminal, Color::Muted, None),
         };
+
         h_flex()
             .gap_2()
-            .child(Icon::new(icon))
-            .child(Label::new(title).color(if selected {
+            .group("term-tab-icon")
+            .child(
+                h_flex()
+                    .group("term-tab-icon")
+                    .child(
+                        div()
+                            .when(rerun_btn.is_some(), |this| {
+                                this.hover(|style| style.invisible().w_0())
+                            })
+                            .child(Icon::new(icon).color(icon_color)),
+                    )
+                    .when_some(rerun_btn, |this, rerun_btn| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .visible_on_hover("term-tab-icon")
+                                .child(rerun_btn),
+                        )
+                    }),
+            )
+            .child(Label::new(title).color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted
@@ -822,7 +854,7 @@ impl Item for TerminalView {
 
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         _cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
         //From what I can tell, there's no  way to tell the current working
@@ -866,6 +898,7 @@ impl Item for TerminalView {
         Some(vec![BreadcrumbText {
             text: self.terminal().read(cx).breadcrumb_text.clone(),
             highlights: None,
+            font: None,
         }])
     }
 
@@ -882,40 +915,45 @@ impl Item for TerminalView {
     ) -> Task<anyhow::Result<View<Self>>> {
         let window = cx.window_handle();
         cx.spawn(|pane, mut cx| async move {
-            let cwd = TERMINAL_DB
-                .get_working_directory(item_id, workspace_id)
-                .log_err()
-                .flatten()
-                .or_else(|| {
-                    cx.update(|cx| {
+            let cwd = cx
+                .update(|cx| {
+                    let from_db = TERMINAL_DB
+                        .get_working_directory(item_id, workspace_id)
+                        .log_err()
+                        .flatten();
+                    if from_db
+                        .as_ref()
+                        .is_some_and(|from_db| !from_db.as_os_str().is_empty())
+                    {
+                        project
+                            .read(cx)
+                            .terminal_work_dir_for(from_db.as_deref(), cx)
+                    } else {
                         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
                         workspace.upgrade().and_then(|workspace| {
                             get_working_directory(workspace.read(cx), cx, strategy)
                         })
-                    })
-                    .ok()
-                    .flatten()
+                    }
                 })
-                .filter(|cwd| !cwd.as_os_str().is_empty());
+                .ok()
+                .flatten();
 
             let terminal = project.update(&mut cx, |project, cx| {
                 project.create_terminal(cwd, None, window, cx)
             })??;
             pane.update(&mut cx, |_, cx| {
-                cx.new_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))
+                cx.new_view(|cx| TerminalView::new(terminal, workspace, Some(workspace_id), cx))
             })
         })
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         if self.terminal().read(cx).task().is_none() {
-            cx.background_executor()
-                .spawn(TERMINAL_DB.update_workspace_id(
-                    workspace.database_id(),
-                    self.workspace_id,
-                    cx.entity_id().as_u64(),
-                ))
-                .detach();
+            if let Some((new_id, old_id)) = workspace.database_id().zip(self.workspace_id) {
+                cx.background_executor()
+                    .spawn(TERMINAL_DB.update_workspace_id(new_id, old_id, cx.entity_id().as_u64()))
+                    .detach();
+            }
             self.workspace_id = workspace.database_id();
         }
     }
@@ -943,8 +981,9 @@ impl SearchableItem for TerminalView {
     }
 
     /// Store matches returned from find_matches somewhere for rendering
-    fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-        self.terminal().update(cx, |term, _| term.matches = matches)
+    fn update_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
+        self.terminal()
+            .update(cx, |term, _| term.matches = matches.to_vec())
     }
 
     /// Returns the selection content to pre-load into this search
@@ -958,14 +997,14 @@ impl SearchableItem for TerminalView {
     }
 
     /// Focus match at given index into the Vec of matches
-    fn activate_match(&mut self, index: usize, _: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+    fn activate_match(&mut self, index: usize, _: &[Self::Match], cx: &mut ViewContext<Self>) {
         self.terminal()
             .update(cx, |term, _| term.activate_match(index));
         cx.notify();
     }
 
     /// Add selections for all matches given.
-    fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+    fn select_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
         self.terminal()
             .update(cx, |term, _| term.select_matches(matches));
         cx.notify();
@@ -1003,7 +1042,7 @@ impl SearchableItem for TerminalView {
     /// Reports back to the search toolbar what the active match should be (the selection)
     fn active_match_index(
         &mut self,
-        matches: Vec<Self::Match>,
+        matches: &[Self::Match],
         cx: &mut ViewContext<Self>,
     ) -> Option<usize> {
         // Selection head might have a value if there's a selection that isn't
@@ -1046,20 +1085,24 @@ pub fn get_working_directory(
     workspace: &Workspace,
     cx: &AppContext,
     strategy: WorkingDirectory,
-) -> Option<PathBuf> {
-    let res = match strategy {
-        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx)
-            .or_else(|| first_project_directory(workspace, cx)),
-        WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
-        WorkingDirectory::AlwaysHome => None,
-        WorkingDirectory::Always { directory } => {
-            shellexpand::full(&directory) //TODO handle this better
-                .ok()
-                .map(|dir| Path::new(&dir.to_string()).to_path_buf())
-                .filter(|dir| dir.is_dir())
-        }
-    };
-    res.or_else(home_dir)
+) -> Option<TerminalWorkDir> {
+    if workspace.project().read(cx).is_local() {
+        let res = match strategy {
+            WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx)
+                .or_else(|| first_project_directory(workspace, cx)),
+            WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
+            WorkingDirectory::AlwaysHome => None,
+            WorkingDirectory::Always { directory } => {
+                shellexpand::full(&directory) //TODO handle this better
+                    .ok()
+                    .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+                    .filter(|dir| dir.is_dir())
+            }
+        };
+        res.or_else(home_dir).map(|cwd| TerminalWorkDir::Local(cwd))
+    } else {
+        workspace.project().read(cx).terminal_work_dir_for(None, cx)
+    }
 }
 
 ///Gets the first project's home directory, or the home directory

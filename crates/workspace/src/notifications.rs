@@ -1,17 +1,46 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
 use gpui::{
-    svg, AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EntityId, EventEmitter,
-    Global, PromptLevel, Render, Task, View, ViewContext, VisualContext, WindowContext,
+    svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, Entity, EntityId,
+    EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext,
+    VisualContext, WindowContext,
 };
 use language::DiagnosticSeverity;
 
 use std::{any::TypeId, ops::DerefMut};
-use ui::prelude::*;
+use ui::{prelude::*, Tooltip};
 use util::ResultExt;
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(NotificationTracker::new());
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct NotificationId {
+    /// A [`TypeId`] used to uniquely identify this notification.
+    type_id: TypeId,
+    /// A supplementary ID used to distinguish between multiple
+    /// notifications that have the same [`type_id`](Self::type_id);
+    id: Option<ElementId>,
+}
+
+impl NotificationId {
+    /// Returns a unique [`NotificationId`] for the given type.
+    pub fn unique<T: 'static>() -> Self {
+        Self {
+            type_id: TypeId::of::<T>(),
+            id: None,
+        }
+    }
+
+    /// Returns a [`NotificationId`] for the given type that is also identified
+    /// by the provided ID.
+    pub fn identified<T: 'static>(id: impl Into<ElementId>) -> Self {
+        Self {
+            type_id: TypeId::of::<T>(),
+            id: Some(id.into()),
+        }
+    }
 }
 
 pub trait Notification: EventEmitter<DismissEvent> + Render {}
@@ -40,13 +69,13 @@ impl From<&dyn NotificationHandle> for AnyView {
 }
 
 pub(crate) struct NotificationTracker {
-    notifications_sent: HashMap<TypeId, Vec<usize>>,
+    notifications_sent: HashMap<TypeId, Vec<NotificationId>>,
 }
 
 impl Global for NotificationTracker {}
 
 impl std::ops::Deref for NotificationTracker {
-    type Target = HashMap<TypeId, Vec<usize>>;
+    type Target = HashMap<TypeId, Vec<NotificationId>>;
 
     fn deref(&self) -> &Self::Target {
         &self.notifications_sent
@@ -70,73 +99,72 @@ impl NotificationTracker {
 impl Workspace {
     pub fn has_shown_notification_once<V: Notification>(
         &self,
-        id: usize,
+        id: &NotificationId,
         cx: &ViewContext<Self>,
     ) -> bool {
         cx.global::<NotificationTracker>()
             .get(&TypeId::of::<V>())
-            .map(|ids| ids.contains(&id))
+            .map(|ids| ids.contains(id))
             .unwrap_or(false)
     }
 
     pub fn show_notification_once<V: Notification>(
         &mut self,
-        id: usize,
+        id: NotificationId,
         cx: &mut ViewContext<Self>,
         build_notification: impl FnOnce(&mut ViewContext<Self>) -> View<V>,
     ) {
-        if !self.has_shown_notification_once::<V>(id, cx) {
+        if !self.has_shown_notification_once::<V>(&id, cx) {
             let tracker = cx.global_mut::<NotificationTracker>();
             let entry = tracker.entry(TypeId::of::<V>()).or_default();
-            entry.push(id);
+            entry.push(id.clone());
             self.show_notification::<V>(id, cx, build_notification)
         }
     }
 
     pub fn show_notification<V: Notification>(
         &mut self,
-        id: usize,
+        id: NotificationId,
         cx: &mut ViewContext<Self>,
         build_notification: impl FnOnce(&mut ViewContext<Self>) -> View<V>,
     ) {
-        let type_id = TypeId::of::<V>();
-        if self
-            .notifications
-            .iter()
-            .all(|(existing_type_id, existing_id, _)| {
-                (*existing_type_id, *existing_id) != (type_id, id)
-            })
-        {
-            let notification = build_notification(cx);
-            cx.subscribe(&notification, move |this, _, _: &DismissEvent, cx| {
-                this.dismiss_notification_internal(type_id, id, cx);
-            })
-            .detach();
-            self.notifications
-                .push((type_id, id, Box::new(notification)));
-            cx.notify();
-        }
+        self.dismiss_notification_internal(&id, cx);
+
+        let notification = build_notification(cx);
+        cx.subscribe(&notification, {
+            let id = id.clone();
+            move |this, _, _: &DismissEvent, cx| {
+                this.dismiss_notification_internal(&id, cx);
+            }
+        })
+        .detach();
+        self.notifications.push((id, Box::new(notification)));
+        cx.notify();
     }
 
     pub fn show_error<E>(&mut self, err: &E, cx: &mut ViewContext<Self>)
     where
         E: std::fmt::Debug,
     {
-        self.show_notification(0, cx, |cx| {
-            cx.new_view(|_cx| {
-                simple_message_notification::MessageNotification::new(format!("Error: {err:?}"))
-            })
-        });
+        struct WorkspaceErrorNotification;
+
+        self.show_notification(
+            NotificationId::unique::<WorkspaceErrorNotification>(),
+            cx,
+            |cx| {
+                cx.new_view(|_cx| {
+                    simple_message_notification::MessageNotification::new(format!("Error: {err:?}"))
+                })
+            },
+        );
     }
 
-    pub fn dismiss_notification<V: Notification>(&mut self, id: usize, cx: &mut ViewContext<Self>) {
-        let type_id = TypeId::of::<V>();
-
-        self.dismiss_notification_internal(type_id, id, cx)
+    pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
+        self.dismiss_notification_internal(id, cx)
     }
 
     pub fn show_toast(&mut self, toast: Toast, cx: &mut ViewContext<Self>) {
-        self.dismiss_notification::<simple_message_notification::MessageNotification>(toast.id, cx);
+        self.dismiss_notification(&toast.id, cx);
         self.show_notification(toast.id, cx, |cx| {
             cx.new_view(|_cx| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
@@ -150,36 +178,32 @@ impl Workspace {
         })
     }
 
-    pub fn dismiss_toast(&mut self, id: usize, cx: &mut ViewContext<Self>) {
-        self.dismiss_notification::<simple_message_notification::MessageNotification>(id, cx);
+    pub fn dismiss_toast(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
+        self.dismiss_notification(id, cx);
     }
 
-    fn dismiss_notification_internal(
-        &mut self,
-        type_id: TypeId,
-        id: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.notifications
-            .retain(|(existing_type_id, existing_id, _)| {
-                if (*existing_type_id, *existing_id) == (type_id, id) {
-                    cx.notify();
-                    false
-                } else {
-                    true
-                }
-            });
+    fn dismiss_notification_internal(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
+        self.notifications.retain(|(existing_id, _)| {
+            if existing_id == id {
+                cx.notify();
+                false
+            } else {
+                true
+            }
+        });
     }
 }
 
 pub struct LanguageServerPrompt {
     request: Option<project::LanguageServerPromptRequest>,
+    scroll_handle: ScrollHandle,
 }
 
 impl LanguageServerPrompt {
     pub fn new(request: project::LanguageServerPromptRequest) -> Self {
         Self {
             request: Some(request),
+            scroll_handle: ScrollHandle::new(),
         }
     }
 
@@ -211,45 +235,88 @@ impl Render for LanguageServerPrompt {
 
         h_flex()
             .id("language_server_prompt_notification")
+            .occlude()
             .elevation_3(cx)
             .items_start()
             .justify_between()
             .p_2()
             .gap_2()
             .w_full()
+            .max_h(vh(0.8, cx))
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
+            .group("")
             .child(
                 v_flex()
+                    .w_full()
                     .overflow_hidden()
                     .child(
                         h_flex()
-                            .children(
-                                match request.level {
-                                    PromptLevel::Info => None,
-                                    PromptLevel::Warning => Some(DiagnosticSeverity::WARNING),
-                                    PromptLevel::Critical => Some(DiagnosticSeverity::ERROR),
-                                }
-                                .map(|severity| {
-                                    svg()
-                                        .size(cx.text_style().font_size)
-                                        .flex_none()
-                                        .mr_1()
-                                        .map(|icon| {
-                                            if severity == DiagnosticSeverity::ERROR {
-                                                icon.path(IconName::ExclamationTriangle.path())
-                                                    .text_color(Color::Error.color(cx))
-                                            } else {
-                                                icon.path(IconName::ExclamationTriangle.path())
-                                                    .text_color(Color::Warning.color(cx))
+                            .w_full()
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .flex_grow()
+                                    .children(
+                                        match request.level {
+                                            PromptLevel::Info => None,
+                                            PromptLevel::Warning => {
+                                                Some(DiagnosticSeverity::WARNING)
                                             }
-                                        })
-                                }),
+                                            PromptLevel::Critical => {
+                                                Some(DiagnosticSeverity::ERROR)
+                                            }
+                                        }
+                                        .map(|severity| {
+                                            svg()
+                                                .size(cx.text_style().font_size)
+                                                .flex_none()
+                                                .mr_1()
+                                                .mt(px(-2.0))
+                                                .map(|icon| {
+                                                    if severity == DiagnosticSeverity::ERROR {
+                                                        icon.path(
+                                                            IconName::ExclamationTriangle.path(),
+                                                        )
+                                                        .text_color(Color::Error.color(cx))
+                                                    } else {
+                                                        icon.path(
+                                                            IconName::ExclamationTriangle.path(),
+                                                        )
+                                                        .text_color(Color::Warning.color(cx))
+                                                    }
+                                                })
+                                        }),
+                                    )
+                                    .child(
+                                        Label::new(request.lsp_name.clone())
+                                            .size(LabelSize::Default),
+                                    ),
                             )
                             .child(
-                                Label::new(format!("{}:", request.lsp_name))
-                                    .size(LabelSize::Default),
+                                ui::IconButton::new("close", ui::IconName::Close)
+                                    .on_click(cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent))),
                             ),
                     )
-                    .child(Label::new(request.message.to_string()))
+                    .child(
+                        v_flex()
+                            .child(
+                                h_flex().absolute().right_0().rounded_md().child(
+                                    ui::IconButton::new("copy", ui::IconName::Copy)
+                                        .on_click({
+                                            let message = request.message.clone();
+                                            move |_, cx| {
+                                                cx.write_to_clipboard(ClipboardItem::new(
+                                                    message.clone(),
+                                                ))
+                                            }
+                                        })
+                                        .tooltip(|cx| Tooltip::text("Copy", cx))
+                                        .visible_on_hover(""),
+                                ),
+                            )
+                            .child(Label::new(request.message.to_string()).size(LabelSize::Small)),
+                    )
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
                         let this_handle = cx.view().clone();
                         ui::Button::new(ix, action.title.clone())
@@ -262,10 +329,6 @@ impl Render for LanguageServerPrompt {
                                 .detach()
                             })
                     })),
-            )
-            .child(
-                ui::IconButton::new("close", ui::IconName::Close)
-                    .on_click(cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent))),
             )
     }
 }
@@ -449,6 +512,13 @@ where
 }
 
 pub trait DetachAndPromptErr {
+    fn prompt_err(
+        self,
+        msg: &str,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+    ) -> Task<()>;
+
     fn detach_and_prompt_err(
         self,
         msg: &str,
@@ -461,12 +531,12 @@ impl<R> DetachAndPromptErr for Task<anyhow::Result<R>>
 where
     R: 'static,
 {
-    fn detach_and_prompt_err(
+    fn prompt_err(
         self,
         msg: &str,
         cx: &mut WindowContext,
         f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
-    ) {
+    ) -> Task<()> {
         let msg = msg.to_owned();
         cx.spawn(|mut cx| async move {
             if let Err(err) = self.await {
@@ -480,6 +550,14 @@ where
                 }
             }
         })
-        .detach();
+    }
+
+    fn detach_and_prompt_err(
+        self,
+        msg: &str,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+    ) {
+        self.prompt_err(msg, cx, f).detach();
     }
 }

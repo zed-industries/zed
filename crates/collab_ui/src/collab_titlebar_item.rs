@@ -5,19 +5,19 @@ use client::{proto::PeerId, Client, User, UserStore};
 use gpui::{
     actions, canvas, div, point, px, Action, AnyElement, AppContext, Element, Hsla,
     InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
-    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
-use rpc::proto;
+use rpc::proto::{self, DevServerStatus};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
-    ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, TitleBar, Tooltip,
+    ButtonStyle, ContextMenu, Icon, IconButton, IconName, Indicator, TintColor, TitleBar, Tooltip,
 };
 use util::ResultExt;
-use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
+use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
@@ -58,7 +58,7 @@ impl Render for CollabTitlebarItem {
         let project_id = self.project.read(cx).remote_id();
         let workspace = self.workspace.upgrade();
 
-        TitleBar::new("collab-titlebar")
+        TitleBar::new("collab-titlebar", Box::new(workspace::CloseWindow))
             // note: on windows titlebar behaviour is handled by the platform implementation
             .when(cfg!(not(windows)), |this| {
                 this.on_click(|event, cx| {
@@ -73,7 +73,8 @@ impl Render for CollabTitlebarItem {
                     .gap_1()
                     .children(self.render_project_host(cx))
                     .child(self.render_project_name(cx))
-                    .children(self.render_project_branch(cx)),
+                    .children(self.render_project_branch(cx))
+                    .on_mouse_move(|_, cx| cx.stop_propagation()),
             )
             .child(
                 h_flex()
@@ -105,6 +106,7 @@ impl Render for CollabTitlebarItem {
 
                             this.children(current_user_face_pile.map(|face_pile| {
                                 v_flex()
+                                    .on_mouse_move(|_, cx| cx.stop_propagation())
                                     .child(face_pile)
                                     .child(render_color_ribbon(player_colors.local().cursor))
                             }))
@@ -167,48 +169,53 @@ impl Render for CollabTitlebarItem {
                 h_flex()
                     .gap_1()
                     .pr_1()
+                    .on_mouse_move(|_, cx| cx.stop_propagation())
                     .when_some(room, |this, room| {
                         let room = room.read(cx);
                         let project = self.project.read(cx);
                         let is_local = project.is_local();
-                        let is_shared = is_local && project.is_shared();
+                        let is_dev_server_project = project.dev_server_project_id().is_some();
+                        let is_shared = (is_local || is_dev_server_project) && project.is_shared();
                         let is_muted = room.is_muted();
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
                         let can_use_microphone = room.can_use_microphone();
                         let can_share_projects = room.can_share_projects();
 
-                        this.when(is_local && can_share_projects, |this| {
-                            this.child(
-                                Button::new(
-                                    "toggle_sharing",
-                                    if is_shared { "Unshare" } else { "Share" },
-                                )
-                                .tooltip(move |cx| {
-                                    Tooltip::text(
-                                        if is_shared {
-                                            "Stop sharing project with call participants"
-                                        } else {
-                                            "Share project with call participants"
-                                        },
-                                        cx,
+                        this.when(
+                            (is_local || is_dev_server_project) && can_share_projects,
+                            |this| {
+                                this.child(
+                                    Button::new(
+                                        "toggle_sharing",
+                                        if is_shared { "Unshare" } else { "Share" },
                                     )
-                                })
-                                .style(ButtonStyle::Subtle)
-                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                .selected(is_shared)
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(
-                                    move |this, _, cx| {
-                                        if is_shared {
-                                            this.unshare_project(&Default::default(), cx);
-                                        } else {
-                                            this.share_project(&Default::default(), cx);
-                                        }
-                                    },
-                                )),
-                            )
-                        })
+                                    .tooltip(move |cx| {
+                                        Tooltip::text(
+                                            if is_shared {
+                                                "Stop sharing project with call participants"
+                                            } else {
+                                                "Share project with call participants"
+                                            },
+                                            cx,
+                                        )
+                                    })
+                                    .style(ButtonStyle::Subtle)
+                                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                    .selected(is_shared)
+                                    .label_size(LabelSize::Small)
+                                    .on_click(cx.listener(
+                                        move |this, _, cx| {
+                                            if is_shared {
+                                                this.unshare_project(&Default::default(), cx);
+                                            } else {
+                                                this.share_project(&Default::default(), cx);
+                                            }
+                                        },
+                                    )),
+                                )
+                            },
+                        )
                         .child(
                             div()
                                 .child(
@@ -371,7 +378,41 @@ impl CollabTitlebarItem {
     // resolve if you are in a room -> render_project_owner
     // render_project_owner -> resolve if you are in a room -> Option<foo>
 
-    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        if let Some(dev_server) =
+            self.project
+                .read(cx)
+                .dev_server_project_id()
+                .and_then(|dev_server_project_id| {
+                    dev_server_projects::Store::global(cx)
+                        .read(cx)
+                        .dev_server_for_project(dev_server_project_id)
+                })
+        {
+            return Some(
+                ButtonLike::new("dev_server_trigger")
+                    .child(Indicator::dot().color(
+                        if dev_server.status == DevServerStatus::Online {
+                            Color::Created
+                        } else {
+                            Color::Disabled
+                        },
+                    ))
+                    .child(
+                        Label::new(dev_server.name.clone())
+                            .size(LabelSize::Small)
+                            .line_height_style(LineHeightStyle::UiLabel),
+                    )
+                    .tooltip(move |cx| Tooltip::text("Project is hosted on a dev server", cx))
+                    .on_click(cx.listener(|this, _, cx| {
+                        if let Some(workspace) = this.workspace.upgrade() {
+                            recent_projects::DevServerProjects::open(workspace, cx)
+                        }
+                    }))
+                    .into_any_element(),
+            );
+        }
+
         let host = self.project.read(cx).host()?;
         let host_user = self.user_store.read(cx).get_cached_user(host.user_id)?;
         let participant_index = self
@@ -402,11 +443,12 @@ impl CollabTitlebarItem {
                             })
                             .log_err();
                     })
-                }),
+                })
+                .into_any_element(),
         )
     }
 
-    pub fn render_project_name(&self, cx: &mut ViewContext<Self>) -> impl Element {
+    pub fn render_project_name(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let name = {
             let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -423,18 +465,29 @@ impl CollabTitlebarItem {
         };
 
         let workspace = self.workspace.clone();
-        popover_menu("project_name_trigger")
-            .trigger(
-                Button::new("project_name_trigger", name)
-                    .when(!is_project_selected, |b| b.color(Color::Muted))
-                    .style(ButtonStyle::Subtle)
-                    .label_size(LabelSize::Small)
-                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
-            )
-            .menu(move |cx| Some(Self::render_project_popover(workspace.clone(), cx)))
+        Button::new("project_name_trigger", name)
+            .when(!is_project_selected, |b| b.color(Color::Muted))
+            .style(ButtonStyle::Subtle)
+            .label_size(LabelSize::Small)
+            .tooltip(move |cx| {
+                Tooltip::for_action(
+                    "Recent Projects",
+                    &recent_projects::OpenRecent {
+                        create_new_window: false,
+                    },
+                    cx,
+                )
+            })
+            .on_click(cx.listener(move |_, _, cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        RecentProjects::open(workspace, false, cx);
+                    })
+                }
+            }))
     }
 
-    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
+    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {
@@ -450,22 +503,23 @@ impl CollabTitlebarItem {
             .and_then(RepositoryEntry::branch)
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(
-            popover_menu("project_branch_trigger")
-                .trigger(
-                    Button::new("project_branch_trigger", branch_name)
-                        .color(Color::Muted)
-                        .style(ButtonStyle::Subtle)
-                        .label_size(LabelSize::Small)
-                        .tooltip(move |cx| {
-                            Tooltip::with_meta(
-                                "Recent Branches",
-                                Some(&ToggleVcsMenu),
-                                "Local branches only",
-                                cx,
-                            )
-                        }),
-                )
-                .menu(move |cx| Self::render_vcs_popover(workspace.clone(), cx)),
+            Button::new("project_branch_trigger", branch_name)
+                .color(Color::Muted)
+                .style(ButtonStyle::Subtle)
+                .label_size(LabelSize::Small)
+                .tooltip(move |cx| {
+                    Tooltip::with_meta(
+                        "Recent Branches",
+                        Some(&ToggleVcsMenu),
+                        "Local branches only",
+                        cx,
+                    )
+                })
+                .on_click(move |_, cx| {
+                    let _ = workspace.update(cx, |this, cx| {
+                        BranchList::open(this, &Default::default(), cx)
+                    });
+                }),
         )
     }
 
@@ -597,27 +651,6 @@ impl CollabTitlebarItem {
             .log_err();
     }
 
-    pub fn render_vcs_popover(
-        workspace: View<Workspace>,
-        cx: &mut WindowContext<'_>,
-    ) -> Option<View<BranchList>> {
-        let view = build_branch_list(workspace, cx).log_err()?;
-        let focus_handle = view.focus_handle(cx);
-        cx.focus(&focus_handle);
-        Some(view)
-    }
-
-    pub fn render_project_popover(
-        workspace: WeakView<Workspace>,
-        cx: &mut WindowContext<'_>,
-    ) -> View<RecentProjects> {
-        let view = RecentProjects::open_popover(workspace, cx);
-
-        let focus_handle = view.focus_handle(cx);
-        cx.focus(&focus_handle);
-        view
-    }
-
     fn render_connection_status(
         &self,
         status: &client::Status,
@@ -638,7 +671,7 @@ impl CollabTitlebarItem {
             client::Status::UpgradeRequired => {
                 let auto_updater = auto_update::AutoUpdater::get(cx);
                 let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
-                    Some(AutoUpdateStatus::Updated) => "Please restart Zed to Collaborate",
+                    Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
                     Some(AutoUpdateStatus::Installing)
                     | Some(AutoUpdateStatus::Downloading)
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
@@ -652,7 +685,7 @@ impl CollabTitlebarItem {
                         .label_size(LabelSize::Small)
                         .on_click(|_, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
-                                if auto_updater.read(cx).status() == AutoUpdateStatus::Updated {
+                                if auto_updater.read(cx).status().is_updated() {
                                     workspace::restart(&Default::default(), cx);
                                     return;
                                 }
@@ -689,7 +722,7 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .action("Themes...", theme_selector::Toggle::default().boxed_clone())
+                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
                             .separator()
                             .action("Sign Out", client::SignOut.boxed_clone())
                     })
@@ -701,7 +734,11 @@ impl CollabTitlebarItem {
                             h_flex()
                                 .gap_0p5()
                                 .child(Avatar::new(user.avatar_uri.clone()))
-                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
+                                .child(
+                                    Icon::new(IconName::ChevronDown)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                ),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
@@ -713,16 +750,18 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .action("Themes...", theme_selector::Toggle::default().boxed_clone())
+                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
                     })
                     .into()
                 })
                 .trigger(
                     ButtonLike::new("user-menu")
                         .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
+                            h_flex().gap_0p5().child(
+                                Icon::new(IconName::ChevronDown)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            ),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),

@@ -1,7 +1,7 @@
 use gpui::{rems, Length, Rems, WindowContext};
 
 /// The base size of a rem, in pixels.
-pub(crate) const BASE_REM_SIZE_IN_PX: f32 = 16.;
+pub const BASE_REM_SIZE_IN_PX: f32 = 16.;
 
 /// Returns a rem value derived from the provided pixel value and the base rem size (16px).
 ///

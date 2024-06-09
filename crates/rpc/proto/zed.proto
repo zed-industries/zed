@@ -159,6 +159,7 @@ message Envelope {
         SetChannelMemberRole set_channel_member_role = 123;
         RenameChannel rename_channel = 124;
         RenameChannelResponse rename_channel_response = 125;
+        SubscribeToChannels subscribe_to_channels = 207; // current max
 
         JoinChannelBuffer join_channel_buffer = 126;
         JoinChannelBufferResponse join_channel_buffer_response = 127;
@@ -204,11 +205,53 @@ message Envelope {
         LanguageModelResponse language_model_response = 167;
         CountTokensWithLanguageModel count_tokens_with_language_model = 168;
         CountTokensResponse count_tokens_response = 169;
+        GetCachedEmbeddings get_cached_embeddings = 189;
+        GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
+        ComputeEmbeddings compute_embeddings = 191;
+        ComputeEmbeddingsResponse compute_embeddings_response = 192;
+
         UpdateChannelMessage update_channel_message = 170;
         ChannelMessageUpdate channel_message_update = 171;
 
         BlameBuffer blame_buffer = 172;
-        BlameBufferResponse blame_buffer_response = 173; // Current max
+        BlameBufferResponse blame_buffer_response = 173;
+
+        UpdateNotification update_notification = 174;
+
+        MultiLspQuery multi_lsp_query = 175;
+        MultiLspQueryResponse multi_lsp_query_response = 176;
+
+        CreateDevServerProject create_dev_server_project = 177;
+        CreateDevServerProjectResponse create_dev_server_project_response = 188;
+        CreateDevServer create_dev_server = 178;
+        CreateDevServerResponse create_dev_server_response = 179;
+        ShutdownDevServer shutdown_dev_server = 180;
+        DevServerInstructions dev_server_instructions = 181;
+        ReconnectDevServer reconnect_dev_server = 182;
+        ReconnectDevServerResponse reconnect_dev_server_response = 183;
+
+        ShareDevServerProject share_dev_server_project = 184;
+        JoinDevServerProject join_dev_server_project = 185;
+        RejoinRemoteProjects rejoin_remote_projects = 186;
+        RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
+
+        DevServerProjectsUpdate dev_server_projects_update = 193;
+        ValidateDevServerProjectRequest validate_dev_server_project_request = 194;
+        DeleteDevServer delete_dev_server = 195;
+        OpenNewBuffer open_new_buffer = 196;
+        DeleteDevServerProject delete_dev_server_project = 197;
+
+        GetSupermavenApiKey get_supermaven_api_key = 198;
+        GetSupermavenApiKeyResponse get_supermaven_api_key_response = 199;
+
+        RegenerateDevServerToken regenerate_dev_server_token = 200;
+        RegenerateDevServerTokenResponse regenerate_dev_server_token_response = 201;
+        RenameDevServer rename_dev_server = 202;
+
+        TaskContextForLocation task_context_for_location = 203;
+        TaskContext task_context = 204;
+        TaskTemplatesResponse task_templates_response = 205;
+        TaskTemplates task_templates = 206;
     }
 
     reserved 158 to 161;
@@ -244,6 +287,10 @@ enum ErrorCode {
     WrongMoveTarget = 11;
     UnsharedItem = 12;
     NoSuchProject = 13;
+    DevServerAlreadyOnline = 14;
+    DevServerOffline = 15;
+    DevServerProjectPathDoesNotExist = 16;
+    RemoteUpgradeRequired = 17;
     reserved 6;
 }
 
@@ -274,6 +321,13 @@ message RejoinRoom {
     uint64 id = 1;
     repeated UpdateProject reshared_projects = 2;
     repeated RejoinProject rejoined_projects = 3;
+}
+message RejoinRemoteProjects {
+    repeated RejoinProject rejoined_projects = 1;
+}
+
+message RejoinRemoteProjectsResponse {
+    repeated RejoinedProject rejoined_projects = 1;
 }
 
 message RejoinProject {
@@ -401,6 +455,7 @@ message LiveKitConnectionInfo {
 message ShareProject {
     uint64 room_id = 1;
     repeated WorktreeMetadata worktrees = 2;
+    optional uint64 dev_server_project_id = 3;
 }
 
 message ShareProjectResponse {
@@ -424,6 +479,86 @@ message JoinHostedProject {
     uint64 project_id = 1;
 }
 
+message CreateDevServerProject {
+    reserved 1;
+    reserved 2;
+    uint64 dev_server_id = 3;
+    string path = 4;
+}
+message CreateDevServerProjectResponse {
+    DevServerProject dev_server_project = 1;
+}
+
+message ValidateDevServerProjectRequest {
+    string path = 1;
+}
+
+message CreateDevServer {
+    reserved 1;
+    string name = 2;
+    optional string ssh_connection_string = 3;
+}
+
+message RegenerateDevServerToken {
+    uint64 dev_server_id = 1;
+}
+
+message RegenerateDevServerTokenResponse {
+    uint64 dev_server_id = 1;
+    string access_token = 2;
+}
+
+message CreateDevServerResponse {
+    uint64 dev_server_id = 1;
+    reserved 2;
+    string access_token = 3;
+    string name = 4;
+}
+
+message ShutdownDevServer {
+    optional string reason = 1;
+}
+
+message RenameDevServer {
+    uint64 dev_server_id = 1;
+    string name = 2;
+    optional string ssh_connection_string = 3;
+}
+
+message DeleteDevServer {
+    uint64 dev_server_id = 1;
+}
+
+message DeleteDevServerProject {
+    uint64 dev_server_project_id = 1;
+}
+
+message ReconnectDevServer {
+    repeated UpdateProject reshared_projects = 1;
+}
+
+message ReconnectDevServerResponse {
+    repeated ResharedProject reshared_projects = 1;
+}
+
+message DevServerInstructions {
+    repeated DevServerProject projects = 1;
+}
+
+message DevServerProjectsUpdate {
+    repeated DevServer dev_servers = 1;
+    repeated DevServerProject dev_server_projects = 2;
+}
+
+message ShareDevServerProject {
+    uint64 dev_server_project_id = 1;
+    repeated WorktreeMetadata worktrees = 2;
+}
+
+message JoinDevServerProject {
+    uint64 dev_server_project_id = 1;
+}
+
 message JoinProjectResponse {
     uint64 project_id = 5;
     uint32 replica_id = 1;
@@ -431,6 +566,7 @@ message JoinProjectResponse {
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
     ChannelRole role = 6;
+    optional uint64 dev_server_project_id = 7;
 }
 
 message LeaveProject {
@@ -479,6 +615,7 @@ message CopyProjectEntry {
 message DeleteProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
+    bool use_trash = 3;
 }
 
 message ExpandProjectEntry {
@@ -636,6 +773,10 @@ message OpenBufferById {
     uint64 id = 2;
 }
 
+message OpenNewBuffer {
+    uint64 project_id = 1;
+}
+
 message OpenBufferResponse {
     uint64 buffer_id = 1;
 }
@@ -670,6 +811,12 @@ message SaveBuffer {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
+    optional ProjectPath new_path = 4;
+}
+
+message ProjectPath {
+    uint64 worktree_id = 1;
+    string path = 2;
 }
 
 message BufferSaved {
@@ -677,7 +824,7 @@ message BufferSaved {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
-    string fingerprint = 5;
+    reserved 5;
 }
 
 message BufferReloaded {
@@ -685,7 +832,7 @@ message BufferReloaded {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
-    string fingerprint = 5;
+    reserved 5;
     LineEnding line_ending = 6;
 }
 
@@ -912,15 +1059,22 @@ message ResolveState {
     }
 }
 
+// This type is used to resolve more than just
+// the documentation, but for backwards-compatibility
+// reasons we can't rename the type.
 message ResolveCompletionDocumentation {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
     bytes lsp_completion = 3;
+    uint64 buffer_id = 4;
 }
 
 message ResolveCompletionDocumentationResponse {
-    string text = 1;
-    bool is_markdown = 2;
+    string documentation = 1;
+    bool documentation_is_markdown = 2;
+    Anchor old_start = 3;
+    Anchor old_end = 4;
+    string new_text = 5;
 }
 
 message ResolveInlayHint {
@@ -1052,6 +1206,11 @@ message UpdateChannels {
 
     repeated HostedProject hosted_projects = 10;
     repeated uint64 deleted_hosted_projects = 11;
+
+    reserved 12;
+    reserved 13;
+    reserved 14;
+    reserved 15;
 }
 
 message UpdateUserChannels {
@@ -1087,6 +1246,28 @@ message HostedProject {
     ChannelVisibility visibility = 4;
 }
 
+message DevServerProject {
+    uint64 id = 1;
+    optional uint64 project_id = 2;
+    reserved 3;
+    reserved 4;
+    uint64 dev_server_id = 5;
+    string path = 6;
+}
+
+message DevServer {
+    reserved 1;
+    uint64 dev_server_id = 2;
+    string name = 3;
+    DevServerStatus status = 4;
+    optional string ssh_connection_string = 5;
+}
+
+enum DevServerStatus {
+    Offline = 0;
+    Online = 1;
+}
+
 message JoinChannel {
     uint64 channel_id = 1;
 }
@@ -1097,10 +1278,13 @@ message DeleteChannel {
 
 message GetChannelMembers {
     uint64 channel_id = 1;
+    string query = 2;
+    uint64 limit = 3;
 }
 
 message GetChannelMembersResponse {
     repeated ChannelMember members = 1;
+    repeated User users = 2;
 }
 
 message ChannelMember {
@@ -1113,6 +1297,8 @@ message ChannelMember {
         Invitee = 1;
     }
 }
+
+message SubscribeToChannels {}
 
 message CreateChannel {
     string name = 1;
@@ -1505,7 +1691,7 @@ message BufferState {
     optional string diff_base = 4;
     LineEnding line_ending = 5;
     repeated VectorClockEntry saved_version = 6;
-    string saved_version_fingerprint = 7;
+    reserved 7;
     Timestamp saved_mtime = 8;
 }
 
@@ -1715,6 +1901,10 @@ message DeleteNotification {
     uint64 notification_id = 1;
 }
 
+message UpdateNotification {
+    Notification notification = 1;
+}
+
 message MarkNotificationRead {
     uint64 notification_id = 1;
 }
@@ -1751,22 +1941,70 @@ message CompleteWithLanguageModel {
     repeated LanguageModelRequestMessage messages = 2;
     repeated string stop = 3;
     float temperature = 4;
+    repeated ChatCompletionTool tools = 5;
+    optional string tool_choice = 6;
 }
 
+// A tool presented to the language model for its use
+message ChatCompletionTool {
+    oneof variant {
+        FunctionObject function = 1;
+    }
+
+    message FunctionObject {
+        string name = 1;
+        optional string description = 2;
+        optional string parameters = 3;
+    }
+}
+
+// A message to the language model
 message LanguageModelRequestMessage {
     LanguageModelRole role = 1;
     string content = 2;
+    optional string tool_call_id = 3;
+    repeated ToolCall tool_calls = 4;
 }
 
 enum LanguageModelRole {
     LanguageModelUser = 0;
     LanguageModelAssistant = 1;
     LanguageModelSystem = 2;
+    LanguageModelTool = 3;
 }
 
 message LanguageModelResponseMessage {
     optional LanguageModelRole role = 1;
     optional string content = 2;
+    repeated ToolCallDelta tool_calls = 3;
+}
+
+// A request to call a tool, by the language model
+message ToolCall {
+    string id = 1;
+
+    oneof variant {
+        FunctionCall function = 2;
+    }
+
+    message FunctionCall {
+        string name = 1;
+        string arguments = 2;
+    }
+}
+
+message ToolCallDelta {
+    uint32 index = 1;
+    optional string id = 2;
+
+    oneof variant {
+        FunctionCallDelta function = 3;
+    }
+
+    message FunctionCallDelta {
+        optional string name = 1;
+        optional string arguments = 2;
+    }
 }
 
 message LanguageModelResponse {
@@ -1786,6 +2024,29 @@ message CountTokensWithLanguageModel {
 
 message CountTokensResponse {
     uint32 token_count = 1;
+}
+
+message GetCachedEmbeddings {
+    string model = 1;
+    repeated bytes digests = 2;
+}
+
+message GetCachedEmbeddingsResponse {
+    repeated Embedding embeddings = 1;
+}
+
+message ComputeEmbeddings {
+    string model = 1;
+    repeated string texts = 2;
+}
+
+message ComputeEmbeddingsResponse {
+    repeated Embedding embeddings = 1;
+}
+
+message Embedding {
+    bytes digest = 1;
+    repeated float dimensions = 2;
 }
 
 message BlameBuffer {
@@ -1831,4 +2092,105 @@ message BlameBufferResponse {
     repeated BlameEntry entries = 1;
     repeated CommitMessage messages = 2;
     repeated CommitPermalink permalinks = 3;
+    optional string remote_url = 4;
+}
+
+message MultiLspQuery {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+    oneof strategy {
+        AllLanguageServers all = 4;
+    }
+    oneof request {
+        GetHover get_hover = 5;
+        GetCodeActions get_code_actions = 6;
+    }
+}
+
+message AllLanguageServers {}
+
+message MultiLspQueryResponse {
+    repeated LspResponse responses = 1;
+}
+
+message LspResponse {
+    oneof response {
+        GetHoverResponse get_hover_response = 1;
+        GetCodeActionsResponse get_code_actions_response = 2;
+    }
+}
+
+message GetSupermavenApiKey {}
+
+message GetSupermavenApiKeyResponse {
+    string api_key = 1;
+}
+
+message TaskContextForLocation {
+    uint64 project_id = 1;
+    Location location = 2;
+}
+
+message TaskContext {
+    optional string cwd = 1;
+    map<string, string> task_variables = 2;
+}
+
+message TaskTemplates {
+    uint64 project_id = 1;
+    optional Location location = 2;
+    optional uint64 worktree_id = 3;
+}
+
+message TaskTemplatesResponse {
+    repeated TemplatePair templates = 1;
+}
+
+message TemplatePair {
+    TaskSourceKind kind = 1;
+    TaskTemplate template = 2;
+}
+
+message TaskTemplate {
+    string label = 1;
+    string command = 2;
+    repeated string args = 3;
+    map<string, string> env = 4;
+    optional string cwd = 5;
+    bool use_new_terminal = 6;
+    bool allow_concurrent_runs = 7;
+    RevealStrategy reveal = 8;
+    repeated string tags = 9;
+}
+
+enum RevealStrategy {
+    Always = 0;
+    Never = 1;
+}
+
+message TaskSourceKind {
+    oneof kind {
+        UserInput user_input = 1;
+        Worktree worktree = 2;
+        AbsPath abs_path = 3;
+        Language language = 4;
+    }
+
+    message UserInput {}
+
+    message Worktree {
+        uint64 id = 1;
+        string abs_path = 2;
+        string id_base = 3;
+    }
+
+    message AbsPath {
+        string id_base = 1;
+        string abs_path = 2;
+    }
+
+    message Language {
+        string name = 1;
+    }
 }

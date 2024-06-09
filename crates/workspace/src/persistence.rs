@@ -3,25 +3,28 @@ pub mod model;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
+use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{point, size, Axis, Bounds};
+use gpui::{point, size, Axis, Bounds, WindowBounds};
 
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 
-use util::{unzip_option, ResultExt};
+use util::ResultExt;
 use uuid::Uuid;
 
 use crate::WorkspaceId;
 
 use model::{
-    GroupId, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
-    WorkspaceLocation,
+    GroupId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
+    SerializedWorkspace,
 };
 
-use self::model::DockStructure;
+use self::model::{
+    DockStructure, LocalPathsOrder, SerializedDevServerProject, SerializedWorkspaceLocation,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
@@ -58,50 +61,99 @@ impl sqlez::bindable::Column for SerializedAxis {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SerializedWindowsBounds(pub(crate) Bounds<gpui::DevicePixels>);
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub(crate) struct SerializedWindowBounds(pub(crate) WindowBounds);
 
-impl StaticColumnCount for SerializedWindowsBounds {
+impl StaticColumnCount for SerializedWindowBounds {
     fn column_count() -> usize {
         5
     }
 }
 
-impl Bind for SerializedWindowsBounds {
+impl Bind for SerializedWindowBounds {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(&"Fixed", start_index)?;
-
-        statement.bind(
-            &(
-                SerializedDevicePixels(self.0.origin.x),
-                SerializedDevicePixels(self.0.origin.y),
-                SerializedDevicePixels(self.0.size.width),
-                SerializedDevicePixels(self.0.size.height),
-            ),
-            next_index,
-        )
+        match self.0 {
+            WindowBounds::Windowed(bounds) => {
+                let next_index = statement.bind(&"Windowed", start_index)?;
+                statement.bind(
+                    &(
+                        SerializedDevicePixels(bounds.origin.x),
+                        SerializedDevicePixels(bounds.origin.y),
+                        SerializedDevicePixels(bounds.size.width),
+                        SerializedDevicePixels(bounds.size.height),
+                    ),
+                    next_index,
+                )
+            }
+            WindowBounds::Maximized(bounds) => {
+                let next_index = statement.bind(&"Maximized", start_index)?;
+                statement.bind(
+                    &(
+                        SerializedDevicePixels(bounds.origin.x),
+                        SerializedDevicePixels(bounds.origin.y),
+                        SerializedDevicePixels(bounds.size.width),
+                        SerializedDevicePixels(bounds.size.height),
+                    ),
+                    next_index,
+                )
+            }
+            WindowBounds::Fullscreen(bounds) => {
+                let next_index = statement.bind(&"FullScreen", start_index)?;
+                statement.bind(
+                    &(
+                        SerializedDevicePixels(bounds.origin.x),
+                        SerializedDevicePixels(bounds.origin.y),
+                        SerializedDevicePixels(bounds.size.width),
+                        SerializedDevicePixels(bounds.size.height),
+                    ),
+                    next_index,
+                )
+            }
+        }
     }
 }
 
-impl Column for SerializedWindowsBounds {
+impl Column for SerializedWindowBounds {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (window_state, next_index) = String::column(statement, start_index)?;
-        let bounds = match window_state.as_str() {
-            "Fixed" => {
+        let status = match window_state.as_str() {
+            "Windowed" | "Fixed" => {
                 let ((x, y, width, height), _) = Column::column(statement, next_index)?;
                 let x: i32 = x;
                 let y: i32 = y;
                 let width: i32 = width;
                 let height: i32 = height;
-                SerializedWindowsBounds(Bounds {
+                SerializedWindowBounds(WindowBounds::Windowed(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
-                })
+                }))
+            }
+            "Maximized" => {
+                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
+                let x: i32 = x;
+                let y: i32 = y;
+                let width: i32 = width;
+                let height: i32 = height;
+                SerializedWindowBounds(WindowBounds::Maximized(Bounds {
+                    origin: point(x.into(), y.into()),
+                    size: size(width.into(), height.into()),
+                }))
+            }
+            "FullScreen" => {
+                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
+                let x: i32 = x;
+                let y: i32 = y;
+                let width: i32 = width;
+                let height: i32 = height;
+                SerializedWindowBounds(WindowBounds::Fullscreen(Bounds {
+                    origin: point(x.into(), y.into()),
+                    size: size(width.into(), height.into()),
+                }))
             }
             _ => bail!("Window State did not have a valid string"),
         };
 
-        Ok((bounds, next_index + 4))
+        Ok((status, next_index + 4))
     }
 }
 
@@ -125,7 +177,8 @@ define_connection! {
     //
     // workspaces(
     //   workspace_id: usize, // Primary key for workspaces
-    //   workspace_location: Bincode<Vec<PathBuf>>,
+    //   local_paths: Bincode<Vec<PathBuf>>,
+    //   local_paths_order: Bincode<Vec<usize>>,
     //   dock_visible: bool, // Deprecated
     //   dock_anchor: DockAnchor, // Deprecated
     //   dock_pane: Option<usize>, // Deprecated
@@ -138,6 +191,7 @@ define_connection! {
     //   window_height: Option<f32>, // WindowBounds::Fixed RectF height
     //   display: Option<Uuid>, // Display id
     //   fullscreen: Option<bool>, // Is the window fullscreen?
+    //   centered_layout: Option<bool>, // Is the Centered Layout mode activated?
     // )
     //
     // pane_groups(
@@ -168,6 +222,7 @@ define_connection! {
     //     kind: String, // Indicates which view this connects to. This is the key in the item_deserializers global
     //     position: usize, // Position of the item in the parent pane. This is equivalent to panes' position column
     //     active: bool, // Indicates if this item is the active one in the pane
+    //     preview: bool // Indicates if this item is a preview item
     // )
     pub static ref DB: WorkspaceDb<()> =
     &[sql!(
@@ -276,8 +331,40 @@ define_connection! {
         ALTER TABLE pane_groups ADD COLUMN flexes TEXT;
     ),
     // Add fullscreen field to workspace
+    // Deprecated, `WindowBounds` holds the fullscreen state now.
+    // Preserving so users can downgrade Zed.
     sql!(
         ALTER TABLE workspaces ADD COLUMN fullscreen INTEGER; //bool
+    ),
+    // Add preview field to items
+    sql!(
+        ALTER TABLE items ADD COLUMN preview INTEGER; //bool
+    ),
+    // Add centered_layout field to workspace
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN centered_layout INTEGER; //bool
+    ),
+    sql!(
+        CREATE TABLE remote_projects (
+            remote_project_id INTEGER NOT NULL UNIQUE,
+            path TEXT,
+            dev_server_name TEXT
+        );
+        ALTER TABLE workspaces ADD COLUMN remote_project_id INTEGER;
+        ALTER TABLE workspaces RENAME COLUMN workspace_location TO local_paths;
+    ),
+    sql!(
+        DROP TABLE remote_projects;
+        CREATE TABLE dev_server_projects (
+            id INTEGER NOT NULL UNIQUE,
+            path TEXT,
+            dev_server_name TEXT
+        );
+        ALTER TABLE workspaces DROP COLUMN remote_project_id;
+        ALTER TABLE workspaces ADD COLUMN dev_server_project_id INTEGER;
+    ),
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN local_paths_order BLOB;
     ),
     ];
 }
@@ -290,14 +377,25 @@ impl WorkspaceDb {
         &self,
         worktree_roots: &[P],
     ) -> Option<SerializedWorkspace> {
-        let workspace_location: WorkspaceLocation = worktree_roots.into();
+        let local_paths = LocalPaths::new(worktree_roots);
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, workspace_location, bounds, display, fullscreen, docks): (
+        let (
+            workspace_id,
+            local_paths,
+            local_paths_order,
+            dev_server_project_id,
+            window_bounds,
+            display,
+            centered_layout,
+            docks,
+        ): (
             WorkspaceId,
-            WorkspaceLocation,
-            Option<SerializedWindowsBounds>,
+            Option<LocalPaths>,
+            Option<LocalPathsOrder>,
+            Option<u64>,
+            Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
             DockStructure,
@@ -305,14 +403,16 @@ impl WorkspaceDb {
             .select_row_bound(sql! {
                 SELECT
                     workspace_id,
-                    workspace_location,
+                    local_paths,
+                    local_paths_order,
+                    dev_server_project_id,
                     window_state,
                     window_x,
                     window_y,
                     window_width,
                     window_height,
                     display,
-                    fullscreen,
+                    centered_layout,
                     left_dock_visible,
                     left_dock_active_panel,
                     left_dock_zoom,
@@ -323,22 +423,46 @@ impl WorkspaceDb {
                     bottom_dock_active_panel,
                     bottom_dock_zoom
                 FROM workspaces
-                WHERE workspace_location = ?
+                WHERE local_paths = ?
             })
-            .and_then(|mut prepared_statement| (prepared_statement)(&workspace_location))
+            .and_then(|mut prepared_statement| (prepared_statement)(&local_paths))
             .context("No workspaces found")
             .warn_on_err()
             .flatten()?;
 
+        let location = if let Some(dev_server_project_id) = dev_server_project_id {
+            let dev_server_project: SerializedDevServerProject = self
+                .select_row_bound(sql! {
+                    SELECT id, path, dev_server_name
+                    FROM dev_server_projects
+                    WHERE id = ?
+                })
+                .and_then(|mut prepared_statement| (prepared_statement)(dev_server_project_id))
+                .context("No remote project found")
+                .warn_on_err()
+                .flatten()?;
+            SerializedWorkspaceLocation::DevServer(dev_server_project)
+        } else if let Some(local_paths) = local_paths {
+            match local_paths_order {
+                Some(order) => SerializedWorkspaceLocation::Local(local_paths, order),
+                None => {
+                    let order = LocalPathsOrder::default_for_paths(&local_paths);
+                    SerializedWorkspaceLocation::Local(local_paths, order)
+                }
+            }
+        } else {
+            return None;
+        };
+
         Some(SerializedWorkspace {
             id: workspace_id,
-            location: workspace_location.clone(),
+            location,
             center_group: self
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
                 .log_err()?,
-            bounds: bounds.map(|bounds| bounds.0),
-            fullscreen: fullscreen.unwrap_or(false),
+            window_bounds,
+            centered_layout: centered_layout.unwrap_or(false),
             display,
             docks,
         })
@@ -353,45 +477,106 @@ impl WorkspaceDb {
                 conn.exec_bound(sql!(
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
-                .expect("Clearing old panes");
+                .context("Clearing old panes")?;
 
-                conn.exec_bound(sql!(
-                    DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?
-                ))?((&workspace.location, workspace.id))
-                .context("clearing out old locations")?;
+                match workspace.location {
+                    SerializedWorkspaceLocation::Local(local_paths, local_paths_order) => {
+                        conn.exec_bound(sql!(
+                            DELETE FROM workspaces WHERE local_paths = ? AND workspace_id != ?
+                        ))?((&local_paths, workspace.id))
+                        .context("clearing out old locations")?;
 
-                // Upsert
-                conn.exec_bound(sql!(
-                    INSERT INTO workspaces(
-                        workspace_id,
-                        workspace_location,
-                        left_dock_visible,
-                        left_dock_active_panel,
-                        left_dock_zoom,
-                        right_dock_visible,
-                        right_dock_active_panel,
-                        right_dock_zoom,
-                        bottom_dock_visible,
-                        bottom_dock_active_panel,
-                        bottom_dock_zoom,
-                        timestamp
-                    )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
-                    ON CONFLICT DO
-                    UPDATE SET
-                        workspace_location = ?2,
-                        left_dock_visible = ?3,
-                        left_dock_active_panel = ?4,
-                        left_dock_zoom = ?5,
-                        right_dock_visible = ?6,
-                        right_dock_active_panel = ?7,
-                        right_dock_zoom = ?8,
-                        bottom_dock_visible = ?9,
-                        bottom_dock_active_panel = ?10,
-                        bottom_dock_zoom = ?11,
-                        timestamp = CURRENT_TIMESTAMP
-                ))?((workspace.id, &workspace.location, workspace.docks))
-                .context("Updating workspace")?;
+                        // Upsert
+                        conn.exec_bound(sql!(
+                            INSERT INTO workspaces(
+                                workspace_id,
+                                local_paths,
+                                local_paths_order,
+                                left_dock_visible,
+                                left_dock_active_panel,
+                                left_dock_zoom,
+                                right_dock_visible,
+                                right_dock_active_panel,
+                                right_dock_zoom,
+                                bottom_dock_visible,
+                                bottom_dock_active_panel,
+                                bottom_dock_zoom,
+                                timestamp
+                            )
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP)
+                            ON CONFLICT DO
+                            UPDATE SET
+                                local_paths = ?2,
+                                local_paths_order = ?3,
+                                left_dock_visible = ?4,
+                                left_dock_active_panel = ?5,
+                                left_dock_zoom = ?6,
+                                right_dock_visible = ?7,
+                                right_dock_active_panel = ?8,
+                                right_dock_zoom = ?9,
+                                bottom_dock_visible = ?10,
+                                bottom_dock_active_panel = ?11,
+                                bottom_dock_zoom = ?12,
+                                timestamp = CURRENT_TIMESTAMP
+                        ))?((workspace.id, &local_paths, &local_paths_order, workspace.docks))
+                        .context("Updating workspace")?;
+                    }
+                    SerializedWorkspaceLocation::DevServer(dev_server_project) => {
+                        conn.exec_bound(sql!(
+                            DELETE FROM workspaces WHERE dev_server_project_id = ? AND workspace_id != ?
+                        ))?((dev_server_project.id.0, workspace.id))
+                        .context("clearing out old locations")?;
+
+                        conn.exec_bound(sql!(
+                            INSERT INTO dev_server_projects(
+                                id,
+                                path,
+                                dev_server_name
+                            ) VALUES (?1, ?2, ?3)
+                            ON CONFLICT DO
+                            UPDATE SET
+                                path = ?2,
+                                dev_server_name = ?3
+                        ))?(&dev_server_project)?;
+
+                        // Upsert
+                        conn.exec_bound(sql!(
+                            INSERT INTO workspaces(
+                                workspace_id,
+                                dev_server_project_id,
+                                left_dock_visible,
+                                left_dock_active_panel,
+                                left_dock_zoom,
+                                right_dock_visible,
+                                right_dock_active_panel,
+                                right_dock_zoom,
+                                bottom_dock_visible,
+                                bottom_dock_active_panel,
+                                bottom_dock_zoom,
+                                timestamp
+                            )
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+                            ON CONFLICT DO
+                            UPDATE SET
+                                dev_server_project_id = ?2,
+                                left_dock_visible = ?3,
+                                left_dock_active_panel = ?4,
+                                left_dock_zoom = ?5,
+                                right_dock_visible = ?6,
+                                right_dock_active_panel = ?7,
+                                right_dock_zoom = ?8,
+                                bottom_dock_visible = ?9,
+                                bottom_dock_active_panel = ?10,
+                                bottom_dock_zoom = ?11,
+                                timestamp = CURRENT_TIMESTAMP
+                        ))?((
+                            workspace.id,
+                            dev_server_project.id.0,
+                            workspace.docks,
+                        ))
+                        .context("Updating workspace")?;
+                    }
+                }
 
                 // Save center pane group
                 Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
@@ -411,22 +596,37 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn recent_workspaces() -> Result<Vec<(WorkspaceId, WorkspaceLocation)>> {
-            SELECT workspace_id, workspace_location
+        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, Option<u64>)>> {
+            SELECT workspace_id, local_paths, dev_server_project_id
             FROM workspaces
-            WHERE workspace_location IS NOT NULL
+            WHERE local_paths IS NOT NULL OR dev_server_project_id IS NOT NULL
             ORDER BY timestamp DESC
         }
     }
 
     query! {
-        pub fn last_window() -> Result<(Option<Uuid>, Option<SerializedWindowsBounds>, Option<bool>)> {
-            SELECT display, window_state, window_x, window_y, window_width, window_height, fullscreen
-            FROM workspaces
-            WHERE workspace_location IS NOT NULL
-            ORDER BY timestamp DESC
-            LIMIT 1
+        fn dev_server_projects() -> Result<Vec<SerializedDevServerProject>> {
+            SELECT id, path, dev_server_name
+            FROM dev_server_projects
         }
+    }
+
+    pub(crate) fn last_window(
+        &self,
+    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowBounds>)> {
+        let mut prepared_query =
+            self.select::<(Option<Uuid>, Option<SerializedWindowBounds>)>(sql!(
+                SELECT
+                display,
+                window_state, window_x, window_y, window_width, window_height
+                FROM workspaces
+                WHERE local_paths
+                IS NOT NULL
+                ORDER BY timestamp DESC
+                LIMIT 1
+            ))?;
+        let result = prepared_query()?;
+        Ok(result.into_iter().next().unwrap_or_else(|| (None, None)))
     }
 
     query! {
@@ -436,16 +636,48 @@ impl WorkspaceDb {
         }
     }
 
+    pub async fn delete_workspace_by_dev_server_project_id(
+        &self,
+        id: DevServerProjectId,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                DELETE FROM dev_server_projects WHERE id = ?
+            ))?(id.0)?;
+            conn.exec_bound(sql!(
+                DELETE FROM workspaces
+                WHERE dev_server_project_id IS ?
+            ))?(id.0)
+        })
+        .await
+    }
+
     // Returns the recent locations which are still valid on disk and deletes ones which no longer
     // exist.
-    pub async fn recent_workspaces_on_disk(&self) -> Result<Vec<(WorkspaceId, WorkspaceLocation)>> {
+    pub async fn recent_workspaces_on_disk(
+        &self,
+    ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
-        for (id, location) in self.recent_workspaces()? {
+        let dev_server_projects = self.dev_server_projects()?;
+
+        for (id, location, dev_server_project_id) in self.recent_workspaces()? {
+            if let Some(dev_server_project_id) = dev_server_project_id.map(DevServerProjectId) {
+                if let Some(dev_server_project) = dev_server_projects
+                    .iter()
+                    .find(|rp| rp.id == dev_server_project_id)
+                {
+                    result.push((id, dev_server_project.clone().into()));
+                } else {
+                    delete_tasks.push(self.delete_workspace_by_id(id));
+                }
+                continue;
+            }
+
             if location.paths().iter().all(|path| path.exists())
                 && location.paths().iter().any(|path| path.is_dir())
             {
-                result.push((id, location));
+                result.push((id, location.into()));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }
@@ -455,13 +687,16 @@ impl WorkspaceDb {
         Ok(result)
     }
 
-    pub async fn last_workspace(&self) -> Result<Option<WorkspaceLocation>> {
+    pub async fn last_workspace(&self) -> Result<Option<LocalPaths>> {
         Ok(self
             .recent_workspaces_on_disk()
             .await?
             .into_iter()
-            .next()
-            .map(|(_, location)| location))
+            .filter_map(|(_, location)| match location {
+                SerializedWorkspaceLocation::Local(local_paths, _) => Some(local_paths),
+                SerializedWorkspaceLocation::DevServer(_) => None,
+            })
+            .next())
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {
@@ -559,7 +794,7 @@ impl WorkspaceDb {
                 children,
                 flexes,
             } => {
-                let (parent_id, position) = unzip_option(parent);
+                let (parent_id, position) = parent.unzip();
 
                 let flex_string = flexes
                     .as_ref()
@@ -610,7 +845,7 @@ impl WorkspaceDb {
         ))?((workspace_id, pane.active))?
         .ok_or_else(|| anyhow!("Could not retrieve inserted pane_id"))?;
 
-        let (parent_id, order) = unzip_option(parent);
+        let (parent_id, order) = parent.unzip();
         conn.exec_bound(sql!(
             INSERT INTO center_panes(pane_id, parent_group_id, position)
             VALUES (?, ?, ?)
@@ -623,7 +858,7 @@ impl WorkspaceDb {
 
     fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
         self.select_bound(sql!(
-            SELECT kind, item_id, active FROM items
+            SELECT kind, item_id, active, preview FROM items
             WHERE pane_id = ?
                 ORDER BY position
         ))?(pane_id)
@@ -636,7 +871,7 @@ impl WorkspaceDb {
         items: &[SerializedItem],
     ) -> Result<()> {
         let mut insert = conn.exec_bound(sql!(
-            INSERT INTO items(workspace_id, pane_id, position, kind, item_id, active) VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO items(workspace_id, pane_id, position, kind, item_id, active, preview) VALUES (?, ?, ?, ?, ?, ?, ?)
         )).context("Preparing insertion")?;
         for (position, item) in items.iter().enumerate() {
             insert((workspace_id, pane_id, position, item))?;
@@ -654,7 +889,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub(crate) async fn set_window_bounds(workspace_id: WorkspaceId, bounds: SerializedWindowsBounds, display: Uuid) -> Result<()> {
+        pub(crate) async fn set_window_open_status(workspace_id: WorkspaceId, bounds: SerializedWindowBounds, display: Uuid) -> Result<()> {
             UPDATE workspaces
             SET window_state = ?2,
                 window_x = ?3,
@@ -667,9 +902,9 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub(crate) async fn set_fullscreen(workspace_id: WorkspaceId, fullscreen: bool) -> Result<()> {
+        pub(crate) async fn set_centered_layout(workspace_id: WorkspaceId, centered_layout: bool) -> Result<()> {
             UPDATE workspaces
-            SET fullscreen = ?2
+            SET centered_layout = ?2
             WHERE workspace_id = ?1
         }
     }
@@ -753,22 +988,22 @@ mod tests {
 
         let mut workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: (["/tmp", "/tmp2"]).into(),
+            location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
+            centered_layout: false,
         };
 
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: (["/tmp"]).into(),
+            location: LocalPaths::new(["/tmp"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -789,7 +1024,7 @@ mod tests {
         })
         .await;
 
-        workspace_1.location = (["/tmp", "/tmp3"]).into();
+        workspace_1.location = LocalPaths::new(["/tmp", "/tmp3"]).into();
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_1).await;
         db.save_workspace(workspace_2).await;
@@ -836,15 +1071,15 @@ mod tests {
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 5, false),
-                                SerializedItem::new("Terminal", 6, true),
+                                SerializedItem::new("Terminal", 5, false, false),
+                                SerializedItem::new("Terminal", 6, true, false),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 7, true),
-                                SerializedItem::new("Terminal", 8, false),
+                                SerializedItem::new("Terminal", 7, true, false),
+                                SerializedItem::new("Terminal", 8, false, false),
                             ],
                             false,
                         )),
@@ -852,8 +1087,8 @@ mod tests {
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 9, false),
-                        SerializedItem::new("Terminal", 10, true),
+                        SerializedItem::new("Terminal", 9, false, false),
+                        SerializedItem::new("Terminal", 10, true, false),
                     ],
                     false,
                 )),
@@ -862,17 +1097,20 @@ mod tests {
 
         let workspace = SerializedWorkspace {
             id: WorkspaceId(5),
-            location: (["/tmp", "/tmp2"]).into(),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(["/tmp", "/tmp2"]),
+                LocalPathsOrder::new([1, 0]),
+            ),
             center_group,
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace.clone()).await;
-        let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
 
+        let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
         assert_eq!(workspace, round_trip_workspace.unwrap());
 
         // Test guaranteed duplicate IDs
@@ -891,22 +1129,25 @@ mod tests {
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: (["/tmp", "/tmp2"]).into(),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(["/tmp", "/tmp2"]),
+                LocalPathsOrder::new([0, 1]),
+            ),
             center_group: Default::default(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
+            centered_layout: false,
         };
 
         let mut workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: (["/tmp"]).into(),
+            location: LocalPaths::new(["/tmp"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -927,7 +1168,7 @@ mod tests {
         assert_eq!(db.workspace_for_roots(&["/tmp3", "/tmp2", "/tmp4"]), None);
 
         // Test 'mutate' case of updating a pre-existing id
-        workspace_2.location = (["/tmp", "/tmp2"]).into();
+        workspace_2.location = LocalPaths::new(["/tmp", "/tmp2"]).into();
 
         db.save_workspace(workspace_2.clone()).await;
         assert_eq!(
@@ -938,12 +1179,15 @@ mod tests {
         // Test other mechanism for mutating
         let mut workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
-            location: (&["/tmp", "/tmp2"]).into(),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(&["/tmp", "/tmp2"]),
+                LocalPathsOrder::new([1, 0]),
+            ),
             center_group: Default::default(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -953,7 +1197,7 @@ mod tests {
         );
 
         // Make sure that updating paths differently also works
-        workspace_3.location = (["/tmp3", "/tmp4", "/tmp2"]).into();
+        workspace_3.location = LocalPaths::new(["/tmp3", "/tmp4", "/tmp2"]).into();
         db.save_workspace(workspace_3.clone()).await;
         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
         assert_eq!(
@@ -972,12 +1216,12 @@ mod tests {
     ) -> SerializedWorkspace {
         SerializedWorkspace {
             id: WorkspaceId(4),
-            location: workspace_id.into(),
+            location: LocalPaths::new(workspace_id).into(),
             center_group: center_group.clone(),
-            bounds: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
+            centered_layout: false,
         }
     }
 
@@ -1000,15 +1244,15 @@ mod tests {
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 1, false),
-                                SerializedItem::new("Terminal", 2, true),
+                                SerializedItem::new("Terminal", 1, false, false),
+                                SerializedItem::new("Terminal", 2, true, false),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 4, false),
-                                SerializedItem::new("Terminal", 3, true),
+                                SerializedItem::new("Terminal", 4, false, false),
+                                SerializedItem::new("Terminal", 3, true, false),
                             ],
                             true,
                         )),
@@ -1016,8 +1260,8 @@ mod tests {
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 5, true),
-                        SerializedItem::new("Terminal", 6, false),
+                        SerializedItem::new("Terminal", 5, true, false),
+                        SerializedItem::new("Terminal", 6, false, false),
                     ],
                     false,
                 )),
@@ -1047,15 +1291,15 @@ mod tests {
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 1, false),
-                                SerializedItem::new("Terminal", 2, true),
+                                SerializedItem::new("Terminal", 1, false, false),
+                                SerializedItem::new("Terminal", 2, true, false),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 4, false),
-                                SerializedItem::new("Terminal", 3, true),
+                                SerializedItem::new("Terminal", 4, false, false),
+                                SerializedItem::new("Terminal", 3, true, false),
                             ],
                             true,
                         )),
@@ -1063,8 +1307,8 @@ mod tests {
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 5, false),
-                        SerializedItem::new("Terminal", 6, true),
+                        SerializedItem::new("Terminal", 5, false, false),
+                        SerializedItem::new("Terminal", 6, true, false),
                     ],
                     false,
                 )),
@@ -1082,15 +1326,15 @@ mod tests {
             vec![
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 1, false),
-                        SerializedItem::new("Terminal", 2, true),
+                        SerializedItem::new("Terminal", 1, false, false),
+                        SerializedItem::new("Terminal", 2, true, false),
                     ],
                     false,
                 )),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 4, true),
-                        SerializedItem::new("Terminal", 3, false),
+                        SerializedItem::new("Terminal", 4, true, false),
+                        SerializedItem::new("Terminal", 3, false, false),
                     ],
                     true,
                 )),

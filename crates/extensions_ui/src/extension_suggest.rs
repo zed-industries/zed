@@ -5,57 +5,86 @@ use std::sync::{Arc, OnceLock};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use extension::ExtensionStore;
-use gpui::{Entity, Model, VisualContext};
+use gpui::{Model, VisualContext};
 use language::Buffer;
-use ui::ViewContext;
-use workspace::{notifications::simple_message_notification, Workspace};
+use ui::{SharedString, ViewContext};
+use workspace::{
+    notifications::{simple_message_notification, NotificationId},
+    Workspace,
+};
+
+const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
+    ("astro", &["astro"]),
+    ("beancount", &["beancount"]),
+    ("clojure", &["bb", "clj", "cljc", "cljs", "edn"]),
+    ("csharp", &["cs"]),
+    ("dart", &["dart"]),
+    ("dockerfile", &["Dockerfile"]),
+    ("elisp", &["el"]),
+    ("elixir", &["ex", "exs", "heex"]),
+    ("elm", &["elm"]),
+    ("erlang", &["erl", "hrl"]),
+    ("fish", &["fish"]),
+    (
+        "git-firefly",
+        &[
+            ".gitconfig",
+            ".gitignore",
+            "COMMIT_EDITMSG",
+            "EDIT_DESCRIPTION",
+            "MERGE_MSG",
+            "NOTES_EDITMSG",
+            "TAG_EDITMSG",
+            "git-rebase-todo",
+        ],
+    ),
+    ("gleam", &["gleam"]),
+    ("glsl", &["vert", "frag"]),
+    ("graphql", &["gql", "graphql"]),
+    ("haskell", &["hs"]),
+    ("html", &["htm", "html", "shtml"]),
+    ("java", &["java"]),
+    ("kotlin", &["kt"]),
+    ("latex", &["tex"]),
+    ("log", &["log"]),
+    ("lua", &["lua"]),
+    ("make", &["Makefile"]),
+    ("nix", &["nix"]),
+    ("nu", &["nu"]),
+    ("ocaml", &["ml", "mli"]),
+    ("php", &["php"]),
+    ("prisma", &["prisma"]),
+    ("purescript", &["purs"]),
+    ("r", &["r", "R"]),
+    ("racket", &["rkt"]),
+    ("rescript", &["res", "resi"]),
+    ("ruby", &["rb", "erb"]),
+    ("scheme", &["scm"]),
+    ("scss", &["scss"]),
+    ("sql", &["sql"]),
+    ("svelte", &["svelte"]),
+    ("swift", &["swift"]),
+    ("templ", &["templ"]),
+    ("terraform", &["tf", "tfvars", "hcl"]),
+    ("toml", &["Cargo.lock", "toml"]),
+    ("vue", &["vue"]),
+    ("wgsl", &["wgsl"]),
+    ("wit", &["wit"]),
+    ("zig", &["zig"]),
+];
 
 fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
-    static SUGGESTED: OnceLock<HashMap<&str, Arc<str>>> = OnceLock::new();
-    SUGGESTED.get_or_init(|| {
-        [
-            ("astro", "astro"),
-            ("beancount", "beancount"),
-            ("csharp", "cs"),
-            ("dockerfile", "Dockerfile"),
-            ("elisp", "el"),
-            ("erlang", "erl"),
-            ("erlang", "hrl"),
-            ("fish", "fish"),
-            ("git-firefly", ".gitconfig"),
-            ("git-firefly", ".gitignore"),
-            ("git-firefly", "COMMIT_EDITMSG"),
-            ("git-firefly", "EDIT_DESCRIPTION"),
-            ("git-firefly", "MERGE_MSG"),
-            ("git-firefly", "NOTES_EDITMSG"),
-            ("git-firefly", "TAG_EDITMSG"),
-            ("git-firefly", "git-rebase-todo"),
-            ("gleam", "gleam"),
-            ("graphql", "gql"),
-            ("graphql", "graphql"),
-            ("haskell", "hs"),
-            ("java", "java"),
-            ("kotlin", "kt"),
-            ("latex", "tex"),
-            ("make", "Makefile"),
-            ("nix", "nix"),
-            ("php", "php"),
-            ("prisma", "prisma"),
-            ("purescript", "purs"),
-            ("r", "r"),
-            ("r", "R"),
-            ("sql", "sql"),
-            ("svelte", "svelte"),
-            ("swift", "swift"),
-            ("templ", "templ"),
-            ("toml", "Cargo.lock"),
-            ("toml", "toml"),
-            ("wgsl", "wgsl"),
-            ("zig", "zig"),
-        ]
-        .into_iter()
-        .map(|(name, file)| (file, name.into()))
-        .collect()
+    static SUGGESTIONS_BY_PATH_SUFFIX: OnceLock<HashMap<&str, Arc<str>>> = OnceLock::new();
+    SUGGESTIONS_BY_PATH_SUFFIX.get_or_init(|| {
+        SUGGESTIONS_BY_EXTENSION_ID
+            .into_iter()
+            .flat_map(|(name, path_suffixes)| {
+                let name = Arc::<str>::from(*name);
+                path_suffixes
+                    .into_iter()
+                    .map(move |suffix| (*suffix, name.clone()))
+            })
+            .collect()
     })
 }
 
@@ -131,7 +160,13 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
             return;
         }
 
-        workspace.show_notification(buffer.entity_id().as_u64() as usize, cx, |cx| {
+        struct ExtensionSuggestionNotification;
+
+        let notification_id = NotificationId::identified::<ExtensionSuggestionNotification>(
+            SharedString::from(extension_id.clone()),
+        );
+
+        workspace.show_notification(notification_id, cx, |cx| {
             cx.new_view(move |_cx| {
                 simple_message_notification::MessageNotification::new(format!(
                     "Do you want to install the recommended '{}' extension for '{}' files?",

@@ -14,19 +14,18 @@ use client::{
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    HighlightStyle, Model, Pixels, Point, SharedString, Task, View, ViewContext, WeakView,
+    Font, HighlightStyle, Model, Pixels, Point, SharedString, Task, View, ViewContext, WeakView,
     WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
-    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -40,6 +39,13 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
+}
+
+#[derive(Deserialize)]
+pub struct PreviewTabsSettings {
+    pub enabled: bool,
+    pub enable_preview_from_file_finder: bool,
+    pub enable_preview_from_code_navigation: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -63,7 +69,7 @@ impl ClosePosition {
 pub struct ItemSettingsContent {
     /// Whether to show the Git file status on a tab item.
     ///
-    /// Default: true
+    /// Default: false
     git_status: Option<bool>,
     /// Position of the close button in a tab.
     ///
@@ -71,17 +77,40 @@ pub struct ItemSettingsContent {
     close_position: Option<ClosePosition>,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct PreviewTabsSettingsContent {
+    /// Whether to show opened editors as preview tabs.
+    /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
+    ///
+    /// Default: true
+    enabled: Option<bool>,
+    /// Whether to open tabs in preview mode when selected from the file finder.
+    ///
+    /// Default: false
+    enable_preview_from_file_finder: Option<bool>,
+    /// Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
+    ///
+    /// Default: false
+    enable_preview_from_code_navigation: Option<bool>,
+}
+
 impl Settings for ItemSettings {
     const KEY: Option<&'static str> = Some("tabs");
 
     type FileContent = ItemSettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut AppContext,
-    ) -> Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
+    }
+}
+
+impl Settings for PreviewTabsSettings {
+    const KEY: Option<&'static str> = Some("preview_tabs");
+
+    type FileContent = PreviewTabsSettingsContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
     }
 }
 
@@ -97,16 +126,19 @@ pub enum ItemEvent {
 pub struct BreadcrumbText {
     pub text: String,
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
+    pub font: Option<Font>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TabContentParams {
+    pub detail: Option<usize>,
+    pub selected: bool,
+    pub preview: bool,
 }
 
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
     type Event;
-    fn tab_content(
-        &self,
-        _detail: Option<usize>,
-        _selected: bool,
-        _cx: &WindowContext,
-    ) -> AnyElement {
+    fn tab_content(&self, _params: TabContentParams, _cx: &WindowContext) -> AnyElement {
         gpui::Empty.into_any()
     }
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
@@ -140,7 +172,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         _: &mut ViewContext<Self>,
     ) -> Option<View<Self>>
     where
@@ -168,7 +200,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn save_as(
         &mut self,
         _project: Model<Project>,
-        _abs_path: PathBuf,
+        _path: ProjectPath,
         _cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("save_as() must be implemented if can_save() returns true")
@@ -240,9 +272,9 @@ pub trait ItemHandle: 'static + Send {
     fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement;
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str>;
-    fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement;
+    fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]>;
@@ -255,7 +287,7 @@ pub trait ItemHandle: 'static + Send {
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn clone_on_split(
         &self,
-        workspace_id: WorkspaceId,
+        workspace_id: Option<WorkspaceId>,
         cx: &mut WindowContext,
     ) -> Option<Box<dyn ItemHandle>>;
     fn added_to_pane(
@@ -281,7 +313,7 @@ pub trait ItemHandle: 'static + Send {
     fn save_as(
         &self,
         project: Model<Project>,
-        abs_path: PathBuf,
+        path: ProjectPath,
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
@@ -298,6 +330,7 @@ pub trait ItemHandle: 'static + Send {
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
+    fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -343,12 +376,18 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).tab_description(detail, cx)
     }
 
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
-        self.read(cx).tab_content(detail, selected, cx)
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+        self.read(cx).tab_content(params, cx)
     }
 
-    fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
-        self.read(cx).tab_content(detail, true, cx)
+    fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+        self.read(cx).tab_content(
+            TabContentParams {
+                selected: true,
+                ..params
+            },
+            cx,
+        )
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
@@ -398,7 +437,7 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn clone_on_split(
         &self,
-        workspace_id: WorkspaceId,
+        workspace_id: Option<WorkspaceId>,
         cx: &mut WindowContext,
     ) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| item.clone_on_split(workspace_id, cx))
@@ -457,9 +496,7 @@ impl<T: Item> ItemHandle for View<T> {
                             }
 
                             workspace.update(&mut cx, |workspace, cx| {
-                                let item = item.upgrade().expect(
-                                    "item to be alive, otherwise task would have been dropped",
-                                );
+                                let Some(item) = item.upgrade() else { return };
                                 workspace.update_followers(
                                     is_project_item,
                                     proto::update_followers::Variant::UpdateView(
@@ -481,8 +518,9 @@ impl<T: Item> ItemHandle for View<T> {
                 }));
             }
 
-            let mut event_subscription =
-                Some(cx.subscribe(self, move |workspace, item, event, cx| {
+            let mut event_subscription = Some(cx.subscribe(
+                self,
+                move |workspace, item: View<T>, event, cx| {
                     let pane = if let Some(pane) = workspace
                         .panes_by_item
                         .get(&item.item_id())
@@ -490,7 +528,6 @@ impl<T: Item> ItemHandle for View<T> {
                     {
                         pane
                     } else {
-                        log::error!("unexpected item event after pane was dropped");
                         return;
                     };
 
@@ -538,11 +575,13 @@ impl<T: Item> ItemHandle for View<T> {
                                     Pane::autosave_item(&item, workspace.project().clone(), cx)
                                 });
                             }
+                            pane.update(cx, |pane, cx| pane.handle_item_edit(item.item_id(), cx));
                         }
 
                         _ => {}
                     });
-                }));
+                },
+            ));
 
             cx.on_blur(&self.focus_handle(cx), move |workspace, cx| {
                 if WorkspaceSettings::get_global(cx).autosave == AutosaveSetting::OnFocusChange {
@@ -564,7 +603,7 @@ impl<T: Item> ItemHandle for View<T> {
         }
 
         cx.defer(|workspace, cx| {
-            workspace.serialize_workspace(cx).detach();
+            workspace.serialize_workspace(cx);
         });
     }
 
@@ -612,10 +651,10 @@ impl<T: Item> ItemHandle for View<T> {
     fn save_as(
         &self,
         project: Model<Project>,
-        abs_path: PathBuf,
+        path: ProjectPath,
         cx: &mut WindowContext,
     ) -> Task<anyhow::Result<()>> {
-        self.update(cx, |item, cx| item.save_as(project, abs_path, cx))
+        self.update(cx, |item, cx| item.save_as(project, path, cx))
     }
 
     fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
@@ -662,6 +701,10 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>> {
         self.read(cx).pixel_position_of_cursor(cx)
+    }
+
+    fn downgrade_item(&self) -> Box<dyn WeakItemHandle> {
+        Box::new(self.downgrade())
     }
 }
 
@@ -823,7 +866,7 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakView<T> {
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
-    use super::{Item, ItemEvent};
+    use super::{Item, ItemEvent, TabContentParams};
     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
@@ -839,7 +882,7 @@ pub mod test {
     }
 
     pub struct TestItem {
-        pub workspace_id: WorkspaceId,
+        pub workspace_id: Option<WorkspaceId>,
         pub state: String,
         pub label: String,
         pub save_count: usize,
@@ -920,7 +963,7 @@ pub mod test {
 
         pub fn new_deserialized(id: WorkspaceId, cx: &mut ViewContext<Self>) -> Self {
             let mut this = Self::new(cx);
-            this.workspace_id = id;
+            this.workspace_id = Some(id);
             this
         }
 
@@ -996,11 +1039,10 @@ pub mod test {
 
         fn tab_content(
             &self,
-            detail: Option<usize>,
-            _selected: bool,
+            params: TabContentParams,
             _cx: &ui::prelude::WindowContext,
         ) -> AnyElement {
-            self.tab_detail.set(detail);
+            self.tab_detail.set(params.detail);
             gpui::div().into_any_element()
         }
 
@@ -1038,7 +1080,7 @@ pub mod test {
 
         fn clone_on_split(
             &self,
-            _workspace_id: WorkspaceId,
+            _workspace_id: Option<WorkspaceId>,
             cx: &mut ViewContext<Self>,
         ) -> Option<View<Self>>
         where
@@ -1092,7 +1134,7 @@ pub mod test {
         fn save_as(
             &mut self,
             _: Model<Project>,
-            _: std::path::PathBuf,
+            _: ProjectPath,
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_as_count += 1;

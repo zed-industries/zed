@@ -1,9 +1,9 @@
-use std::{cmp, f32};
-
-use gpui::{px, Pixels, ViewContext};
+use crate::{
+    display_map::ToDisplayPoint, DisplayRow, Editor, EditorMode, LineWithInvisibles, RowExt,
+};
+use gpui::{px, Bounds, Pixels, ViewContext};
 use language::Point;
-
-use crate::{display_map::ToDisplayPoint, Editor, EditorMode, LineWithInvisibles};
+use std::{cmp, f32};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Autoscroll {
@@ -61,22 +61,39 @@ impl AutoscrollStrategy {
 }
 
 impl Editor {
+    pub fn autoscroll_requested(&self) -> bool {
+        self.scroll_manager.autoscroll_requested()
+    }
+
     pub fn autoscroll_vertically(
         &mut self,
-        viewport_height: Pixels,
+        bounds: Bounds<Pixels>,
         line_height: Pixels,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
+        let viewport_height = bounds.size.height;
         let visible_lines = viewport_height / line_height;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
+        let original_y = scroll_position.y;
+        if let Some(last_bounds) = self.expect_bounds_change.take() {
+            if scroll_position.y != 0. {
+                scroll_position.y += (bounds.top() - last_bounds.top()) / line_height;
+                if scroll_position.y < 0. {
+                    scroll_position.y = 0.;
+                }
+            }
+        }
         let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
-            (display_map.max_point().row() as f32 - visible_lines + 1.).max(0.)
+            (display_map.max_point().row().as_f32() - visible_lines + 1.).max(0.)
         } else {
-            display_map.max_point().row() as f32
+            display_map.max_point().row().as_f32()
         };
         if scroll_position.y > max_scroll_top {
             scroll_position.y = max_scroll_top;
+        }
+
+        if original_y != scroll_position.y {
             self.set_scroll_position(scroll_position, cx);
         }
 
@@ -86,8 +103,10 @@ impl Editor {
 
         let mut target_top;
         let mut target_bottom;
-        if let Some(first_highlighted_row) = &self.highlighted_display_rows(cx).first_entry() {
-            target_top = *first_highlighted_row.key() as f32;
+        if let Some(first_highlighted_row) =
+            self.highlighted_display_row_for_autoscroll(&display_map)
+        {
+            target_top = first_highlighted_row.as_f32();
             target_bottom = target_top + 1.;
         } else {
             let selections = self.selections.all::<Point>(cx);
@@ -96,14 +115,16 @@ impl Editor {
                 .unwrap()
                 .head()
                 .to_display_point(&display_map)
-                .row() as f32;
+                .row()
+                .as_f32();
             target_bottom = selections
                 .last()
                 .unwrap()
                 .head()
                 .to_display_point(&display_map)
-                .row() as f32
-                + 1.0;
+                .row()
+                .next_row()
+                .as_f32();
 
             // If the selections can't all fit on screen, scroll to the newest.
             if autoscroll == Autoscroll::newest()
@@ -115,7 +136,8 @@ impl Editor {
                     .unwrap()
                     .head()
                     .to_display_point(&display_map)
-                    .row() as f32;
+                    .row()
+                    .as_f32();
                 target_top = newest_selection_top;
                 target_bottom = newest_selection_top + 1.;
             }
@@ -201,7 +223,7 @@ impl Editor {
 
     pub(crate) fn autoscroll_horizontally(
         &mut self,
-        start_row: u32,
+        start_row: DisplayRow,
         viewport_width: Pixels,
         scroll_width: Pixels,
         max_glyph_width: Pixels,
@@ -214,22 +236,25 @@ impl Editor {
         let mut target_left;
         let mut target_right;
 
-        if self.highlighted_rows.is_empty() {
+        if self
+            .highlighted_display_row_for_autoscroll(&display_map)
+            .is_none()
+        {
             target_left = px(f32::INFINITY);
             target_right = px(0.);
             for selection in selections {
                 let head = selection.head().to_display_point(&display_map);
-                if head.row() >= start_row && head.row() < start_row + layouts.len() as u32 {
+                if head.row() >= start_row
+                    && head.row() < DisplayRow(start_row.0 + layouts.len() as u32)
+                {
                     let start_column = head.column().saturating_sub(3);
                     let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
                     target_left = target_left.min(
-                        layouts[(head.row() - start_row) as usize]
-                            .line
+                        layouts[head.row().minus(start_row) as usize]
                             .x_for_index(start_column as usize),
                     );
                     target_right = target_right.max(
-                        layouts[(head.row() - start_row) as usize]
-                            .line
+                        layouts[head.row().minus(start_row) as usize]
                             .x_for_index(end_column as usize)
                             + max_glyph_width,
                     );

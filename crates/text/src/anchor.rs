@@ -2,7 +2,6 @@ use crate::{
     locator::Locator, BufferId, BufferSnapshot, Point, PointUtf16, TextDimension, ToOffset,
     ToPoint, ToPointUtf16,
 };
-use anyhow::Result;
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
 
@@ -97,6 +96,8 @@ impl Anchor {
     pub fn is_valid(&self, buffer: &BufferSnapshot) -> bool {
         if *self == Anchor::MIN || *self == Anchor::MAX {
             true
+        } else if self.buffer_id != Some(buffer.remote_id) {
+            false
         } else {
             let fragment_id = buffer.fragment_id_for_anchor(self);
             let mut fragment_cursor = buffer.fragments.cursor::<(Option<&Locator>, usize)>();
@@ -134,14 +135,14 @@ where
 }
 
 pub trait AnchorRangeExt {
-    fn cmp(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> Result<Ordering>;
+    fn cmp(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> Ordering;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
-    fn cmp(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> Result<Ordering> {
-        Ok(match self.start.cmp(&other.start, buffer) {
+    fn cmp(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> Ordering {
+        match self.start.cmp(&other.start, buffer) {
             Ordering::Equal => other.end.cmp(&self.end, buffer),
             ord => ord,
-        })
+        }
     }
 }

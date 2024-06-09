@@ -1,6 +1,6 @@
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, sync::Arc};
+use std::{fmt::Display, sync::Arc, time::Duration};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EventRequestBody {
@@ -53,7 +53,8 @@ impl Display for AssistantKind {
 #[serde(tag = "type")]
 pub enum Event {
     Editor(EditorEvent),
-    Copilot(CopilotEvent),
+    Copilot(CopilotEvent), // Needed for clients sending old copilot_event types
+    InlineCompletion(InlineCompletionEvent),
     Call(CallEvent),
     Assistant(AssistantEvent),
     Cpu(CpuEvent),
@@ -74,9 +75,17 @@ pub struct EditorEvent {
     pub copilot_enabled_for_language: bool,
 }
 
+// Needed for clients sending old copilot_event types
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CopilotEvent {
     pub suggestion_id: Option<String>,
+    pub suggestion_accepted: bool,
+    pub file_extension: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InlineCompletionEvent {
+    pub provider: String,
     pub suggestion_accepted: bool,
     pub file_extension: Option<String>,
 }
@@ -93,6 +102,8 @@ pub struct AssistantEvent {
     pub conversation_id: Option<String>,
     pub kind: AssistantKind,
     pub model: String,
+    pub response_latency: Option<Duration>,
+    pub error_message: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -134,4 +145,51 @@ pub struct ExtensionEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AppEvent {
     pub operation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BacktraceFrame {
+    pub ip: usize,
+    pub symbol_addr: usize,
+    pub base: Option<usize>,
+    pub symbols: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HangReport {
+    pub backtrace: Vec<BacktraceFrame>,
+    pub app_version: Option<SemanticVersion>,
+    pub os_name: String,
+    pub os_version: Option<SemanticVersion>,
+    pub architecture: String,
+    pub installation_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LocationData {
+    pub file: String,
+    pub line: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Panic {
+    pub thread: String,
+    pub payload: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location_data: Option<LocationData>,
+    pub backtrace: Vec<String>,
+    pub app_version: String,
+    pub release_channel: String,
+    pub os_name: String,
+    pub os_version: Option<String>,
+    pub architecture: String,
+    pub panicked_on: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installation_id: Option<String>,
+    pub session_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PanicRequest {
+    pub panic: Panic,
 }

@@ -37,7 +37,7 @@ impl Editor {
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
 
         let mut new_screen_top = self.selections.newest_display(cx).head();
-        *new_screen_top.row_mut() = new_screen_top.row().saturating_sub(scroll_margin_rows);
+        *new_screen_top.row_mut() = new_screen_top.row().0.saturating_sub(scroll_margin_rows);
         *new_screen_top.column_mut() = 0;
         let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
         let new_anchor = snapshot.buffer_snapshot.anchor_before(new_screen_top);
@@ -60,7 +60,7 @@ impl Editor {
         };
 
         let mut new_screen_top = self.selections.newest_display(cx).head();
-        *new_screen_top.row_mut() = new_screen_top.row().saturating_sub(visible_rows / 2);
+        *new_screen_top.row_mut() = new_screen_top.row().0.saturating_sub(visible_rows / 2);
         *new_screen_top.column_mut() = 0;
         let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
         let new_anchor = snapshot.buffer_snapshot.anchor_before(new_screen_top);
@@ -86,6 +86,7 @@ impl Editor {
         let mut new_screen_top = self.selections.newest_display(cx).head();
         *new_screen_top.row_mut() = new_screen_top
             .row()
+            .0
             .saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
         *new_screen_top.column_mut() = 0;
         let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);

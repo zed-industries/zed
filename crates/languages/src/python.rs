@@ -1,14 +1,16 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use std::{
     any::Any,
+    borrow::Cow,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
@@ -83,7 +85,7 @@ impl LspAdapter for PythonLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn process_completion(&self, item: &mut lsp::CompletionItem) {
+    async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
         // Pyright assigns each completion item a `sortText` of the form `XX.YYYY.name`.
         // Where `XX` is the sorting category, `YYYY` is based on most recent usage,
         // and `name` is the symbol name itself.
@@ -94,14 +96,16 @@ impl LspAdapter for PythonLspAdapter {
         // to allow our own fuzzy score to be used to break ties.
         //
         // see https://github.com/microsoft/pyright/blob/95ef4e103b9b2f129c9320427e51b73ea7cf78bd/packages/pyright-internal/src/languageService/completionProvider.ts#LL2873
-        let Some(sort_text) = &mut item.sort_text else {
-            return;
-        };
-        let mut parts = sort_text.split('.');
-        let Some(first) = parts.next() else { return };
-        let Some(second) = parts.next() else { return };
-        let Some(_) = parts.next() else { return };
-        sort_text.replace_range(first.len() + second.len() + 1.., "");
+        for item in items {
+            let Some(sort_text) = &mut item.sort_text else {
+                continue;
+            };
+            let mut parts = sort_text.split('.');
+            let Some(first) = parts.next() else { continue };
+            let Some(second) = parts.next() else { continue };
+            let Some(_) = parts.next() else { continue };
+            sort_text.replace_range(first.len() + second.len() + 1.., "");
+        }
     }
 
     async fn label_for_completion(
@@ -178,13 +182,100 @@ async fn get_cached_server_binary(
     }
 }
 
+pub(crate) struct PythonContextProvider;
+
+const PYTHON_UNITTEST_TARGET_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("PYTHON_UNITTEST_TARGET"));
+
+impl ContextProvider for PythonContextProvider {
+    fn build_context(
+        &self,
+        variables: &task::TaskVariables,
+        _location: &project::Location,
+        _cx: &mut gpui::AppContext,
+    ) -> Result<task::TaskVariables> {
+        let python_module_name = python_module_name_from_relative_path(
+            variables.get(&VariableName::RelativeFile).unwrap_or(""),
+        );
+        let unittest_class_name =
+            variables.get(&VariableName::Custom(Cow::Borrowed("_unittest_class_name")));
+        let unittest_method_name = variables.get(&VariableName::Custom(Cow::Borrowed(
+            "_unittest_method_name",
+        )));
+
+        let unittest_target_str = match (unittest_class_name, unittest_method_name) {
+            (Some(class_name), Some(method_name)) => {
+                format!("{}.{}.{}", python_module_name, class_name, method_name)
+            }
+            (Some(class_name), None) => format!("{}.{}", python_module_name, class_name),
+            (None, None) => python_module_name,
+            (None, Some(_)) => return Ok(task::TaskVariables::default()), // should never happen, a TestCase class is the unit of testing
+        };
+
+        let unittest_target = (
+            PYTHON_UNITTEST_TARGET_TASK_VARIABLE.clone(),
+            unittest_target_str,
+        );
+
+        Ok(task::TaskVariables::from_iter([unittest_target]))
+    }
+
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
+        Some(TaskTemplates(vec![
+            TaskTemplate {
+                label: "execute selection".to_owned(),
+                command: "python3".to_owned(),
+                args: vec!["-c".to_owned(), VariableName::SelectedText.template_value()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!("run '{}'", VariableName::File.template_value()),
+                command: "python3".to_owned(),
+                args: vec![VariableName::File.template_value()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!("unittest '{}'", VariableName::File.template_value()),
+                command: "python3".to_owned(),
+                args: vec![
+                    "-m".to_owned(),
+                    "unittest".to_owned(),
+                    VariableName::File.template_value(),
+                ],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "unittest $ZED_CUSTOM_PYTHON_UNITTEST_TARGET".to_owned(),
+                command: "python3".to_owned(),
+                args: vec![
+                    "-m".to_owned(),
+                    "unittest".to_owned(),
+                    "$ZED_CUSTOM_PYTHON_UNITTEST_TARGET".to_owned(),
+                ],
+                tags: vec![
+                    "python-unittest-class".to_owned(),
+                    "python-unittest-method".to_owned(),
+                ],
+                ..TaskTemplate::default()
+            },
+        ]))
+    }
+}
+
+fn python_module_name_from_relative_path(relative_path: &str) -> String {
+    let path_with_dots = relative_path.replace('/', ".");
+    path_with_dots
+        .strip_suffix(".py")
+        .unwrap_or(&path_with_dots)
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::{BorrowAppContext, Context, ModelContext, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
-    use text::BufferId;
 
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
@@ -202,8 +293,7 @@ mod tests {
         });
 
         cx.new_model(|cx| {
-            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
-                .with_language(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
                 let ix = buffer.len();
                 buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);

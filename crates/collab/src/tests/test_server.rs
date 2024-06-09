@@ -1,4 +1,5 @@
 use crate::{
+    auth::split_dev_server_token,
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
     rpc::{Principal, Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
@@ -16,7 +17,9 @@ use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
+use git::GitHostingProviderRegistry;
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
+use http::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 use notifications::NotificationStore;
@@ -39,8 +42,7 @@ use std::{
         Arc,
     },
 };
-use util::http::FakeHttpClient;
-use workspace::{Workspace, WorkspaceId, WorkspaceStore};
+use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
@@ -63,7 +65,7 @@ pub struct TestClient {
 #[derive(Default)]
 struct TestClientState {
     local_projects: Vec<Model<Project>>,
-    remote_projects: Vec<Model<Project>>,
+    dev_server_projects: Vec<Model<Project>>,
     buffers: HashMap<Model<Project>, HashSet<Model<language::Buffer>>>,
     channel_buffers: HashSet<Model<ChannelBuffer>>,
 }
@@ -135,9 +137,10 @@ impl TestServer {
         (server, client_a, client_b, channel_id)
     }
 
-    pub async fn start1(cx: &mut TestAppContext) -> TestClient {
+    pub async fn start1(cx: &mut TestAppContext) -> (TestServer, TestClient) {
         let mut server = Self::start(cx.executor().clone()).await;
-        server.create_client(cx, "user_a").await
+        let client = server.create_client(cx, "user_a").await;
+        (server, client)
     }
 
     pub async fn reset(&self) {
@@ -255,6 +258,140 @@ impl TestServer {
                 })
             });
 
+        let git_hosting_provider_registry =
+            cx.update(|cx| GitHostingProviderRegistry::default_global(cx));
+        git_hosting_provider_registry
+            .register_hosting_provider(Arc::new(git_hosting_providers::Github));
+
+        let fs = FakeFs::new(cx.executor());
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let app_state = Arc::new(workspace::AppState {
+            client: client.clone(),
+            user_store: user_store.clone(),
+            workspace_store,
+            languages: language_registry,
+            fs: fs.clone(),
+            build_window_options: |_, _| Default::default(),
+            node_runtime: FakeNodeRuntime::new(),
+        });
+
+        let os_keymap = if cfg!(target_os = "linux") {
+            "keymaps/default-linux.json"
+        } else {
+            "keymaps/default-macos.json"
+        };
+
+        cx.update(|cx| {
+            theme::init(theme::LoadThemes::JustBase, cx);
+            Project::init(&client, cx);
+            client::init(&client, cx);
+            language::init(cx);
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+            call::init(client.clone(), user_store.clone(), cx);
+            channel::init(&client, user_store.clone(), cx);
+            notifications::init(client.clone(), user_store, cx);
+            collab_ui::init(&app_state, cx);
+            file_finder::init(cx);
+            menu::init();
+            dev_server_projects::init(client.clone(), cx);
+            settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
+        });
+
+        client
+            .authenticate_and_connect(false, &cx.to_async())
+            .await
+            .unwrap();
+
+        let client = TestClient {
+            app_state,
+            username: name.to_string(),
+            channel_store: cx.read(ChannelStore::global).clone(),
+            notification_store: cx.read(NotificationStore::global).clone(),
+            state: Default::default(),
+        };
+        client.wait_for_current_user(cx).await;
+        client
+    }
+
+    pub async fn create_dev_server(
+        &self,
+        access_token: String,
+        cx: &mut TestAppContext,
+    ) -> TestClient {
+        cx.update(|cx| {
+            if cx.has_global::<SettingsStore>() {
+                panic!("Same cx used to create two test clients")
+            }
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            release_channel::init("0.0.0", cx);
+            client::init_settings(cx);
+        });
+        let (dev_server_id, _) = split_dev_server_token(&access_token).unwrap();
+
+        let clock = Arc::new(FakeSystemClock::default());
+        let http = FakeHttpClient::with_404_response();
+        let mut client = cx.update(|cx| Client::new(clock, http.clone(), cx));
+        let server = self.server.clone();
+        let db = self.app_state.db.clone();
+        let connection_killers = self.connection_killers.clone();
+        let forbid_connections = self.forbid_connections.clone();
+        Arc::get_mut(&mut client)
+            .unwrap()
+            .set_id(1)
+            .set_dev_server_token(client::DevServerToken(access_token.clone()))
+            .override_establish_connection(move |credentials, cx| {
+                assert_eq!(
+                    credentials,
+                    &Credentials::DevServer {
+                        token: client::DevServerToken(access_token.to_string())
+                    }
+                );
+
+                let server = server.clone();
+                let db = db.clone();
+                let connection_killers = connection_killers.clone();
+                let forbid_connections = forbid_connections.clone();
+                cx.spawn(move |cx| async move {
+                    if forbid_connections.load(SeqCst) {
+                        Err(EstablishConnectionError::other(anyhow!(
+                            "server is forbidding connections"
+                        )))
+                    } else {
+                        let (client_conn, server_conn, killed) =
+                            Connection::in_memory(cx.background_executor().clone());
+                        let (connection_id_tx, connection_id_rx) = oneshot::channel();
+                        let dev_server = db
+                            .get_dev_server(dev_server_id)
+                            .await
+                            .expect("retrieving dev_server failed");
+                        cx.background_executor()
+                            .spawn(server.handle_connection(
+                                server_conn,
+                                "dev-server".to_string(),
+                                Principal::DevServer(dev_server),
+                                ZedVersion(SemanticVersion::new(1, 0, 0)),
+                                Some(connection_id_tx),
+                                Executor::Deterministic(cx.background_executor().clone()),
+                            ))
+                            .detach();
+                        let connection_id = connection_id_rx.await.map_err(|e| {
+                            EstablishConnectionError::Other(anyhow!(
+                                "{} (is server shutting down?)",
+                                e
+                            ))
+                        })?;
+                        connection_killers
+                            .lock()
+                            .insert(connection_id.into(), killed);
+                        Ok(client_conn)
+                    }
+                })
+            });
+
         let fs = FakeFs::new(cx.executor());
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -282,23 +419,27 @@ impl TestServer {
             collab_ui::init(&app_state, cx);
             file_finder::init(cx);
             menu::init();
-            settings::KeymapFile::load_asset("keymaps/default-macos.json", cx).unwrap();
-        });
+            headless::init(
+                client.clone(),
+                headless::AppState {
+                    languages: app_state.languages.clone(),
+                    user_store: app_state.user_store.clone(),
+                    fs: fs.clone(),
+                    node_runtime: app_state.node_runtime.clone(),
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
 
-        client
-            .authenticate_and_connect(false, &cx.to_async())
-            .await
-            .unwrap();
-
-        let client = TestClient {
+        TestClient {
             app_state,
-            username: name.to_string(),
+            username: "dev-server".to_string(),
             channel_store: cx.read(ChannelStore::global).clone(),
             notification_store: cx.read(NotificationStore::global).clone(),
             state: Default::default(),
-        };
-        client.wait_for_current_user(cx).await;
-        client
+        }
     }
 
     pub fn disconnect_client(&self, peer_id: PeerId) {
@@ -522,6 +663,7 @@ impl TestServer {
                 auto_join_channel_id: None,
                 migrations_path: None,
                 seed_path: None,
+                supermaven_admin_api_key: None,
             },
         })
     }
@@ -602,16 +744,18 @@ impl TestClient {
         Ref::map(self.state.borrow(), |state| &state.local_projects)
     }
 
-    pub fn remote_projects(&self) -> impl Deref<Target = Vec<Model<Project>>> + '_ {
-        Ref::map(self.state.borrow(), |state| &state.remote_projects)
+    pub fn dev_server_projects(&self) -> impl Deref<Target = Vec<Model<Project>>> + '_ {
+        Ref::map(self.state.borrow(), |state| &state.dev_server_projects)
     }
 
     pub fn local_projects_mut(&self) -> impl DerefMut<Target = Vec<Model<Project>>> + '_ {
         RefMut::map(self.state.borrow_mut(), |state| &mut state.local_projects)
     }
 
-    pub fn remote_projects_mut(&self) -> impl DerefMut<Target = Vec<Model<Project>>> + '_ {
-        RefMut::map(self.state.borrow_mut(), |state| &mut state.remote_projects)
+    pub fn dev_server_projects_mut(&self) -> impl DerefMut<Target = Vec<Model<Project>>> + '_ {
+        RefMut::map(self.state.borrow_mut(), |state| {
+            &mut state.dev_server_projects
+        })
     }
 
     pub fn buffers_for_project<'a>(
@@ -736,7 +880,7 @@ impl TestClient {
         })
     }
 
-    pub async fn build_remote_project(
+    pub async fn build_dev_server_project(
         &self,
         host_project_id: u64,
         guest_cx: &mut TestAppContext,
@@ -762,12 +906,7 @@ impl TestClient {
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(
-                WorkspaceId::default(),
-                project.clone(),
-                self.app_state.clone(),
-                cx,
-            )
+            Workspace::new(None, project.clone(), self.app_state.clone(), cx)
         })
     }
 
@@ -778,12 +917,7 @@ impl TestClient {
         let project = self.build_test_project(cx).await;
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(
-                WorkspaceId::default(),
-                project.clone(),
-                self.app_state.clone(),
-                cx,
-            )
+            Workspace::new(None, project.clone(), self.app_state.clone(), cx)
         })
     }
 
