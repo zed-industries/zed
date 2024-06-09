@@ -6013,8 +6013,7 @@ impl Project {
     ) -> Task<Result<Vec<Range<Anchor>>>> {
         if self.is_local() {
             let snapshot = buffer.read(cx).snapshot();
-            let offset = position.to_offset(&snapshot);
-            let scope = snapshot.language_scope_at(offset);
+            let scope = snapshot.language_scope_at(position);
             let Some(server_id) = self
                 .language_servers_for_buffer(buffer.read(cx), cx)
                 .filter(|(_, server)| {

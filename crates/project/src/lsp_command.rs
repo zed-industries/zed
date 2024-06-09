@@ -17,7 +17,7 @@ use language::{
 };
 use lsp::{
     CompletionListItemDefaultsEditRange, DocumentHighlightKind, LanguageServer, LanguageServerId,
-    LinkedEditingRangeServerCapabilities, LinkedEditingRanges, OneOf, ServerCapabilities,
+    LinkedEditingRangeServerCapabilities, OneOf, ServerCapabilities,
 };
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
@@ -2568,7 +2568,7 @@ impl LspCommand for InlayHints {
 impl LspCommand for LinkedEditingRange {
     type Response = Vec<Range<Anchor>>;
     type LspRequest = lsp::request::LinkedEditingRange;
-    type ProtoRequest = proto::LinkedEditingRanges;
+    type ProtoRequest = proto::LinkedEditingRange;
 
     fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
         let Some(linked_editing_options) = &server_capabilities.linked_editing_range_provider
@@ -2599,13 +2599,13 @@ impl LspCommand for LinkedEditingRange {
 
     async fn response_from_lsp(
         self,
-        message: Option<LinkedEditingRanges>,
+        message: Option<lsp::LinkedEditingRanges>,
         _project: Model<Project>,
         buffer: Model<Buffer>,
         _server_id: LanguageServerId,
         cx: AsyncAppContext,
     ) -> Result<Vec<Range<Anchor>>> {
-        if let Some(LinkedEditingRanges { mut ranges, .. }) = message {
+        if let Some(lsp::LinkedEditingRanges { mut ranges, .. }) = message {
             ranges.sort_by_key(|range| range.start);
             // let (lsp_adapter, lsp_server) =
             //     language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
@@ -2625,77 +2625,70 @@ impl LspCommand for LinkedEditingRange {
         }
     }
 
-    fn to_proto(&self, _project_id: u64, _buffer: &Buffer) -> proto::LinkedEditingRanges {
-        unimplemented!();
-        // proto::OnTypeFormatting {
-        //     project_id,
-        //     buffer_id: buffer.remote_id().into(),
-        //     position: Some(language::proto::serialize_anchor(
-        //         &buffer.anchor_before(self.position),
-        //     )),
-        //     trigger: self.trigger.clone(),
-        //     version: serialize_version(&buffer.version()),
-        // }
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LinkedEditingRange {
+        proto::LinkedEditingRange {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+            position: Some(proto::PointUtf16 {
+                row: self.position.row,
+                column: self.position.column,
+            }),
+        }
     }
 
     async fn from_proto(
-        _message: proto::LinkedEditingRanges,
-        _: Model<Project>,
+        message: proto::LinkedEditingRange,
+        _project: Model<Project>,
         _buffer: Model<Buffer>,
         _cx: AsyncAppContext,
     ) -> Result<Self> {
-        unimplemented!();
-        // let position = message
-        //     .position
-        //     .and_then(deserialize_anchor)
-        //     .ok_or_else(|| anyhow!("invalid position"))?;
-        // buffer
-        //     .update(&mut cx, |buffer, _| {
-        //         buffer.wait_for_version(deserialize_version(&message.version))
-        //     })?
-        //     .await?;
-
-        // let tab_size = buffer.update(&mut cx, |buffer, cx| {
-        //     language_settings(buffer.language(), buffer.file(), cx).tab_size
-        // })?;
-
-        // Ok(Self {
-        //     position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
-        //     trigger: message.trigger.clone(),
-        //     options: lsp_formatting_options(tab_size.get()).into(),
-        //     push_to_history: false,
-        // })
+        let position = message
+            .position
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        let position = PointUtf16 {
+            row: position.row,
+            column: position.column,
+        };
+        Ok(Self { position })
     }
 
     fn response_to_proto(
-        _response: Vec<Range<Anchor>>,
+        response: Vec<Range<Anchor>>,
         _: &mut Project,
         _: PeerId,
         _: &clock::Global,
         _: &mut AppContext,
-    ) -> proto::LinkedEditingRangesResponse {
-        unimplemented!()
-        // proto::OnTypeFormattingResponse {
-        //     transaction: response
-        //         .map(|transaction| language::proto::serialize_transaction(&transaction)),
-        // }
+    ) -> proto::LinkedEditingRangeResponse {
+        proto::LinkedEditingRangeResponse {
+            items: response
+                .into_iter()
+                .map(|range| proto::AnchorRange {
+                    start: Some(serialize_anchor(&range.start)),
+                    end: Some(serialize_anchor(&range.end)),
+                })
+                .collect(),
+        }
     }
 
     async fn response_from_proto(
         self,
-        _message: proto::LinkedEditingRangesResponse,
+        message: proto::LinkedEditingRangeResponse,
         _: Model<Project>,
         _: Model<Buffer>,
         _: AsyncAppContext,
     ) -> Result<Vec<Range<Anchor>>> {
-        Ok(vec![])
-        // let Some(transaction) = message.transaction else {
-        //     return Ok(None);
-        // };
-        // Ok(Some(language::proto::deserialize_transaction(transaction)?))
+        Ok(message
+            .items
+            .into_iter()
+            .filter_map(|range| {
+                let start = deserialize_anchor(range.start?)?;
+                let end = deserialize_anchor(range.end?)?;
+                Some(start..end)
+            })
+            .collect())
     }
 
-    fn buffer_id_from_proto(message: &proto::LinkedEditingRanges) -> Result<BufferId> {
+    fn buffer_id_from_proto(message: &proto::LinkedEditingRange) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

@@ -254,8 +254,8 @@ message Envelope {
         TaskTemplatesResponse task_templates_response = 205;
         TaskTemplates task_templates = 206;
 
-        LinkedEditingRanges linked_editing_ranges = 209;
-        LinkedEditingRangesResponse linked_editing_ranges_response = 210; // current max
+        LinkedEditingRange linked_editing_range = 209;
+        LinkedEditingRangeResponse linked_editing_range_response = 210; // current max
     }
 
     reserved 158 to 161;
@@ -991,19 +991,19 @@ message OnTypeFormattingResponse {
 }
 
 
-message LinkedEditingRanges {
+message LinkedEditingRange {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
-    repeated Location position = 3;
+    PointUtf16 position = 3;
 }
 
-message LinkedEditingRangeItem {
-    Location parent = 1;
-    repeated Location items = 2;
+message AnchorRange {
+    Anchor start = 1;
+    Anchor end = 2;
 }
 
-message LinkedEditingRangesResponse {
-    repeated LinkedEditingRangeItem items = 1;
+message LinkedEditingRangeResponse {
+    repeated AnchorRange items = 1;
 }
 
 message InlayHints {
