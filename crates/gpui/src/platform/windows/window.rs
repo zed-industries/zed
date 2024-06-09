@@ -890,7 +890,7 @@ unsafe extern "system" fn wnd_proc(
         unsafe { drop(Box::from_raw(ptr)) };
     }
     r
-} 
+}
 
 pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowStatePtr>> {
     if hwnd == HWND(0) {
