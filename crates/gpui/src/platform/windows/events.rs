@@ -1048,31 +1048,26 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     let vk_code = wparam.loword();
 
     let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => Some("backspace"),
-        VK_RETURN => Some("enter"),
-        VK_TAB => Some("tab"),
-        VK_UP => Some("up"),
-        VK_DOWN => Some("down"),
-        VK_RIGHT => Some("right"),
-        VK_LEFT => Some("left"),
-        VK_HOME => Some("home"),
-        VK_END => Some("end"),
-        VK_PRIOR => Some("pageup"),
-        VK_NEXT => Some("pagedown"),
-        VK_ESCAPE => Some("escape"),
-        VK_INSERT => Some("insert"),
-        _ => {
-            let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-            if basic_key.is_some() {
-                return basic_key;
-            }
-            None
-        }
-    };
+        VK_BACK => "backspace",
+        VK_RETURN => "enter",
+        VK_TAB => "tab",
+        VK_UP => "up",
+        VK_DOWN => "down",
+        VK_RIGHT => "right",
+        VK_LEFT => "left",
+        VK_HOME => "home",
+        VK_END => "end",
+        VK_PRIOR => "pageup",
+        VK_NEXT => "pagedown",
+        VK_ESCAPE => "escape",
+        VK_INSERT => "insert",
+        _ => return basic_vkcode_to_string(vk_code, modifiers),
+    }
+    .to_string();
 
     Some(Keystroke {
         modifiers,
-        key: key?.to_string(),
+        key: key,
         ime_key: None,
     })
 }
@@ -1088,20 +1083,20 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
     let modifiers = current_modifiers();
 
     let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => Some("backspace"),
-        VK_RETURN => Some("enter"),
-        VK_TAB => Some("tab"),
-        VK_UP => Some("up"),
-        VK_DOWN => Some("down"),
-        VK_RIGHT => Some("right"),
-        VK_LEFT => Some("left"),
-        VK_HOME => Some("home"),
-        VK_END => Some("end"),
-        VK_PRIOR => Some("pageup"),
-        VK_NEXT => Some("pagedown"),
-        VK_ESCAPE => Some("escape"),
-        VK_INSERT => Some("insert"),
-        VK_DELETE => Some("delete"),
+        VK_BACK => "backspace",
+        VK_RETURN => "enter",
+        VK_TAB => "tab",
+        VK_UP => "up",
+        VK_DOWN => "down",
+        VK_RIGHT => "right",
+        VK_LEFT => "left",
+        VK_HOME => "home",
+        VK_END => "end",
+        VK_PRIOR => "pageup",
+        VK_NEXT => "pagedown",
+        VK_ESCAPE => "escape",
+        VK_INSERT => "insert",
+        VK_DELETE => "delete",
         _ => {
             if is_modifier(VIRTUAL_KEY(vk_code)) {
                 return Some(KeystrokeOrModifier::Modifier(modifiers));
@@ -1122,26 +1117,20 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
                     ime_key: None,
                 }));
             };
-            None
+            return None;
         }
-    };
-
-    if let Some(key) = key {
-        Some(KeystrokeOrModifier::Keystroke(Keystroke {
-            modifiers,
-            key: key.to_string(),
-            ime_key: None,
-        }))
-    } else {
-        None
     }
+    .to_string();
+
+    Some(KeystrokeOrModifier::Keystroke(Keystroke {
+        modifiers,
+        key: key,
+        ime_key: None,
+    }))
 }
 
 fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
-    let src = [wparam.0 as u16];
-    let Ok(first_char) = char::decode_utf16(src).collect::<Vec<_>>()[0] else {
-        return None;
-    };
+    let first_char = char::from_u32((wparam.0 as u16).into())?;
     if first_char.is_control() {
         None
     } else {
@@ -1225,45 +1214,25 @@ fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
 }
 
 fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> {
-    match code {
-        // VK_0 - VK_9
-        48..=57 => Some(Keystroke {
-            modifiers,
-            key: format!("{}", code - VK_0.0),
-            ime_key: None,
-        }),
-        // VK_A - VK_Z
-        65..=90 => Some(Keystroke {
-            modifiers,
-            key: format!("{}", (b'a' + code as u8 - VK_A.0 as u8) as char),
-            ime_key: None,
-        }),
-        // VK_F1 - VK_F24
-        112..=135 => Some(Keystroke {
-            modifiers,
-            key: format!("f{}", code - VK_F1.0 + 1),
-            ime_key: None,
-        }),
-        // OEM3: `/~, OEM_MINUS: -/_, OEM_PLUS: =/+, ...
-        _ => Some(Keystroke {
-            modifiers,
-            key: oemkey_vkcode_to_string(code)?,
-            ime_key: None,
-        }),
-    }
-}
-
-fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
     let mapped_code = unsafe { MapVirtualKeyW(code as u32, MAPVK_VK_TO_CHAR) };
 
-    Some(
-        match mapped_code {
-            0 => None,
-            raw_code => char::from_u32(raw_code),
-        }?
-        .to_ascii_lowercase()
-        .to_string(),
-    )
+    let key = match mapped_code {
+        0 => None,
+        raw_code => char::from_u32(raw_code),
+    }?
+    .to_ascii_lowercase();
+
+    let key = if matches!(code as u32, 112..=135) {
+        format!("f{key}")
+    } else {
+        key.to_string()
+    };
+
+    Some(Keystroke {
+        modifiers,
+        key,
+        ime_key: None,
+    })
 }
 
 #[inline]
