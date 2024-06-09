@@ -2,7 +2,6 @@ use std::rc::Rc;
 
 use ::util::ResultExt;
 use anyhow::Context;
-use itertools::Itertools;
 use windows::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
