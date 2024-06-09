@@ -55,6 +55,7 @@
       "ctrl-c": "editor::Copy",
       "shift-insert": "editor::Paste",
       "ctrl-v": "editor::Paste",
+      "ctrl-y": "editor::Redo",
       "ctrl-z": "editor::Undo",
       "ctrl-shift-z": "editor::Redo",
       "up": "editor::MoveUp",
