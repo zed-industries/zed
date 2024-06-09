@@ -229,7 +229,14 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
-        self.0.write().layout_line(text, font_size, runs)
+        self.0
+            .write()
+            .layout_line(text, font_size, runs)
+            .log_err()
+            .unwrap_or(LineLayout {
+                font_size,
+                ..Default::default()
+            })
     }
 }
 
@@ -402,12 +409,17 @@ impl DirectWriteState {
             })
     }
 
-    fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
+    fn layout_line(
+        &mut self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+    ) -> Result<LineLayout> {
         if font_runs.is_empty() {
-            return LineLayout {
+            return Ok(LineLayout {
                 font_size,
                 ..Default::default()
-            };
+            });
         }
         unsafe {
             let text_renderer = self.components.text_renderer.clone();
@@ -423,25 +435,22 @@ impl DirectWriteState {
                 } else {
                     &self.custom_font_collection
                 };
-                let format = self
-                    .components
-                    .factory
-                    .CreateTextFormat(
-                        &HSTRING::from(&font_info.font_family),
-                        collection,
-                        font_info.font_face.GetWeight(),
-                        font_info.font_face.GetStyle(),
-                        DWRITE_FONT_STRETCH_NORMAL,
-                        font_size.0,
-                        &HSTRING::from(&self.components.locale),
-                    )
-                    .unwrap();
+                let format = self.components.factory.CreateTextFormat(
+                    &HSTRING::from(&font_info.font_family),
+                    collection,
+                    font_info.font_face.GetWeight(),
+                    font_info.font_face.GetStyle(),
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    font_size.0,
+                    &HSTRING::from(&self.components.locale),
+                )?;
 
-                let layout = self
-                    .components
-                    .factory
-                    .CreateTextLayout(&text_wide, &format, f32::INFINITY, f32::INFINITY)
-                    .unwrap();
+                let layout = self.components.factory.CreateTextLayout(
+                    &text_wide,
+                    &format,
+                    f32::INFINITY,
+                    f32::INFINITY,
+                )?;
                 let current_text = &text[utf8_offset..(utf8_offset + first_run.len)];
                 utf8_offset += first_run.len;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
@@ -449,9 +458,7 @@ impl DirectWriteState {
                     startPosition: utf16_offset,
                     length: current_text_utf16_length,
                 };
-                layout
-                    .SetTypography(&font_info.features, text_range)
-                    .unwrap();
+                layout.SetTypography(&font_info.features, text_range)?;
                 utf16_offset += current_text_utf16_length;
 
                 layout
@@ -465,9 +472,7 @@ impl DirectWriteState {
                     first_run = false;
                     let mut metrics = vec![DWRITE_LINE_METRICS::default(); 4];
                     let mut line_count = 0u32;
-                    text_layout
-                        .GetLineMetrics(Some(&mut metrics), &mut line_count as _)
-                        .unwrap();
+                    text_layout.GetLineMetrics(Some(&mut metrics), &mut line_count as _)?;
                     ascent = px(metrics[0].baseline);
                     descent = px(metrics[0].height - metrics[0].baseline);
                     continue;
@@ -487,22 +492,13 @@ impl DirectWriteState {
                     length: current_text_utf16_length,
                 };
                 utf16_offset += current_text_utf16_length;
+                text_layout.SetFontCollection(collection, text_range)?;
                 text_layout
-                    .SetFontCollection(collection, text_range)
-                    .unwrap();
-                text_layout
-                    .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)
-                    .unwrap();
-                text_layout.SetFontSize(font_size.0, text_range).unwrap();
-                text_layout
-                    .SetFontStyle(font_info.font_face.GetStyle(), text_range)
-                    .unwrap();
-                text_layout
-                    .SetFontWeight(font_info.font_face.GetWeight(), text_range)
-                    .unwrap();
-                text_layout
-                    .SetTypography(&font_info.features, text_range)
-                    .unwrap();
+                    .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)?;
+                text_layout.SetFontSize(font_size.0, text_range)?;
+                text_layout.SetFontStyle(font_info.font_face.GetStyle(), text_range)?;
+                text_layout.SetFontWeight(font_info.font_face.GetWeight(), text_range)?;
+                text_layout.SetTypography(&font_info.features, text_range)?;
             }
 
             let mut runs = Vec::new();
@@ -513,24 +509,22 @@ impl DirectWriteState {
                 utf16_index: 0,
                 width: 0.0,
             };
-            text_layout
-                .Draw(
-                    Some(&renderer_context as *const _ as _),
-                    &text_renderer.0,
-                    0.0,
-                    0.0,
-                )
-                .unwrap();
+            text_layout.Draw(
+                Some(&renderer_context as *const _ as _),
+                &text_renderer.0,
+                0.0,
+                0.0,
+            )?;
             let width = px(renderer_context.width);
 
-            LineLayout {
+            Ok(LineLayout {
                 font_size,
                 width,
                 ascent,
                 descent,
                 runs,
                 len: text.len(),
-            }
+            })
         }
     }
 
