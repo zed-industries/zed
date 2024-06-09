@@ -1140,7 +1140,7 @@ fn get_font_names_from_collection(
             let Some(localized_family_name) = font_family.GetFamilyNames().log_err() else {
                 continue;
             };
-            let Some(family_name) = get_name(localized_family_name, locale) else {
+            let Some(family_name) = get_name(localized_family_name, locale).log_err() else {
                 continue;
             };
             result.push(family_name);
@@ -1160,7 +1160,7 @@ fn get_font_identifier_and_font_struct(
     let Some(localized_family_name) = (unsafe { font_face.GetFamilyNames().log_err() }) else {
         return None;
     };
-    let Some(family_name) = get_name(localized_family_name, locale) else {
+    let Some(family_name) = get_name(localized_family_name, locale).log_err() else {
         return None;
     };
     let weight = unsafe { font_face.GetWeight() };
@@ -1208,7 +1208,7 @@ fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Option<Str
         return None;
     }
 
-    get_name(info.unwrap(), locale)
+    get_name(info.unwrap(), locale).log_err()
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
