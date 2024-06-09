@@ -1279,40 +1279,36 @@ fn make_direct_write_tag(tag_name: &str) -> DWRITE_FONT_FEATURE_TAG {
 }
 
 #[inline]
-fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Option<String> {
+fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Result<String> {
     let mut locale_name_index = 0u32;
     let mut exists = BOOL(0);
     unsafe {
-        string
-            .FindLocaleName(
-                &HSTRING::from(locale),
-                &mut locale_name_index,
-                &mut exists as _,
-            )
-            .log_err();
-    }
+        string.FindLocaleName(
+            &HSTRING::from(locale),
+            &mut locale_name_index,
+            &mut exists as _,
+        )?
+    };
     if !exists.as_bool() {
         unsafe {
-            string
-                .FindLocaleName(
-                    DEFAULT_LOCALE_NAME,
-                    &mut locale_name_index as _,
-                    &mut exists as _,
-                )
-                .log_err();
-        }
+            string.FindLocaleName(
+                DEFAULT_LOCALE_NAME,
+                &mut locale_name_index as _,
+                &mut exists as _,
+            )?
+        };
         if !exists.as_bool() {
-            return None;
+            return Err(anyhow!("No localised string for {}", locale));
         }
     }
 
-    let name_length = unsafe { string.GetStringLength(locale_name_index).unwrap() } as usize;
+    let name_length = unsafe { string.GetStringLength(locale_name_index) }? as usize;
     let mut name_vec = vec![0u16; name_length + 1];
     unsafe {
-        string.GetString(locale_name_index, &mut name_vec).unwrap();
+        string.GetString(locale_name_index, &mut name_vec)?;
     }
 
-    Some(String::from_utf16_lossy(&name_vec[..name_length]))
+    Ok(String::from_utf16_lossy(&name_vec[..name_length]))
 }
 
 #[inline]
