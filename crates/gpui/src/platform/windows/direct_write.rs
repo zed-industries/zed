@@ -303,20 +303,15 @@ impl DirectWriteState {
         } else {
             &self.custom_font_collection
         };
-        let Some(fontset) = collection.GetFontSet().log_err() else {
-            return None;
-        };
-        let Some(font) = fontset
+        let fontset = collection.GetFontSet().log_err()?;
+        let font = fontset
             .GetMatchingFonts(
                 &HSTRING::from(family_name),
                 font_weight.into(),
                 DWRITE_FONT_STRETCH_NORMAL,
                 font_style.into(),
             )
-            .log_err()
-        else {
-            return None;
-        };
+            .log_err()?;
         let total_number = font.GetFontCount();
         for index in 0..total_number {
             let Some(font_face_ref) = font.GetFontFaceReference(index).log_err() else {
@@ -977,7 +972,6 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
             let Some((font_identifier, font_struct, is_emoji)) =
                 get_font_identifier_and_font_struct(font_face, &self.locale)
             else {
-                log::error!("none postscript name found");
                 return Ok(());
             };
 
