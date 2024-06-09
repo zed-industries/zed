@@ -1154,15 +1154,9 @@ fn get_font_identifier_and_font_struct(
     font_face: &IDWriteFontFace3,
     locale: &str,
 ) -> Option<(FontIdentifier, Font, bool)> {
-    let Some(postscript_name) = get_postscript_name(font_face, locale) else {
-        return None;
-    };
-    let Some(localized_family_name) = (unsafe { font_face.GetFamilyNames().log_err() }) else {
-        return None;
-    };
-    let Some(family_name) = get_name(localized_family_name, locale).log_err() else {
-        return None;
-    };
+    let postscript_name = get_postscript_name(font_face, locale)?;
+    let localized_family_name = unsafe { font_face.GetFamilyNames().log_err() }?;
+    let family_name = get_name(localized_family_name, locale).log_err()?;
     let weight = unsafe { font_face.GetWeight() };
     let style = unsafe { font_face.GetStyle() };
     let identifier = FontIdentifier {
