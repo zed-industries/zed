@@ -15,7 +15,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 - Install the necessary system libraries:
 
   ```bash
-  script/linux
+  cd zed && ./script/linux
   ```
 
   If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
