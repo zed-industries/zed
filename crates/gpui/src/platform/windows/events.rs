@@ -1046,10 +1046,6 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     }
 
     let vk_code = wparam.loword();
-    let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-    if basic_key.is_some() {
-        return basic_key;
-    }
 
     let key = match VIRTUAL_KEY(vk_code) {
         VK_BACK => Some("backspace"),
@@ -1065,18 +1061,20 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_NEXT => Some("pagedown"),
         VK_ESCAPE => Some("escape"),
         VK_INSERT => Some("insert"),
-        _ => None,
+        _ => {
+            let basic_key = basic_vkcode_to_string(vk_code, modifiers);
+            if basic_key.is_some() {
+                return basic_key;
+            }
+            None
+        }
     };
 
-    if let Some(key) = key {
-        Some(Keystroke {
-            modifiers,
-            key: key.to_string(),
-            ime_key: None,
-        })
-    } else {
-        None
-    }
+    Some(Keystroke {
+        modifiers,
+        key: key?.to_string(),
+        ime_key: None,
+    })
 }
 
 enum KeystrokeOrModifier {
@@ -1088,26 +1086,6 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
     let vk_code = wparam.loword();
 
     let modifiers = current_modifiers();
-
-    if is_modifier(VIRTUAL_KEY(vk_code)) {
-        return Some(KeystrokeOrModifier::Modifier(modifiers));
-    }
-
-    if modifiers.control || modifiers.alt {
-        let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-        if let Some(basic_key) = basic_key {
-            return Some(KeystrokeOrModifier::Keystroke(basic_key));
-        }
-    }
-
-    if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
-        let offset = vk_code - VK_F1.0;
-        return Some(KeystrokeOrModifier::Keystroke(Keystroke {
-            modifiers,
-            key: format!("f{}", offset + 1),
-            ime_key: None,
-        }));
-    }
 
     let key = match VIRTUAL_KEY(vk_code) {
         VK_BACK => Some("backspace"),
@@ -1124,7 +1102,28 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
         VK_ESCAPE => Some("escape"),
         VK_INSERT => Some("insert"),
         VK_DELETE => Some("delete"),
-        _ => None,
+        _ => {
+            if is_modifier(VIRTUAL_KEY(vk_code)) {
+                return Some(KeystrokeOrModifier::Modifier(modifiers));
+            }
+
+            if modifiers.control || modifiers.alt {
+                let basic_key = basic_vkcode_to_string(vk_code, modifiers);
+                if let Some(basic_key) = basic_key {
+                    return Some(KeystrokeOrModifier::Keystroke(basic_key));
+                }
+            }
+
+            if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
+                let offset = vk_code - VK_F1.0;
+                return Some(KeystrokeOrModifier::Keystroke(Keystroke {
+                    modifiers,
+                    key: format!("f{}", offset + 1),
+                    ime_key: None,
+                }));
+            };
+            None
+        }
     };
 
     if let Some(key) = key {
@@ -1246,36 +1245,25 @@ fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> 
             ime_key: None,
         }),
         // OEM3: `/~, OEM_MINUS: -/_, OEM_PLUS: =/+, ...
-        _ => {
-            if let Some(key) = oemkey_vkcode_to_string(code) {
-                Some(Keystroke {
-                    modifiers,
-                    key,
-                    ime_key: None,
-                })
-            } else {
-                None
-            }
-        }
+        _ => Some(Keystroke {
+            modifiers,
+            key: oemkey_vkcode_to_string(code)?,
+            ime_key: None,
+        }),
     }
 }
 
 fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
-    match code {
-        186 => Some(";".to_string()), // VK_OEM_1
-        187 => Some("=".to_string()), // VK_OEM_PLUS
-        188 => Some(",".to_string()), // VK_OEM_COMMA
-        189 => Some("-".to_string()), // VK_OEM_MINUS
-        190 => Some(".".to_string()), // VK_OEM_PERIOD
-        // https://kbdlayout.info/features/virtualkeys/VK_ABNT_C1
-        191 | 193 => Some("/".to_string()), // VK_OEM_2 VK_ABNT_C1
-        192 => Some("`".to_string()),       // VK_OEM_3
-        219 => Some("[".to_string()),       // VK_OEM_4
-        220 => Some("\\".to_string()),      // VK_OEM_5
-        221 => Some("]".to_string()),       // VK_OEM_6
-        222 => Some("'".to_string()),       // VK_OEM_7
-        _ => None,
-    }
+    let mapped_code = unsafe { MapVirtualKeyW(code as u32, MAPVK_VK_TO_CHAR) };
+
+    Some(
+        match mapped_code {
+            0 => None,
+            raw_code => char::from_u32(raw_code),
+        }?
+        .to_ascii_lowercase()
+        .to_string(),
+    )
 }
 
 #[inline]
