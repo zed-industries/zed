@@ -30,10 +30,7 @@ pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
 fn select_next_line(cx: &mut WindowContext) {}
 
 pub fn helix_normal_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
-    // Helix only selects the last of the motions
-    if let Some(times) = times {
-        normal_motion(motion.to_owned(), None, Some(times - 1), cx);
-    };
+    let times = times.unwrap_or(1);
     match motion {
         Motion::Up { .. } | Motion::Down { .. } | Motion::Right | Motion::Left => {
             normal_motion(motion.to_owned(), None, None, cx);
@@ -43,13 +40,13 @@ pub fn helix_normal_motion(motion: Motion, times: Option<usize>, cx: &mut Window
         | Motion::NextWordEnd { .. }
         | Motion::NextSubwordStart { .. }
         | Motion::NextSubwordEnd { .. } => {
-            next_word(motion, cx);
+            next_word(motion, times, cx);
         }
         Motion::PreviousWordStart { .. }
         | Motion::PreviousWordEnd { .. }
         | Motion::PreviousSubwordStart { .. }
         | Motion::PreviousSubwordEnd { .. } => {
-            prev_word(motion, cx);
+            prev_word(motion, times, cx);
         }
         Motion::FindForward { .. }
         | Motion::FindBackward { .. }
@@ -62,24 +59,28 @@ pub fn helix_normal_motion(motion: Motion, times: Option<usize>, cx: &mut Window
     };
 }
 
-fn prev_word(motion: Motion, cx: &mut WindowContext) {
+fn prev_word(motion: Motion, times: usize, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
-                    prev_word_selection_update(map, selection, motion.clone());
+                    for _ in 0..times {
+                        prev_word_selection_update(map, selection, 1, motion.clone());
+                    }
                 })
             })
         });
     })
 }
 
-fn next_word(motion: Motion, cx: &mut WindowContext) {
+fn next_word(motion: Motion, times: usize, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
-                    next_word_selection_update(map, selection, motion.clone());
+                    for _ in 0..times {
+                        next_word_selection_update(map, selection, times, motion.clone());
+                    }
                 })
             })
         });
@@ -124,6 +125,7 @@ impl CursorSelectionExt for Selection<DisplayPoint> {
 fn next_word_selection_update(
     map: &DisplaySnapshot,
     selection: &mut Selection<DisplayPoint>,
+    times: usize,
     motion: Motion,
 ) {
     let (a, b, c, d);
@@ -186,6 +188,7 @@ fn next_word_selection_update(
 fn prev_word_selection_update(
     map: &DisplaySnapshot,
     selection: &mut Selection<DisplayPoint>,
+    times: usize,
     motion: Motion,
 ) {
     let (a, b, c, d);
@@ -276,7 +279,7 @@ fn select_current(cx: &mut WindowContext) {
     });
 }
 
-fn find(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
+fn find(motion: Motion, times: usize, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -294,7 +297,7 @@ fn find(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
                                 cursor,
                                 before,
                                 char,
-                                1,
+                                times,
                                 FindRange::SingleLine,
                                 smartcase,
                             );
@@ -316,7 +319,7 @@ fn find(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
                                 cursor,
                                 after,
                                 char,
-                                1,
+                                times,
                                 FindRange::SingleLine,
                                 smartcase,
                             );
