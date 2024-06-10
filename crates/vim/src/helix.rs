@@ -11,7 +11,10 @@ use ui::{ViewContext, WindowContext};
 use workspace::Workspace;
 
 use crate::{
-    motion::{next_word_end, next_word_start, previous_word_end, previous_word_start, Motion},
+    motion::{
+        next_subword_end, next_subword_start, next_word_end, next_word_start, previous_subword_end,
+        previous_subword_start, previous_word_end, previous_word_start, Motion,
+    },
     normal::normal_motion,
     utils::coerce_punctuation,
     visual::visual_motion,
@@ -36,10 +39,16 @@ pub fn helix_normal_motion(motion: Motion, times: Option<usize>, cx: &mut Window
             normal_motion(motion.to_owned(), None, None, cx);
             select_current(cx);
         }
-        Motion::NextWordStart { .. } | Motion::NextWordEnd { .. } => {
+        Motion::NextWordStart { .. }
+        | Motion::NextWordEnd { .. }
+        | Motion::NextSubwordStart { .. }
+        | Motion::NextSubwordEnd { .. } => {
             next_word(motion, cx);
         }
-        Motion::PreviousWordStart { .. } | Motion::PreviousWordEnd { .. } => {
+        Motion::PreviousWordStart { .. }
+        | Motion::PreviousWordEnd { .. }
+        | Motion::PreviousSubwordStart { .. }
+        | Motion::PreviousSubwordEnd { .. } => {
             prev_word(motion, cx);
         }
         Motion::FindForward { .. }
@@ -117,7 +126,7 @@ fn next_word_selection_update(
     selection: &mut Selection<DisplayPoint>,
     motion: Motion,
 ) {
-    let (a, b);
+    let (a, b, c, d);
     let next_word_fn: &dyn Fn(DisplayPoint) -> DisplayPoint = match &motion {
         Motion::NextWordStart { ignore_punctuation } => {
             a = |point| next_word_start(map, point, *ignore_punctuation, 1);
@@ -126,6 +135,14 @@ fn next_word_selection_update(
         Motion::NextWordEnd { ignore_punctuation } => {
             b = |point| next_word_end(map, point, *ignore_punctuation, 1, true);
             &b
+        }
+        Motion::NextSubwordStart { ignore_punctuation } => {
+            c = |point| next_subword_start(map, point, *ignore_punctuation, 1);
+            &c
+        }
+        Motion::NextSubwordEnd { ignore_punctuation } => {
+            d = |point| next_subword_end(map, point, *ignore_punctuation, 1, true);
+            &d
         }
         _ => unreachable!(),
     };
@@ -171,7 +188,7 @@ fn prev_word_selection_update(
     selection: &mut Selection<DisplayPoint>,
     motion: Motion,
 ) {
-    let (a, b);
+    let (a, b, c, d);
     let prev_word_fn: &dyn Fn(DisplayPoint) -> DisplayPoint = match &motion {
         Motion::PreviousWordStart { ignore_punctuation } => {
             a = |point| previous_word_start(map, point, *ignore_punctuation, 1);
@@ -180,6 +197,14 @@ fn prev_word_selection_update(
         Motion::PreviousWordEnd { ignore_punctuation } => {
             b = |point| previous_word_end(map, point, *ignore_punctuation, 1);
             &b
+        }
+        Motion::PreviousSubwordStart { ignore_punctuation } => {
+            c = |point| previous_subword_start(map, point, *ignore_punctuation, 1);
+            &c
+        }
+        Motion::PreviousSubwordEnd { ignore_punctuation } => {
+            d = |point| previous_subword_end(map, point, *ignore_punctuation, 1);
+            &d
         }
         _ => unreachable!(),
     };
