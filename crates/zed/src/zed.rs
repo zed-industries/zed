@@ -1314,7 +1314,8 @@ mod tests {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
         })
-        .await;
+        .await
+        .unwrap();
         cx.run_until_parked();
 
         let workspace = cx

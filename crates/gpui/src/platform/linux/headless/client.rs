@@ -59,10 +59,6 @@ impl LinuxClient for HeadlessClient {
         None
     }
 
-    fn can_open_windows(&self) -> anyhow::Result<()> {
-        return Err(anyhow::anyhow!("neither DISPLAY, nor WAYLAND_DISPLAY found. You can still run zed for remote development with --dev-server-token."));
-    }
-
     fn active_window(&self) -> Option<AnyWindowHandle> {
         None
     }
@@ -73,7 +69,7 @@ impl LinuxClient for HeadlessClient {
         _params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         Err(anyhow::anyhow!(
-            "Running in headless mode, cannot open windows"
+            "neither DISPLAY nor WAYLAND_DISPLAY is set. You can run in headless mode"
         ))
     }
 
