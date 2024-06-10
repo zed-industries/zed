@@ -71,8 +71,10 @@ impl LinuxClient for HeadlessClient {
         &self,
         _handle: AnyWindowHandle,
         _params: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
-        unimplemented!()
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
+        Err(anyhow::anyhow!(
+            "Running in headless mode, cannot open windows"
+        ))
     }
 
     fn set_cursor_style(&self, _style: CursorStyle) {}

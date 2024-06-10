@@ -509,6 +509,7 @@ fn test_clone(cx: &mut TestAppContext) {
         .update(cx, |editor, cx| {
             cx.open_window(Default::default(), |cx| cx.new_view(|cx| editor.clone(cx)))
         })
+        .unwrap()
         .unwrap();
 
     let snapshot = editor.update(cx, |e, cx| e.snapshot(cx)).unwrap();
@@ -7657,6 +7658,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             },
             |cx| cx.new_view(|cx| build_editor(buffer.clone(), cx)),
         )
+        .unwrap()
     });
 
     let is_still_following = Rc::new(RefCell::new(true));

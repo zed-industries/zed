@@ -490,16 +490,23 @@ impl AppContext {
         &mut self,
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
-    ) -> WindowHandle<V> {
+    ) -> anyhow::Result<WindowHandle<V>> {
         self.update(|cx| {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
-            let mut window = Window::new(handle.into(), options, cx);
-            let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
-            window.root_view.replace(root_view.into());
-            cx.window_handles.insert(id, window.handle);
-            cx.windows.get_mut(id).unwrap().replace(window);
-            handle
+            match Window::new(handle.into(), options, cx) {
+                Ok(mut window) => {
+                    let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
+                    window.root_view.replace(root_view.into());
+                    cx.window_handles.insert(id, window.handle);
+                    cx.windows.get_mut(id).unwrap().replace(window);
+                    Ok(handle)
+                }
+                Err(e) => {
+                    cx.windows.remove(id);
+                    return Err(e);
+                }
+            }
         })
     }
 

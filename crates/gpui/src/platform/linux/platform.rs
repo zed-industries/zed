@@ -65,7 +65,7 @@ pub trait LinuxClient {
         &self,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Box<dyn PlatformWindow>;
+    ) -> anyhow::Result<Box<dyn PlatformWindow>>;
     fn set_cursor_style(&self, style: CursorStyle);
     fn open_uri(&self, uri: &str);
     fn write_to_primary(&self, item: ClipboardItem);
@@ -245,7 +245,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         &self,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         self.open_window(handle, options)
     }
 

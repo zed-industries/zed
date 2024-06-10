@@ -93,6 +93,7 @@ fn main() {
                 local_resource: Arc::new(PathBuf::from_str("examples/image/app-icon.png").unwrap()),
                 remote_resource: "https://picsum.photos/512/512".into(),
             })
-        });
+        })
+        .unwrap();
     });
 }

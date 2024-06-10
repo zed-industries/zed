@@ -187,14 +187,14 @@ impl Platform for TestPlatform {
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
-    ) -> Box<dyn crate::PlatformWindow> {
+    ) -> anyhow::Result<Box<dyn crate::PlatformWindow>> {
         let window = TestWindow::new(
             handle,
             params,
             self.weak.clone(),
             self.active_display.clone(),
         );
-        Box::new(window)
+        Ok(Box::new(window))
     }
 
     fn window_appearance(&self) -> WindowAppearance {

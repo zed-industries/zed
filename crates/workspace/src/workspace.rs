@@ -4839,18 +4839,16 @@ pub fn open_new(
     app_state: Arc<AppState>,
     cx: &mut AppContext,
     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static + Send,
-) -> Task<()> {
+) -> Task<anyhow::Result<()>> {
     let task = Workspace::new_local(Vec::new(), app_state, None, cx);
     cx.spawn(|mut cx| async move {
-        if let Some((workspace, opened_paths)) = task.await.log_err() {
-            workspace
-                .update(&mut cx, |workspace, cx| {
-                    if opened_paths.is_empty() {
-                        init(workspace, cx)
-                    }
-                })
-                .log_err();
-        }
+        let (workspace, opened_paths) = task.await?;
+        workspace.update(&mut cx, |workspace, cx| {
+            if opened_paths.is_empty() {
+                init(workspace, cx)
+            }
+        })?;
+        Ok(())
     })
 }
 
@@ -4922,7 +4920,7 @@ pub fn join_hosted_project(
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
                     })
                 })
-            })?
+            })??
         };
 
         workspace.update(&mut cx, |_, cx| {
@@ -4987,7 +4985,7 @@ pub fn join_dev_server_project(
                             Workspace::new(Default::default(), project, app_state.clone(), cx)
                         })
                     })
-                })?
+                })??
             }
         };
 
@@ -5050,7 +5048,7 @@ pub fn join_in_room_project(
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
                     })
                 })
-            })?
+            })??
         };
 
         workspace.update(&mut cx, |workspace, cx| {
