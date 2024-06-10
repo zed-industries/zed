@@ -91,6 +91,6 @@ Try `cargo clean` and `cargo build`.
 
 This error can happen if you are using the "rust-lld.exe" linker. Consider trying a different linker.
 
-If you are using a global config. Consider putting zed in a nested directory and add a `.cargo/config.toml` with a custom linker config in the parent directory.
+If you are using a global config. Consider moving zed to a nested directory and add a `.cargo/config.toml` with a custom linker config in the parent directory.
 
 See this issue for more information https://github.com/zed-industries/zed/issues/12041
