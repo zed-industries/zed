@@ -86,3 +86,7 @@ Before reporting the issue, make sure that you have the latest rustc version wit
 ### Cargo errors claiming that a dependency is using unstable features
 
 Try `cargo clean` and `cargo build`.
+
+### `STATUS_ACCESS_VIOLATION`
+
+This error can happen if you are using the "rust-lld.exe" linker. Consider trying a different linker. See this issue for more information https://github.com/zed-industries/zed/issues/12041
