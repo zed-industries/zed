@@ -11030,7 +11030,6 @@ impl Editor {
             blame.update(cx, GitBlame::blur)
         }
         self.hide_context_menu(cx);
-        hide_hover(self, cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();
     }
