@@ -1,10 +1,17 @@
 ## Other bugs
 - [ ] mouse click sets cursor incorrectly
 - [ ] document highlight is broken (lsp protocol only deals with bar cursor not block cursor)
+- [ ] fix the selection goals
 
 ### Movement
 
 > NOTE: Unlike Vim, `f`, `F`, `t` and `T` are not confined to the current line.
+
+index
+x = done
+. = done but slightly incorrect
+- = left for later
+
 
 | Key                       | Description                                        | Command                     |
 | -----                     | -----------                                        | -------                     |
@@ -22,17 +29,17 @@
 | [x] `f`                   | Find next char                                     | `find_next_char`            |
 | [x] `T`                   | Find 'till previous char                           | `till_prev_char`            |
 | [x] `F`                   | Find previous char                                 | `find_prev_char`            |
-| [-] `G`                   | Go to line number `<n>`                            | `goto_line`                 |
+| [x] `G`                   | Go to line number `<n>`                            | `goto_line`                 |
 | [-] `Alt-.`               | Repeat last motion (`f`, `t`, `m`, `[` or `]`)     | `repeat_last_motion`        |
-| [ ] `Home`                | Move to the start of the line                      | `goto_line_start`           |
-| [ ] `End`                 | Move to the end of the line                        | `goto_line_end`             |
-| [ ] `Ctrl-b`, `PageUp`    | Move page up                                       | `page_up`                   |
-| [ ] `Ctrl-f`, `PageDown`  | Move page down                                     | `page_down`                 |
-| [ ] `Ctrl-u`              | Move cursor and page half page up                  | `page_cursor_half_up`       |
-| [ ] `Ctrl-d`              | Move cursor and page half page down                | `page_cursor_half_down`     |
-| [ ] `Ctrl-i`              | Jump forward on the jumplist                       | `jump_forward`              |
-| [ ] `Ctrl-o`              | Jump backward on the jumplist                      | `jump_backward`             |
-| [ ] `Ctrl-s`              | Save the current selection to the jumplist         | `save_selection`            |
+| [x] `Home`                | Move to the start of the line                      | `goto_line_start`           |
+| [.] `End`                 | Move to the end of the line                        | `goto_line_end`             |
+| [x] `Ctrl-b`, `PageUp`    | Move page up                                       | `page_up`                   |
+| [x] `Ctrl-f`, `PageDown`  | Move page down                                     | `page_down`                 |
+| [x] `Ctrl-u`              | Move cursor and page half page up                  | `page_cursor_half_up`       |
+| [x] `Ctrl-d`              | Move cursor and page half page down                | `page_cursor_half_down`     |
+| [-] `Ctrl-i`              | Jump forward on the jumplist                       | `jump_forward`              |
+| [-] `Ctrl-o`              | Jump backward on the jumplist                      | `jump_backward`             |
+| [-] `Ctrl-s`              | Save the current selection to the jumplist         | `save_selection`            |
 
 ### Changes
 
@@ -178,27 +185,27 @@ Jumps to various locations.
 
 | Key   | Description                                      | Command                    |
 | ----- | -----------                                      | -------                    |
-| `g`   | Go to line number `<n>` else start of file       | `goto_file_start`          |
-| `e`   | Go to the end of the file                        | `goto_last_line`           |
-| `f`   | Go to files in the selections                    | `goto_file`                |
-| `h`   | Go to the start of the line                      | `goto_line_start`          |
-| `l`   | Go to the end of the line                        | `goto_line_end`            |
-| `s`   | Go to first non-whitespace character of the line | `goto_first_nonwhitespace` |
-| `t`   | Go to the top of the screen                      | `goto_window_top`          |
-| `c`   | Go to the middle of the screen                   | `goto_window_center`       |
-| `b`   | Go to the bottom of the screen                   | `goto_window_bottom`       |
-| `d`   | Go to definition (**LSP**)                       | `goto_definition`          |
-| `y`   | Go to type definition (**LSP**)                  | `goto_type_definition`     |
-| `r`   | Go to references (**LSP**)                       | `goto_reference`           |
-| `i`   | Go to implementation (**LSP**)                   | `goto_implementation`      |
-| `a`   | Go to the last accessed/alternate file           | `goto_last_accessed_file`  |
-| `m`   | Go to the last modified/alternate file           | `goto_last_modified_file`  |
-| `n`   | Go to next buffer                                | `goto_next_buffer`         |
-| `p`   | Go to previous buffer                            | `goto_previous_buffer`     |
-| `.`   | Go to last modification in current file          | `goto_last_modification`   |
-| `j`   | Move down textual (instead of visual) line       | `move_line_down`           |
-| `k`   | Move up textual (instead of visual) line         | `move_line_up`             |
-| `w`   | Show labels at each word and select the word that belongs to the entered labels | `goto_word` |
+| [x] `g`   | Go to line number `<n>` else start of file       | `goto_file_start`          |
+| [x] `e`   | Go to the end of the file                        | `goto_last_line`           |
+| [-] `f`   | Go to files in the selections                    | `goto_file`                |
+| [x] `h`   | Go to the start of the line                      | `goto_line_start`          |
+| [.] `l`   | Go to the end of the line                        | `goto_line_end`            |
+| [x] `s`   | Go to first non-whitespace character of the line | `goto_first_nonwhitespace` |
+| [x] `t`   | Go to the top of the screen                      | `goto_window_top`          |
+| [x] `c`   | Go to the middle of the screen                   | `goto_window_center`       |
+| [x] `b`   | Go to the bottom of the screen                   | `goto_window_bottom`       |
+| [x] `d`   | Go to definition (**LSP**)                       | `goto_definition`          |
+| [x] `y`   | Go to type definition (**LSP**)                  | `goto_type_definition`     |
+| [x] `r`   | Go to references (**LSP**)                       | `goto_reference`           |
+| [x] `i`   | Go to implementation (**LSP**)                   | `goto_implementation`      |
+| [ ] `a`   | Go to the last accessed/alternate file           | `goto_last_accessed_file`  |
+| [ ] `m`   | Go to the last modified/alternate file           | `goto_last_modified_file`  |
+| [ ] `n`   | Go to next buffer                                | `goto_next_buffer`         |
+| [ ] `p`   | Go to previous buffer                            | `goto_previous_buffer`     |
+| [ ] `.`   | Go to last modification in current file          | `goto_last_modification`   |
+| [ ] `j`   | Move down textual (instead of visual) line       | `move_line_down`           |
+| [ ] `k`   | Move up textual (instead of visual) line         | `move_line_up`             |
+| [ ] `w`   | Show labels at each word and select the word that belongs to the entered labels | `goto_word` |
 
 #### Match mode
 

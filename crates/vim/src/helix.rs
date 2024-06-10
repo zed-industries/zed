@@ -32,7 +32,21 @@ fn select_next_line(cx: &mut WindowContext) {}
 pub fn helix_normal_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     let times = times.unwrap_or(1);
     match motion {
-        Motion::Up { .. } | Motion::Down { .. } | Motion::Right | Motion::Left => {
+        Motion::Up { .. }
+        | Motion::Down { .. }
+        | Motion::Right
+        | Motion::Left
+        | Motion::GoToColumn
+        | Motion::FirstNonWhitespace { .. }
+        | Motion::StartOfDocument
+        | Motion::EndOfDocument
+        | Motion::Jump { .. }
+        | Motion::WindowTop
+        | Motion::WindowBottom
+        | Motion::WindowMiddle
+        | Motion::EndOfLine { .. }
+        | Motion::StartOfLine { .. }
+        | Motion::FirstNonWhitespace { .. } => {
             simple_motion(motion, times, cx);
         }
         Motion::NextWordStart { .. }
@@ -65,11 +79,15 @@ fn simple_motion(motion: Motion, times: usize, cx: &mut WindowContext) {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     let mut cursor = selection.cursor(map);
-                    for _ in 0..times {
-                        (cursor, selection.goal) = motion
-                            .move_point(map, cursor, selection.goal, None, &text_layout_details)
-                            .unwrap_or((cursor, selection.goal));
-                    }
+                    (cursor, selection.goal) = motion
+                        .move_point(
+                            map,
+                            cursor,
+                            selection.goal,
+                            Some(times),
+                            &text_layout_details,
+                        )
+                        .unwrap_or((cursor, selection.goal));
                     selection.start = cursor;
                     selection.end = cursor.next_char(map).map_or(cursor, |(_, offset)| offset);
                     selection.reversed = false;
