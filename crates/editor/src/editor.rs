@@ -2990,26 +2990,12 @@ impl Editor {
                     })
                 {
                     use text::ToOffset as TO;
-                    use text::ToPoint as TP;
                     // find offset from the start of current range to current cursor position
                     let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
-                    let Some((_, start_anchor)) = self
-                        .buffer
-                        .read(cx)
-                        .text_anchor_for_position_in_snapshot(selection.head(), &snapshot)
-                    else {
-                        continue;
-                    };
-                    let Some((_, end_anchor)) = self
-                        .buffer
-                        .read(cx)
-                        .text_anchor_for_position_in_snapshot(selection.tail(), &snapshot)
-                    else {
-                        continue;
-                    };
-                    let start_offset = TO::to_offset(&start_anchor, &buffer_snapshot);
+
+                    let start_offset = TO::to_offset(&start_anchor.text_anchor, &buffer_snapshot);
                     let start_difference = start_offset - start_byte_offset;
-                    let end_offset = TO::to_offset(&end_anchor, &buffer_snapshot);
+                    let end_offset = TO::to_offset(&anchor.text_anchor, &buffer_snapshot);
                     let end_difference = end_offset - start_byte_offset;
                     // Current range has associated linked ranges.
                     for range in linked_ranges.iter() {
@@ -5086,9 +5072,10 @@ impl Editor {
             this.select_autoclose_pair(cx);
 
             if !this.linked_edit_ranges.is_empty() {
-                let mut linked_ranges = vec![];
+                let mut linked_ranges = HashMap::<_, Vec<_>>::default();
                 let selections = this.selections.all::<MultiBufferPoint>(cx);
                 let snapshot = this.buffer.read(cx).snapshot(cx);
+                let empty_str: Arc<str> = Arc::from("");
                 for selection in selections.iter() {
                     let selection_start = snapshot.anchor_after(selection.start).text_anchor;
                     let selection_end = snapshot.anchor_after(selection.end).text_anchor;
@@ -5098,41 +5085,45 @@ impl Editor {
                     let Some(buffer_id) = selection_start.buffer_id else {
                         continue;
                     };
-                    let Some(buffer_snapshot) = this
-                        .buffer
-                        .read(cx)
-                        .buffer(buffer_id)
-                        .map(|buffer| buffer.read(cx).text_snapshot())
-                    else {
+                    let Some(buffer) = this.buffer.read(cx).buffer(buffer_id) else {
                         continue;
                     };
-                    let empty_str: Arc<str> = Arc::from("");
+                    let buffer_snapshot = buffer.read(cx).text_snapshot();
+
                     if let Some((base_range, associated_ranges)) = this.linked_edit_ranges.get(
                         buffer_id,
                         selection_start..selection_end,
                         &buffer_snapshot,
                     ) {
                         use text::ToOffset as TO;
+                        use text::ToPoint as TP;
                         // find offset from the start of current range to current cursor position
                         let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
-                        let start_offset = TO::to_offset(&selection.head(), &buffer_snapshot);
+                        let start_offset = TO::to_offset(&selection_start, &buffer_snapshot);
                         let start_difference = start_offset - start_byte_offset;
-                        let end_offset = TO::to_offset(&selection.tail(), &buffer_snapshot);
+                        let end_offset = TO::to_offset(&selection_end, &buffer_snapshot);
                         let end_difference = end_offset - start_byte_offset;
                         // Current range has associated linked ranges.
                         for range in associated_ranges.iter() {
                             let start_offset = TO::to_offset(&range.start, &buffer_snapshot);
                             let end_offset = start_offset + end_difference;
                             let start_offset = start_offset + start_difference - 1;
-                            let start_point = start_offset.to_point(&snapshot);
-                            let end_point = end_offset.to_point(&snapshot);
+                            let start_point = TP::to_point(&start_offset, &buffer_snapshot);
+                            let end_point = TP::to_point(&end_offset, &buffer_snapshot);
 
-                            linked_ranges.push((start_point..end_point, empty_str.clone()));
+                            linked_ranges
+                                .entry(buffer.clone())
+                                .or_default()
+                                .push((start_point..end_point, empty_str.clone()));
                         }
                     }
                 }
-                linked_ranges.sort_by_key(|(range, _)| range.start);
-                this.edit(linked_ranges, cx);
+                for (buffer, mut edits) in linked_ranges {
+                    edits.sort_by_key(|(range, _)| range.start);
+                    buffer.update(cx, |this, cx| {
+                        this.edit(edits, None, cx);
+                    })
+                }
             }
 
             let mut selections = this.selections.all::<MultiBufferPoint>(cx);
