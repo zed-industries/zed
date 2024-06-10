@@ -480,14 +480,6 @@ impl MarkdownElement {
             }
         });
     }
-    fn copy_selection_to_clipboard(&self, rendered_text: &RenderedText, cx: &mut WindowContext) {
-        if self.selection.end > self.selection.start {
-            let text = rendered_text
-                .clone()
-                .text_for_range(self.selection.start..self.selection.end);
-            cx.write_to_clipboard(ClipboardItem::new(text));
-        }
-    }
 
     fn autoscroll(&mut self, rendered_text: &RenderedText, cx: &mut WindowContext) -> Option<()> {
         let autoscroll_index = self
