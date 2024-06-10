@@ -1569,6 +1569,87 @@ impl LocalWorktree {
         })
     }
 
+    pub async fn copy_external_entries(
+        this: Model<Worktree>,
+        copy_to_entry_id: ProjectEntryId,
+        external_paths: Vec<Arc<Path>>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Vec<ProjectEntryId>> {
+        let (fs, worktree_path, copy_to_path) = cx
+            .read_model(&this, |this, _| {
+                let local_worktree = this.as_local()?;
+                let mut abs_path = local_worktree.abs_path().to_path_buf();
+                abs_path.push(&local_worktree.entry_for_id(copy_to_entry_id)?.path);
+                Some((
+                    local_worktree.fs.clone(),
+                    local_worktree.abs_path().clone(),
+                    abs_path,
+                ))
+            })?
+            .with_context(|| "Failed to get local worktree")?;
+
+        let copy_into_entry = if copy_to_path.is_dir() {
+            copy_to_path
+        } else {
+            copy_to_path
+                .parent()
+                .with_context(|| "Failed to get parent of {copy_to_path:?}")?
+                .to_owned()
+        };
+
+        let paths: Vec<(Arc<Path>, PathBuf)> = external_paths
+            .into_iter()
+            .filter_map(|source| {
+                let file_name = source.file_name()?;
+                let mut target = copy_into_entry.clone();
+                target.push(file_name);
+                Some((source, target))
+            })
+            .collect::<Vec<_>>();
+
+        let paths_to_refresh = paths
+            .iter()
+            .filter_map(|(_, target)| Some(target.strip_prefix(&worktree_path).ok()?.into()))
+            .collect::<Vec<_>>();
+
+        cx.background_executor()
+            .spawn(async move {
+                for (source, target) in paths {
+                    fs.copy_file(source.as_ref(), target.as_ref(), fs::CopyOptions::default())
+                        .await
+                        .with_context(|| {
+                            anyhow!("Failed to copy file from {source:?} to {target:?}")
+                        })?;
+                }
+                Ok::<(), anyhow::Error>(())
+            })
+            .await
+            .log_err();
+
+        let mut refresh = cx
+            .read_model(&this, |this, _| {
+                Some(
+                    this.as_local()?
+                        .refresh_entries_for_paths(paths_to_refresh.clone()),
+                )
+            })?
+            .with_context(|| "Failed to get local worktree")?;
+        cx.background_executor()
+            .spawn(async move {
+                refresh.next().await;
+                Ok::<(), anyhow::Error>(())
+            })
+            .await
+            .log_err();
+
+        Ok(cx.read_model(&this, |this, _| {
+            paths_to_refresh
+                .iter()
+                .filter_map(|path| Some(this.entry_for_path(path)?.id))
+                .collect()
+        })?)
+    }
+
     pub fn expand_entry(
         &mut self,
         entry_id: ProjectEntryId,

@@ -12,10 +12,10 @@ use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
     AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, InteractiveElement, KeyContext, ListSizingBehavior, Model,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _,
-    WeakView, WindowContext,
+    ExternalPaths, FocusHandle, FocusableView, InteractiveElement, KeyContext, ListSizingBehavior,
+    Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
+    Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
+    VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -1737,6 +1737,37 @@ impl ProjectPanel {
         });
     }
 
+    fn drop_entry(
+        &mut self,
+        external_paths: &ExternalPaths,
+        entry_id: ProjectEntryId,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let paths: Vec<_> = external_paths
+            .paths()
+            .to_owned()
+            .into_iter()
+            .map(|path| Arc::from(path))
+            .collect();
+
+        let task = self.project.update(cx, |project, cx| {
+            project.copy_external_entries(entry_id, paths, cx)
+        });
+
+        cx.spawn(|this, mut cx| {
+            async move {
+                let opened_entries = task.await?;
+                this.update(&mut cx, |this, cx| {
+                    if opened_entries.len() == 1 {
+                        this.open_entry(opened_entries[0], true, true, false, cx);
+                    }
+                })
+            }
+            .log_err()
+        })
+        .detach()
+    }
+
     fn drag_onto(
         &mut self,
         selections: &DraggedSelection,
@@ -1988,6 +2019,15 @@ impl ProjectPanel {
         };
         div()
             .id(entry_id.to_proto() as usize)
+            .drag_over(|style, _: &ExternalPaths, cx| {
+                style.bg(cx.theme().colors().drop_target_background)
+            })
+            .on_drop(
+                cx.listener(move |project_panel, external_paths: &ExternalPaths, cx| {
+                    project_panel.drop_entry(external_paths, entry_id, cx);
+                    cx.stop_propagation();
+                }),
+            )
             .on_drag(dragged_selection, move |selection, cx| {
                 cx.new_view(|_| DraggedProjectEntryView {
                     details: details.clone(),

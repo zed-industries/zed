@@ -1510,6 +1510,31 @@ impl Project {
         }
     }
 
+    pub fn copy_external_entries(
+        &self,
+        copy_to_entry_id: ProjectEntryId,
+        external_paths: Vec<Arc<Path>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<ProjectEntryId>>> {
+        let Some(worktree) = self.worktree_for_entry(copy_to_entry_id, cx) else {
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        if !worktree.read(cx).is_local() {
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        cx.spawn(move |_, mut cx| async move {
+            LocalWorktree::copy_external_entries(
+                worktree,
+                copy_to_entry_id,
+                external_paths,
+                &mut cx,
+            )
+            .await
+        })
+    }
+
     pub fn rename_entry(
         &mut self,
         entry_id: ProjectEntryId,
