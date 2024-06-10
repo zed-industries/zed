@@ -1572,7 +1572,8 @@ impl LocalWorktree {
     pub async fn copy_external_entries(
         this: Model<Worktree>,
         copy_to_entry_id: ProjectEntryId,
-        external_paths: Vec<Arc<Path>>,
+        paths: Vec<Arc<Path>>,
+        overwrite_existing_files: bool,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<ProjectEntryId>> {
         let (fs, worktree_path, copy_to_path) = cx
@@ -1597,7 +1598,7 @@ impl LocalWorktree {
                 .to_owned()
         };
 
-        let paths: Vec<(Arc<Path>, PathBuf)> = external_paths
+        let paths = paths
             .into_iter()
             .filter_map(|source| {
                 let file_name = source.file_name()?;
@@ -1615,11 +1616,19 @@ impl LocalWorktree {
         cx.background_executor()
             .spawn(async move {
                 for (source, target) in paths {
-                    fs.copy_file(source.as_ref(), target.as_ref(), fs::CopyOptions::default())
-                        .await
-                        .with_context(|| {
-                            anyhow!("Failed to copy file from {source:?} to {target:?}")
-                        })?;
+                    copy_recursive(
+                        fs.as_ref(),
+                        &source,
+                        &target,
+                        fs::CopyOptions {
+                            overwrite: overwrite_existing_files,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .with_context(|| {
+                        anyhow!("Failed to copy file from {source:?} to {target:?}")
+                    })?;
                 }
                 Ok::<(), anyhow::Error>(())
             })
@@ -1634,6 +1643,7 @@ impl LocalWorktree {
                 )
             })?
             .with_context(|| "Failed to get local worktree")?;
+
         cx.background_executor()
             .spawn(async move {
                 refresh.next().await;

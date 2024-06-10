@@ -1529,6 +1529,7 @@ impl Project {
                 worktree,
                 copy_to_entry_id,
                 external_paths,
+                true,
                 &mut cx,
             )
             .await

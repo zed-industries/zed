@@ -1743,29 +1743,73 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,
     ) {
-        let paths: Vec<_> = external_paths
+        let mut paths: Vec<Arc<Path>> = external_paths
             .paths()
             .to_owned()
             .into_iter()
             .map(|path| Arc::from(path))
-            .collect();
+            .collect::<Vec<_>>();
 
-        let task = self.project.update(cx, |project, cx| {
-            project.copy_external_entries(entry_id, paths, cx)
-        });
+        let open_file_after_drop = paths.len() == 1 && paths[0].is_file();
+
+        let Some(target_path) = maybe!({
+            let target_worktree = self.project.read(cx).worktree_for_entry(entry_id, cx)?;
+            let mut target_path = target_worktree.read(cx).abs_path().to_path_buf();
+            target_path.push(&target_worktree.read(cx).entry_for_id(entry_id)?.path);
+            Some(target_path)
+        }) else {
+            return;
+        };
+
+        let mut paths_to_replace = Vec::new();
+        for path in &paths {
+            if let Some(name) = path.file_name() {
+                let mut target_path = target_path.clone();
+                target_path.push(name);
+                if target_path.exists() {
+                    paths_to_replace.push((name.to_string_lossy().to_string(), path.clone()));
+                }
+            }
+        }
 
         cx.spawn(|this, mut cx| {
             async move {
+                for (filename, original_path) in &paths_to_replace {
+                    let answer = cx
+                        .prompt(
+                            PromptLevel::Info,
+                            format!("A file or folder with name {filename} already exists in the destination folder. Do you want to replace it?").as_str(),
+                            None,
+                            &["Replace", "Cancel"],
+                        )
+                        .await?;
+                    if answer == 1 {
+                        if let Some(item_idx) = paths.iter().position(|p| p == original_path) {
+                            paths.remove(item_idx);
+                        }
+                    }
+                }
+
+                if paths.is_empty() {
+                    return Ok(());
+                }
+
+                let task = this.update(&mut cx, |this, cx| {
+                    this.project.update(cx, |project, cx| {
+                        project.copy_external_entries(entry_id, paths, cx)
+                    })
+                })?;
+
                 let opened_entries = task.await?;
                 this.update(&mut cx, |this, cx| {
-                    if opened_entries.len() == 1 {
+                    if open_file_after_drop && !opened_entries.is_empty() {
                         this.open_entry(opened_entries[0], true, true, false, cx);
                     }
                 })
             }
             .log_err()
         })
-        .detach()
+        .detach();
     }
 
     fn drag_onto(
