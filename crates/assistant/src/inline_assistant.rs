@@ -524,6 +524,8 @@ impl InlineAssistant {
     }
 
     fn update_editor_highlights(&self, editor: &View<Editor>, cx: &mut WindowContext) {
+        let mut gutter_pending_ranges = Vec::new();
+        let mut gutter_transformed_ranges = Vec::new();
         let mut foreground_ranges = Vec::new();
         let mut inserted_row_ranges = Vec::new();
         let empty_inline_assist_ids = Vec::new();
@@ -539,6 +541,15 @@ impl InlineAssistant {
                 let codegen = pending_assist.codegen.read(cx);
                 foreground_ranges.extend(codegen.last_equal_ranges().iter().cloned());
                 if pending_assist.editor_decorations.is_some() {
+                    if codegen.edit_position != codegen.range().end {
+                        gutter_pending_ranges.push(codegen.edit_position..codegen.range().end);
+                    }
+
+                    if codegen.range().start != codegen.edit_position {
+                        gutter_transformed_ranges
+                            .push(codegen.range().start..codegen.edit_position);
+                    }
+
                     inserted_row_ranges.extend(codegen.diff.inserted_row_ranges.iter().cloned());
                 }
             }
@@ -546,7 +557,31 @@ impl InlineAssistant {
 
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         merge_ranges(&mut foreground_ranges, &snapshot);
+        merge_ranges(&mut gutter_pending_ranges, &snapshot);
+        merge_ranges(&mut gutter_transformed_ranges, &snapshot);
         editor.update(cx, |editor, cx| {
+            enum GutterPendingRange {}
+            if gutter_pending_ranges.is_empty() {
+                editor.clear_gutter_highlights::<GutterPendingRange>(cx);
+            } else {
+                editor.highlight_gutter::<GutterPendingRange>(
+                    &gutter_pending_ranges,
+                    |cx| cx.theme().status().info_background,
+                    cx,
+                )
+            }
+
+            enum GutterTransformedRange {}
+            if gutter_transformed_ranges.is_empty() {
+                editor.clear_gutter_highlights::<GutterTransformedRange>(cx);
+            } else {
+                editor.highlight_gutter::<GutterTransformedRange>(
+                    &gutter_transformed_ranges,
+                    |cx| cx.theme().status().info,
+                    cx,
+                )
+            }
+
             if foreground_ranges.is_empty() {
                 editor.clear_highlights::<PendingInlineAssist>(cx);
             } else {
@@ -1016,6 +1051,7 @@ pub struct Codegen {
     old_buffer: Model<Buffer>,
     snapshot: MultiBufferSnapshot,
     kind: CodegenKind,
+    edit_position: Anchor,
     last_equal_ranges: Vec<Range<Anchor>>,
     transaction_id: Option<TransactionId>,
     error: Option<anyhow::Error>,
@@ -1067,6 +1103,7 @@ impl Codegen {
         Self {
             buffer: buffer.clone(),
             old_buffer,
+            edit_position: kind.range(&snapshot).start,
             snapshot,
             kind,
             last_equal_ranges: Default::default(),
@@ -1127,6 +1164,7 @@ impl Codegen {
         let model_telemetry_id = prompt.model.telemetry_id();
         let response = CompletionProvider::global(cx).complete(prompt);
         let telemetry = self.telemetry.clone();
+        self.edit_position = range.start;
         self.diff = Diff::default();
         self.generation = cx.spawn(|this, mut cx| {
             async move {
@@ -1261,6 +1299,7 @@ impl Codegen {
                                     None,
                                     cx,
                                 );
+                                this.edit_position = snapshot.anchor_after(edit_start);
 
                                 buffer.end_transaction(cx)
                             });

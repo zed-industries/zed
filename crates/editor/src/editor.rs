@@ -376,7 +376,7 @@ type CompletionId = usize;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
-type GutterHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
+type GutterHighlight = (fn(&AppContext) -> Hsla, Arc<[Range<Anchor>]>);
 
 struct ScrollbarMarkerState {
     scrollbar_size: Size<Pixels>,
@@ -10269,7 +10269,7 @@ impl Editor {
     pub fn highlight_gutter<T: 'static>(
         &mut self,
         ranges: &[Range<Anchor>],
-        color_fetcher: fn(&ThemeColors) -> Hsla,
+        color_fetcher: fn(&AppContext) -> Hsla,
         cx: &mut ViewContext<Self>,
     ) {
         self.gutter_highlights
@@ -10478,11 +10478,11 @@ impl Editor {
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
-        theme: &ThemeColors,
+        cx: &AppContext,
     ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         let mut results = Vec::new();
         for (color_fetcher, ranges) in self.gutter_highlights.values() {
-            let color = color_fetcher(theme);
+            let color = color_fetcher(cx);
             let start_ix = match ranges.binary_search_by(|probe| {
                 let cmp = probe
                     .end
