@@ -705,10 +705,6 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
-    fn os_name(&self) -> &'static str {
-        "macOS"
-    }
-
     fn os_version(&self) -> Result<SemanticVersion> {
         unsafe {
             let process_info = NSProcessInfo::processInfo(nil);

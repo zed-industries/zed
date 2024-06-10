@@ -73,6 +73,10 @@ impl LinuxClient for HeadlessClient {
         ))
     }
 
+    fn compositor_name(&self) -> &'static str {
+        "headless"
+    }
+
     fn set_cursor_style(&self, _style: CursorStyle) {}
 
     fn open_uri(&self, _uri: &str) {}

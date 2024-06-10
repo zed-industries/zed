@@ -883,6 +883,10 @@ impl X11Client {
 }
 
 impl LinuxClient for X11Client {
+    fn compositor_name(&self) -> &'static str {
+        "X11"
+    }
+
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
     }

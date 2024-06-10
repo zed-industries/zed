@@ -27,7 +27,7 @@ use log::LevelFilter;
 use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
-use release_channel::AppCommitSha;
+use release_channel::{AppCommitSha, AppVersion};
 use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -81,11 +81,18 @@ fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncAppContext) {
 
 fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
     eprintln!("Zed failed to open a window: {:?}", e);
+    #[cfg(not(target_os = "linux"))]
+    {
+        process::exit(1);
+    }
+
     #[cfg(target_os = "linux")]
     {
         use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
-        _cx.spawn(|cx| async move {
-            let proxy = NotificationProxy::new().await?;
+        _cx.spawn(|_cx| async move {
+            let Ok(proxy) = NotificationProxy::new().await else {
+                process::exit(1);
+            };
 
             let notification_id = "dev.zed.Oops";
             proxy
@@ -98,11 +105,10 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
                             "dialog-question-symbolic",
                         ])),
                 )
-                .await?;
+                .await
+                .ok();
 
-            cx.update(|cx| {
-                cx.quit();
-            })
+            process::exit(1);
         })
         .detach();
     }
@@ -289,7 +295,13 @@ fn main() {
         .ok()
         .unzip();
     let session_id = Uuid::new_v4().to_string();
-    reliability::init_panic_hook(&app, installation_id.clone(), session_id.clone());
+
+    let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
+    reliability::init_panic_hook(
+        installation_id.clone(),
+        app_version.clone(),
+        session_id.clone(),
+    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -363,7 +375,7 @@ fn main() {
     });
 
     app.run(move |cx| {
-        release_channel::init(env!("CARGO_PKG_VERSION"), cx);
+        release_channel::init(app_version, cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }

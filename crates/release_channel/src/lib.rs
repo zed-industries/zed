@@ -59,15 +59,12 @@ impl AppVersion {
     /// 1. the `ZED_APP_VERSION` environment variable,
     /// 2. the [`AppContext::app_metadata`],
     /// 3. the passed in `pkg_version`.
-    pub fn init(pkg_version: &str, cx: &mut AppContext) {
-        let version = if let Ok(from_env) = env::var("ZED_APP_VERSION") {
+    pub fn init(pkg_version: &str) -> SemanticVersion {
+        if let Ok(from_env) = env::var("ZED_APP_VERSION") {
             from_env.parse().expect("invalid ZED_APP_VERSION")
         } else {
-            cx.app_metadata()
-                .app_version
-                .unwrap_or_else(|| pkg_version.parse().expect("invalid version in Cargo.toml"))
-        };
-        cx.set_global(GlobalAppVersion(version))
+            pkg_version.parse().expect("invalid version in Cargo.toml")
+        }
     }
 
     /// Returns the global version number.
@@ -100,8 +97,8 @@ struct GlobalReleaseChannel(ReleaseChannel);
 impl Global for GlobalReleaseChannel {}
 
 /// Initializes the release channel.
-pub fn init(pkg_version: &str, cx: &mut AppContext) {
-    AppVersion::init(pkg_version, cx);
+pub fn init(app_version: SemanticVersion, cx: &mut AppContext) {
+    cx.set_global(GlobalAppVersion(app_version));
     cx.set_global(GlobalReleaseChannel(*RELEASE_CHANNEL))
 }
 

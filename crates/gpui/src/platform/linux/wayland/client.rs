@@ -693,6 +693,10 @@ impl LinuxClient for WaylandClient {
             .as_ref()
             .map(|window| window.handle())
     }
+
+    fn compositor_name(&self) -> &'static str {
+        "Wayland"
+    }
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStatePtr {

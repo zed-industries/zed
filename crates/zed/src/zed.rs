@@ -893,8 +893,7 @@ mod tests {
     use collections::HashSet;
     use editor::{display_map::DisplayRow, scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
-        actions, Action, AnyWindowHandle, AppContext, AssetSource, BorrowAppContext, Entity,
-        TestAppContext, VisualTestContext, WindowHandle,
+        actions, Action, AnyWindowHandle, AppContext, AssetSource, BorrowAppContext, Entity, SemanticVersion, TestAppContext, VisualTestContext, WindowHandle
     };
     use language::{LanguageMatcher, LanguageRegistry};
     use project::{Project, ProjectPath, WorktreeSettings};
@@ -3089,7 +3088,7 @@ mod tests {
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
             language::init(cx);
             editor::init(cx);

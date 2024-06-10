@@ -9,7 +9,10 @@ use crate::{
     JoinLines,
 };
 use futures::StreamExt;
-use gpui::{div, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds, WindowOptions};
+use gpui::{
+    div, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds,
+    WindowOptions,
+};
 use indoc::indoc;
 use language::{
     language_settings::{
@@ -12189,7 +12192,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
-        release_channel::init("0.0.0", cx);
+        release_channel::init(SemanticVersion::default(), cx);
         client::init_settings(cx);
         language::init(cx);
         Project::init_settings(cx);
