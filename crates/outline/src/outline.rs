@@ -2,19 +2,18 @@ use editor::{scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode};
 use fuzzy::StringMatch;
 use gpui::{
     actions, div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    FontStyle, FontWeight, HighlightStyle, ParentElement, Point, Render, Styled, StyledText, Task,
-    TextStyle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    HighlightStyle, ParentElement, Point, Render, Styled, Task, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use settings::Settings;
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
 };
 
-use theme::{color_alpha, ActiveTheme, ThemeSettings};
+use theme::{color_alpha, ActiveTheme};
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
@@ -268,38 +267,12 @@ impl PickerDelegate for OutlineViewDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let settings = ThemeSettings::get_global(cx);
-
-        // TODO: We probably shouldn't need to build a whole new text style here
-        // but I'm not sure how to get the current one and modify it.
-        // Before this change TextStyle::default() was used here, which was giving us the wrong font and text color.
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features.clone(),
-            font_size: settings.buffer_font_size(cx).into(),
-            font_weight: FontWeight::NORMAL,
-            font_style: FontStyle::Normal,
-            line_height: relative(1.),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
-        };
+        let mat = self.matches.get(ix)?;
+        let outline_item = self.outline.items.get(mat.candidate_id)?;
 
         let mut highlight_style = HighlightStyle::default();
         highlight_style.background_color = Some(color_alpha(cx.theme().colors().text_accent, 0.3));
-
-        let mat = &self.matches[ix];
-        let outline_item = &self.outline.items[mat.candidate_id];
-
-        let highlights = gpui::combine_highlights(
-            mat.ranges().map(|range| (range, highlight_style)),
-            outline_item.highlight_ranges.iter().cloned(),
-        );
-
-        let styled_text =
-            StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights);
+        let custom_highlights = mat.ranges().map(|range| (range, highlight_style));
 
         Some(
             ListItem::new(ix)
@@ -310,7 +283,7 @@ impl PickerDelegate for OutlineViewDelegate {
                     div()
                         .text_ui(cx)
                         .pl(rems(outline_item.depth as f32))
-                        .child(styled_text),
+                        .child(language::render_item(outline_item, custom_highlights, cx)),
                 ),
         )
     }
