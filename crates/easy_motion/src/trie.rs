@@ -233,8 +233,8 @@ impl<TItem, TOut, F: Fn(usize, TItem) -> TOut> TrieBuilder<TItem, TOut, F> {
         };
         Trie {
             root,
-            keys: self.keys.into(),
-            len: self.total_leaf_count as usize,
+            keys: self.keys,
+            len: self.total_leaf_count,
         }
     }
 
