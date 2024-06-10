@@ -4,7 +4,7 @@ use futures::{
     channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
     AsyncBufRead, AsyncReadExt, AsyncWrite, SinkExt as _, StreamExt,
 };
-use gpui::{AsyncWindowContext, Flatten};
+use gpui::AsyncWindowContext;
 use serde_json::Value;
 use smol::{
     io::BufReader,
@@ -12,9 +12,10 @@ use smol::{
     process::{self, Child},
 };
 use std::{
-    net::{Ipv4Addr, SocketAddrV4},
+    net::{Ipv4Addr, SocketAddrV4, TcpListener},
     process::Stdio,
     sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
 };
 use util::ResultExt;
 
@@ -53,7 +54,10 @@ impl Client {
         let mut command = process::Command::new("python3");
         command
             .current_dir("/Users/remcosmits/Documents/code/debugpy")
-            .arg("-m debugpy --listen localhost:5679 --wait-for-client test.py")
+            .arg(format!(
+                "-m debugpy --listen localhost:{} --wait-for-client test.py",
+                5679
+            ))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -64,6 +68,8 @@ impl Client {
             .with_context(|| "failed to spawn command.")?;
 
         let addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 5679);
+
+        dbg!(addr);
 
         let (rx, tx) = TcpStream::connect(addr).await?.split();
 

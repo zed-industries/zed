@@ -1,7 +1,7 @@
 use anyhow::Result;
 use dap::{
     client::{Client, TransportType},
-    requests::{Disconnect, Initialize, InitializeArguments},
+    requests::{Initialize, Launch, LaunchRequestArguments},
     transport::Payload,
 };
 use futures::channel::mpsc::UnboundedReceiver;
@@ -12,8 +12,8 @@ use gpui::{
 use ui::{
     div, h_flex,
     prelude::{IntoElement, Pixels, WindowContext},
-    px, ButtonCommon, Clickable, Element, IconButton, IconName, ParentElement, Render, Styled,
-    Tooltip, VisualContext,
+    px, ButtonCommon, Element, IconButton, IconName, ParentElement, Render, Styled, Tooltip,
+    VisualContext,
 };
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -49,10 +49,10 @@ impl DebugPanel {
 
     pub async fn load(
         workspace: WeakView<Workspace>,
-        mut cx: AsyncWindowContext,
+        cx: AsyncWindowContext,
     ) -> Result<View<Self>> {
         let mut cx = cx.clone();
-        let debug_client = Client::new(
+        let (mut debug_client, events) = Client::new(
             TransportType::TCP,
             "python3",
             vec![
@@ -66,38 +66,45 @@ impl DebugPanel {
             None,
             &mut cx,
         )
-        .await;
+        .await?;
 
-        if let Ok(mut debug_client) = debug_client {
-            let mut cx = cx.clone();
+        let mut cx = cx.clone();
 
-            let args = dap::requests::InitializeArguments {
-                client_id: Some("hx".to_owned()),
-                client_name: Some("helix".to_owned()),
-                adapter_id: "debugpy".into(),
-                locale: Some("en-us".to_owned()),
-                lines_start_at_one: Some(true),
-                columns_start_at_one: Some(true),
-                path_format: Some("path".to_owned()),
-                supports_variable_type: Some(true),
-                supports_variable_paging: Some(false),
-                supports_run_in_terminal_request: Some(false),
-                supports_memory_references: Some(false),
-                supports_progress_reporting: Some(false),
-                supports_invalidated_event: Some(false),
-            };
+        let args = dap::requests::InitializeArguments {
+            client_id: Some("zed".to_owned()),
+            client_name: Some("zed".to_owned()),
+            adapter_id: "debugpy".into(),
+            locale: Some("en-us".to_owned()),
+            lines_start_at_one: Some(true),
+            columns_start_at_one: Some(true),
+            path_format: Some("path".to_owned()),
+            supports_variable_type: Some(true),
+            supports_variable_paging: Some(false),
+            supports_run_in_terminal_request: Some(false),
+            supports_memory_references: Some(false),
+            supports_progress_reporting: Some(false),
+            supports_invalidated_event: Some(false),
+        };
 
-            debug_client.0.request::<Initialize>(args).await;
+        let capabilities = debug_client.request::<Initialize>(args).await;
 
-            debug_client.0.request::<Disconnect>(None).await;
+        dbg!(capabilities);
 
-            workspace.update(&mut cx, |_, cx| {
-                cx.new_view(|cx| DebugPanel::new(DockPosition::Bottom, debug_client, cx))
+        // launch/attach
+        let launch = debug_client
+            .request::<Launch>(LaunchRequestArguments {
+                no_debug: Some(true),
+                __restart: None,
             })
-        } else {
-            dbg!(&debug_client);
-            Err(anyhow::anyhow!("Failed to start debug client"))
-        }
+            .await;
+
+        dbg!(launch);
+
+        // configure request
+
+        workspace.update(&mut cx, |_, cx| {
+            cx.new_view(|cx| DebugPanel::new(DockPosition::Bottom, (debug_client, events), cx))
+        })
     }
 }
 

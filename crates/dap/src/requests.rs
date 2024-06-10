@@ -53,11 +53,20 @@ impl Request for Initialize {
     const COMMAND: &'static str = "initialize";
 }
 
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchRequestArguments {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub no_debug: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub __restart: Option<Value>,
+}
+
 #[derive(Debug)]
 pub enum Launch {}
 
 impl Request for Launch {
-    type Arguments = Value;
+    type Arguments = LaunchRequestArguments;
     type Result = ();
     const COMMAND: &'static str = "launch";
 }
