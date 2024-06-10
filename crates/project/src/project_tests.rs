@@ -2981,21 +2981,26 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
 
     // Create a remote copy of this worktree.
     let tree = project.update(cx, |project, _| project.worktrees().next().unwrap());
-
-    let metadata = tree.update(cx, |tree, _| tree.as_local().unwrap().metadata_proto());
+    let metadata = tree.update(cx, |tree, _| tree.metadata_proto());
 
     let updates = Arc::new(Mutex::new(Vec::new()));
     tree.update(cx, |tree, cx| {
-        tree.as_local_mut().unwrap().observe_updates(0, cx, {
-            let updates = updates.clone();
-            move |update| {
-                updates.lock().push(update);
-                async { true }
-            }
+        let updates = updates.clone();
+        tree.observe_updates(0, cx, move |update| {
+            updates.lock().push(update);
+            async { true }
         });
     });
 
-    let remote = cx.update(|cx| Worktree::remote(1, metadata, cx));
+    let remote = cx.update(|cx| {
+        Worktree::remote(
+            0,
+            1,
+            metadata,
+            Box::new(CollabRemoteWorktreeClient(project.read(cx).client())),
+            cx,
+        )
+    });
 
     cx.executor().run_until_parked();
 

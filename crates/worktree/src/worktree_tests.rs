@@ -453,11 +453,9 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     // Open a file that is nested inside of a gitignored directory that
     // has not yet been expanded.
     let prev_read_dir_count = fs.read_dir_call_count();
-    let (file, _, _) = tree
+    let loaded = tree
         .update(cx, |tree, cx| {
-            tree.as_local_mut()
-                .unwrap()
-                .load_file("one/node_modules/b/b1.js".as_ref(), cx)
+            tree.load_file("one/node_modules/b/b1.js".as_ref(), cx)
         })
         .await
         .unwrap();
@@ -483,7 +481,10 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
             ]
         );
 
-        assert_eq!(file.path.as_ref(), Path::new("one/node_modules/b/b1.js"));
+        assert_eq!(
+            loaded.file.path.as_ref(),
+            Path::new("one/node_modules/b/b1.js")
+        );
 
         // Only the newly-expanded directories are scanned.
         assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 2);
@@ -492,11 +493,9 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     // Open another file in a different subdirectory of the same
     // gitignored directory.
     let prev_read_dir_count = fs.read_dir_call_count();
-    let (file, _, _) = tree
+    let loaded = tree
         .update(cx, |tree, cx| {
-            tree.as_local_mut()
-                .unwrap()
-                .load_file("one/node_modules/a/a2.js".as_ref(), cx)
+            tree.load_file("one/node_modules/a/a2.js".as_ref(), cx)
         })
         .await
         .unwrap();
@@ -524,7 +523,10 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
             ]
         );
 
-        assert_eq!(file.path.as_ref(), Path::new("one/node_modules/a/a2.js"));
+        assert_eq!(
+            loaded.file.path.as_ref(),
+            Path::new("one/node_modules/a/a2.js")
+        );
 
         // Only the newly-expanded directory is scanned.
         assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 1);
@@ -844,7 +846,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
     tree.flush_fs_events(cx).await;
 
     tree.update(cx, |tree, cx| {
-        tree.as_local().unwrap().write_file(
+        tree.write_file(
             Path::new("tracked-dir/file.txt"),
             "hello".into(),
             Default::default(),
@@ -854,7 +856,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
     .await
     .unwrap();
     tree.update(cx, |tree, cx| {
-        tree.as_local().unwrap().write_file(
+        tree.write_file(
             Path::new("ignored-dir/file.txt"),
             "world".into(),
             Default::default(),

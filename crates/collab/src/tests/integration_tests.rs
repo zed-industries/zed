@@ -1378,10 +1378,7 @@ async fn test_unshare_project(
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     executor.run_until_parked();
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| tree
-        .as_local()
-        .unwrap()
-        .has_update_observer()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
 
     project_b
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
@@ -1406,10 +1403,7 @@ async fn test_unshare_project(
         .unwrap();
     executor.run_until_parked();
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| !tree
-        .as_local()
-        .unwrap()
-        .has_update_observer()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| !tree.has_update_observer()));
 
     assert!(project_c.read_with(cx_c, |project, _| project.is_disconnected()));
 
@@ -1421,10 +1415,7 @@ async fn test_unshare_project(
     let project_c2 = client_c.build_dev_server_project(project_id, cx_c).await;
     executor.run_until_parked();
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| tree
-        .as_local()
-        .unwrap()
-        .has_update_observer()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
     project_c2
         .update(cx_c, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
@@ -1531,7 +1522,7 @@ async fn test_project_reconnect(
     executor.run_until_parked();
 
     let worktree1_id = worktree_a1.read_with(cx_a, |worktree, _| {
-        assert!(worktree.as_local().unwrap().has_update_observer());
+        assert!(worktree.has_update_observer());
         worktree.id()
     });
     let (worktree_a2, _) = project_a1
@@ -1543,7 +1534,7 @@ async fn test_project_reconnect(
     executor.run_until_parked();
 
     let worktree2_id = worktree_a2.read_with(cx_a, |tree, _| {
-        assert!(tree.as_local().unwrap().has_update_observer());
+        assert!(tree.has_update_observer());
         tree.id()
     });
     executor.run_until_parked();
@@ -1576,9 +1567,7 @@ async fn test_project_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
-    worktree_a1.read_with(cx_a, |tree, _| {
-        assert!(tree.as_local().unwrap().has_update_observer())
-    });
+    worktree_a1.read_with(cx_a, |tree, _| assert!(tree.has_update_observer()));
 
     // While client A is disconnected, add and remove files from client A's project.
     client_a
@@ -1620,7 +1609,7 @@ async fn test_project_reconnect(
         .await;
 
     let worktree3_id = worktree_a3.read_with(cx_a, |tree, _| {
-        assert!(!tree.as_local().unwrap().has_update_observer());
+        assert!(!tree.has_update_observer());
         tree.id()
     });
     executor.run_until_parked();
@@ -1643,11 +1632,7 @@ async fn test_project_reconnect(
 
     project_a1.read_with(cx_a, |project, cx| {
         assert!(project.is_shared());
-        assert!(worktree_a1
-            .read(cx)
-            .as_local()
-            .unwrap()
-            .has_update_observer());
+        assert!(worktree_a1.read(cx).has_update_observer());
         assert_eq!(
             worktree_a1
                 .read(cx)
@@ -1665,11 +1650,7 @@ async fn test_project_reconnect(
                 "subdir2/i.txt"
             ]
         );
-        assert!(worktree_a3
-            .read(cx)
-            .as_local()
-            .unwrap()
-            .has_update_observer());
+        assert!(worktree_a3.read(cx).has_update_observer());
         assert_eq!(
             worktree_a3
                 .read(cx)
@@ -1750,7 +1731,7 @@ async fn test_project_reconnect(
     executor.run_until_parked();
 
     let worktree4_id = worktree_a4.read_with(cx_a, |tree, _| {
-        assert!(tree.as_local().unwrap().has_update_observer());
+        assert!(tree.has_update_observer());
         tree.id()
     });
     project_a1.update(cx_a, |project, cx| {

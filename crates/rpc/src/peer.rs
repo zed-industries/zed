@@ -435,6 +435,7 @@ impl Peer {
         self.connections.write().clear();
     }
 
+    /// Make a request and wait for a response.
     pub fn request<T: RequestMessage>(
         &self,
         receiver_id: ConnectionId,
@@ -462,28 +463,50 @@ impl Peer {
             .map_ok(|envelope| envelope.payload)
     }
 
-    pub fn request_internal<T: RequestMessage>(
+    fn request_internal<T: RequestMessage>(
         &self,
         original_sender_id: Option<ConnectionId>,
         receiver_id: ConnectionId,
         request: T,
     ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
+        let envelope = request.into_envelope(0, None, original_sender_id.map(Into::into));
+        let response = self.request_dynamic(receiver_id, envelope, T::NAME);
+        async move {
+            let (response, received_at) = response.await?;
+            Ok(TypedEnvelope {
+                message_id: response.id,
+                sender_id: receiver_id,
+                original_sender_id: response.original_sender_id,
+                payload: T::Response::from_envelope(response)
+                    .ok_or_else(|| anyhow!("received response of the wrong type"))?,
+                received_at,
+            })
+        }
+    }
+
+    /// Make a request and wait for a response.
+    ///
+    /// The caller must make sure to deserialize the response into the request's
+    /// response type. This interface is only useful in trait objects, where
+    /// generics can't be used. If you have a concrete type, use `request`.
+    pub fn request_dynamic(
+        &self,
+        receiver_id: ConnectionId,
+        mut envelope: proto::Envelope,
+        type_name: &'static str,
+    ) -> impl Future<Output = Result<(proto::Envelope, Instant)>> {
         let (tx, rx) = oneshot::channel();
         let send = self.connection_state(receiver_id).and_then(|connection| {
-            let message_id = connection.next_message_id.fetch_add(1, SeqCst);
+            envelope.id = connection.next_message_id.fetch_add(1, SeqCst);
             connection
                 .response_channels
                 .lock()
                 .as_mut()
                 .ok_or_else(|| anyhow!("connection was closed"))?
-                .insert(message_id, tx);
+                .insert(envelope.id, tx);
             connection
                 .outgoing_tx
-                .unbounded_send(proto::Message::Envelope(request.into_envelope(
-                    message_id,
-                    None,
-                    original_sender_id.map(Into::into),
-                )))
+                .unbounded_send(proto::Message::Envelope(envelope))
                 .map_err(|_| anyhow!("connection was closed"))?;
             Ok(())
         });
@@ -491,19 +514,10 @@ impl Peer {
             send?;
             let (response, received_at, _barrier) =
                 rx.await.map_err(|_| anyhow!("connection was closed"))?;
-
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                Err(RpcError::from_proto(&error, T::NAME))
-            } else {
-                Ok(TypedEnvelope {
-                    message_id: response.id,
-                    sender_id: receiver_id,
-                    original_sender_id: response.original_sender_id,
-                    payload: T::Response::from_envelope(response)
-                        .ok_or_else(|| anyhow!("received response of the wrong type"))?,
-                    received_at,
-                })
+                return Err(RpcError::from_proto(&error, type_name));
             }
+            Ok((response, received_at))
         }
     }
 

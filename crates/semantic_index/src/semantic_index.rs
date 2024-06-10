@@ -30,7 +30,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use util::ResultExt;
-use worktree::LocalSnapshot;
+use worktree::Snapshot;
 
 pub use project_index_debug_view::ProjectIndexDebugView;
 
@@ -583,9 +583,9 @@ impl WorktreeIndex {
     }
 
     fn index_entries_changed_on_disk(&self, cx: &AppContext) -> impl Future<Output = Result<()>> {
-        let worktree = self.worktree.read(cx).as_local().unwrap().snapshot();
+        let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
-        let scan = self.scan_entries(worktree.clone(), cx);
+        let scan = self.scan_entries(worktree, cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
@@ -600,7 +600,7 @@ impl WorktreeIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
-        let worktree = self.worktree.read(cx).as_local().unwrap().snapshot();
+        let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
@@ -612,7 +612,7 @@ impl WorktreeIndex {
         }
     }
 
-    fn scan_entries(&self, worktree: LocalSnapshot, cx: &AppContext) -> ScanEntries {
+    fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
         let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
         let db_connection = self.db_connection.clone();
@@ -692,7 +692,7 @@ impl WorktreeIndex {
 
     fn scan_updated_entries(
         &self,
-        worktree: LocalSnapshot,
+        worktree: Snapshot,
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> ScanEntries {

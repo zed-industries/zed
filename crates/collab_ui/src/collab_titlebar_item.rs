@@ -686,7 +686,7 @@ impl CollabTitlebarItem {
                         .on_click(|_, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
                                 if auto_updater.read(cx).status().is_updated() {
-                                    workspace::restart(&Default::default(), cx);
+                                    workspace::reload(&Default::default(), cx);
                                     return;
                                 }
                             }
