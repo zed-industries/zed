@@ -2837,6 +2837,8 @@ impl EditorElement {
             Self::paint_diff_hunks(layout.gutter_hitbox.bounds, layout, cx)
         }
 
+        self.paint_gutter_highlights(layout.gutter_hitbox.bounds, layout, cx);
+
         if layout.blamed_display_rows.is_some() {
             self.paint_blamed_display_rows(layout, cx);
         }
@@ -3004,6 +3006,40 @@ impl EditorElement {
                 }
             },
         }
+    }
+
+    fn paint_gutter_highlights(
+        &self,
+        gutter_bounds: Bounds<Pixels>,
+        layout: &EditorLayout,
+        cx: &mut WindowContext,
+    ) {
+        let highlight_width = 0.275 * layout.position_map.line_height;
+        let highlight_corner_radii = Corners::all(0.05 * layout.position_map.line_height);
+        cx.paint_layer(gutter_bounds, |cx| {
+            for (range, color) in &layout.highlighted_gutter_ranges {
+                let start_row = if range.start.row() < layout.visible_display_row_range.start {
+                    layout.visible_display_row_range.start - DisplayRow(1)
+                } else {
+                    range.start.row()
+                };
+                let end_row = if range.end.row() > layout.visible_display_row_range.end {
+                    layout.visible_display_row_range.end + DisplayRow(1)
+                } else {
+                    range.end.row()
+                };
+
+                let start_y = start_row.0 as f32 * layout.position_map.line_height
+                    - layout.position_map.scroll_pixel_position.y;
+                let end_y = end_row.0 as f32 * layout.position_map.line_height
+                    - layout.position_map.scroll_pixel_position.y;
+                let bounds = Bounds::from_corners(
+                    point(gutter_bounds.origin.x, start_y),
+                    point(gutter_bounds.origin.x + highlight_width, end_y),
+                );
+                cx.paint_quad(fill(bounds, *color).corner_radii(highlight_corner_radii));
+            }
+        });
     }
 
     fn paint_blamed_display_rows(&self, layout: &mut EditorLayout, cx: &mut WindowContext) {
@@ -4631,6 +4667,12 @@ impl Element for EditorElement {
                         &snapshot.display_snapshot,
                         cx.theme().colors(),
                     );
+                    let highlighted_gutter_ranges =
+                        self.editor.read(cx).gutter_highlights_in_range(
+                            start_anchor..end_anchor,
+                            &snapshot.display_snapshot,
+                            cx.theme().colors(),
+                        );
 
                     let redacted_ranges = self.editor.read(cx).redacted_ranges(
                         start_anchor..end_anchor,
@@ -4991,6 +5033,7 @@ impl Element for EditorElement {
                         active_rows,
                         highlighted_rows,
                         highlighted_ranges,
+                        highlighted_gutter_ranges,
                         redacted_ranges,
                         line_elements,
                         line_numbers,
@@ -5121,6 +5164,7 @@ pub struct EditorLayout {
     inline_blame: Option<AnyElement>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+    highlighted_gutter_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     redacted_ranges: Vec<Range<DisplayPoint>>,
     cursors: Vec<(DisplayPoint, Hsla)>,
     visible_cursors: Vec<CursorLayout>,
