@@ -2607,14 +2607,14 @@ impl LspCommand for LinkedEditingRange {
     ) -> Result<Vec<Range<Anchor>>> {
         if let Some(lsp::LinkedEditingRanges { mut ranges, .. }) = message {
             ranges.sort_by_key(|range| range.start);
-            // let (lsp_adapter, lsp_server) =
-            //     language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
             let ranges = buffer.read_with(&cx, |buffer, _| {
                 ranges
                     .into_iter()
                     .map(|range| {
-                        buffer.anchor_before(point_from_lsp(range.start))
-                            ..buffer.anchor_after(point_from_lsp(range.end))
+                        let start =
+                            buffer.clip_point_utf16(point_from_lsp(range.start), Bias::Left);
+                        let end = buffer.clip_point_utf16(point_from_lsp(range.end), Bias::Left);
+                        buffer.anchor_before(start)..buffer.anchor_after(end)
                     })
                     .collect()
             });

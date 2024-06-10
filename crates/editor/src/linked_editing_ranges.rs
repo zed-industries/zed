@@ -11,7 +11,7 @@ use crate::Editor;
 #[derive(Clone, Default)]
 pub(super) struct LinkedEditingRanges(
     /// Ranges are non-overlapping and sorted by .0 (thus, [x + 1].start > [x].end must hold)
-    HashMap<BufferId, Vec<(Range<text::Anchor>, Vec<Range<text::Anchor>>)>>,
+    pub HashMap<BufferId, Vec<(Range<text::Anchor>, Vec<Range<text::Anchor>>)>>,
 );
 
 impl LinkedEditingRanges {
@@ -43,7 +43,8 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
     let project = this.project.clone()?;
     let buffer = this.buffer.read(cx);
     let mut applicable_selections = vec![];
-    for selection in this.selections.all::<usize>(cx) {
+    let selections = this.selections.all::<usize>(cx);
+    for selection in selections {
         let cursor_position = selection.head();
         let (cursor_buffer, start_position) =
             buffer.text_anchor_for_position(cursor_position, cx)?;
@@ -65,10 +66,10 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                 for (buffer, start, end) in &applicable_selections {
                     let snapshot = buffer.read(cx).snapshot();
                     let buffer_id = buffer.read(cx).remote_id();
+                    let path = buffer.read(cx).file().map(|x| x.path()).cloned();
                     let linked_edits_task = project.linked_edit(&buffer, *start, cx);
                     let highlights = move || async move {
                         let edits = linked_edits_task.await.log_err()?;
-
                         // Find the range containing our current selection.
                         // We might not find one, because the selection contains both the start and end of the contained range
                         // (think of selecting <`html>foo`</html> - even though there's a matching closing tag, the selection goes beyond the range of the opening tag)
@@ -106,10 +107,11 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
         let highlights = futures::future::join_all(highlights).await;
 
         this.update(&mut cx, |this, cx| {
+            this.linked_edit_ranges.0.clear();
             if this.pending_rename.is_some() {
                 return;
             }
-            this.linked_edit_ranges.0.clear();
+
             for (buffer_id, ranges) in highlights.into_iter().flatten() {
                 this.linked_edit_ranges
                     .0

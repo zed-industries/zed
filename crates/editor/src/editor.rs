@@ -2210,7 +2210,7 @@ impl Editor {
                 )
             });
         }
-
+        linked_editing_ranges::refresh_linked_ranges(self, cx);
         let display_map = self
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
@@ -2798,7 +2798,6 @@ impl Editor {
                     .get(end_buffer_id, selection.start..selection.end, &snapshot)
                     .map(|ranges| (ranges, snapshot, buffer))
             })?;
-
         use text::ToOffset as TO;
         // find offset from the start of current range to current cursor position
         let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
@@ -3015,7 +3014,7 @@ impl Editor {
             // newly inserted text.
             let anchor = snapshot.anchor_after(selection.end);
             if !self.linked_edit_ranges.is_empty() {
-                let start_anchor = snapshot.anchor_after(selection.start);
+                let start_anchor = snapshot.anchor_before(selection.start);
                 if let Some(ranges) =
                     self.linked_editing_ranges_for(start_anchor.text_anchor..anchor.text_anchor, cx)
                 {
@@ -3049,7 +3048,8 @@ impl Editor {
                             let start_point = TP::to_point(&range.start, &snapshot);
                             (start_point..end_point, text)
                         })
-                        .sorted_by_key(|(range, _)| range.start);
+                        .sorted_by_key(|(range, _)| range.start)
+                        .collect::<Vec<_>>();
                     buffer.edit(edits, None, cx);
                 })
             }
@@ -4497,7 +4497,7 @@ impl Editor {
         if self.pending_rename.is_some() {
             return None;
         }
-        linked_editing_ranges::refresh_linked_ranges(self, cx);
+
         let project = self.project.clone()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
@@ -5092,7 +5092,7 @@ impl Editor {
                 let snapshot = this.buffer.read(cx).snapshot(cx);
                 let empty_str: Arc<str> = Arc::from("");
                 for selection in selections.iter() {
-                    let selection_start = snapshot.anchor_after(selection.start).text_anchor;
+                    let selection_start = snapshot.anchor_before(selection.start).text_anchor;
                     let selection_end = snapshot.anchor_after(selection.end).text_anchor;
                     if selection_start.buffer_id != selection_end.buffer_id {
                         continue;
@@ -5112,21 +5112,19 @@ impl Editor {
                     let edits = edits
                         .into_iter()
                         .map(|range| {
-                            let start = if range.start == range.end {
+                            let end_point = TP::to_point(&range.end, &snapshot);
+                            let mut start_point = TP::to_point(&range.start, &snapshot);
+
+                            if end_point == start_point {
                                 let offset = text::ToOffset::to_offset(&range.start, &snapshot)
                                     .saturating_sub(1);
-                                TP::to_point(&offset, &snapshot)
-                            } else {
-                                TP::to_point(&range.start, &snapshot)
+                                start_point = TP::to_point(&offset, &snapshot);
                             };
 
-                            (
-                                start..TP::to_point(&range.end, &snapshot),
-                                empty_str.clone(),
-                            )
+                            (start_point..end_point, empty_str.clone())
                         })
-                        .sorted_by_key(|(range, _)| range.start);
-
+                        .sorted_by_key(|(range, _)| range.start)
+                        .collect::<Vec<_>>();
                     buffer.update(cx, |this, cx| {
                         this.edit(edits, None, cx);
                     })
@@ -10671,7 +10669,7 @@ impl Editor {
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
-
+                linked_editing_ranges::refresh_linked_ranges(self, cx);
                 if *singleton_buffer_edited {
                     if let Some(project) = &self.project {
                         let project = project.read(cx);
@@ -10728,6 +10726,7 @@ impl Editor {
                 cx.emit(EditorEvent::Reparsed);
             }
             multi_buffer::Event::LanguageChanged => {
+                linked_editing_ranges::refresh_linked_ranges(self, cx);
                 cx.emit(EditorEvent::Reparsed);
                 cx.notify();
             }
