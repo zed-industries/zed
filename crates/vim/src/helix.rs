@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
     scroll::Autoscroll,
-    DisplayPoint, ToPoint,
+    Bias, DisplayPoint, ToPoint,
 };
-use gpui::actions;
+use gpui::{actions, impl_actions};
 use language::{char_kind, CharKind, Selection};
 use log::error;
 use settings::Settings;
@@ -17,6 +19,7 @@ use crate::{
         previous_subword_start, previous_word_end, previous_word_start, Motion,
     },
     normal::normal_motion,
+    state::{Mode, Operator},
     utils::coerce_punctuation,
     visual::visual_motion,
     HelixModeSetting, Vim,
@@ -371,5 +374,49 @@ fn find(motion: Motion, times: usize, cx: &mut WindowContext) {
                 })
             });
         })
+    });
+}
+
+pub(crate) fn hx_replace(text: Arc<str>, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
+        vim.stop_recording();
+        vim.update_active_editor(cx, |_, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+
+                // Selections are biased right at the start. So we need to store
+                // anchors that are biased left so that we can restore the selections
+                // after the change
+                let stable_anchors = editor
+                    .selections
+                    .disjoint_anchors()
+                    .into_iter()
+                    .map(|selection| {
+                        let start = selection.start.bias_left(&display_map.buffer_snapshot);
+                        let end = selection.end.bias_left(&display_map.buffer_snapshot);
+                        start..end
+                    })
+                    .collect::<Vec<_>>();
+
+                let mut edits = Vec::new();
+                for selection in selections.iter() {
+                    let selection = selection.clone();
+                    for row_range in
+                        movement::split_display_range_by_lines(&display_map, selection.range())
+                    {
+                        let range = row_range.start.to_offset(&display_map, Bias::Right)
+                            ..row_range.end.to_offset(&display_map, Bias::Right);
+                        let text = text.repeat(range.len());
+                        edits.push((range, text));
+                    }
+                }
+
+                editor.buffer().update(cx, |buffer, cx| {
+                    buffer.edit(edits, None, cx);
+                });
+                editor.change_selections(None, cx, |s| s.select_ranges(stable_anchors));
+            });
+        });
+        vim.switch_mode(Mode::HelixNormal, false, cx);
     });
 }

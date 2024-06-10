@@ -30,6 +30,7 @@ use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
     Subscription, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
+use helix::hx_replace;
 use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
@@ -867,6 +868,7 @@ impl Vim {
             Some(Operator::Replace) => match Vim::read(cx).state().mode {
                 Mode::Normal => normal_replace(text, cx),
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
+                Mode::HelixNormal => hx_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
             Some(Operator::Digraph { first_char }) => {

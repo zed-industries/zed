@@ -165,7 +165,10 @@
       "space w q": "pane::CloseAllItems",
       "space w o": "workspace::CloseInactiveTabsAndPanes",
 
-      "-": "pane::RevealInProjectPanel"
+      "-": "pane::RevealInProjectPanel",
+
+      // change actions
+      "r": ["vim::PushOperator", "Replace"],
     }
   },
   {
