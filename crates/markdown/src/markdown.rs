@@ -1,4 +1,3 @@
-// pub mod markdown;
 mod parser;
 
 use crate::parser::CodeBlockKind;
@@ -151,6 +150,7 @@ impl Markdown {
     }
 
     fn copy(&self, text: &RenderedText, cx: &mut ViewContext<Self>) {
+        println!("copying!");
         let text = text.text_for_range(self.selection.start..self.selection.end);
         cx.write_to_clipboard(ClipboardItem::new(text));
     }
@@ -409,6 +409,7 @@ impl MarkdownElement {
                                 pending: true,
                             };
                             // Need to remove cx.focus(&markdown.focus_handle); in order to allow popovers to stay open.
+                            // cx.focus(&markdown.focus_handle);
                             cx.prevent_default()
                         }
 
@@ -449,6 +450,8 @@ impl MarkdownElement {
         });
         self.on_mouse_event(cx, {
             let rendered_text = rendered_text.clone();
+            let view = self.markdown.clone();
+
             move |markdown, event: &MouseUpEvent, phase, cx| {
                 if phase.bubble() {
                     if let Some(pressed_link) = markdown.pressed_link.take() {
@@ -465,11 +468,25 @@ impl MarkdownElement {
                                 .text_for_range(markdown.selection.start..markdown.selection.end);
                             cx.write_to_primary(ClipboardItem::new(text))
                         }
+                        if markdown.selection.end > markdown.selection.start {
+                            let text = rendered_text
+                                .clone()
+                                .text_for_range(markdown.selection.start..markdown.selection.end);
+                            cx.write_to_clipboard(ClipboardItem::new(text));
+                        }
                         cx.notify();
                     }
                 }
             }
         });
+    }
+    fn copy_selection_to_clipboard(&self, rendered_text: &RenderedText, cx: &mut WindowContext) {
+        if self.selection.end > self.selection.start {
+            let text = rendered_text
+                .clone()
+                .text_for_range(self.selection.start..self.selection.end);
+            cx.write_to_clipboard(ClipboardItem::new(text));
+        }
     }
 
     fn autoscroll(&mut self, rendered_text: &RenderedText, cx: &mut WindowContext) -> Option<()> {
