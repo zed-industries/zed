@@ -20,7 +20,7 @@ doctest = false
 anyhow.workspace = true
 collections.workspace = true
 prost.workspace = true
-serde.workpace = true
+serde.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true

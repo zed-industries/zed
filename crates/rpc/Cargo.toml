@@ -36,7 +36,7 @@ util.workspace = true
 zstd = "0.11"
 
 [dev-dependencies]
-proto = { workspace = true, features = ["test-support"] }
-collections.workspace = true
+collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-gpui.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+proto = { workspace = true, features = ["test-support"] }

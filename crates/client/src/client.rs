@@ -1729,6 +1729,7 @@ mod tests {
     use gpui::{BackgroundExecutor, Context, TestAppContext};
     use http::FakeHttpClient;
     use parking_lot::Mutex;
+    use proto::TypedEnvelope;
     use settings::SettingsStore;
     use std::future;
 
