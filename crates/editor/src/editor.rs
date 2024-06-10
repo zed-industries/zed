@@ -2787,10 +2787,8 @@ impl Editor {
         if self.linked_edit_ranges.is_empty() {
             return None;
         }
-        let ((base_range, linked_ranges), buffer_snapshot, buffer) = selection
-            .end
-            .buffer_id
-            .and_then(|end_buffer_id| {
+        let ((base_range, linked_ranges), buffer_snapshot, buffer) =
+            selection.end.buffer_id.and_then(|end_buffer_id| {
                 if selection.start.buffer_id != Some(end_buffer_id) {
                     return None;
                 }
@@ -2799,8 +2797,7 @@ impl Editor {
                 self.linked_edit_ranges
                     .get(end_buffer_id, selection.start..selection.end, &snapshot)
                     .map(|ranges| (ranges, snapshot, buffer))
-            })
-            .unwrap();
+            })?;
 
         use text::ToOffset as TO;
         // find offset from the start of current range to current cursor position
@@ -3022,7 +3019,6 @@ impl Editor {
                 if let Some(ranges) =
                     self.linked_editing_ranges_for(start_anchor.text_anchor..anchor.text_anchor, cx)
                 {
-                    dbg!(&ranges);
                     for (buffer, edits) in ranges {
                         linked_edits
                             .entry(buffer.clone())
