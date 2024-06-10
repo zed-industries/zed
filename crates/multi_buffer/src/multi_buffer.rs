@@ -1548,6 +1548,14 @@ impl MultiBuffer {
         cx: &AppContext,
     ) -> Option<(Model<Buffer>, language::Anchor)> {
         let snapshot = self.read(cx);
+        self.text_anchor_for_position_in_snapshot(position, &snapshot)
+    }
+
+    pub fn text_anchor_for_position_in_snapshot<T: ToOffset>(
+        &self,
+        position: T,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Option<(Model<Buffer>, language::Anchor)> {
         let anchor = snapshot.anchor_before(position);
         let buffer = self
             .buffers

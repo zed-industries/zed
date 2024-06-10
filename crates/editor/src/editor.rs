@@ -2789,6 +2789,7 @@ impl Editor {
         let selections = self.selections.all_adjusted(cx);
         let mut brace_inserted = false;
         let mut edits = Vec::new();
+        let mut linked_edits = HashMap::<_, Vec<_>>::default();
         let mut new_selections = Vec::with_capacity(selections.len());
         let mut new_autoclose_regions = Vec::new();
         let snapshot = self.buffer.read(cx).read(cx);
@@ -2971,44 +2972,53 @@ impl Editor {
             let anchor = snapshot.anchor_after(selection.end);
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_after(selection.start);
-                if let Some(((base_range, linked_ranges), buffer_snapshot)) =
+                if let Some(((base_range, linked_ranges), buffer_snapshot, buffer)) =
                     anchor.buffer_id.and_then(|end_buffer_id| {
                         if start_anchor.buffer_id == Some(end_buffer_id) {
-                            let snapshot = self
-                                .buffer
-                                .read(cx)
-                                .buffer(end_buffer_id)?
-                                .read(cx)
-                                .snapshot();
+                            let buffer = self.buffer.read(cx).buffer(end_buffer_id)?;
+                            let snapshot = buffer.read(cx).snapshot();
                             self.linked_edit_ranges
                                 .get(
                                     end_buffer_id,
                                     start_anchor.text_anchor..anchor.text_anchor,
                                     &snapshot,
                                 )
-                                .map(|ranges| (ranges, snapshot))
+                                .map(|ranges| (ranges, snapshot, buffer))
                         } else {
                             None
                         }
                     })
                 {
                     use text::ToOffset as TO;
-
+                    use text::ToPoint as TP;
                     // find offset from the start of current range to current cursor position
                     let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
-                    let start_offset = TO::to_offset(&selection.head(), &buffer_snapshot);
+                    let Some((_, start_anchor)) = self
+                        .buffer
+                        .read(cx)
+                        .text_anchor_for_position_in_snapshot(selection.head(), &snapshot)
+                    else {
+                        continue;
+                    };
+                    let Some((_, end_anchor)) = self
+                        .buffer
+                        .read(cx)
+                        .text_anchor_for_position_in_snapshot(selection.tail(), &snapshot)
+                    else {
+                        continue;
+                    };
+                    let start_offset = TO::to_offset(&start_anchor, &buffer_snapshot);
                     let start_difference = start_offset - start_byte_offset;
-                    let end_offset = TO::to_offset(&selection.tail(), &buffer_snapshot);
+                    let end_offset = TO::to_offset(&end_anchor, &buffer_snapshot);
                     let end_difference = end_offset - start_byte_offset;
                     // Current range has associated linked ranges.
                     for range in linked_ranges.iter() {
-                        let start_offset = TO::to_offset(&range.start, &buffer_snapshot);
-                        let end_offset = start_offset + end_difference;
-                        let start_offset = start_offset + start_difference;
-                        let start_point = start_offset.to_point(&snapshot);
-                        let end_point = end_offset.to_point(&snapshot);
-                        let text = text.clone();
-                        edits.push((start_point..end_point, text));
+                        linked_edits.entry(buffer.clone()).or_default().push((
+                            range.start,
+                            end_difference,
+                            start_difference,
+                            text.clone(),
+                        ));
                     }
                 }
             }
@@ -3024,7 +3034,24 @@ impl Editor {
             this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, this.autoindent_mode.clone(), cx);
             });
-
+            for (buffer, edits) in linked_edits {
+                buffer.update(cx, |buffer, cx| {
+                    let snapshot = buffer.snapshot();
+                    let edits =
+                        edits
+                            .into_iter()
+                            .map(|(start_anchor, start_diff, end_diff, text)| {
+                                use text::ToOffset as TO;
+                                use text::ToPoint as TP;
+                                let start_offset = TO::to_offset(&start_anchor, &snapshot);
+                                let end_point = TP::to_point(&(start_offset + end_diff), &snapshot);
+                                let start_point =
+                                    TP::to_point(&(start_offset + start_diff), &snapshot);
+                                (start_point..end_point, text)
+                            });
+                    buffer.edit(edits, None, cx);
+                })
+            }
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
             let snapshot = this.buffer.read(cx).read(cx);
