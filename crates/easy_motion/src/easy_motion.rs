@@ -1,7 +1,7 @@
 use collections::HashMap;
 use serde::Deserialize;
 use std::{fmt, sync::Arc};
-use util::start_of_document;
+use trie::Trie;
 
 use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{
@@ -18,7 +18,6 @@ use crate::{
     editor_state::{EditorState, OverlayState},
     search::{row_starts, sort_matches_display, word_starts},
     trie::{TrieBuilder, TrimResult},
-    util::end_of_document,
 };
 
 mod editor_events;
@@ -31,7 +30,7 @@ mod util;
 #[serde(rename_all = "camelCase")]
 enum Direction {
     #[default]
-    BiDirectional,
+    Both,
     Forwards,
     Backwards,
 }
@@ -232,11 +231,11 @@ impl EasyMotion {
 
         if dimming {
             let start = match direction {
-                Direction::BiDirectional | Direction::Backwards => start_of_document(map),
+                Direction::Both | Direction::Backwards => DisplayPoint::zero(),
                 Direction::Forwards => selections.start,
             };
             let end = match direction {
-                Direction::BiDirectional | Direction::Forwards => end_of_document(map),
+                Direction::Both | Direction::Forwards => map.max_point(),
                 Direction::Backwards => selections.end,
             };
             let anchor_start = map.display_point_to_anchor(start, Bias::Left);

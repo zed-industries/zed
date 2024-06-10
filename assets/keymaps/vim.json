@@ -337,9 +337,9 @@
       "-": "pane::RevealInProjectPanel",
 
       // easy motion
-      "g w": ["easy_motion::Word", "biDirectional"],
-      "g shift-w": ["easy_motion::FullWord", "biDirectional"],
-      "g r": ["easy_motion::Row", "biDirectional"]
+      "g w": ["easy_motion::Word", "both"],
+      "g shift-w": ["easy_motion::FullWord", "both"],
+      "g r": ["easy_motion::Row", "both"]
     }
   },
   {
