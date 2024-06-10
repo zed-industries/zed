@@ -1,216 +1,32 @@
 use std::{fmt::Debug, mem, sync::Arc};
 
+// Represents the matches for easy motion in a trie.
+// Nodes store their leaves in an array with the index of that array corresponding
+// to the character for that Node
+
+// ex: keys: "abc", root: node { [ leaf_1, leaf_2 ] }
+// would have leaves with strings of "a" and "b" respectively
+
+// ex: keys: "abc", root: node { [ leaf_1, leaf_2, node { [leaf_3, leaf_4] } ] }
+// would have leaves with strings of "a", "b", "ca", and "cb" respectively
+
+// When new layers are necessary, the deepest layers are assigned to the latest indices first
+// so the most preferred keys are kept as short as possible, which will correspond to the closest matches
+
+// notes: There will only ever be two layers separated by one.
+// Upper layer always refers to layer with a smaller depth.
+// Ex: in the above leaf_count=4 example the "a" and "b" leaves are in the upper layer
+// while the other two are in the lower
+
 #[derive(Debug)]
 enum TrieNode<T> {
     Leaf(T),
     Node(Vec<TrieNode<T>>),
 }
 
-impl<T> TrieNode<T> {
-    #[allow(dead_code)]
-    pub fn is_leaf(&self) -> bool {
-        matches!(self, Self::Leaf(_))
-    }
-
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        match self {
-            Self::Leaf(_) => 0,
-            Self::Node(hash_map) => hash_map.len(),
-        }
-    }
-}
-
-impl<T: Default> TrieNode<T> {
-    pub fn insert(&mut self, val: T) -> &mut Self {
-        match self {
-            Self::Leaf(old_val) => {
-                *self = Self::Node(vec![
-                    TrieNode::Leaf(mem::take(old_val)),
-                    TrieNode::Leaf(val),
-                ]);
-            }
-            Self::Node(hash_map) => {
-                hash_map.push(TrieNode::Leaf(val));
-            }
-        }
-        self
-    }
-}
-
 impl<T: Default> Default for TrieNode<T> {
     fn default() -> Self {
         TrieNode::Leaf(Default::default())
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct TrieBuilder {
-    root: TrieNode<()>,
-    keys: Arc<str>,
-    len: usize,
-}
-
-impl TrieBuilder {
-    pub fn new(keys: Arc<str>, len: usize) -> Self {
-        let root = TrieNode::Node(vec![TrieNode::Leaf(())]);
-        let mut builder = TrieBuilder { keys, root, len };
-        let mut p = vec![0];
-        // constructs the trie
-        for _ in 1..len {
-            p = builder.next_perm(p);
-        }
-        builder
-    }
-
-    #[allow(dead_code)]
-    pub fn populate<T>(self, reverse: bool, iter: impl IntoIterator<Item = T>) -> Trie<T> {
-        let (node, _) = TrieBuilder::new_rec(self.root, reverse, iter.into_iter());
-        Trie {
-            keys: self.keys,
-            root: node,
-            len: self.len,
-        }
-    }
-
-    pub fn populate_with<TItem, TFinal>(
-        mut self,
-        reverse: bool,
-        iter: impl IntoIterator<Item = TItem>,
-        func: impl Fn(&str, TItem) -> TFinal,
-    ) -> Trie<TFinal> {
-        let node = mem::take(&mut self.root);
-        let (node, _, _) =
-            self.new_rec_with(node, "".to_string(), reverse, iter.into_iter(), &func);
-        Trie {
-            keys: self.keys,
-            root: node,
-            len: self.len,
-        }
-    }
-
-    fn next_perm(&mut self, pointer: Vec<usize>) -> Vec<usize> {
-        self.next_perm_internal(pointer)
-    }
-
-    // reverse puts the deeper nodes last
-    // i.e. aa ab b c -> a b ca cb
-    fn new_rec<T>(
-        node: TrieNode<()>,
-        reverse: bool,
-        mut iter: impl Iterator<Item = T>,
-    ) -> (TrieNode<T>, impl Iterator<Item = T>) {
-        let node = match node {
-            TrieNode::Leaf(_) => {
-                let val = iter.next().unwrap();
-                TrieNode::Leaf(val)
-            }
-            TrieNode::Node(mut list) => {
-                let mut ret = Vec::<TrieNode<T>>::new();
-                for _ in 0..list.len() {
-                    let child = if reverse {
-                        list.pop().unwrap()
-                    } else {
-                        list.remove(0)
-                    };
-                    let (new_child, new_iter) = TrieBuilder::new_rec(child, reverse, iter);
-                    iter = new_iter;
-                    ret.push(new_child);
-                }
-                TrieNode::Node(ret)
-            }
-        };
-        (node, iter)
-    }
-
-    fn new_rec_with<TItem, TFinal, TFunc: Fn(&str, TItem) -> TFinal>(
-        &self,
-        node: TrieNode<()>,
-        mut path: String,
-        reverse: bool,
-        mut iter: impl Iterator<Item = TItem>,
-        func: &TFunc,
-    ) -> (TrieNode<TFinal>, impl Iterator<Item = TItem>, String) {
-        let node = match node {
-            TrieNode::Leaf(_) => {
-                let val = iter.next().unwrap();
-                TrieNode::Leaf(func(&path, val))
-            }
-            TrieNode::Node(mut list) => {
-                let mut ret = Vec::<TrieNode<TFinal>>::new();
-                for i in 0..list.len() {
-                    let character = self.keys.chars().nth(i).unwrap();
-                    path.push(character);
-                    let child = if reverse {
-                        list.pop().unwrap()
-                    } else {
-                        list.remove(0)
-                    };
-                    let (new_child, new_iter, new_path) =
-                        self.new_rec_with(child, path, reverse, iter, func);
-                    iter = new_iter;
-                    ret.push(new_child);
-                    path = new_path;
-                    path.pop();
-                }
-                TrieNode::Node(ret)
-            }
-        };
-        (node, iter, path)
-    }
-
-    fn next_perm_internal(&mut self, mut pointer: Vec<usize>) -> Vec<usize> {
-        let max_len = self.keys.len();
-        let len = pointer.len();
-        let last_index = *pointer.last().unwrap();
-        if last_index < max_len - 1 {
-            pointer[len - 1] += 1;
-            // get parent to current node
-            let node = self.pointer_to_node_ref(&pointer[0..len - 1]);
-            debug_assert!(matches!(node, TrieNode::Node(_)));
-            node.insert(());
-            return pointer;
-        }
-
-        let mut depth = len;
-        // find the first layer that is not full
-        while depth > 0 {
-            if pointer[depth - 1] >= max_len - 1 {
-                depth -= 1;
-                continue;
-            }
-
-            pointer[depth - 1] += 1;
-            // return to original depth adding 0s
-            pointer[depth..].fill(0);
-            *pointer.last_mut().unwrap() = 1;
-            let node = self.pointer_to_node_ref(&pointer[0..len - 1]);
-            debug_assert!(matches!(node, TrieNode::Leaf(_)));
-            node.insert(());
-            return pointer;
-        }
-
-        // current layer is completely full so we need to add a new layer
-        pointer.fill(0);
-        pointer.push(1);
-        let node = self.pointer_to_node_ref(&pointer[0..len]);
-        debug_assert!(matches!(node, TrieNode::Leaf(_)));
-        node.insert(());
-        pointer
-    }
-
-    fn pointer_to_node_ref(&mut self, pointer: &[usize]) -> &mut TrieNode<()> {
-        if pointer.is_empty() {
-            return &mut self.root;
-        }
-        let mut node = &mut self.root;
-        for i in pointer {
-            node = match node {
-                TrieNode::Leaf(_) => return node,
-                TrieNode::Node(list) => list.get_mut(*i).unwrap(),
-            };
-        }
-        node
     }
 }
 
@@ -230,61 +46,16 @@ impl<T> Debug for Trie<T> {
 }
 
 impl<T> Trie<T> {
+    pub fn new_from_vec<TItem, F: Fn(usize, TItem) -> T>(
+        keys: Arc<str>,
+        list: Vec<TItem>,
+        func: F,
+    ) -> Self {
+        TrieBuilder::new_from_vec(keys, list, func).populate()
+    }
+
     pub fn len(&self) -> usize {
         self.len
-    }
-    #[allow(dead_code)]
-    pub fn new_from_vec(keys: Arc<str>, values: Vec<T>, reverse: bool) -> Self {
-        TrieBuilder::new(keys, values.len()).populate(reverse, values)
-    }
-
-    #[allow(dead_code)]
-    pub fn for_each(&self, func: impl Fn(&str, &T)) {
-        let mut path = String::new();
-        self.for_each_rec(&self.root, &mut path, false, &func);
-    }
-
-    #[allow(dead_code)]
-    pub fn for_each_reverse(&self, func: impl Fn(&str, &T)) {
-        let mut path = String::new();
-        self.for_each_rec(&self.root, &mut path, true, &func);
-    }
-
-    fn for_each_rec(
-        &self,
-        node: &TrieNode<T>,
-        path: &mut String,
-        reverse: bool,
-        func: &impl Fn(&str, &T),
-    ) {
-        match node {
-            TrieNode::Leaf(val) => func(path, val),
-            TrieNode::Node(list) => {
-                if reverse {
-                    for (i, child) in list.into_iter().enumerate().rev() {
-                        self.for_each_rec_loop(i, child, path, true, func);
-                    }
-                    return;
-                }
-                for (i, child) in list.into_iter().enumerate() {
-                    self.for_each_rec_loop(i, child, path, false, func);
-                }
-            }
-        }
-    }
-
-    fn for_each_rec_loop(
-        &self,
-        i: usize,
-        node: &TrieNode<T>,
-        path: &mut String,
-        reverse: bool,
-        func: &impl Fn(&str, &T),
-    ) {
-        let character = self.keys.chars().nth(i).unwrap();
-        path.push(character);
-        self.for_each_rec(node, path, reverse, func);
-        path.pop();
     }
 
     // returns a list of all permutations
@@ -293,16 +64,6 @@ impl<T> Trie<T> {
         let mut perms = Vec::new();
         let mut path = String::new();
         self.trie_to_perms_rec(&self.root, &mut path, &mut perms, false);
-        return perms;
-    }
-
-    // returns a list of all permutations with the indices reversed
-    // i.e. a b ca cb -> c b ac ab
-    #[allow(dead_code)]
-    pub fn trie_to_perms_rev(&self) -> Vec<(String, &T)> {
-        let mut perms = Vec::new();
-        let mut path = String::new();
-        self.trie_to_perms_rec(&self.root, &mut path, &mut perms, true);
         return perms;
     }
 
@@ -393,6 +154,148 @@ impl<T: Clone> TrimResult<&T> {
     }
 }
 
+fn trie_max_depth(keys_len: usize, leaf_count: usize) -> usize {
+    if leaf_count > 1 {
+        let max_len = f32::from(leaf_count as u16 - 1);
+        let keys_len = f32::from(keys_len as u16);
+        max_len.log(keys_len) as usize + 1
+    } else {
+        1
+    }
+}
+
+/// Gives the count of leaves which will be in the upper layer
+/// ex: keys: "abc", leaf_count: 4
+/// a b  c
+///     b a
+/// => 2
+fn upper_layer_count(keys_len: usize, leaf_count: usize, max_trie_depth: usize) -> usize {
+    if leaf_count <= keys_len {
+        return leaf_count;
+    }
+
+    // count of nodes in the previous layer
+    let lower_layer_count = keys_len.pow((max_trie_depth - 1) as u32);
+
+    // count of elements we are placing in new lowest layer
+    let diff = leaf_count - lower_layer_count;
+
+    // when we need to create the next permutation with a leaf we create a node
+    // with two leaves
+    // ex ... b   c     next perm    ...  b      c
+    //    ...   a b c     --->       ... a b   a b c
+    // extra_leaves = 2
+    let extra_leaves = (diff - 1) / (keys_len - 1) + 1;
+
+    // higher_count = diff + extra_leaves;
+    // lower_count = leaf_count - higher_count;
+    // simplified
+    lower_layer_count - extra_leaves
+}
+
+pub(crate) struct TrieBuilder<TItem, TOut, F: Fn(usize, TItem) -> TOut> {
+    keys: Arc<str>,
+    list: Vec<TItem>,
+    total_leaf_count: usize,
+    current_leaf_count: usize,
+    upper_node_count: usize,
+    max_depth: usize,
+    func: F,
+}
+
+impl<TItem, TOut, F: Fn(usize, TItem) -> TOut> TrieBuilder<TItem, TOut, F> {
+    fn new_from_vec(keys: Arc<str>, list: Vec<TItem>, func: F) -> Self {
+        let keys_len = keys.len();
+        let total_leaf_count = list.len();
+        let max_depth = trie_max_depth(keys_len, total_leaf_count);
+        let upper_node_count = upper_layer_count(keys_len, total_leaf_count, max_depth);
+        TrieBuilder {
+            total_leaf_count,
+            current_leaf_count: 0,
+            upper_node_count,
+            max_depth,
+            keys,
+            list,
+            func,
+        }
+    }
+
+    fn populate(mut self) -> Trie<TOut> {
+        let iter = mem::take(&mut self.list).into_iter();
+        let root = if self.total_leaf_count <= self.keys.len() {
+            let (root, mut iter) = self.node_from_iter(1, iter, self.total_leaf_count);
+            debug_assert!(iter.next().is_none());
+            root
+        } else {
+            let (root, mut iter) = self.populate_rec(1, iter);
+            debug_assert!(iter.next().is_none());
+            root
+        };
+        Trie {
+            root,
+            keys: self.keys.into(),
+            len: self.total_leaf_count as usize,
+        }
+    }
+
+    fn populate_rec<I>(&mut self, curr_depth: usize, mut values: I) -> (TrieNode<TOut>, I)
+    where
+        I: Iterator<Item = TItem>,
+    {
+        debug_assert!(curr_depth <= self.max_depth);
+
+        let mut new_vec = Vec::new();
+        if curr_depth < self.max_depth - 1 {
+            for _ in 0..self.keys.len() {
+                let (new_node, new_values) = self.populate_rec(curr_depth + 1, values);
+                values = new_values;
+                new_vec.push(new_node);
+            }
+            return (TrieNode::Node(new_vec), values);
+        }
+
+        for _ in 0..self.keys.len() {
+            if self.current_leaf_count < self.upper_node_count {
+                new_vec.push(self.oper(curr_depth, values.next().unwrap()));
+                self.current_leaf_count += 1;
+                continue;
+            } else if self.current_leaf_count == self.upper_node_count {
+                // when the all the upper leaves have been assigned the first node will not necessarily be full
+                let lower_leaf_count = self.total_leaf_count - self.upper_node_count;
+                let modulo = lower_leaf_count % self.keys.len();
+                let len = if modulo == 0 { self.keys.len() } else { modulo };
+                let (new_node, new_values) = self.node_from_iter(curr_depth + 1, values, len);
+                values = new_values;
+                self.current_leaf_count += len;
+                new_vec.push(new_node);
+            } else {
+                let (node, new_values) =
+                    self.node_from_iter(curr_depth + 1, values, self.keys.len());
+                new_vec.push(node);
+                self.current_leaf_count += self.keys.len();
+                values = new_values;
+            }
+        }
+        (TrieNode::Node(new_vec), values)
+    }
+
+    fn node_from_iter<I>(&self, depth: usize, mut values: I, len: usize) -> (TrieNode<TOut>, I)
+    where
+        I: Iterator<Item = TItem>,
+    {
+        let mut new_vec = Vec::new();
+        new_vec.reserve_exact(len);
+        for _ in 0..len {
+            new_vec.push(self.oper(depth, values.next().unwrap()));
+        }
+        (TrieNode::Node(new_vec), values)
+    }
+
+    fn oper(&self, depth: usize, val: TItem) -> TrieNode<TOut> {
+        TrieNode::Leaf((self.func)(depth, val))
+    }
+}
+
 pub struct TrieIterator<'a, T> {
     keys: &'a str,
     stack: Vec<(&'a TrieNode<T>, String)>,
@@ -439,7 +342,57 @@ impl<'a, T> Iterator for TrieIterator<'a, T> {
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
+
     use super::*;
+
+    #[test]
+    fn test_lower() {
+        let keys_len = 3;
+        // trie: a b c
+        //          a b
+        let leaf_count = 4;
+        let max_trie_depth = trie_max_depth(keys_len, leaf_count);
+        assert_eq!(upper_layer_count(keys_len, leaf_count, max_trie_depth), 2);
+
+        // trie: a   b      c
+        //          a b   a b c
+        let leaf_count = 6;
+        let max_trie_depth = trie_max_depth(keys_len, leaf_count);
+        assert_eq!(upper_layer_count(keys_len, leaf_count, max_trie_depth), 1);
+
+        // trie: a    b       c
+        //          a b c   a b c
+        let leaf_count = 7;
+        let max_trie_depth = trie_max_depth(keys_len, leaf_count);
+        assert_eq!(upper_layer_count(keys_len, leaf_count, max_trie_depth), 1);
+
+        // trie:  a      b       c
+        //       a b   a b c   a b c
+        let leaf_count = 8;
+        let max_trie_depth = trie_max_depth(keys_len, leaf_count);
+        assert_eq!(upper_layer_count(keys_len, leaf_count, max_trie_depth), 0);
+
+        // trie:   a       b       c
+        //       a b c   a b c   a b c
+        let leaf_count = 9;
+        let max_trie_depth = trie_max_depth(keys_len, leaf_count);
+        assert_eq!(upper_layer_count(keys_len, leaf_count, max_trie_depth), 0);
+
+        // trie:   a       b        c
+        //       a b c   a b c   a  b  c
+        //                            a b
+        let leaf_count = 10;
+        let max_trie_depth = trie_max_depth(keys_len, leaf_count);
+        assert_eq!(upper_layer_count(keys_len, leaf_count, max_trie_depth), 8);
+
+        let keys_len = 5;
+        // trie:   a       b     c           d           e
+        //                    a b c d    a b c d e   a b c d e
+        let leaf_count = 16;
+        let max_trie_depth = trie_max_depth(keys_len, leaf_count);
+        assert_eq!(upper_layer_count(keys_len, leaf_count, max_trie_depth), 2);
+    }
 
     fn perms_helper(trie: &Trie<i32>, perms: Vec<(&str, i32)>) {
         let trie_perms = trie.trie_to_perms();
@@ -452,48 +405,59 @@ mod tests {
         );
     }
 
-    #[allow(dead_code)]
-    fn perms_helper_rev(trie: &Trie<i32>, perms: Vec<(&str, i32)>) {
-        let trie_perms = trie.trie_to_perms_rev();
-        assert_eq!(
-            trie_perms,
-            perms
-                .iter()
-                .map(|(a, b)| (a.to_string(), b))
-                .collect::<Vec<_>>()
-        );
+    pub fn new_from_vec_helper(keys: &str, list: Vec<i32>) -> Trie<i32> {
+        Trie::new_from_vec(keys.into(), list, |_, val| val)
     }
 
     #[test]
-    fn test_trie_perms() {
-        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2], false);
+    fn test_new_from_vec() {
+        let trie = new_from_vec_helper("abc", (0..=2).collect_vec());
         let expected = vec![("a", 0), ("b", 1), ("c", 2)];
         perms_helper(&trie, expected);
 
-        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3], false);
-        let expected = vec![("aa", 0), ("ab", 1), ("b", 2), ("c", 3)];
+        let trie = new_from_vec_helper("abc", (0..=3).collect_vec());
+        let expected = vec![("a", 0), ("b", 1), ("ca", 2), ("cb", 3)];
         perms_helper(&trie, expected);
 
-        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3, 4], false);
-        let expected = vec![("aa", 0), ("ab", 1), ("ac", 2), ("b", 3), ("c", 4)];
-        perms_helper(&trie, expected);
-
-        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], false);
+        let trie = new_from_vec_helper("abc", (0..=5).collect_vec());
         let expected = vec![
-            ("aaa", 0),
-            ("aab", 1),
-            ("ab", 2),
-            ("ac", 3),
-            ("ba", 4),
-            ("bb", 5),
-            ("bc", 6),
-            ("ca", 7),
-            ("cb", 8),
-            ("cc", 9),
+            ("a", 0),
+            ("ba", 1),
+            ("bb", 2),
+            ("ca", 3),
+            ("cb", 4),
+            ("cc", 5),
         ];
         perms_helper(&trie, expected);
 
-        let mut trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
+        let trie = new_from_vec_helper("abc", (0..=7).collect_vec());
+        let expected = vec![
+            ("aa", 0),
+            ("ab", 1),
+            ("ba", 2),
+            ("bb", 3),
+            ("bc", 4),
+            ("ca", 5),
+            ("cb", 6),
+            ("cc", 7),
+        ];
+        perms_helper(&trie, expected);
+
+        let trie = new_from_vec_helper("abc", (0..=8).collect_vec());
+        let expected = vec![
+            ("aa", 0),
+            ("ab", 1),
+            ("ac", 2),
+            ("ba", 3),
+            ("bb", 4),
+            ("bc", 5),
+            ("ca", 6),
+            ("cb", 7),
+            ("cc", 8),
+        ];
+        perms_helper(&trie, expected);
+
+        let trie = new_from_vec_helper("abc", (0..=9).collect_vec());
         let expected = vec![
             ("aa", 0),
             ("ab", 1),
@@ -508,30 +472,46 @@ mod tests {
         ];
         perms_helper(&trie, expected);
 
-        let res = trie.trim('c');
-        assert!(matches!(res, TrimResult::Changed));
-        let expected = vec![("a", 6), ("b", 7), ("ca", 8), ("cb", 9)];
+        let trie = new_from_vec_helper("abc", (0..=12).collect_vec());
+        let expected = vec![
+            ("aa", 0),
+            ("ab", 1),
+            ("ac", 2),
+            ("ba", 3),
+            ("bb", 4),
+            ("bc", 5),
+            ("ca", 6),
+            ("cba", 7),
+            ("cbb", 8),
+            ("cbc", 9),
+            ("cca", 10),
+            ("ccb", 11),
+            ("ccc", 12),
+        ];
         perms_helper(&trie, expected);
 
-        let res = trie.trim('c');
-        assert!(matches!(res, TrimResult::Changed));
-        let expected = vec![("a", 8), ("b", 9)];
+        // trie:   a       b     c           d           e
+        //                    a b c d    a b c d e   a b c d e
+        let trie = new_from_vec_helper("abcde", (0..=15).collect_vec());
+        let expected = vec![
+            ("a", 0),
+            ("b", 1),
+            ("ca", 2),
+            ("cb", 3),
+            ("cc", 4),
+            ("cd", 5),
+            ("da", 6),
+            ("db", 7),
+            ("dc", 8),
+            ("dd", 9),
+            ("de", 10),
+            ("ea", 11),
+            ("eb", 12),
+            ("ec", 13),
+            ("ed", 14),
+            ("ee", 15),
+        ];
         perms_helper(&trie, expected);
-
-        let res = trie.trim('c');
-        assert!(matches!(res, TrimResult::NoChange));
-        let expected = vec![("a", 8), ("b", 9)];
-        perms_helper(&trie, expected);
-
-        let res = trie.trim('b');
-        match res {
-            TrimResult::Found(p) => {
-                assert_eq!(p, &9);
-            }
-            _ => panic!("Expected Found"),
-        }
-        let res = trie.trim('b');
-        assert!(matches!(res, TrimResult::Err));
     }
 
     fn iter_helper(trie: Trie<i32>, expected: Vec<(&str, i32)>) {
@@ -545,19 +525,52 @@ mod tests {
 
     #[test]
     fn test_trie_iter() {
-        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2], false);
+        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2]);
         let expected = vec![("a", 0), ("b", 1), ("c", 2)];
         iter_helper(trie, expected);
 
-        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3], false);
-        let expected = vec![("aa", 0), ("ab", 1), ("b", 2), ("c", 3)];
-        iter_helper(trie, expected);
-
-        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3], true);
+        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2, 3]);
         let expected = vec![("a", 0), ("b", 1), ("ca", 2), ("cb", 3)];
         iter_helper(trie, expected);
 
-        let trie = Trie::new_from_vec("abc".into(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9], true);
+        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2, 3, 4, 5]);
+        let expected = vec![
+            ("a", 0),
+            ("ba", 1),
+            ("bb", 2),
+            ("ca", 3),
+            ("cb", 4),
+            ("cc", 5),
+        ];
+        iter_helper(trie, expected);
+
+        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2, 3, 4, 5, 6]);
+        let expected = vec![
+            ("a", 0),
+            ("ba", 1),
+            ("bb", 2),
+            ("bc", 3),
+            ("ca", 4),
+            ("cb", 5),
+            ("cc", 6),
+        ];
+        iter_helper(trie, expected);
+
+        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        let expected = vec![
+            ("aa", 0),
+            ("ab", 1),
+            ("ac", 2),
+            ("ba", 3),
+            ("bb", 4),
+            ("bc", 5),
+            ("ca", 6),
+            ("cb", 7),
+            ("cc", 8),
+        ];
+        iter_helper(trie, expected);
+
+        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
         let expected = vec![
             ("aa", 0),
             ("ab", 1),
@@ -571,44 +584,65 @@ mod tests {
             ("ccb", 9),
         ];
         iter_helper(trie, expected);
+
+        // trie:   a       b     c           d           e
+        //                    a b c d    a b c d e   a b c d e
+        let trie = new_from_vec_helper(
+            "abcde".into(),
+            vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        );
+        let expected = vec![
+            ("a", 0),
+            ("b", 1),
+            ("ca", 2),
+            ("cb", 3),
+            ("cc", 4),
+            ("cd", 5),
+            ("da", 6),
+            ("db", 7),
+            ("dc", 8),
+            ("dd", 9),
+            ("de", 10),
+            ("ea", 11),
+            ("eb", 12),
+            ("ec", 13),
+            ("ed", 14),
+            ("ee", 15),
+        ];
+        iter_helper(trie, expected);
     }
 
     #[test]
     fn test_populate_with() {
         let keys: Arc<str> = "abc".into();
         let values = vec![0, 1, 2];
-        let trie = TrieBuilder::new(keys.clone(), values.len()).populate_with(
-            true,
-            values,
-            |path, val| (path.to_string(), val),
-        );
+        let trie = Trie::new_from_vec(keys.clone(), values, |len, val| (len, val));
         let perms = trie.trie_to_perms();
         assert_eq!(
             perms,
             vec![
-                ("a".to_string(), &("a".to_string(), 0)),
-                ("b".to_string(), &("b".to_string(), 1)),
-                ("c".to_string(), &("c".to_string(), 2)),
+                ("a".to_string(), &(1, 0)),
+                ("b".to_string(), &(1, 1)),
+                ("c".to_string(), &(1, 2)),
             ]
         );
 
         let values = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-        let trie = TrieBuilder::new(keys, values.len())
-            .populate_with(true, values, |path, val| (path.to_string(), val));
+        let trie = Trie::new_from_vec(keys.clone(), values, |len, val| (len, val));
         let perms = trie.trie_to_perms();
         assert_eq!(
             perms,
             vec![
-                ("aa".to_string(), &("aa".to_string(), 0)),
-                ("ab".to_string(), &("ab".to_string(), 1)),
-                ("ac".to_string(), &("ac".to_string(), 2)),
-                ("ba".to_string(), &("ba".to_string(), 3)),
-                ("bb".to_string(), &("bb".to_string(), 4)),
-                ("bc".to_string(), &("bc".to_string(), 5)),
-                ("ca".to_string(), &("ca".to_string(), 6)),
-                ("cb".to_string(), &("cb".to_string(), 7)),
-                ("cca".to_string(), &("cca".to_string(), 8)),
-                ("ccb".to_string(), &("ccb".to_string(), 9)),
+                ("aa".to_string(), &(2, 0)),
+                ("ab".to_string(), &(2, 1)),
+                ("ac".to_string(), &(2, 2)),
+                ("ba".to_string(), &(2, 3)),
+                ("bb".to_string(), &(2, 4)),
+                ("bc".to_string(), &(2, 5)),
+                ("ca".to_string(), &(2, 6)),
+                ("cb".to_string(), &(2, 7)),
+                ("cca".to_string(), &(3, 8)),
+                ("ccb".to_string(), &(3, 9)),
             ]
         );
     }

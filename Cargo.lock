@@ -3442,6 +3442,7 @@ dependencies = [
  "command_palette",
  "editor",
  "gpui",
+ "itertools 0.11.0",
  "language",
  "multi_buffer",
  "project",

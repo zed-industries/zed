@@ -1,7 +1,6 @@
 use collections::HashMap;
 use serde::Deserialize;
 use std::{fmt, sync::Arc};
-use trie::Trie;
 
 use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{
@@ -17,7 +16,7 @@ use workspace::Workspace;
 use crate::{
     editor_state::{EditorState, OverlayState},
     search::{row_starts, sort_matches_display, word_starts},
-    trie::{TrieBuilder, TrimResult},
+    trie::{Trie, TrimResult},
 };
 
 mod editor_events;
@@ -218,15 +217,14 @@ impl EasyMotion {
             .unwrap_or((DEFAULT_KEYS.into(), true));
 
         let (style_0, style_1, style_2) = Self::get_highlights(cx);
-        let trie =
-            TrieBuilder::new(keys, matches.len()).populate_with(true, matches, |seq, point| {
-                let style = match seq.len() {
-                    0 | 1 => style_0,
-                    2 => style_1,
-                    3.. => style_2,
-                };
-                OverlayState { style, point }
-            });
+        let trie = Trie::new_from_vec(keys, matches, |depth, point| {
+            let style = match depth {
+                0 | 1 => style_0,
+                2 => style_1,
+                3.. => style_2,
+            };
+            OverlayState { style, point }
+        });
         Self::add_overlays(editor, trie.iter(), trie.len(), cx);
 
         if dimming {
