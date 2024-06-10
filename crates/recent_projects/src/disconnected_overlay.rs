@@ -114,7 +114,6 @@ impl Render for DisconnectedOverlay {
             .elevation_3(cx)
             .on_action(cx.listener(Self::cancel))
             .occlude()
-            .on_mouse_down_out(cx.listener(|_, _, cx| cx.emit(DismissEvent)))
             .w(rems(24.))
             .max_h(rems(40.))
             .child(

@@ -158,6 +158,10 @@ impl Render for ModalLayer {
                 let mut background = cx.theme().colors().elevated_surface_background;
                 background.fade_out(0.2);
                 el.bg(background)
+                    .occlude()
+                    .on_mouse_down_out(cx.listener(|this, _, cx| {
+                        this.hide_modal(cx);
+                    }))
             })
             .child(
                 v_flex()

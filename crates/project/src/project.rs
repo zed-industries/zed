@@ -1924,6 +1924,9 @@ impl Project {
     }
 
     pub fn disconnected_from_host(&mut self, cx: &mut ModelContext<Self>) {
+        if self.is_disconnected() {
+            return;
+        }
         self.disconnected_from_host_internal(cx);
         cx.emit(Event::DisconnectedFromHost);
         cx.notify();

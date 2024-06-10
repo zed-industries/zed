@@ -1,5 +1,5 @@
 mod dev_servers;
-mod disconnected_overlay;
+pub mod disconnected_overlay;
 
 use client::{DevServerProjectId, ProjectId};
 use dev_servers::reconnect_to_dev_server_project;
