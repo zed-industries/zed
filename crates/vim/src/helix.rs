@@ -33,8 +33,7 @@ pub fn helix_normal_motion(motion: Motion, times: Option<usize>, cx: &mut Window
     let times = times.unwrap_or(1);
     match motion {
         Motion::Up { .. } | Motion::Down { .. } | Motion::Right | Motion::Left => {
-            normal_motion(motion.to_owned(), None, None, cx);
-            select_current(cx);
+            simple_motion(motion, times, cx);
         }
         Motion::NextWordStart { .. }
         | Motion::NextWordEnd { .. }
@@ -57,6 +56,27 @@ pub fn helix_normal_motion(motion: Motion, times: Option<usize>, cx: &mut Window
             visual_motion(motion.to_owned(), None, cx);
         }
     };
+}
+
+fn simple_motion(motion: Motion, times: usize, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
+        vim.update_active_editor(cx, |_, editor, cx| {
+            let text_layout_details = editor.text_layout_details(cx);
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.move_with(|map, selection| {
+                    let mut cursor = selection.cursor(map);
+                    for _ in 0..times {
+                        (cursor, selection.goal) = motion
+                            .move_point(map, cursor, selection.goal, None, &text_layout_details)
+                            .unwrap_or((cursor, selection.goal));
+                    }
+                    selection.start = cursor;
+                    selection.end = cursor.next_char(map).map_or(cursor, |(_, offset)| offset);
+                    selection.reversed = false;
+                })
+            })
+        });
+    })
 }
 
 fn prev_word(motion: Motion, times: usize, cx: &mut WindowContext) {
@@ -262,17 +282,14 @@ fn clear_selection(cx: &mut WindowContext) {
 }
 
 fn select_current(cx: &mut WindowContext) {
-    // go left so selecting right selects current
-    normal_motion(Motion::Left, None, None, cx);
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
-                    // Clear previous selection
-                    let point = selection.head();
-                    selection.collapse_to(point, selection.goal);
-                    //select right
-                    selection.end = movement::right(map, selection.start)
+                    let cursor = selection.cursor(map);
+                    selection.start = cursor;
+                    selection.end = cursor.next_char(map).map_or(cursor, |(_, next)| next);
+                    selection.reversed = false;
                 });
             });
         });
