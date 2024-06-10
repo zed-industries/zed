@@ -50,7 +50,7 @@ impl Mode {
 
 impl Default for Mode {
     fn default() -> Self {
-        Self::Normal
+        Self::HelixNormal
     }
 }
 
@@ -104,6 +104,7 @@ pub struct EditorState {
 
     pub selected_register: Option<char>,
     pub search: SearchState,
+    pub hx_return_selection: Option<Vec<Range<editor::Anchor>>>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -245,9 +246,12 @@ impl EditorState {
                     true
                 }
             }
-            Mode::Normal | Mode::Replace | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                false
-            }
+            Mode::Normal
+            | Mode::HelixNormal
+            | Mode::Replace
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock => false,
         }
     }
 

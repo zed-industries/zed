@@ -147,13 +147,17 @@ where
                         ranges.push(selection.start..selection.end);
                         cursor_positions.push(selection.start..selection.start);
                     }
+                    Mode::HelixNormal => {
+                        ranges.push(selection.start..selection.end);
+                        cursor_positions.push(selection.start..selection.end);
+                    }
                     Mode::VisualBlock => {
                         ranges.push(selection.start..selection.end);
                         if cursor_positions.len() == 0 {
                             cursor_positions.push(selection.start..selection.start);
                         }
                     }
-                    Mode::Insert | Mode::Normal | Mode::Replace | Mode::HelixNormal => {
+                    Mode::Insert | Mode::Normal | Mode::Replace => {
                         let start = selection.start;
                         let mut end = start;
                         for _ in 0..count {
@@ -186,7 +190,8 @@ where
                 })
             });
         });
-        vim.switch_mode(Mode::Normal, true, cx)
+        // FIXME: breaks vim
+        vim.switch_mode(Mode::HelixNormal, true, cx)
     })
 }
 

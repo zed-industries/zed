@@ -1,13 +1,33 @@
-## Other bugs
+## TODOS
+- [-] fix enter insert mode and exiting insert mode moving the cursor.
+  - [ ] fix updating the selection in append mode
+- [x] fix xc on multi line selection
+  - [ ] figure out how to auto indent on xc when full line is selected
+- [ ] fix xp
+- [x] correctly handle xd and xc (unable to nuke the end of line character)
+- [ ] d doesn't leave behind selection (so multiple ds doesnt work together)
+- [ ] fix ge
+- [ ] fix gd on word selection (extra space at end is selected)
+- [ ] fix search (how to select the search word properly, new selections are always zero sized)
 - [ ] mouse click sets cursor incorrectly
 - [ ] document highlight is broken (lsp protocol only deals with bar cursor not block cursor)
 - [ ] fix the selection goals
 - [ ] w and soft wrap has infinite loop bugs
 - [ ] w is wrong when cursor is at end of the line
+- [ ] keep select even when entering insert mode and leave insert mode
+- [ ] `u` undo is incorrect
+- [ ] w is wrong at end of file
+- [ ] b is wrong at start of file
+- [ ] preserve selection after undo
+- [x] handle newlines in x is horrible!
+- [ ] x is not as same helix
+- [ ] fix status status showing line and column is incorrect :/
+- [ ] everything is broken on EOF
 
 ## Major changes
 
 keep track of selections in undo history
+selection mode (helix visual mode)
 
 ### Movement
 
@@ -51,39 +71,39 @@ x = done
 
 ### Changes
 
-| Key         | Description                                                          | Command                   |
-| -----       | -----------                                                          | -------                   |
-| `r`         | Replace with a character                                             | `replace`                 |
-| `R`         | Replace with yanked text                                             | `replace_with_yanked`     |
-| `~`         | Switch case of the selected text                                     | `switch_case`             |
-| `` ` ``     | Set the selected text to lower case                                  | `switch_to_lowercase`     |
-| `` Alt-` `` | Set the selected text to upper case                                  | `switch_to_uppercase`     |
-| `i`         | Insert before selection                                              | `insert_mode`             |
-| `a`         | Insert after selection (append)                                      | `append_mode`             |
-| `I`         | Insert at the start of the line                                      | `insert_at_line_start`    |
-| `A`         | Insert at the end of the line                                        | `insert_at_line_end`      |
-| `o`         | Open new line below selection                                        | `open_below`              |
-| `O`         | Open new line above selection                                        | `open_above`              |
-| `.`         | Repeat last insert                                                   | N/A                       |
-| `u`         | Undo change                                                          | `undo`                    |
-| `U`         | Redo change                                                          | `redo`                    |
-| `Alt-u`     | Move backward in history                                             | `earlier`                 |
-| `Alt-U`     | Move forward in history                                              | `later`                   |
-| `y`         | Yank selection                                                       | `yank`                    |
-| `p`         | Paste after selection                                                | `paste_after`             |
-| `P`         | Paste before selection                                               | `paste_before`            |
-| `"` `<reg>` | Select a register to yank to or paste from                           | `select_register`         |
-| `>`         | Indent selection                                                     | `indent`                  |
-| `<`         | Unindent selection                                                   | `unindent`                |
-| `=`         | Format selection (**LSP**)                                           | `format_selections`       |
-| `d`         | Delete selection                                                     | `delete_selection`        |
-| `Alt-d`     | Delete selection, without yanking                                    | `delete_selection_noyank` |
-| `c`         | Change selection (delete and enter insert mode)                      | `change_selection`        |
-| `Alt-c`     | Change selection (delete and enter insert mode, without yanking)     | `change_selection_noyank` |
-| `Ctrl-a`    | Increment object (number) under cursor                               | `increment`               |
-| `Ctrl-x`    | Decrement object (number) under cursor                               | `decrement`               |
-| `Q`         | Start/stop macro recording to the selected register (experimental)   | `record_macro`            |
-| `q`         | Play back a recorded macro from the selected register (experimental) | `replay_macro`            |
+| Key             | Description                                                          | Command                   |
+| -----           | -----------                                                          | -------                   |
+| [x] `r`         | Replace with a character                                             | `replace`                 |
+| [ ] `R`         | Replace with yanked text                                             | `replace_with_yanked`     |
+| [x] `~`         | Switch case of the selected text                                     | `switch_case`             |
+| [x] `` ` ``     | Set the selected text to lower case                                  | `switch_to_lowercase`     |
+| [x] `` Alt-` `` | Set the selected text to upper case                                  | `switch_to_uppercase`     |
+| [x] `i`         | Insert before selection                                              | `insert_mode`             |
+| [x] `a`         | Insert after selection (append)                                      | `append_mode`             |
+| [x] `I`         | Insert at the start of the line                                      | `insert_at_line_start`    |
+| [x] `A`         | Insert at the end of the line                                        | `insert_at_line_end`      |
+| [x] `o`         | Open new line below selection                                        | `open_below`              |
+| [x] `O`         | Open new line above selection                                        | `open_above`              |
+| [ ] `.`         | Repeat last insert                                                   | N/A                       |
+| [x] `u`         | Undo change                                                          | `undo`                    |
+| [x] `U`         | Redo change                                                          | `redo`                    |
+| [ ] `Alt-u`     | Move backward in history                                             | `earlier`                 |
+| [ ] `Alt-U`     | Move forward in history                                              | `later`                   |
+| [ ] `y`         | Yank selection                                                       | `yank`                    |
+| [ ] `p`         | Paste after selection                                                | `paste_after`             |
+| [ ] `P`         | Paste before selection                                               | `paste_before`            |
+| [ ] `"` `<reg>` | Select a register to yank to or paste from                           | `select_register`         |
+| [ ] `>`         | Indent selection                                                     | `indent`                  |
+| [ ] `<`         | Unindent selection                                                   | `unindent`                |
+| [ ] `=`         | Format selection (**LSP**)                                           | `format_selections`       |
+| [x] `d`         | Delete selection                                                     | `delete_selection`        |
+| [ ] `Alt-d`     | Delete selection, without yanking                                    | `delete_selection_noyank` |
+| [x] `c`         | Change selection (delete and enter insert mode)                      | `change_selection`        |
+| [ ] `Alt-c`     | Change selection (delete and enter insert mode, without yanking)     | `change_selection_noyank` |
+| [ ] `Ctrl-a`    | Increment object (number) under cursor                               | `increment`               |
+| [ ] `Ctrl-x`    | Decrement object (number) under cursor                               | `decrement`               |
+| [ ] `Q`         | Start/stop macro recording to the selected register (experimental)   | `record_macro`            |
+| [ ] `q`         | Play back a recorded macro from the selected register (experimental) | `replay_macro`            |
 
 #### Shell
 

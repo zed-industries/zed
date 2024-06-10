@@ -787,6 +787,7 @@ pub fn load_default_keymap(cx: &mut AppContext) {
     if HelixModeSetting::get_global(cx).0 {
         KeymapFile::load_asset("keymaps/helix.json", cx).unwrap();
     } else if VimModeSetting::get_global(cx).0 {
+        panic!("please enable helix mode!!!!");
         KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
     }
 
