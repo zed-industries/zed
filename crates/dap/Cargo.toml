@@ -8,10 +8,6 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
-[lib]
-path = "src/dap.rs"
-doctest = false
-
 [dependencies]
 anyhow.workspace = true
 dap = { git = "https://github.com/sztomi/dap-rs", branch = "main" }

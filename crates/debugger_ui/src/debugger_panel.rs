@@ -1,4 +1,10 @@
 use anyhow::Result;
+use dap::{
+    client::{Client, TransportType},
+    requests::{Disconnect, Initialize, InitializeArguments},
+    transport::Payload,
+};
+use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
     View, ViewContext, WeakView,
@@ -6,8 +12,8 @@ use gpui::{
 use ui::{
     div, h_flex,
     prelude::{IntoElement, Pixels, WindowContext},
-    px, ButtonCommon, Element, IconButton, IconName, ParentElement, Render, Styled, Tooltip,
-    VisualContext,
+    px, ButtonCommon, Clickable, Element, IconButton, IconName, ParentElement, Render, Styled,
+    Tooltip, VisualContext,
 };
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -22,16 +28,22 @@ pub struct DebugPanel {
     pub active: bool,
     pub focus_handle: FocusHandle,
     pub size: Pixels,
+    debug_client: (Client, UnboundedReceiver<Payload>),
 }
 
 impl DebugPanel {
-    pub fn new(position: DockPosition, cx: &mut WindowContext) -> Self {
+    pub fn new(
+        position: DockPosition,
+        debug_client: (Client, UnboundedReceiver<Payload>),
+        cx: &mut WindowContext,
+    ) -> Self {
         Self {
             position,
             zoomed: false,
             active: false,
             focus_handle: cx.focus_handle(),
             size: px(300.),
+            debug_client,
         }
     }
 
@@ -39,9 +51,53 @@ impl DebugPanel {
         workspace: WeakView<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> Result<View<Self>> {
-        workspace.update(&mut cx, |_, cx| {
-            cx.new_view(|cx| DebugPanel::new(DockPosition::Bottom, cx))
-        })
+        let mut cx = cx.clone();
+        let debug_client = Client::new(
+            TransportType::TCP,
+            "python3",
+            vec![
+                "-m",
+                "debugpy",
+                "--listen",
+                "localhost:5668",
+                "--wait-for-client",
+                "test.py",
+            ],
+            None,
+            &mut cx,
+        )
+        .await;
+
+        if let Ok(mut debug_client) = debug_client {
+            let mut cx = cx.clone();
+
+            let args = dap::requests::InitializeArguments {
+                client_id: Some("hx".to_owned()),
+                client_name: Some("helix".to_owned()),
+                adapter_id: "debugpy".into(),
+                locale: Some("en-us".to_owned()),
+                lines_start_at_one: Some(true),
+                columns_start_at_one: Some(true),
+                path_format: Some("path".to_owned()),
+                supports_variable_type: Some(true),
+                supports_variable_paging: Some(false),
+                supports_run_in_terminal_request: Some(false),
+                supports_memory_references: Some(false),
+                supports_progress_reporting: Some(false),
+                supports_invalidated_event: Some(false),
+            };
+
+            debug_client.0.request::<Initialize>(args).await;
+
+            debug_client.0.request::<Disconnect>(None).await;
+
+            workspace.update(&mut cx, |_, cx| {
+                cx.new_view(|cx| DebugPanel::new(DockPosition::Bottom, debug_client, cx))
+            })
+        } else {
+            dbg!(&debug_client);
+            Err(anyhow::anyhow!("Failed to start debug client"))
+        }
     }
 }
 
@@ -118,6 +174,9 @@ impl Render for DebugPanel {
                     .gap_2()
                     .child(
                         IconButton::new("debug-play", IconName::Play)
+                            // .on_click(|_, cx| {
+                            //     self.debug_client.0.request("continue", None);
+                            // })
                             .tooltip(move |cx| Tooltip::text("Start debug", cx)),
                     )
                     .child(

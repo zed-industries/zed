@@ -3211,19 +3211,12 @@ dependencies = [
  "dap 0.1.0",
  "db",
  "editor",
+ "futures 0.3.28",
  "gpui",
  "serde",
  "serde_derive",
  "ui",
  "workspace",
-]
-
-[[package]]
-name = "debuggers"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dap 0.1.0",
 ]
 
 [[package]]
