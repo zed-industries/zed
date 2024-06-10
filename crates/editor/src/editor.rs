@@ -4832,23 +4832,6 @@ impl Editor {
         })
     }
 
-    pub fn render_overlays(
-        &self,
-        visible_display_row_range: Range<DisplayRow>,
-    ) -> Vec<(DisplayPoint, f32, AnyElement)> {
-        let Some(style) = self.style.as_ref() else {
-            return vec![];
-        };
-        // let mut new_style = style.clone();
-        // new_style.text.font_size *= 0.8;
-        let overlays = &self.overlay_map;
-        let iter = overlays
-            .iter()
-            .flat_map(|(_, list)| list.iter())
-            .filter_map(move |overlay| overlay.render(style, visible_display_row_range.clone()));
-        iter.collect_vec()
-    }
-
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<ContextMenu> {
         cx.notify();
         self.completion_tasks.clear();

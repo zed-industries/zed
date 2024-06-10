@@ -2403,15 +2403,16 @@ impl EditorElement {
         visible_display_row_range: Range<DisplayRow>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_layouts: &[LineWithInvisibles],
+        text_style: &TextStyle,
         cx: &mut WindowContext,
-    ) -> bool {
-        let overlays = self.editor.update(cx, |editor, _| {
-            editor.render_overlays(visible_display_row_range.clone())
-        });
-        if overlays.is_empty() {
-            return false;
-        };
-
+    ) {
+        let overlay_map = self
+            .editor
+            .update(cx, |editor, _| mem::take(&mut editor.overlay_map));
+        let overlays = overlay_map
+            .iter()
+            .flat_map(|(_, list)| list.iter())
+            .filter_map(|overlay| overlay.render(text_style, visible_display_row_range.clone()));
         let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
 
         for (anchor, offset, mut overlay) in overlays {
@@ -2427,7 +2428,9 @@ impl EditorElement {
 
             cx.defer_draw(overlay, origin, 1);
         }
-        true
+
+        self.editor
+            .update(cx, move |editor, _| editor.overlay_map = overlay_map);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4956,12 +4959,13 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let _ = self.layout_overlays(
+                    self.layout_overlays(
                         content_origin,
                         line_height,
                         start_row..end_row,
                         scroll_pixel_position,
                         &line_layouts,
+                        &style.text,
                         cx,
                     );
 
