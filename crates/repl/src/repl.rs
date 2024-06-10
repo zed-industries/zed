@@ -115,7 +115,7 @@ pub struct RuntimeManager {
     // todo!(): Next
     // To reduce the number of open tasks and channels we have, let's feed the response
     // messages by ID over to the paired ExecutionView
-    execution_views_by_id: HashMap<String, View<ExecutionView>>,
+    _execution_views_by_id: HashMap<String, View<ExecutionView>>,
 }
 
 #[derive(Debug, Clone)]
@@ -128,7 +128,7 @@ struct EditorRuntimeState {
 #[derive(Debug, Clone)]
 struct EditorRuntimeBlock {
     code_range: Range<Anchor>,
-    execution_id: String,
+    _execution_id: String,
     block_id: BlockId,
     _execution_view: View<ExecutionView>,
 }
@@ -140,7 +140,7 @@ impl RuntimeManager {
             runtime_specifications: Default::default(),
             instances: Default::default(),
             editors: Default::default(),
-            execution_views_by_id: Default::default(),
+            _execution_views_by_id: Default::default(),
         }
     }
 
@@ -234,7 +234,7 @@ impl RuntimeManager {
 
         cx.spawn(|_, cx| async move {
             let running_kernel =
-                RunningKernel::new(runtime_specification, entity_id.clone(), fs.clone(), cx);
+                RunningKernel::new(runtime_specification, entity_id, fs.clone(), cx);
 
             let running_kernel = running_kernel.await?;
 
@@ -259,7 +259,7 @@ impl RuntimeManager {
                     .await
                 {
                     Ok(_) => {}
-                    Err(err) => {
+                    Err(_err) => {
                         break;
                     }
                 };
@@ -470,7 +470,7 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
             code_range: anchor_range.clone(),
             block_id,
             _execution_view: execution_view.clone(),
-            execution_id: Default::default(),
+            _execution_id: Default::default(),
         };
 
         editor_runtime_state

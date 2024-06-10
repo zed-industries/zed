@@ -9,7 +9,6 @@ use smol::{net::TcpListener, process::Command};
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::{path::PathBuf, sync::Arc};
-use util::{ResultExt as _, TryFutureExt};
 
 #[derive(Debug)]
 pub struct Request {
