@@ -75,7 +75,7 @@ jobs:
       - uses: bufbuild/buf-breaking-action@v1
         with:
           input: "crates/proto/proto/"
-          against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/rpc/proto/"
+          against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
 
   macos_tests:
     timeout-minutes: 60
