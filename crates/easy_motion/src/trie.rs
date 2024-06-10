@@ -58,55 +58,6 @@ impl<T> Trie<T> {
         self.len
     }
 
-    // returns a list of all permutations
-    #[allow(dead_code)]
-    pub fn trie_to_perms(&self) -> Vec<(String, &T)> {
-        let mut perms = Vec::new();
-        let mut path = String::new();
-        self.trie_to_perms_rec(&self.root, &mut path, &mut perms, false);
-        return perms;
-    }
-
-    fn trie_to_perms_rec<'a>(
-        &'a self,
-        node: &'a TrieNode<T>,
-        path: &mut String,
-        perms: &mut Vec<(String, &'a T)>,
-        reverse: bool,
-    ) {
-        match node {
-            TrieNode::Leaf(val) => {
-                perms.push((path.clone(), &val));
-                return;
-            }
-            TrieNode::Node(list) => {
-                if reverse {
-                    for (i, child) in list.into_iter().enumerate().rev() {
-                        self.trie_to_perms_rec_loop(i, child, path, perms, reverse);
-                    }
-                    return;
-                }
-                for (i, child) in list.into_iter().enumerate() {
-                    self.trie_to_perms_rec_loop(i, child, path, perms, reverse);
-                }
-            }
-        }
-    }
-
-    fn trie_to_perms_rec_loop<'a>(
-        &'a self,
-        i: usize,
-        node: &'a TrieNode<T>,
-        path: &mut String,
-        perms: &mut Vec<(String, &'a T)>,
-        reverse: bool,
-    ) {
-        let character = self.keys.chars().nth(i).unwrap();
-        path.push(character);
-        self.trie_to_perms_rec(node, path, perms, reverse);
-        path.pop();
-    }
-
     pub fn trim(&mut self, character: char) -> TrimResult<&T> {
         let node = match &mut self.root {
             TrieNode::Leaf(_) => {
@@ -132,6 +83,38 @@ impl<T> Trie<T> {
 
     pub fn iter(&self) -> TrieIterator<T> {
         TrieIterator::new(self)
+    }
+
+    // returns a list of all permutations via DFS
+    #[cfg(test)]
+    pub fn trie_to_perms(&self) -> Vec<(String, &T)> {
+        let mut perms = Vec::new();
+        let mut path = String::new();
+        self.trie_to_perms_rec(&self.root, &mut path, &mut perms);
+        return perms;
+    }
+
+    #[cfg(test)]
+    fn trie_to_perms_rec<'a>(
+        &'a self,
+        node: &'a TrieNode<T>,
+        path: &mut String,
+        perms: &mut Vec<(String, &'a T)>,
+    ) {
+        match node {
+            TrieNode::Leaf(val) => {
+                perms.push((path.clone(), &val));
+                return;
+            }
+            TrieNode::Node(list) => {
+                for (i, child) in list.into_iter().enumerate() {
+                    let character = self.keys.chars().nth(i).unwrap();
+                    path.push(character);
+                    self.trie_to_perms_rec(child, path, perms);
+                    path.pop();
+                }
+            }
+        }
     }
 }
 
