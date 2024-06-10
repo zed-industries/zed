@@ -1,5 +1,3 @@
-use crate::{ErrorCode, ErrorCodeExt, ErrorExt, RpcError};
-
 use super::{
     proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, PeerId, RequestMessage},
     Connection,
@@ -12,6 +10,7 @@ use futures::{
     FutureExt, SinkExt, Stream, StreamExt, TryFutureExt,
 };
 use parking_lot::{Mutex, RwLock};
+use proto::{ErrorCode, ErrorCodeExt, ErrorExt, RpcError};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{
     fmt, future,
@@ -376,9 +375,12 @@ impl Peer {
                             "incoming stream response: requester resumed"
                         );
                     } else {
-                        let message_type =
-                            proto::build_typed_envelope(connection_id, received_at, incoming)
-                                .map(|p| p.payload_type_name());
+                        let message_type = proto::build_typed_envelope(
+                            connection_id.into(),
+                            received_at,
+                            incoming,
+                        )
+                        .map(|p| p.payload_type_name());
                         tracing::warn!(
                             %connection_id,
                             message_id,
@@ -391,16 +393,15 @@ impl Peer {
                     None
                 } else {
                     tracing::trace!(%connection_id, message_id, "incoming message: received");
-                    proto::build_typed_envelope(connection_id, received_at, incoming).or_else(
-                        || {
+                    proto::build_typed_envelope(connection_id.into(), received_at, incoming)
+                        .or_else(|| {
                             tracing::error!(
                                 %connection_id,
                                 message_id,
                                 "unable to construct a typed envelope"
                             );
                             None
-                        },
-                    )
+                        })
                 }
             }
         });
@@ -674,7 +675,7 @@ impl Peer {
         &self,
         envelope: Box<dyn AnyTypedEnvelope>,
     ) -> Result<()> {
-        let connection = self.connection_state(envelope.sender_id())?;
+        let connection = self.connection_state(envelope.sender_id().into())?;
         let response = ErrorCode::Internal
             .message(format!(
                 "message {} was not handled",

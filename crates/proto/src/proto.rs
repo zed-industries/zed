@@ -1,9 +1,14 @@
 #![allow(non_snake_case)]
 
+pub mod error;
 mod macros;
 mod typed_envelope;
 
+pub use error::*;
+pub use typed_envelope::*;
+
 use collections::HashMap;
+pub use prost::Message;
 use serde::Serialize;
 use std::any::{Any, TypeId};
 use std::time::Instant;
@@ -14,7 +19,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use std::{fmt, mem};
-pub use typed_envelope::*;
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
