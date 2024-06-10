@@ -771,7 +771,6 @@ mod tests {
             peer: Arc<Peer>,
         ) -> Result<()> {
             while let Some(envelope) = messages.next().await {
-                dbg!(envelope.payload_type_name());
                 let envelope = envelope.into_any();
                 if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Ping>>() {
                     let receipt = envelope.receipt();
