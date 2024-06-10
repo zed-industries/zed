@@ -68,6 +68,7 @@ members = [
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
+    "crates/proto",
     "crates/quick_action_bar",
     "crates/recent_projects",
     "crates/refineable",
