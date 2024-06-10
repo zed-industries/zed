@@ -18,7 +18,7 @@ You agree that You shall not: (a) exceed the scope of the licenses granted in Se
 
 ### 2.3. Open Source Software
 
-Zed makes certain versions of the Editor and related software available at the Zed Github Repository: https://github.com/zed-industries/zed (the “Repo”). Your use of such software is subject to the open source software licenses declared in the Repo.
+Zed makes certain versions of the Editor and related software available at the Zed GitHub Repository: https://github.com/zed-industries/zed (the “Repo”). Your use of such software is subject to the open source software licenses declared in the Repo.
 
 ## 3. TERMS APPLICABLE TO THE NETWORK BASED SERVICE
 
