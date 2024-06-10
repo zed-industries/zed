@@ -1,20 +1,20 @@
 use std::{fmt::Debug, mem};
 
 // Represents the matches for easy motion in a trie.
-// Nodes store their leaves in an array with the index of that array corresponding
-// to the character for that Node
+// Nodes store their leaves in an array with the indices of that array corresponding
+// to indices of the key string
 
-// ex: keys: "abc", root: node { [ leaf_1, leaf_2 ] }
+// ex: keys: "abc", root: Node { Leaf, Leaf }
 // would have leaves with strings of "a" and "b" respectively
 
-// ex: keys: "abc", root: node { [ leaf_1, leaf_2, node { [leaf_3, leaf_4] } ] }
-// would have leaves with strings of "a", "b", "ca", and "cb" respectively
+// ex: keys: "abc", root: Node { Leaf, Leaf, Node { Leaf, Leaf } }
+// would give permutations of "a", "b", "ca", and "cb" respectively
 
-// When new layers are necessary, the deepest layers are assigned to the latest indices first
-// so the most preferred keys are kept as short as possible, which will correspond to the closest matches
+// When new layers are necessary, new layers are assigned to the latest indices first
+// so the most preferred keys are kept as short as possible
 
 // notes: There will only ever be two layers separated by one.
-// Upper layer always refers to layer with a smaller depth.
+// "upper layer" always refers to layer with a smaller depth.
 // Ex: in the above leaf_count=4 example the "a" and "b" leaves are in the upper layer
 // while the other two are in the lower
 
@@ -163,16 +163,14 @@ fn upper_layer_count(keys_len: usize, leaf_count: usize, max_trie_depth: usize) 
     // count of elements we are placing in new lowest layer
     let diff = leaf_count - lower_layer_count;
 
-    // when we need to create the next permutation with a leaf we create a node
-    // with two leaves
+    // when we start adding leaves to a node which has none two leaves will be created.
     // ex ... b   c     next perm    ...  b      c
     //    ...   a b c     --->       ... a b   a b c
-    // extra_leaves = 2
     let extra_leaves = (diff - 1) / (keys_len - 1) + 1;
 
     // higher_count = diff + extra_leaves;
     // lower_count = leaf_count - higher_count;
-    // simplified
+    // >> simplified
     lower_layer_count - extra_leaves
 }
 
@@ -243,7 +241,7 @@ impl<TItem, TOut, F: Fn(usize, TItem) -> TOut> TrieBuilder<TItem, TOut, F> {
                 self.current_leaf_count += 1;
                 continue;
             } else if self.current_leaf_count == self.upper_node_count {
-                // when the all the upper leaves have been assigned the first node will not necessarily be full
+                // the first node on the upper depth which has leaves will not necessarily be full
                 let lower_leaf_count = self.total_leaf_count - self.upper_node_count;
                 let modulo = lower_leaf_count % self.keys.len();
                 let len = if modulo == 0 { self.keys.len() } else { modulo };
@@ -252,6 +250,7 @@ impl<TItem, TOut, F: Fn(usize, TItem) -> TOut> TrieBuilder<TItem, TOut, F> {
                 self.current_leaf_count += len;
                 new_vec.push(new_node);
             } else {
+                // all the nodes after that will be full though
                 let (node, new_values) =
                     self.node_from_iter(curr_depth + 1, values, self.keys.len());
                 new_vec.push(node);
