@@ -2,15 +2,23 @@
 - [ ] mouse click sets cursor incorrectly
 - [ ] document highlight is broken (lsp protocol only deals with bar cursor not block cursor)
 - [ ] fix the selection goals
+- [ ] w and soft wrap has infinite loop bugs
+- [ ] w is wrong when cursor is at end of the line
+
+## Major changes
+
+keep track of selections in undo history
 
 ### Movement
 
 > NOTE: Unlike Vim, `f`, `F`, `t` and `T` are not confined to the current line.
 
 index
+```
 x = done
 . = done but slightly incorrect
 - = left for later
+```
 
 
 | Key                       | Description                                        | Command                     |
@@ -29,7 +37,7 @@ x = done
 | [x] `f`                   | Find next char                                     | `find_next_char`            |
 | [x] `T`                   | Find 'till previous char                           | `till_prev_char`            |
 | [x] `F`                   | Find previous char                                 | `find_prev_char`            |
-| [x] `G`                   | Go to line number `<n>`                            | `goto_line`                 |
+| [.] `G`                   | Go to line number `<n>`                            | `goto_line`                 |
 | [-] `Alt-.`               | Repeat last motion (`f`, `t`, `m`, `[` or `]`)     | `repeat_last_motion`        |
 | [x] `Home`                | Move to the start of the line                      | `goto_line_start`           |
 | [.] `End`                 | Move to the end of the line                        | `goto_line_end`             |
@@ -200,8 +208,8 @@ Jumps to various locations.
 | [x] `i`   | Go to implementation (**LSP**)                   | `goto_implementation`      |
 | [x] `a`   | Go to the last accessed/alternate file           | `goto_last_accessed_file`  |
 | [ ] `m`   | Go to the last modified/alternate file           | `goto_last_modified_file`  |
-| [ ] `n`   | Go to next buffer                                | `goto_next_buffer`         |
-| [ ] `p`   | Go to previous buffer                            | `goto_previous_buffer`     |
+| [x] `n`   | Go to next buffer                                | `goto_next_buffer`         |
+| [x] `p`   | Go to previous buffer                            | `goto_previous_buffer`     |
 | [x] `.`   | Go to last modification in current file          | `goto_last_modification`   |
 | [x] `j`   | Move down textual (instead of visual) line       | `move_line_down`           |
 | [x] `k`   | Move up textual (instead of visual) line         | `move_line_up`             |

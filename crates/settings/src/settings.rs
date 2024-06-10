@@ -48,6 +48,10 @@ pub fn vim_keymap() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("keymaps/vim.json")
 }
 
+pub fn helix_keymap() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("keymaps/helix.json")
+}
+
 pub fn initial_user_settings_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_user_settings.json")
 }

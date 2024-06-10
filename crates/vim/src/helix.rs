@@ -7,6 +7,7 @@ use editor::{
 use gpui::actions;
 use language::{char_kind, CharKind, Selection};
 use log::error;
+use settings::Settings;
 use ui::{ViewContext, WindowContext};
 use workspace::Workspace;
 
@@ -18,7 +19,7 @@ use crate::{
     normal::normal_motion,
     utils::coerce_punctuation,
     visual::visual_motion,
-    Vim,
+    HelixModeSetting, Vim,
 };
 
 actions!(helix, [SelectNextLine,]);
