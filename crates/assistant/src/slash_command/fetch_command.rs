@@ -11,6 +11,7 @@ use language::LspAdapterDelegate;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ContentType {
     Html,
     Plaintext,
