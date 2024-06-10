@@ -2779,6 +2779,53 @@ impl Editor {
         false
     }
 
+    fn linked_editing_ranges_for(
+        &self,
+        selection: Range<text::Anchor>,
+        cx: &mut AppContext,
+    ) -> Option<HashMap<Model<Buffer>, Vec<Range<text::Anchor>>>> {
+        if self.linked_edit_ranges.is_empty() {
+            return None;
+        }
+        let ((base_range, linked_ranges), buffer_snapshot, buffer) = selection
+            .end
+            .buffer_id
+            .and_then(|end_buffer_id| {
+                if selection.start.buffer_id != Some(end_buffer_id) {
+                    return None;
+                }
+                let buffer = self.buffer.read(cx).buffer(end_buffer_id)?;
+                let snapshot = buffer.read(cx).snapshot();
+                self.linked_edit_ranges
+                    .get(end_buffer_id, selection.start..selection.end, &snapshot)
+                    .map(|ranges| (ranges, snapshot, buffer))
+            })
+            .unwrap();
+
+        use text::ToOffset as TO;
+        // find offset from the start of current range to current cursor position
+        let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
+
+        let start_offset = TO::to_offset(&selection.start, &buffer_snapshot);
+        let start_difference = start_offset - start_byte_offset;
+        let end_offset = TO::to_offset(&selection.end, &buffer_snapshot);
+        let end_difference = end_offset - start_byte_offset;
+        // Current range has associated linked ranges.
+        let mut linked_edits = HashMap::<_, Vec<_>>::default();
+        for range in linked_ranges.iter() {
+            let start_offset = TO::to_offset(&range.start, &buffer_snapshot);
+            let end_offset = start_offset + end_difference;
+            let start_offset = start_offset + start_difference;
+            let start = buffer_snapshot.anchor_after(start_offset);
+            let end = buffer_snapshot.anchor_after(end_offset);
+            linked_edits
+                .entry(buffer.clone())
+                .or_default()
+                .push(start..end);
+        }
+        Some(linked_edits)
+    }
+
     pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         let text: Arc<str> = text.into();
 
@@ -5082,44 +5129,36 @@ impl Editor {
                     if selection_start.buffer_id != selection_end.buffer_id {
                         continue;
                     }
-                    let Some(buffer_id) = selection_start.buffer_id else {
-                        continue;
-                    };
-                    let Some(buffer) = this.buffer.read(cx).buffer(buffer_id) else {
-                        continue;
-                    };
-                    let buffer_snapshot = buffer.read(cx).text_snapshot();
-
-                    if let Some((base_range, associated_ranges)) = this.linked_edit_ranges.get(
-                        buffer_id,
-                        selection_start..selection_end,
-                        &buffer_snapshot,
-                    ) {
-                        use text::ToOffset as TO;
-                        use text::ToPoint as TP;
-                        // find offset from the start of current range to current cursor position
-                        let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
-                        let start_offset = TO::to_offset(&selection_start, &buffer_snapshot);
-                        let start_difference = start_offset - start_byte_offset;
-                        let end_offset = TO::to_offset(&selection_end, &buffer_snapshot);
-                        let end_difference = end_offset - start_byte_offset;
-                        // Current range has associated linked ranges.
-                        for range in associated_ranges.iter() {
-                            let start_offset = TO::to_offset(&range.start, &buffer_snapshot);
-                            let end_offset = start_offset + end_difference;
-                            let start_offset = start_offset + start_difference - 1;
-                            let start_point = TP::to_point(&start_offset, &buffer_snapshot);
-                            let end_point = TP::to_point(&end_offset, &buffer_snapshot);
-
-                            linked_ranges
-                                .entry(buffer.clone())
-                                .or_default()
-                                .push((start_point..end_point, empty_str.clone()));
+                    if let Some(ranges) =
+                        this.linked_editing_ranges_for(selection_start..selection_end, cx)
+                    {
+                        for (buffer, entries) in ranges {
+                            linked_ranges.entry(buffer).or_default().extend(entries);
                         }
                     }
                 }
-                for (buffer, mut edits) in linked_ranges {
-                    edits.sort_by_key(|(range, _)| range.start);
+                for (buffer, edits) in linked_ranges {
+                    let snapshot = buffer.read(cx).snapshot();
+                    use text::ToPoint as TP;
+
+                    let edits = edits
+                        .into_iter()
+                        .map(|range| {
+                            let start = if range.start == range.end {
+                                let offset = text::ToOffset::to_offset(&range.start, &snapshot)
+                                    .saturating_sub(1);
+                                TP::to_point(&offset, &snapshot)
+                            } else {
+                                TP::to_point(&range.start, &snapshot)
+                            };
+
+                            (
+                                start..TP::to_point(&range.end, &snapshot),
+                                empty_str.clone(),
+                            )
+                        })
+                        .sorted_by_key(|(range, _)| range.start);
+
                     buffer.update(cx, |this, cx| {
                         this.edit(edits, None, cx);
                     })
