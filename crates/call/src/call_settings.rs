@@ -15,7 +15,7 @@ pub struct CallSettings {
 pub struct CallSettingsContent {
     /// Whether the microphone should be muted when joining a channel or a call.
     ///
-    /// Default: false
+    /// Default: true
     pub mute_on_join: Option<bool>,
 
     /// Whether your current project should be shared when joining an empty channel.
