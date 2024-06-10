@@ -1512,14 +1512,11 @@ impl Project {
 
     pub fn copy_external_entries(
         &self,
-        copy_to_entry_id: ProjectEntryId,
+        worktree: Model<Worktree>,
+        target_directory: PathBuf,
         external_paths: Vec<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ProjectEntryId>>> {
-        let Some(worktree) = self.worktree_for_entry(copy_to_entry_id, cx) else {
-            return Task::ready(Ok(Vec::new()));
-        };
-
         if !worktree.read(cx).is_local() {
             return Task::ready(Ok(Vec::new()));
         };
@@ -1527,7 +1524,7 @@ impl Project {
         cx.spawn(move |_, mut cx| async move {
             LocalWorktree::copy_external_entries(
                 worktree,
-                copy_to_entry_id,
+                target_directory,
                 external_paths,
                 true,
                 &mut cx,

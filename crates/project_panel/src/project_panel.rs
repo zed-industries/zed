@@ -1739,24 +1739,21 @@ impl ProjectPanel {
 
     fn drop_entry(
         &mut self,
-        external_paths: &ExternalPaths,
+        paths: &[PathBuf],
         entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut paths: Vec<Arc<Path>> = external_paths
-            .paths()
-            .to_owned()
+        let mut paths: Vec<Arc<Path>> = paths
             .into_iter()
-            .map(|path| Arc::from(path))
-            .collect::<Vec<_>>();
+            .map(|path| Arc::from(path.clone()))
+            .collect();
 
         let open_file_after_drop = paths.len() == 1 && paths[0].is_file();
 
-        let Some(target_path) = maybe!({
-            let target_worktree = self.project.read(cx).worktree_for_entry(entry_id, cx)?;
-            let mut target_path = target_worktree.read(cx).abs_path().to_path_buf();
-            target_path.push(&target_worktree.read(cx).entry_for_id(entry_id)?.path);
-            Some(target_path)
+        let Some((target_directory, worktree)) = maybe!({
+            let worktree = self.project.read(cx).worktree_for_entry(entry_id, cx)?;
+            let entry = worktree.read(cx).entry_for_id(entry_id)?;
+            Some((worktree.read(cx).absolutize(&entry.path).ok()?, worktree))
         }) else {
             return;
         };
@@ -1764,7 +1761,7 @@ impl ProjectPanel {
         let mut paths_to_replace = Vec::new();
         for path in &paths {
             if let Some(name) = path.file_name() {
-                let mut target_path = target_path.clone();
+                let mut target_path = target_directory.clone();
                 target_path.push(name);
                 if target_path.exists() {
                     paths_to_replace.push((name.to_string_lossy().to_string(), path.clone()));
@@ -1796,7 +1793,7 @@ impl ProjectPanel {
 
                 let task = this.update(&mut cx, |this, cx| {
                     this.project.update(cx, |project, cx| {
-                        project.copy_external_entries(entry_id, paths, cx)
+                        project.copy_external_entries(worktree, target_directory, paths, cx)
                     })
                 })?;
 
@@ -2068,7 +2065,7 @@ impl ProjectPanel {
             })
             .on_drop(
                 cx.listener(move |project_panel, external_paths: &ExternalPaths, cx| {
-                    project_panel.drop_entry(external_paths, entry_id, cx);
+                    project_panel.drop_entry(external_paths.paths(), entry_id, cx);
                     cx.stop_propagation();
                 }),
             )
