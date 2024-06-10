@@ -106,9 +106,10 @@ However, we realize that many distros have other priorities. We want to work wit
 To build & install the Flatpak package locally follow the steps below:
 
 1. Install Flatpak for your distribution as outlined [here](https://flathub.org/setup).
-2. Run the `script/flatpak/deps` script to install the required dependencies.
-3. Run `script/flatpak/bundle-flatpak`.
-4. Now the package has been installed and has a bundle available at `target/release/{app-id}.flatpak`.
+1. Run the `script/flatpak/deps` script to install the required dependencies.
+1. Run the `script/generate-licenses` script to generate licenses (required for flatpak bundle).
+1. Run `script/flatpak/bundle-flatpak`.
+1. Now the package has been installed and has a bundle available at `target/release/{app-id}.flatpak`.
 
 ## Troubleshooting
 
@@ -119,6 +120,11 @@ Before reporting the issue, make sure that you have the latest rustc version wit
 ### Cargo errors claiming that a dependency is using unstable features
 
 Try `cargo clean` and `cargo build`.
+
+### Flatpak bundle errors
+If `script/flatpak/bundle-flatpak` terminates with "flatpak-builder: command not found", you're missing the "flatpak-builder" program. You'll need to install it and re-run the bundle-flatpak script. If you receive a new error, your version of flatpak-builder may be out-of-date and you'll need to install a more recent version of flatpak-builder (consider building from source).
+>Error loading AppData file: AppData file /app/share/appdata/dev.zed.Zed-Dev.appdata.xml was not valid
+>Error: ERROR: appstream-compose failed: Child process exited with code 1
 
 ### Vulkan/GPU issues
 
