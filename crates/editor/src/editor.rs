@@ -10486,14 +10486,14 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn add_overlays<T: 'static>(
+    pub fn add_overlays_with_reserve<T: 'static>(
         &mut self,
         overlays: impl IntoIterator<Item = Overlay>,
-        len: usize,
+        reserve: usize,
         cx: &mut ViewContext<Self>,
     ) {
         let list = self.overlay_map.entry(TypeId::of::<T>()).or_default();
-        list.reserve_exact(len);
+        list.reserve_exact(reserve);
         list.extend(overlays);
         cx.notify();
     }

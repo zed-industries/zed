@@ -398,7 +398,7 @@ impl EasyMotion {
         len: usize,
         cx: &mut ViewContext<Editor>,
     ) {
-        let iter = trie_iter.map(|(seq, overlay)| {
+        let overlays = trie_iter.map(|(seq, overlay)| {
             let mut highlights = vec![(0..1, overlay.style)];
             if seq.len() > 1 {
                 highlights.push((
@@ -416,7 +416,7 @@ impl EasyMotion {
                 offset: 0.0,
             }
         });
-        editor.add_overlays::<Self>(iter, len, cx);
+        editor.add_overlays_with_reserve::<Self>(overlays, len, cx);
     }
 
     fn get_highlights(cx: &AppContext) -> (HighlightStyle, HighlightStyle, HighlightStyle) {
