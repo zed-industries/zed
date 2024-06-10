@@ -456,6 +456,7 @@ impl OutlinePanel {
                         .visible_entries
                         .iter()
                         .skip_while(|entry| entry.outlines_container().as_ref() != Some(container))
+                        .skip(1)
                         .next(),
                 }
                 .cloned()
@@ -518,8 +519,7 @@ impl OutlinePanel {
                         .visible_entries
                         .iter()
                         .rev()
-                        .skip_while(|entry| entry.outlines_container().as_ref() != Some(container))
-                        .next(),
+                        .find(|entry| entry.outlines_container().as_ref() == Some(container)),
                 }
                 .cloned()
                 .map(EntryOwned::Entry)
@@ -1104,6 +1104,7 @@ impl OutlinePanel {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn entry_element(
         &self,
         rendered_entry: EntryRef<'_>,
@@ -2072,4 +2073,5 @@ fn range_contains(
 }
 
 // TODO kb tests
+// TODO kb Enter does not work
 // TODO kb toggling and displaying in the tree is not working well enough
