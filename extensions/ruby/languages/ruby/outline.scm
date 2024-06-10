@@ -18,9 +18,3 @@
 (module
     "module" @context
     name: (_) @name) @item
-
-; Minitest/RSpec
-(call
-   method: (identifier) @run (#any-of? @run "describe" "context" "test")
-   arguments: (argument_list . (_) @name)
-) @item
