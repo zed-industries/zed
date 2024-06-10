@@ -4,3 +4,6 @@ rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
 
 [alias]
 xtask = "run --package xtask --"
+
+[target.x86_64-pc-windows-msvc]
+linker = "link.exe"
