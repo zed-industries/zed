@@ -93,4 +93,4 @@ This error can happen if you are using the "rust-lld.exe" linker. Consider tryin
 
 If you are using a global config, consider moving the Zed repository to a nested directory and add a `.cargo/config.toml` with a custom linker config in the parent directory.
 
-See this issue for more information https://github.com/zed-industries/zed/issues/12041
+See this issue for more information [#12041](https://github.com/zed-industries/zed/issues/12041)
