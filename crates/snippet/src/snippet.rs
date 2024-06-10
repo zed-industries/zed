@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use smallvec::SmallVec;
-use std::{collections::BTreeMap, ops::Range};
+use std::{collections::BTreeMap, default, ops::Range};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snippet {
@@ -83,6 +83,10 @@ fn parse_tabstop<'a>(
         tabstop_index = index;
         source = rest;
 
+        if source.starts_with("|") {
+            source = parse_choices(&source[1..], text)?;
+        }
+
         if source.starts_with(':') {
             source = parse_snippet(&source[1..], true, text, tabstops)?;
         }
@@ -114,6 +118,22 @@ fn parse_int(source: &str) -> Result<(usize, &str)> {
     }
     let (prefix, suffix) = source.split_at(len);
     Ok((prefix.parse()?, suffix))
+}
+
+fn parse_choices<'a>(source: &'a str, text: &mut String) -> Result<&'a str> {
+    if let Some(default_choice_len) = source.find(|c: char| c == ',') {
+        text.push_str(source.split_at(default_choice_len).0);
+    }
+
+    let Some(len) = source.find(|c: char| c == '|') else {
+        return Err(anyhow!(
+            "expected snippet placeholder choices to have closing pipe-character '|'"
+        ));
+    };
+
+    // TODO: Support enumeration of choices
+    // The code below is skipping over the enumeration of choices
+    Ok(source.split_at(len + 1).1)
 }
 
 #[cfg(test)]
@@ -167,6 +187,19 @@ mod tests {
             tabstops(&snippet),
             &[vec![3..6], vec![11..15], vec![15..15]]
         );
+    }
+
+    #[test]
+    fn test_snippet_with_choice_placeholders() {
+        let snippet = Snippet::parse(
+            "${1:spi_inst}: entity ${2|work,default|}.spi\n generic map(\n    N => ${4:N}\n)\n port map(\n    clk => ${5:clk},\n    reset => ${6:reset},\n    sck => ${7:sck},\n    sdi => ${8:sdi},\n    sdo => ${9:sdo},\n    start => ${10:start},\n    busy => ${11:busy},\n    length => ${12:length},\n    data_tx => ${13:data_tx},\n    data_rx => ${14:data_rx}\n);"
+        ).unwrap();
+
+        let snippet = Snippet::parse("type ${1|i32, u32|} = $2")
+            .expect("Should be able to unpack choice placeholders");
+
+        assert_eq!(snippet.text, "type i32 = ");
+        assert_eq!(tabstops(&snippet), &[vec![5..8], vec![11..11],]);
     }
 
     #[test]
