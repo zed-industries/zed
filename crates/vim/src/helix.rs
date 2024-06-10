@@ -118,13 +118,13 @@ fn next_word_selection_update(
     motion: Motion,
 ) {
     let (a, b);
-    let next_word_fn: &dyn Fn(DisplayPoint) -> DisplayPoint = match motion {
+    let next_word_fn: &dyn Fn(DisplayPoint) -> DisplayPoint = match &motion {
         Motion::NextWordStart { ignore_punctuation } => {
-            a = |point| next_word_start(map, point, false, 1);
+            a = |point| next_word_start(map, point, *ignore_punctuation, 1);
             &a
         }
         Motion::NextWordEnd { ignore_punctuation } => {
-            b = |point| next_word_end(map, point, false, 1, true);
+            b = |point| next_word_end(map, point, *ignore_punctuation, 1, true);
             &b
         }
         _ => unreachable!(),
@@ -172,13 +172,13 @@ fn prev_word_selection_update(
     motion: Motion,
 ) {
     let (a, b);
-    let prev_word_fn: &dyn Fn(DisplayPoint) -> DisplayPoint = match motion {
+    let prev_word_fn: &dyn Fn(DisplayPoint) -> DisplayPoint = match &motion {
         Motion::PreviousWordStart { ignore_punctuation } => {
-            a = |point| previous_word_start(map, point, false, 1);
+            a = |point| previous_word_start(map, point, *ignore_punctuation, 1);
             &a
         }
         Motion::PreviousWordEnd { ignore_punctuation } => {
-            b = |point| previous_word_end(map, point, false, 1);
+            b = |point| previous_word_end(map, point, *ignore_punctuation, 1);
             &b
         }
         _ => unreachable!(),
