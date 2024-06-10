@@ -7932,6 +7932,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "proto"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "prost",
+ "prost-build",
+ "serde",
+]
+
+[[package]]
 name = "protobuf"
 version = "2.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8514,8 +8525,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "parking_lot",
- "prost",
- "prost-build",
+ "proto",
  "rand 0.8.5",
  "rsa 0.4.0",
  "serde",

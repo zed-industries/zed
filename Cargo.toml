@@ -68,6 +68,7 @@ members = [
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
+    "crates/proto",
     "crates/quick_action_bar",
     "crates/recent_projects",
     "crates/refineable",
@@ -319,6 +320,7 @@ pretty_assertions = "1.3.0"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
+proto = { path = "./crates/proto" }
 pulldown-cmark = { version = "0.10.0", default-features = false }
 rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
