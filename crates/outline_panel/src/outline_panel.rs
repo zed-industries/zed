@@ -1392,7 +1392,7 @@ impl OutlinePanel {
                     for (excerpt_id, buffer_id, file_entry_id, worktree) in excerpts {
                         let is_new = new_entries.contains(&excerpt_id);
                         if let Some(worktree) = worktree {
-                            let collapsed_dir_ids =
+                            let collapsed_dirs =
                                 new_collapsed_dirs.entry(worktree.id()).or_default();
 
                             match file_entry_id
@@ -1411,15 +1411,10 @@ impl OutlinePanel {
                                     let mut current_entry = entry;
                                     loop {
                                         if current_entry.is_dir() {
-                                            if is_new
-                                                || worktree.root_entry() == Some(&current_entry)
-                                            {
-                                                collapsed_dir_ids.remove(&current_entry.id);
-                                            } else if collapsed_dir_ids.contains(&current_entry.id)
-                                            {
+                                            if is_new {
+                                                collapsed_dirs.remove(&current_entry.id);
+                                            } else if collapsed_dirs.contains(&current_entry.id) {
                                                 entries_to_add.clear();
-                                                entries_to_add.insert(current_entry);
-                                                break;
                                             }
                                         }
 
@@ -2073,5 +2068,4 @@ fn range_contains(
 }
 
 // TODO kb tests
-// TODO kb Enter does not work
 // TODO kb toggling and displaying in the tree is not working well enough
