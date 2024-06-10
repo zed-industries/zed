@@ -68,6 +68,7 @@ members = [
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
+    "crates/proto",
     "crates/quick_action_bar",
     "crates/recent_projects",
     "crates/refineable",
@@ -306,6 +307,7 @@ log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
 nix = "0.28"
+num-format = "0.4.4"
 once_cell = "1.19.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
@@ -317,6 +319,7 @@ pretty_assertions = "1.3.0"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
+proto = { path = "./crates/proto" }
 pulldown-cmark = { version = "0.10.0", default-features = false }
 rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
