@@ -222,17 +222,15 @@ impl InlineAssistant {
                                     return;
                                 };
 
-                                let error = codegen
-                                    .read(cx)
-                                    .error()
-                                    .map(|error| format!("Inline assistant error: {}", error));
-                                if let Some(error) = error {
+                                if let CodegenStatus::Error(error) = &codegen.read(cx).status {
                                     if pending_assist.editor_decorations.is_none() {
                                         if let Some(workspace) = pending_assist
                                             .workspace
                                             .as_ref()
                                             .and_then(|workspace| workspace.upgrade())
                                         {
+                                            let error =
+                                                format!("Inline assistant error: {}", error);
                                             workspace.update(cx, |workspace, cx| {
                                                 struct InlineAssistantError;
 
@@ -245,9 +243,11 @@ impl InlineAssistant {
                                                 workspace.show_toast(Toast::new(id, error), cx);
                                             })
                                         }
-
-                                        this.finish_inline_assist(inline_assist_id, false, cx);
                                     }
+                                }
+
+                                if pending_assist.editor_decorations.is_none() {
+                                    this.finish_inline_assist(inline_assist_id, false, cx);
                                 }
                             }
                         })
@@ -275,14 +275,17 @@ impl InlineAssistant {
     ) {
         let assist_id = inline_assist_editor.read(cx).id;
         match event {
-            InlineAssistEditorEvent::Confirmed { prompt } => {
-                self.confirm_inline_assist(assist_id, prompt, cx);
+            InlineAssistEditorEvent::Started { prompt } => {
+                self.start_inline_assist(assist_id, prompt, cx);
+            }
+            InlineAssistEditorEvent::Confirmed => {
+                self.finish_inline_assist(assist_id, false, cx);
             }
             InlineAssistEditorEvent::Canceled => {
                 self.finish_inline_assist(assist_id, true, cx);
             }
             InlineAssistEditorEvent::Dismissed => {
-                self.hide_inline_assist(assist_id, cx);
+                self.hide_inline_assist_decorations(assist_id, cx);
             }
             InlineAssistEditorEvent::Resized { height_in_lines } => {
                 self.resize_inline_assist(assist_id, *height_in_lines, cx);
@@ -312,7 +315,7 @@ impl InlineAssistant {
         undo: bool,
         cx: &mut WindowContext,
     ) {
-        self.hide_inline_assist(assist_id, cx);
+        self.hide_inline_assist_decorations(assist_id, cx);
 
         if let Some(pending_assist) = self.pending_assists.remove(&assist_id) {
             if let hash_map::Entry::Occupied(mut entry) = self
@@ -337,15 +340,19 @@ impl InlineAssistant {
         }
     }
 
-    fn hide_inline_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    fn hide_inline_assist_decorations(
+        &mut self,
+        assist_id: InlineAssistId,
+        cx: &mut WindowContext,
+    ) -> bool {
         let Some(pending_assist) = self.pending_assists.get_mut(&assist_id) else {
-            return;
+            return false;
         };
         let Some(editor) = pending_assist.editor.upgrade() else {
-            return;
+            return false;
         };
         let Some(decorations) = pending_assist.editor_decorations.take() else {
-            return;
+            return false;
         };
 
         editor.update(cx, |editor, cx| {
@@ -363,6 +370,7 @@ impl InlineAssistant {
         });
 
         self.update_editor_highlights(&editor, cx);
+        true
     }
 
     fn resize_inline_assist(
@@ -397,7 +405,7 @@ impl InlineAssistant {
         }
     }
 
-    fn confirm_inline_assist(
+    fn start_inline_assist(
         &mut self,
         assist_id: InlineAssistId,
         user_prompt: &str,
@@ -540,16 +548,16 @@ impl InlineAssistant {
             if let Some(pending_assist) = self.pending_assists.get(inline_assist_id) {
                 let codegen = pending_assist.codegen.read(cx);
                 foreground_ranges.extend(codegen.last_equal_ranges().iter().cloned());
+
+                if codegen.edit_position != codegen.range().end {
+                    gutter_pending_ranges.push(codegen.edit_position..codegen.range().end);
+                }
+
+                if codegen.range().start != codegen.edit_position {
+                    gutter_transformed_ranges.push(codegen.range().start..codegen.edit_position);
+                }
+
                 if pending_assist.editor_decorations.is_some() {
-                    if codegen.edit_position != codegen.range().end {
-                        gutter_pending_ranges.push(codegen.edit_position..codegen.range().end);
-                    }
-
-                    if codegen.range().start != codegen.edit_position {
-                        gutter_transformed_ranges
-                            .push(codegen.range().start..codegen.edit_position);
-                    }
-
                     inserted_row_ranges.extend(codegen.diff.inserted_row_ranges.iter().cloned());
                 }
             }
@@ -721,7 +729,8 @@ impl InlineAssistId {
 }
 
 enum InlineAssistEditorEvent {
-    Confirmed { prompt: String },
+    Started { prompt: String },
+    Confirmed,
     Canceled,
     Dismissed,
     Resized { height_in_lines: u8 },
@@ -804,21 +813,25 @@ impl Render for InlineAssistEditor {
                             .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                             .pr(gutter_dimensions.fold_area_width())
                             .justify_end()
-                            .children(if let Some(error) = self.codegen.read(cx).error() {
-                                let error_message = SharedString::from(error.to_string());
-                                Some(
-                                    div()
-                                        .id("error")
-                                        .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
-                                        .child(
-                                            Icon::new(IconName::XCircle)
-                                                .size(icon_size)
-                                                .color(Color::Error),
-                                        ),
-                                )
-                            } else {
-                                None
-                            }),
+                            .children(
+                                if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
+                                    let error_message = SharedString::from(error.to_string());
+                                    Some(
+                                        div()
+                                            .id("error")
+                                            .tooltip(move |cx| {
+                                                Tooltip::text(error_message.clone(), cx)
+                                            })
+                                            .child(
+                                                Icon::new(IconName::XCircle)
+                                                    .size(icon_size)
+                                                    .color(Color::Error),
+                                            ),
+                                    )
+                                } else {
+                                    None
+                                },
+                            ),
                     )
                     .child(div().flex_1().child(self.render_prompt_editor(cx))),
             )
@@ -917,7 +930,7 @@ impl InlineAssistEditor {
     }
 
     fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
-        if self.codegen.read(cx).error.is_some() {
+        if let CodegenStatus::Error(_) = &self.codegen.read(cx).status {
             self.confirmed = false;
             self.prompt_editor
                 .update(cx, |editor, _| editor.set_read_only(false));
@@ -930,12 +943,19 @@ impl InlineAssistEditor {
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         if self.confirmed {
-            cx.emit(InlineAssistEditorEvent::Dismissed);
+            match &self.codegen.read(cx).status {
+                CodegenStatus::Idle | CodegenStatus::Pending => {
+                    cx.emit(InlineAssistEditorEvent::Dismissed);
+                }
+                CodegenStatus::Done | CodegenStatus::Error(_) => {
+                    cx.emit(InlineAssistEditorEvent::Confirmed);
+                }
+            }
         } else {
             let prompt = self.prompt_editor.read(cx).text(cx);
             self.prompt_editor
                 .update(cx, |editor, _cx| editor.set_read_only(true));
-            cx.emit(InlineAssistEditorEvent::Confirmed { prompt });
+            cx.emit(InlineAssistEditorEvent::Started { prompt });
             self.confirmed = true;
             cx.notify();
         }
@@ -1054,11 +1074,18 @@ pub struct Codegen {
     edit_position: Anchor,
     last_equal_ranges: Vec<Range<Anchor>>,
     transaction_id: Option<TransactionId>,
-    error: Option<anyhow::Error>,
+    status: CodegenStatus,
     generation: Task<()>,
     diff: Diff,
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
+}
+
+enum CodegenStatus {
+    Idle,
+    Pending,
+    Done,
+    Error(anyhow::Error),
 }
 
 #[derive(Default)]
@@ -1108,7 +1135,7 @@ impl Codegen {
             kind,
             last_equal_ranges: Default::default(),
             transaction_id: Default::default(),
-            error: Default::default(),
+            status: CodegenStatus::Idle,
             generation: Task::ready(()),
             diff: Diff::default(),
             telemetry,
@@ -1143,10 +1170,6 @@ impl Codegen {
         &self.last_equal_ranges
     }
 
-    pub fn error(&self) -> Option<&anyhow::Error> {
-        self.error.as_ref()
-    }
-
     pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
         let range = self.range();
         let snapshot = self.snapshot.clone();
@@ -1166,6 +1189,7 @@ impl Codegen {
         let telemetry = self.telemetry.clone();
         self.edit_position = range.start;
         self.diff = Diff::default();
+        self.status = CodegenStatus::Pending;
         self.generation = cx.spawn(|this, mut cx| {
             async move {
                 let generate = async {
@@ -1336,7 +1360,9 @@ impl Codegen {
                 this.update(&mut cx, |this, cx| {
                     this.last_equal_ranges.clear();
                     if let Err(error) = result {
-                        this.error = Some(error);
+                        this.status = CodegenStatus::Error(error);
+                    } else {
+                        this.status = CodegenStatus::Done;
                     }
                     cx.emit(CodegenEvent::Finished);
                     cx.notify();
@@ -1344,7 +1370,6 @@ impl Codegen {
                 .ok();
             }
         });
-        self.error.take();
         cx.notify();
     }
 
