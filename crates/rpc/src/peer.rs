@@ -1,8 +1,8 @@
 use crate::{ErrorCode, ErrorCodeExt, ErrorExt, RpcError};
 
 use super::{
-    proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, PeerId, RequestMessage},
-    Connection,
+    proto::{self, AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage},
+    Connection, MessageStream,
 };
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
