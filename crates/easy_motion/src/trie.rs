@@ -1,4 +1,4 @@
-use std::{fmt::Debug, mem, sync::Arc};
+use std::{fmt::Debug, mem};
 
 // Represents the matches for easy motion in a trie.
 // Nodes store their leaves in an array with the index of that array corresponding
@@ -31,7 +31,7 @@ impl<T: Default> Default for TrieNode<T> {
 }
 
 pub(crate) struct Trie<T> {
-    keys: Arc<str>,
+    keys: String,
     root: TrieNode<T>,
     len: usize,
 }
@@ -47,7 +47,7 @@ impl<T> Debug for Trie<T> {
 
 impl<T> Trie<T> {
     pub fn new_from_vec<TItem, F: Fn(usize, TItem) -> T>(
-        keys: Arc<str>,
+        keys: String,
         list: Vec<TItem>,
         func: F,
     ) -> Self {
@@ -177,7 +177,7 @@ fn upper_layer_count(keys_len: usize, leaf_count: usize, max_trie_depth: usize) 
 }
 
 pub(crate) struct TrieBuilder<TItem, TOut, F: Fn(usize, TItem) -> TOut> {
-    keys: Arc<str>,
+    keys: String,
     list: Vec<TItem>,
     total_leaf_count: usize,
     current_leaf_count: usize,
@@ -187,7 +187,7 @@ pub(crate) struct TrieBuilder<TItem, TOut, F: Fn(usize, TItem) -> TOut> {
 }
 
 impl<TItem, TOut, F: Fn(usize, TItem) -> TOut> TrieBuilder<TItem, TOut, F> {
-    fn new_from_vec(keys: Arc<str>, list: Vec<TItem>, func: F) -> Self {
+    fn new_from_vec(keys: String, list: Vec<TItem>, func: F) -> Self {
         let keys_len = keys.len();
         let total_leaf_count = list.len();
         let max_depth = trie_max_depth(keys_len, total_leaf_count);
@@ -508,15 +508,15 @@ mod tests {
 
     #[test]
     fn test_trie_iter() {
-        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2]);
+        let trie = new_from_vec_helper("abc", vec![0, 1, 2]);
         let expected = vec![("a", 0), ("b", 1), ("c", 2)];
         iter_helper(trie, expected);
 
-        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2, 3]);
+        let trie = new_from_vec_helper("abc", vec![0, 1, 2, 3]);
         let expected = vec![("a", 0), ("b", 1), ("ca", 2), ("cb", 3)];
         iter_helper(trie, expected);
 
-        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2, 3, 4, 5]);
+        let trie = new_from_vec_helper("abc", vec![0, 1, 2, 3, 4, 5]);
         let expected = vec![
             ("a", 0),
             ("ba", 1),
@@ -527,7 +527,7 @@ mod tests {
         ];
         iter_helper(trie, expected);
 
-        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2, 3, 4, 5, 6]);
+        let trie = new_from_vec_helper("abc", vec![0, 1, 2, 3, 4, 5, 6]);
         let expected = vec![
             ("a", 0),
             ("ba", 1),
@@ -539,7 +539,7 @@ mod tests {
         ];
         iter_helper(trie, expected);
 
-        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        let trie = new_from_vec_helper("abc", vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
         let expected = vec![
             ("aa", 0),
             ("ab", 1),
@@ -553,7 +553,7 @@ mod tests {
         ];
         iter_helper(trie, expected);
 
-        let trie = new_from_vec_helper("abc".into(), vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let trie = new_from_vec_helper("abc", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
         let expected = vec![
             ("aa", 0),
             ("ab", 1),
@@ -571,7 +571,7 @@ mod tests {
         // trie:   a       b     c           d           e
         //                    a b c d    a b c d e   a b c d e
         let trie = new_from_vec_helper(
-            "abcde".into(),
+            "abcde",
             vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
         );
         let expected = vec![
@@ -597,7 +597,7 @@ mod tests {
 
     #[test]
     fn test_populate_with() {
-        let keys: Arc<str> = "abc".into();
+        let keys = "abc".to_string();
         let values = vec![0, 1, 2];
         let trie = Trie::new_from_vec(keys.clone(), values, |len, val| (len, val));
         let perms = trie.trie_to_perms();

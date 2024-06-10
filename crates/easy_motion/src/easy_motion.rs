@@ -1,6 +1,6 @@
 use collections::HashMap;
 use serde::Deserialize;
-use std::{fmt, sync::Arc};
+use std::fmt;
 
 use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{
@@ -74,7 +74,7 @@ enum WordType {
 pub struct EasyMotion {
     active_editor: Option<WeakView<Editor>>,
     dimming: bool,
-    keys: Arc<str>,
+    keys: String,
     enabled: bool,
     editor_states: HashMap<EntityId, EditorState>,
 }
