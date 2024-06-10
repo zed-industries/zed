@@ -12,25 +12,29 @@ Subject to the terms and conditions in this Agreement, Zed will make available t
 
 Subject to the terms and conditions of this Agreement, Zed hereby grants to You, and You hereby accept from Zed, a term-limited, non-exclusive, non-transferable, non-assignable and non-sublicensable license to make use of the Editor for Your internal use only, and subject to the use limitations in the table in Section 2.2.
 
-### 2.2	License Limitations
+### 2.2. License Limitations
 
 You agree that You shall not: (a) exceed the scope of the licenses granted in Section 2.1; (b) make copies of the Editor; (c) distribute, sublicense, assign, delegate, rent, lease, sell, time-share or otherwise transfer the benefits of, use under, or rights to, the license granted in Section 2.1; (d) reverse engineer, decompile, disassemble or otherwise attempt to learn the source code, structure or algorithms underlying the Editor, except to the extent required to be permitted under applicable law; (e) modify, translate or create derivative works of the Editor; or (f) remove any copyright, trademark, patent or other proprietary notice that appears on the Editor or copies thereof.
 
+### 2.3. Open Source Software
+
+Zed makes certain versions of the Editor and related software available at the Zed GitHub Repository: https://github.com/zed-industries/zed (the “Repo”). Your use of such software is subject to the open source software licenses declared in the Repo.
+
 ## 3. TERMS APPLICABLE TO THE NETWORK BASED SERVICE
 
-### 3.1	Access to and Scope of Network Based Service
+### 3.1. Access to and Scope of Network Based Service
 
 If you have elected to use the Network Based Service by enabling or activating the Network Based Service, Zed will use commercially reasonable efforts to make the Network Based Service available to You as set forth in this Agreement.  Once you elected to use the Network Based Service, You may access and use the Network Based Service during the Term, subject to Your compliance with the terms and conditions of the Agreement,
 
-### 3.2	Restrictions
+### 3.2. Restrictions
 
 You will use the Network Based Service only in accordance with all applicable laws, including, but not limited to, laws related to data (whether applicable within the United States, the European Union, or otherwise).  You agree not to (and will not allow any third party to): (i) remove or otherwise alter any proprietary notices or labels from the Network Based Service or any portion thereof; (ii) reverse engineer, decompile, disassemble, or otherwise attempt to discover the underlying structure, ideas, or algorithms of the Network Based Service or any software used to provide or make the Network Based Service available; or (iii) rent, resell or otherwise allow any third party access to or use of the Network Based Service.   Zed may suspend Your access to or use of the Network Based Service as follows: (a) immediately if Zed reasonably believes Your use of the Network Based Service may pose a security risk to or may adversely impact the Network Based Service;  or (b) if You are in breach of this Agreement.
 
-### 3.3	Customer Data
+### 3.3. Customer Data
 
 You are solely responsible for Customer Data including, but not limited to: (a) compliance with all applicable laws and this Agreement; (b) any claims relating to Customer Data; and (c) any claims that Customer Data infringes, misappropriates, or otherwise violates the rights of any third party. You agree and acknowledge that Customer Data may be irretrievably deleted if Your account is terminated.  For purposes of this Agreement, "Customer Data" shall mean any data, information or other material provided, uploaded, or submitted by You to the Network Based Service in the course of using the Network Based Service. You shall retain all right, title and interest in and to the Customer Data, including all intellectual property rights therein.
 
-#### 3.3.1	Customer Data Made Available to Zed
+#### 3.3.1. Customer Data Made Available to Zed
 
 To the extent You elect to make Customer Data available to Zed, the same may only be used by Zed according to the Customer Data type and the use rights regarding the same as described herein:
 
@@ -48,15 +52,15 @@ Customer Data consisting of User content created while using the Solution is cla
 
 ## 4. TERM AND TERMINATION
 
-### 4.1 Term
+### 4.1. Term
 
 The term of this Agreement shall commence on the date You first download the Editor or use the Network Based Service (the "Effective Date"), and unless terminated earlier according to this Section 3, will end pursuant to this Section 4 (the "Term").
 
-### 4.2	Termination
+### 4.2. Termination
 
 This Agreement may be terminated: (a) by either party if the other has materially breached this Agreement; or (b) by Zed at any time and for any reason upon notice to Customer.  You acknowledge that Zed is under no obligation to continue to operate the Network Based Service or make the Editor available, and We may end any programs in connection with the same at any time.
 
-### 4.3 Effect of Termination and Survival
+### 4.3. Effect of Termination and Survival
 
 Upon any expiration or termination of this Agreement, Customer shall (i) immediately cease use of the Network Based Service, and (ii) return all Zed Confidential Information and other materials provided by Zed.  The following provisions will survive termination of this Agreement: Sections 1.4 (Ownership), 3 (Customer Data); 4.3 (Effect of Termination and Survival), Section 5 (Ownership), Section 6 (Indemnification), Section 8 (Limitation of Liability), and Section 9 (Miscellaneous).
 
@@ -78,40 +82,40 @@ IN NO EVENT SHALL ZED BE LIABLE FOR ANY LOST DATA, LOST PROFITS, BUSINESS INTERR
 
 ## 9. MISCELLANEOUS
 
-### 9.1 Export Control
+### 9.1. Export Control
 
 You hereby certify that You will comply with all current US Export Control laws. You agree to defend, indemnify and hold Zed harmless from any liability for Your violation of U.S. Export Control laws.
 
-### 9.2	Compliance with Laws
+### 9.2. Compliance with Laws
 
 You shall comply with all applicable laws and regulations in its use of the Solution, including without limitation the unlawful gathering or collecting, or assisting in the gathering or collecting of information in violation of any privacy laws or regulations. You shall, at its own expense, defend, indemnify and hold harmless Zed from and against any and all claims, losses, liabilities, damages, judgments, government or federal sanctions, costs and expenses (including attorneys' fees) incurred by Zed arising from any claim or assertion by any third party of violation of privacy laws or regulations by You or any of its agents, officers, directors or employees.
 
-### 9.3	Assignment
+### 9.3. Assignment
 
 Neither party may transfer and assign its rights and obligations under this Agreement without the prior written consent of the other party.  Notwithstanding the foregoing, Zed may transfer and assign its rights under this Agreement without consent from the other party in connection with a change in control, acquisition or sale of all or substantially all of its assets.
 
-### 9.4 Force Majeure
+### 9.4. Force Majeure
 
 Neither party shall be responsible for failure or delay in performance by events out of their reasonable control, including but not limited to, acts of God, Internet outage, terrorism, war, fires, earthquakes and other disasters (each a "Force Majeure").  Notwithstanding the foregoing: if a Force Majeure continues for more than thirty (30) days, either party may to terminate this agreement by written notice to the other party.
 
-### 9.5 Notice
+### 9.5. Notice
 
 All notices between the parties shall be in writing and shall be deemed to have been given if personally delivered or sent by registered or certified mail (return receipt), or by recognized courier service.
 
-### 9.6 No Agency
+### 9.6. No Agency
 
 Both parties agree that no agency, partnership, joint venture, or employment is created as a result of this Agreement.  You do not have any authority of any kind to bind Zed.
 
-### 9.7 Governing Law
+### 9.7. Governing Law
 
 This Agreement shall be governed exclusively by, and construed exclusively in accordance with, the laws of the United States and the State of California, without regard to its conflict of laws provisions.  The federal courts of the United States in the Northern District of California and the state courts of the State of California shall have exclusive jurisdiction to adjudicate any dispute arising out of or relating to this Agreement.  Each party hereby consents to the jurisdiction of such courts and waives any right it may otherwise have to challenge the appropriateness of such forums, whether on the basis of the doctrine of forum non conveniens or otherwise.  The United Nations Convention on Contracts for the International Sale of Goods shall not apply to this Agreement or any Purchase Order issued under this Agreement.
 
 
-### 9.8 Updated Agreement
+### 9.8. Updated Agreement
 
 Zed reserves the right to update this Agreement at any time. The terms and conditions of the updated version of the Agreement shall apply to the Network Based Service and Editor downloaded, or accessed following the date of publication of the updated version.  If You do not agree with any terms of the updated Agreement, You may not use or access the Network Based Service or Editor in any manner.  Zed may from time-to-time provide release notes applicable to the Editor or Network Based Service, and such release notes may contain additional use restrictions or terms applicable to Customer Data.  Your use of the Editor or Network Based Service after the applicable release notes are made available shall be subject to the additional use restrictions or terms applicable to Customer Data.
 
-### 9.9 Entire Agreement
+### 9.9. Entire Agreement
 
 This Agreement is the complete and exclusive statement of the mutual understanding of the parties and supersedes and cancels all previous written and oral agreements, communications, and other understandings relating to the subject matter of this Agreement, and all waivers and modifications must be in a writing signed by both parties, except as otherwise provided herein. Any term or provision of this Agreement held to be illegal or unenforceable shall be, to the fullest extent possible, interpreted so as to be construed as valid, but in any event the validity or enforceability of the remainder hereof shall not be affected.
 
