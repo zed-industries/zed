@@ -215,6 +215,7 @@ plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
+proto = { path = "crates/proto" }
 worktree = { path = "crates/worktree" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
@@ -320,7 +321,6 @@ pretty_assertions = "1.3.0"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
-proto = { path = "./crates/proto" }
 pulldown-cmark = { version = "0.10.0", default-features = false }
 rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
