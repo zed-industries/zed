@@ -35,6 +35,8 @@ use std::{
 pub(crate) use streaming_diff::*;
 use util::paths::EMBEDDINGS_DIR;
 
+use crate::slash_command::now_command;
+
 actions!(
     assistant,
     [
@@ -307,6 +309,7 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(search_command::SearchSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
+    slash_command_registry.register_command(now_command::NowSlashCommand, true);
     slash_command_registry.register_command(rustdoc_command::RustdocSlashCommand, false);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 }
