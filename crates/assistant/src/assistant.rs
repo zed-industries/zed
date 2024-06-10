@@ -25,8 +25,8 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, fetch_command, file_command, project_command, prompt_command,
-    rustdoc_command, search_command, tabs_command,
+    active_command, default_command, fetch_command, file_command, now_command, project_command,
+    prompt_command, rustdoc_command, search_command, tabs_command,
 };
 use std::{
     fmt::{self, Display},
@@ -34,8 +34,6 @@ use std::{
 };
 pub(crate) use streaming_diff::*;
 use util::paths::EMBEDDINGS_DIR;
-
-use crate::slash_command::now_command;
 
 actions!(
     assistant,
