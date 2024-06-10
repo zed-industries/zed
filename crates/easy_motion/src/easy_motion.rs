@@ -23,7 +23,6 @@ mod editor_events;
 mod editor_state;
 mod search;
 mod trie;
-mod util;
 
 #[derive(Eq, PartialEq, Copy, Clone, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
