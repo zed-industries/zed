@@ -403,9 +403,14 @@ impl WaylandClient {
 
         let handle = event_loop.handle();
         handle
-            .insert_source(main_receiver, |event, _, _: &mut WaylandClientStatePtr| {
-                if let calloop::channel::Event::Msg(runnable) = event {
-                    runnable.run();
+            .insert_source(main_receiver, {
+                let handle = handle.clone();
+                move |event, _, _: &mut WaylandClientStatePtr| {
+                    if let calloop::channel::Event::Msg(runnable) = event {
+                        handle.insert_idle(|_| {
+                            runnable.run();
+                        });
+                    }
                 }
             })
             .unwrap();
