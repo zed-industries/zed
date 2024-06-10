@@ -97,13 +97,23 @@ enum EntryOwned {
     Outline(OutlinesContainer, Outline),
 }
 
+impl EntryOwned {
+    fn to_ref_entry(&self) -> EntryRef<'_> {
+        match self {
+            Self::Entry(entry) => EntryRef::Entry(entry),
+            Self::Outline(container, outline) => EntryRef::Outline(*container, outline),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 enum EntryRef<'a> {
     Entry(&'a PanelEntry),
     Outline(OutlinesContainer, &'a Outline),
 }
 
 impl EntryRef<'_> {
-    fn to_selected_entry(&self) -> EntryOwned {
+    fn to_owned_entry(&self) -> EntryOwned {
         match self {
             &Self::Entry(entry) => EntryOwned::Entry(entry.clone()),
             &Self::Outline(container, outline) => EntryOwned::Outline(container, outline.clone()),
@@ -635,12 +645,16 @@ impl OutlinePanel {
     fn deploy_context_menu(
         &mut self,
         position: Point<Pixels>,
-        entry: &EntryOwned,
+        entry: EntryRef<'_>,
         cx: &mut ViewContext<Self>,
     ) {
-        let project = self.project.read(cx);
+        self.selected_entry = Some(entry.to_owned_entry());
+        if matches!(entry, EntryRef::Outline(_, _)) {
+            cx.notify();
+            return;
+        }
 
-        self.selected_entry = Some(entry.clone());
+        let project = self.project.read(cx);
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
         let is_foldable = auto_fold_dirs && self.is_foldable(entry);
         let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry);
@@ -665,7 +679,6 @@ impl OutlinePanel {
                 },
             )
         });
-
         cx.focus_view(&context_menu);
         let subscription = cx.subscribe(&context_menu, |outline_panel, _, _: &DismissEvent, cx| {
             outline_panel.context_menu.take();
@@ -675,11 +688,11 @@ impl OutlinePanel {
         cx.notify();
     }
 
-    fn is_unfoldable(&self, _entry: &EntryOwned) -> bool {
+    fn is_unfoldable(&self, _entry: EntryRef) -> bool {
         false
     }
 
-    fn is_foldable(&self, _entry: &EntryOwned) -> bool {
+    fn is_foldable(&self, _entry: EntryRef) -> bool {
         false
     }
 
@@ -1116,7 +1129,7 @@ impl OutlinePanel {
         cx: &mut ViewContext<OutlinePanel>,
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
-        let selected_entry = rendered_entry.to_selected_entry();
+        let rendered_entry = rendered_entry.to_owned_entry();
         div()
             .id(item_id.clone())
             .child(
@@ -1133,7 +1146,8 @@ impl OutlinePanel {
                             .flex_none()
                     })
                     .child(h_flex().h_6().child(label_element).ml_1())
-                    .on_click(
+                    .on_click({
+                        let clicked_entry = rendered_entry.clone();
                         cx.listener(move |outline_panel, event: &gpui::ClickEvent, cx| {
                             if event.down.button == MouseButton::Right || event.down.first_mouse {
                                 return;
@@ -1149,7 +1163,7 @@ impl OutlinePanel {
                             let active_multi_buffer = active_editor.read(cx).buffer().clone();
                             let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
 
-                            match &selected_entry {
+                            match &clicked_entry {
                                 EntryOwned::Entry(PanelEntry::ExternalFile(buffer_id)) => {
                                     let scroll_target = multi_buffer_snapshot.excerpts().find_map(
                                         |(excerpt_id, buffer_snapshot, excerpt_range)| {
@@ -1164,7 +1178,7 @@ impl OutlinePanel {
                                         },
                                     );
                                     if let Some(anchor) = scroll_target {
-                                        outline_panel.selected_entry = Some(selected_entry.clone());
+                                        outline_panel.selected_entry = Some(clicked_entry.clone());
                                         active_editor.update(cx, |editor, cx| {
                                             editor.set_scroll_anchor(
                                                 ScrollAnchor {
@@ -1203,7 +1217,7 @@ impl OutlinePanel {
                                             )
                                         });
                                     if let Some(anchor) = scroll_target {
-                                        outline_panel.selected_entry = Some(selected_entry.clone());
+                                        outline_panel.selected_entry = Some(clicked_entry.clone());
                                         active_editor.update(cx, |editor, cx| {
                                             editor.set_scroll_anchor(
                                                 ScrollAnchor {
@@ -1272,7 +1286,7 @@ impl OutlinePanel {
                                             },
                                         );
                                     if let Some(anchor) = scroll_target {
-                                        outline_panel.selected_entry = Some(selected_entry.clone());
+                                        outline_panel.selected_entry = Some(clicked_entry.clone());
                                         active_editor.update(cx, |editor, cx| {
                                             editor.set_scroll_anchor(
                                                 ScrollAnchor {
@@ -1285,19 +1299,18 @@ impl OutlinePanel {
                                     }
                                 }
                             }
-                        }),
-                    )
+                        })
+                    })
                     .on_secondary_mouse_down(cx.listener(
                         move |outline_panel, event: &MouseDownEvent, cx| {
                             // Stop propagation to prevent the catch-all context menu for the project
                             // panel from being deployed.
                             cx.stop_propagation();
-                            if let Some(selection) = outline_panel.selected_entry.clone() {
-                                outline_panel.deploy_context_menu(event.position, &selection, cx)
-                            } else if let Some(entry) = outline_panel.visible_entries.last() {
-                                let selection = EntryOwned::Entry(entry.clone());
-                                outline_panel.deploy_context_menu(event.position, &selection, cx)
-                            }
+                            outline_panel.deploy_context_menu(
+                                event.position,
+                                rendered_entry.to_ref_entry(),
+                                cx,
+                            )
                         },
                     )),
             )
@@ -1948,13 +1961,18 @@ impl Render for OutlinePanel {
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |outline_panel, event: &MouseDownEvent, cx| {
-                        // When deploying the context menu anywhere below the last project entry,
-                        // act as if the user clicked the last visible element (as most of the empty space to click on is below).
-                        if let Some(selection) = outline_panel.selected_entry.as_ref().cloned() {
-                            outline_panel.deploy_context_menu(event.position, &selection, cx)
-                        } else if let Some(entry) = outline_panel.visible_entries.last() {
-                            let selection = EntryOwned::Entry(entry.clone());
-                            outline_panel.deploy_context_menu(event.position, &selection, cx)
+                        if let Some(entry) = outline_panel.selected_entry.clone() {
+                            outline_panel.deploy_context_menu(
+                                event.position,
+                                entry.to_ref_entry(),
+                                cx,
+                            )
+                        } else if let Some(entry) = outline_panel.visible_entries.first().cloned() {
+                            outline_panel.deploy_context_menu(
+                                event.position,
+                                EntryRef::Entry(&entry),
+                                cx,
+                            )
                         }
                     }),
                 )
@@ -2068,4 +2086,3 @@ fn range_contains(
 }
 
 // TODO kb tests
-// TODO kb toggling and displaying in the tree is not working well enough
