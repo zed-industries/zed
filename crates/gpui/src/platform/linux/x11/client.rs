@@ -5,7 +5,7 @@ use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 use calloop::generic::{FdWrapper, Generic};
-use calloop::{channel, EventLoop, LoopHandle, RegistrationToken};
+use calloop::{EventLoop, LoopHandle, RegistrationToken};
 
 use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
@@ -282,11 +282,9 @@ impl X11Client {
 
         let xcb_connection = Rc::new(xcb_connection);
 
-        let (xim_tx, xim_rx) = channel::channel::<XimCallbackEvent>();
-
         let ximc = X11rbClient::init(Rc::clone(&xcb_connection), x_root_index, None).ok();
         let xim_handler = if ximc.is_some() {
-            Some(XimHandler::new(xim_tx))
+            Some(XimHandler::new())
         } else {
             None
         };
@@ -311,10 +309,12 @@ impl X11Client {
                                 client.handle_event(event);
                                 continue;
                             }
+
                             let mut ximc = state.ximc.take().unwrap();
                             let mut xim_handler = state.xim_handler.take().unwrap();
                             let xim_connected = xim_handler.connected;
                             drop(state);
+
                             let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
                                 Ok(handled) => handled,
                                 Err(err) => {
@@ -322,46 +322,34 @@ impl X11Client {
                                     false
                                 }
                             };
+                            let xim_callback_event = xim_handler.last_callback_event.take();
+
                             let mut state = client.0.borrow_mut();
                             state.ximc = Some(ximc);
                             state.xim_handler = Some(xim_handler);
                             drop(state);
+
+                            if let Some(event) = xim_callback_event {
+                                client.handle_xim_callback_event(event);
+                            }
+
                             if xim_filtered {
                                 continue;
                             }
+
                             if xim_connected {
                                 client.xim_handle_event(event);
                             } else {
                                 client.handle_event(event);
                             }
                         }
+
                         Ok(calloop::PostAction::Continue)
                     }
                 },
             )
             .expect("Failed to initialize x11 event source");
-        handle
-            .insert_source(xim_rx, {
-                move |chan_event, _, client| match chan_event {
-                    channel::Event::Msg(xim_event) => {
-                        match xim_event {
-                            XimCallbackEvent::XimXEvent(event) => {
-                                client.handle_event(event);
-                            }
-                            XimCallbackEvent::XimCommitEvent(window, text) => {
-                                client.xim_handle_commit(window, text);
-                            }
-                            XimCallbackEvent::XimPreeditEvent(window, text) => {
-                                client.xim_handle_preedit(window, text);
-                            }
-                        };
-                    }
-                    channel::Event::Closed => {
-                        log::error!("XIM Event Sender dropped")
-                    }
-                }
-            })
-            .expect("Failed to initialize XIM event source");
+
         handle
             .insert_source(XDPEventSource::new(&common.background_executor), {
                 move |event, _, client| match event {
@@ -799,6 +787,20 @@ impl X11Client {
         };
 
         Some(())
+    }
+
+    fn handle_xim_callback_event(&self, event: XimCallbackEvent) {
+        match event {
+            XimCallbackEvent::XimXEvent(event) => {
+                self.handle_event(event);
+            }
+            XimCallbackEvent::XimCommitEvent(window, text) => {
+                self.xim_handle_commit(window, text);
+            }
+            XimCallbackEvent::XimPreeditEvent(window, text) => {
+                self.xim_handle_preedit(window, text);
+            }
+        };
     }
 
     fn xim_handle_event(&self, event: Event) -> Option<()> {
