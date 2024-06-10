@@ -2,9 +2,6 @@
   {
     "label": "clippy",
     "command": "cargo",
-    "args": ["xtask", "clippy"],
-    "env": {
-      "RUST_BACKTRACE": "0"
-    }
+    "args": ["xtask", "clippy"]
   }
 ]

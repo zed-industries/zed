@@ -459,48 +459,55 @@ impl OutlinePanel {
         else {
             return;
         };
-        if let Some(EntryOwned::Entry(FsEntry::Directory(worktree_id, entry))) =
-            &self.selected_entry
-        {
-            let unfolded_dirs = self.unfolded_dirs.get_mut(worktree_id);
-            let worktree = self
-                .project
-                .read(cx)
-                .worktree_for_id(*worktree_id, cx)
-                .map(|w| w.read(cx).snapshot());
-            let Some((worktree, unfolded_dirs)) = worktree.zip(unfolded_dirs) else {
-                return;
-            };
 
-            unfolded_dirs.remove(&entry.id);
-            let mut parent = entry.path.parent();
-            while let Some(parent_path) = parent {
-                let removed = worktree.entry_for_path(parent_path).map_or(false, |entry| {
-                    if worktree.root_entry() == Some(entry) {
-                        false
-                    } else {
-                        unfolded_dirs.remove(&entry.id)
-                    }
-                });
+        let (worktree_id, entry) = match &self.selected_entry {
+            Some(EntryOwned::Entry(FsEntry::Directory(worktree_id, entry))) => {
+                (worktree_id, Some(entry))
+            }
+            Some(EntryOwned::FoldedDirs(worktree_id, entries)) => (worktree_id, entries.last()),
+            _ => return,
+        };
+        let Some(entry) = entry else {
+            return;
+        };
+        let unfolded_dirs = self.unfolded_dirs.get_mut(worktree_id);
+        let worktree = self
+            .project
+            .read(cx)
+            .worktree_for_id(*worktree_id, cx)
+            .map(|w| w.read(cx).snapshot());
+        let Some((worktree, unfolded_dirs)) = worktree.zip(unfolded_dirs) else {
+            return;
+        };
 
-                if removed {
-                    parent = parent_path.parent();
+        unfolded_dirs.remove(&entry.id);
+        let mut parent = entry.path.parent();
+        while let Some(parent_path) = parent {
+            let removed = worktree.entry_for_path(parent_path).map_or(false, |entry| {
+                if worktree.root_entry().map(|entry| entry.id) == Some(entry.id) {
+                    false
                 } else {
-                    break;
+                    unfolded_dirs.remove(&entry.id)
                 }
-            }
-            for child_dir in worktree
-                .child_entries(&entry.path)
-                .filter(|entry| entry.is_dir())
-            {
-                let removed = unfolded_dirs.remove(&child_dir.id);
-                if !removed {
-                    break;
-                }
-            }
+            });
 
-            self.update_visible_entries(&editor, HashSet::default(), None, None, false, cx);
+            if removed {
+                parent = parent_path.parent();
+            } else {
+                break;
+            }
         }
+        for child_dir in worktree
+            .child_entries(&entry.path)
+            .filter(|entry| entry.is_dir())
+        {
+            let removed = unfolded_dirs.remove(&child_dir.id);
+            if !removed {
+                break;
+            }
+        }
+
+        self.update_visible_entries(&editor, HashSet::default(), None, None, false, cx);
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
@@ -767,35 +774,51 @@ impl OutlinePanel {
         cx: &mut ViewContext<Self>,
     ) {
         self.selected_entry = Some(entry.to_owned_entry());
-        if matches!(entry, EntryRef::Outline(..)) {
-            cx.notify();
-            return;
-        }
-
-        let project = self.project.read(cx);
+        let is_root = match entry {
+            EntryRef::Entry(FsEntry::File(worktree_id, entry))
+            | EntryRef::Entry(FsEntry::Directory(worktree_id, entry)) => self
+                .project
+                .read(cx)
+                .worktree_for_id(*worktree_id, cx)
+                .map(|worktree| {
+                    worktree.read(cx).root_entry().map(|entry| entry.id) == Some(entry.id)
+                })
+                .unwrap_or(false),
+            EntryRef::FoldedDirs(worktree_id, entries) => entries
+                .first()
+                .and_then(|entry| {
+                    self.project
+                        .read(cx)
+                        .worktree_for_id(worktree_id, cx)
+                        .map(|worktree| {
+                            worktree.read(cx).root_entry().map(|entry| entry.id) == Some(entry.id)
+                        })
+                })
+                .unwrap_or(false),
+            EntryRef::Entry(FsEntry::ExternalFile(..)) => false,
+            EntryRef::Outline(_, _) => {
+                cx.notify();
+                return;
+            }
+        };
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
-        let is_foldable = auto_fold_dirs && self.is_foldable(entry);
-        let is_unfoldable = auto_fold_dirs && !is_foldable && self.is_unfoldable(entry);
-        let is_read_only = project.is_read_only();
+        let is_foldable = auto_fold_dirs && !is_root && self.is_foldable(entry);
+        let is_unfoldable = auto_fold_dirs && !is_root && self.is_unfoldable(entry);
 
         let context_menu = ContextMenu::build(cx, |menu, _| {
-            menu.context(self.focus_handle.clone()).when_else(
-                is_read_only,
-                |menu| menu.action("Copy Relative Path", Box::new(CopyRelativePath)),
-                |menu| {
-                    menu.action("Reveal in Finder", Box::new(RevealInFinder))
-                        .action("Open in Terminal", Box::new(OpenInTerminal))
-                        .when(is_unfoldable, |menu| {
-                            menu.action("Unfold Directory", Box::new(UnfoldDirectory))
-                        })
-                        .when(is_foldable, |menu| {
-                            menu.action("Fold Directory", Box::new(FoldDirectory))
-                        })
-                        .separator()
-                        .action("Copy Path", Box::new(CopyPath))
-                        .action("Copy Relative Path", Box::new(CopyRelativePath))
-                },
-            )
+            menu.context(self.focus_handle.clone())
+                .action("Copy Relative Path", Box::new(CopyRelativePath))
+                .action("Reveal in Finder", Box::new(RevealInFinder))
+                .action("Open in Terminal", Box::new(OpenInTerminal))
+                .when(is_unfoldable, |menu| {
+                    menu.action("Unfold Directory", Box::new(UnfoldDirectory))
+                })
+                .when(is_foldable, |menu| {
+                    menu.action("Fold Directory", Box::new(FoldDirectory))
+                })
+                .separator()
+                .action("Copy Path", Box::new(CopyPath))
+                .action("Copy Relative Path", Box::new(CopyRelativePath))
         });
         cx.focus_view(&context_menu);
         let subscription = cx.subscribe(&context_menu, |outline_panel, _, _: &DismissEvent, cx| {
@@ -811,39 +834,50 @@ impl OutlinePanel {
     }
 
     fn is_foldable(&self, entry: EntryRef) -> bool {
-        if let EntryRef::Entry(
-            directory @ FsEntry::Directory(directory_worktree, directory_entry),
-        ) = entry
-        {
-            if self
-                .unfolded_dirs
-                .get(directory_worktree)
-                .map_or(false, |unfolded_dirs| {
-                    unfolded_dirs.contains(&directory_entry.id)
-                })
-            {
-                return true;
+        let (directory_worktree, directory_entry) = match entry {
+            EntryRef::Entry(FsEntry::Directory(directory_worktree, directory_entry)) => {
+                (*directory_worktree, Some(directory_entry))
             }
+            EntryRef::FoldedDirs(directory_worktree, entries) => {
+                (directory_worktree, entries.last())
+            }
+            _ => return false,
+        };
+        let Some(directory_entry) = directory_entry else {
+            return false;
+        };
 
-            let child_entries = self
-                .fs_entries
-                .iter()
-                .skip_while(|entry| entry != &directory)
-                .skip(1)
-                .filter(|next_entry| match next_entry {
-                    FsEntry::ExternalFile(_) => false,
-                    FsEntry::Directory(worktree_id, entry) | FsEntry::File(worktree_id, entry) => {
-                        worktree_id == directory_worktree
-                            && entry.path.parent() == Some(directory_entry.path.as_ref())
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            child_entries.len() == 1
-                && matches!(child_entries.first(), Some(FsEntry::Directory(..)))
-        } else {
-            false
+        if self
+            .unfolded_dirs
+            .get(&directory_worktree)
+            .map_or(false, |unfolded_dirs| {
+                unfolded_dirs.contains(&directory_entry.id)
+            })
+        {
+            return true;
         }
+
+        let child_entries = self
+            .fs_entries
+            .iter()
+            .skip_while(|entry| {
+                if let FsEntry::Directory(worktree_id, entry) = entry {
+                    worktree_id != &directory_worktree || entry.id != directory_entry.id
+                } else {
+                    true
+                }
+            })
+            .skip(1)
+            .filter(|next_entry| match next_entry {
+                FsEntry::ExternalFile(_) => false,
+                FsEntry::Directory(worktree_id, entry) | FsEntry::File(worktree_id, entry) => {
+                    worktree_id == &directory_worktree
+                        && entry.path.parent() == Some(directory_entry.path.as_ref())
+                }
+            })
+            .collect::<Vec<_>>();
+
+        child_entries.len() == 1 && matches!(child_entries.first(), Some(FsEntry::Directory(..)))
     }
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
@@ -1644,7 +1678,9 @@ impl OutlinePanel {
                                         let mut current_entry = entry;
                                         loop {
                                             if current_entry.is_dir() {
-                                                if worktree.root_entry() == Some(&current_entry) {
+                                                if worktree.root_entry().map(|entry| entry.id)
+                                                    == Some(current_entry.id)
+                                                {
                                                     unfolded_dirs.insert(current_entry.id);
                                                 }
                                                 if is_new {
@@ -2379,5 +2415,3 @@ fn range_contains(
     range.start.cmp(&anchor, buffer_snapshot).is_le()
         && range.end.cmp(&anchor, buffer_snapshot).is_ge()
 }
-
-// TODO kb tests
