@@ -16,6 +16,10 @@ Subject to the terms and conditions of this Agreement, Zed hereby grants to You,
 
 You agree that You shall not: (a) exceed the scope of the licenses granted in Section 2.1; (b) make copies of the Editor; (c) distribute, sublicense, assign, delegate, rent, lease, sell, time-share or otherwise transfer the benefits of, use under, or rights to, the license granted in Section 2.1; (d) reverse engineer, decompile, disassemble or otherwise attempt to learn the source code, structure or algorithms underlying the Editor, except to the extent required to be permitted under applicable law; (e) modify, translate or create derivative works of the Editor; or (f) remove any copyright, trademark, patent or other proprietary notice that appears on the Editor or copies thereof.
 
+### 2.3 Open Source Software
+
+Zed makes certain versions of the Editor and related software available at the Zed Github Repository: https://github.com/zed-industries/zed (the “Repo”). Your use of such software is subject to the open source software licenses declared in the Repo.
+
 ## 3. TERMS APPLICABLE TO THE NETWORK BASED SERVICE
 
 ### 3.1	Access to and Scope of Network Based Service
