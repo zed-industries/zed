@@ -2782,7 +2782,7 @@ impl Editor {
     fn linked_editing_ranges_for(
         &self,
         selection: Range<text::Anchor>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Option<HashMap<Model<Buffer>, Vec<Range<text::Anchor>>>> {
         if self.linked_edit_ranges.is_empty() {
             return None;
@@ -3019,46 +3019,21 @@ impl Editor {
             let anchor = snapshot.anchor_after(selection.end);
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_after(selection.start);
-                if let Some(((base_range, linked_ranges), buffer_snapshot, buffer)) =
-                    anchor.buffer_id.and_then(|end_buffer_id| {
-                        if start_anchor.buffer_id == Some(end_buffer_id) {
-                            let buffer = self.buffer.read(cx).buffer(end_buffer_id)?;
-                            let snapshot = buffer.read(cx).snapshot();
-                            self.linked_edit_ranges
-                                .get(
-                                    end_buffer_id,
-                                    start_anchor.text_anchor..anchor.text_anchor,
-                                    &snapshot,
-                                )
-                                .map(|ranges| (ranges, snapshot, buffer))
-                        } else {
-                            None
-                        }
-                    })
+                if let Some(ranges) =
+                    self.linked_editing_ranges_for(start_anchor.text_anchor..anchor.text_anchor, cx)
                 {
-                    use text::ToOffset as TO;
-                    // find offset from the start of current range to current cursor position
-                    let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
-
-                    let start_offset = TO::to_offset(&start_anchor.text_anchor, &buffer_snapshot);
-                    let start_difference = start_offset - start_byte_offset;
-                    let end_offset = TO::to_offset(&anchor.text_anchor, &buffer_snapshot);
-                    let end_difference = end_offset - start_byte_offset;
-                    // Current range has associated linked ranges.
-                    for range in linked_ranges.iter() {
-                        linked_edits.entry(buffer.clone()).or_default().push((
-                            range.start,
-                            end_difference,
-                            start_difference,
-                            text.clone(),
-                        ));
+                    dbg!(&ranges);
+                    for (buffer, edits) in ranges {
+                        linked_edits
+                            .entry(buffer.clone())
+                            .or_default()
+                            .extend(edits.into_iter().map(|range| (range, text.clone())));
                     }
                 }
             }
 
             new_selections.push((selection.map(|_| anchor), 0));
             edits.push((selection.start..selection.end, text.clone()));
-            edits.sort_by_key(|(a, _)| a.start);
         }
 
         drop(snapshot);
@@ -3070,18 +3045,15 @@ impl Editor {
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
                     let snapshot = buffer.snapshot();
-                    let edits =
-                        edits
-                            .into_iter()
-                            .map(|(start_anchor, start_diff, end_diff, text)| {
-                                use text::ToOffset as TO;
-                                use text::ToPoint as TP;
-                                let start_offset = TO::to_offset(&start_anchor, &snapshot);
-                                let end_point = TP::to_point(&(start_offset + end_diff), &snapshot);
-                                let start_point =
-                                    TP::to_point(&(start_offset + start_diff), &snapshot);
-                                (start_point..end_point, text)
-                            });
+                    let edits = edits
+                        .into_iter()
+                        .map(|(range, text)| {
+                            use text::ToPoint as TP;
+                            let end_point = TP::to_point(&range.end, &snapshot);
+                            let start_point = TP::to_point(&range.start, &snapshot);
+                            (start_point..end_point, text)
+                        })
+                        .sorted_by_key(|(range, _)| range.start);
                     buffer.edit(edits, None, cx);
                 })
             }
