@@ -344,16 +344,7 @@ impl OutlinePanel {
                                 outline_panel.replace_visible_entries(new_active_editor, cx);
                             }
                         } else {
-                            outline_panel.collapsed_dirs.clear();
-                            outline_panel.unfolded_dirs.clear();
-                            outline_panel.last_visible_range = 0..0;
-                            outline_panel.selected_entry = None;
-                            outline_panel.update_task = Task::ready(());
-                            outline_panel.displayed_item = None;
-                            outline_panel.fs_entries.clear();
-                            outline_panel.fs_entries_depth.clear();
-                            outline_panel.outline_fetch_tasks.clear();
-                            outline_panel.outlines.clear();
+                            outline_panel.clear_previous();
                             cx.notify();
                         }
                     }
@@ -1858,8 +1849,7 @@ impl OutlinePanel {
         new_active_editor: View<Editor>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.outline_fetch_tasks.clear();
-        self.outlines.clear();
+        self.clear_previous();
         self.displayed_item = Some(DisplayedActiveItem {
             item_id: new_active_editor.item_id(),
             _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
@@ -1868,6 +1858,19 @@ impl OutlinePanel {
         let new_entries =
             HashSet::from_iter(new_active_editor.read(cx).buffer().read(cx).excerpt_ids());
         self.update_visible_entries(&new_active_editor, new_entries, None, None, true, cx);
+    }
+
+    fn clear_previous(&mut self) {
+        self.collapsed_dirs.clear();
+        self.unfolded_dirs.clear();
+        self.last_visible_range = 0..0;
+        self.selected_entry = None;
+        self.update_task = Task::ready(());
+        self.displayed_item = None;
+        self.fs_entries.clear();
+        self.fs_entries_depth.clear();
+        self.outline_fetch_tasks.clear();
+        self.outlines.clear();
     }
 
     fn location_for_editor_selection(
