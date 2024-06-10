@@ -37,8 +37,8 @@ x = done
 | [x] `Ctrl-f`, `PageDown`  | Move page down                                     | `page_down`                 |
 | [x] `Ctrl-u`              | Move cursor and page half page up                  | `page_cursor_half_up`       |
 | [x] `Ctrl-d`              | Move cursor and page half page down                | `page_cursor_half_down`     |
-| [-] `Ctrl-i`              | Jump forward on the jumplist                       | `jump_forward`              |
-| [-] `Ctrl-o`              | Jump backward on the jumplist                      | `jump_backward`             |
+| [x] `Ctrl-i`              | Jump forward on the jumplist                       | `jump_forward`              |
+| [x] `Ctrl-o`              | Jump backward on the jumplist                      | `jump_backward`             |
 | [-] `Ctrl-s`              | Save the current selection to the jumplist         | `save_selection`            |
 
 ### Changes
@@ -198,13 +198,13 @@ Jumps to various locations.
 | [x] `y`   | Go to type definition (**LSP**)                  | `goto_type_definition`     |
 | [x] `r`   | Go to references (**LSP**)                       | `goto_reference`           |
 | [x] `i`   | Go to implementation (**LSP**)                   | `goto_implementation`      |
-| [ ] `a`   | Go to the last accessed/alternate file           | `goto_last_accessed_file`  |
+| [x] `a`   | Go to the last accessed/alternate file           | `goto_last_accessed_file`  |
 | [ ] `m`   | Go to the last modified/alternate file           | `goto_last_modified_file`  |
 | [ ] `n`   | Go to next buffer                                | `goto_next_buffer`         |
 | [ ] `p`   | Go to previous buffer                            | `goto_previous_buffer`     |
-| [ ] `.`   | Go to last modification in current file          | `goto_last_modification`   |
-| [ ] `j`   | Move down textual (instead of visual) line       | `move_line_down`           |
-| [ ] `k`   | Move up textual (instead of visual) line         | `move_line_up`             |
+| [x] `.`   | Go to last modification in current file          | `goto_last_modification`   |
+| [x] `j`   | Move down textual (instead of visual) line       | `move_line_down`           |
+| [x] `k`   | Move up textual (instead of visual) line         | `move_line_up`             |
 | [ ] `w`   | Show labels at each word and select the word that belongs to the entered labels | `goto_word` |
 
 #### Match mode
