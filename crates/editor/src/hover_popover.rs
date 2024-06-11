@@ -355,7 +355,7 @@ fn show_hover(
 
 fn trim_codeblocks(input: &str) -> String {
     let lines: Vec<&str> = input.lines().collect();
-    let mut result: Vec<String> = Vec::new();
+    let mut result: Vec<&str> = Vec::new();
     let mut i = 0;
 
     while i < lines.len() {
@@ -365,21 +365,15 @@ fn trim_codeblocks(input: &str) -> String {
                 result.pop();
             }
 
-            // Add the current line (which starts with "```")
-            let line = lines[i].replace("\n", "");
-            if line != "" {
-                result.push(line);
-            }
+            result.push(lines[i]);
             i += 1;
             //skip following empty lines
             while i < lines.len() && lines[i].trim().is_empty() {
                 i += 1;
             }
         } else {
-            let line = lines[i].replace("\n", "");
-            if line != "" {
-                result.push(line);
-            }
+            result.push(lines[i]);
+
             i += 1;
         }
     }
@@ -395,9 +389,11 @@ async fn parse_blocks(
     let mut parsed_blocks: Vec<View<Markdown>> = Vec::new();
 
     for block in blocks {
-        println!("{:?}", block.clone().text);
-
+        println!("vvvvvvvvvvvvvvv");
+        println!("{}", block.clone().text);
+        println!("^^^^^^^^^^^^^^");
         let text = trim_codeblocks(block.clone().text.replace("\\n", "\n").trim());
+        println!("{}", text.clone());
 
         let rendered_block = cx.new_view(|cx| {
             let markdown_style = MarkdownStyle {
