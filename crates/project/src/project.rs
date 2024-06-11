@@ -40,7 +40,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
+    language_settings::{
+        language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
+    },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
@@ -6031,9 +6033,20 @@ impl Project {
             .map(|(_, server)| LanguageServerToQuery::Other(server.server_id()))
             .next()
             .or_else(|| self.is_remote().then_some(LanguageServerToQuery::Primary))
+            .filter(|_| {
+                maybe!({
+                    let language_name = buffer.read(cx).language_at(position)?.name();
+                    Some(
+                        AllLanguageSettings::get_global(cx)
+                            .language(Some(&language_name))
+                            .linked_edits,
+                    )
+                }) == Some(true)
+            })
         else {
             return Task::ready(Ok(vec![]));
         };
+
         self.request_lsp(
             buffer.clone(),
             server_id,
