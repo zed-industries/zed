@@ -38,7 +38,7 @@ impl sum_tree::Summary for UndoMapKey {
     }
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
 pub struct UndoMap(SumTree<UndoMapEntry>);
 
 impl UndoMap {

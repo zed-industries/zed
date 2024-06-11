@@ -73,7 +73,6 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                 for (buffer, start, end) in &applicable_selections {
                     let snapshot = buffer.read(cx).snapshot();
                     let buffer_id = buffer.read(cx).remote_id();
-                    let path = buffer.read(cx).file().map(|x| x.path()).cloned();
 
                     let linked_edits_task = project.linked_edit(&buffer, *start, cx);
                     let highlights = move || async move {
