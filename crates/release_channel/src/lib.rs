@@ -69,7 +69,11 @@ impl AppVersion {
 
     /// Returns the global version number.
     pub fn global(cx: &AppContext) -> SemanticVersion {
-        cx.global::<GlobalAppVersion>().0
+        if cx.has_global::<GlobalAppVersion>() {
+            cx.global::<GlobalAppVersion>().0
+        } else {
+            SemanticVersion::default()
+        }
     }
 }
 
