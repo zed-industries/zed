@@ -35,6 +35,7 @@ use ui_text_field::{FieldLabelLayout, TextField};
 use util::ResultExt;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
+use crate::open_dev_server_project;
 use crate::OpenRemote;
 
 pub struct DevServerProjects {
@@ -211,7 +212,11 @@ impl DevServerProjects {
                                     this.mode = Mode::Default(None);
                                     if let Some(app_state) = AppState::global(cx).upgrade() {
                                         workspace::join_dev_server_project(
-                                            project_id, app_state, None, cx,
+                                            DevServerProjectId(dev_server_project_id),
+                                            project_id,
+                                            app_state,
+                                            None,
+                                            cx,
                                         )
                                         .detach_and_prompt_err(
                                             "Could not join project",
@@ -558,7 +563,27 @@ impl DevServerProjects {
                             h_flex()
                                 .visible_on_hover("dev-server")
                                 .gap_1()
-                                .child(
+                                .child(if dev_server.ssh_connection_string.is_some() {
+                                    let dev_server = dev_server.clone();
+                                    IconButton::new("reconnect-dev-server", IconName::ArrowCircle)
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            let Some(workspace) = this.workspace.upgrade() else {
+                                                return;
+                                            };
+
+                                            reconnect_to_dev_server(
+                                                workspace,
+                                                dev_server.clone(),
+                                                cx,
+                                            )
+                                            .detach_and_prompt_err(
+                                                "Failed to reconnect",
+                                                cx,
+                                                |_, _| None,
+                                            );
+                                        }))
+                                        .tooltip(|cx| Tooltip::text("Reconnect", cx))
+                                } else {
                                     IconButton::new("edit-dev-server", IconName::Pencil)
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.mode = Mode::CreateDevServer(CreateDevServer {
@@ -577,8 +602,8 @@ impl DevServerProjects {
                                                 },
                                             )
                                         }))
-                                        .tooltip(|cx| Tooltip::text("Edit dev server", cx)),
-                                )
+                                        .tooltip(|cx| Tooltip::text("Edit dev server", cx))
+                                })
                                 .child({
                                     let dev_server_id = dev_server.id;
                                     IconButton::new("remove-dev-server", IconName::Trash)
@@ -681,7 +706,7 @@ impl DevServerProjects {
             .on_click(cx.listener(move |_, _, cx| {
                 if let Some(project_id) = project_id {
                     if let Some(app_state) = AppState::global(cx).upgrade() {
-                        workspace::join_dev_server_project(project_id, app_state, None, cx)
+                        workspace::join_dev_server_project(dev_server_project_id, project_id, app_state, None, cx)
                             .detach_and_prompt_err("Could not join project", cx, |_, _| None)
                     }
                 } else {
@@ -1042,6 +1067,43 @@ impl Render for DevServerProjects {
                 }
             })
     }
+}
+
+pub fn reconnect_to_dev_server_project(
+    workspace: View<Workspace>,
+    dev_server: DevServer,
+    dev_server_project_id: DevServerProjectId,
+    replace_current_window: bool,
+    cx: &mut WindowContext,
+) -> Task<anyhow::Result<()>> {
+    let store = dev_server_projects::Store::global(cx);
+    let reconnect = reconnect_to_dev_server(workspace.clone(), dev_server, cx);
+    cx.spawn(|mut cx| async move {
+        reconnect.await?;
+
+        cx.background_executor()
+            .timer(Duration::from_millis(1000))
+            .await;
+
+        if let Some(project_id) = store.update(&mut cx, |store, _| {
+            store
+                .dev_server_project(dev_server_project_id)
+                .and_then(|p| p.project_id)
+        })? {
+            workspace
+                .update(&mut cx, move |_, cx| {
+                    open_dev_server_project(
+                        replace_current_window,
+                        dev_server_project_id,
+                        project_id,
+                        cx,
+                    )
+                })?
+                .await?;
+        }
+
+        Ok(())
+    })
 }
 
 pub fn reconnect_to_dev_server(

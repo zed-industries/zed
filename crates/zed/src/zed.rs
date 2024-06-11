@@ -893,7 +893,8 @@ mod tests {
     use collections::HashSet;
     use editor::{display_map::DisplayRow, scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
-        actions, Action, AnyWindowHandle, AppContext, AssetSource, BorrowAppContext, Entity, SemanticVersion, TestAppContext, VisualTestContext, WindowHandle
+        actions, Action, AnyWindowHandle, AppContext, AssetSource, BorrowAppContext, Entity,
+        SemanticVersion, TestAppContext, VisualTestContext, WindowHandle,
     };
     use language::{LanguageMatcher, LanguageRegistry};
     use project::{Project, ProjectPath, WorktreeSettings};

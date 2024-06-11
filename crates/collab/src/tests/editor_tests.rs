@@ -30,6 +30,7 @@ use project::{
     project_settings::{InlineBlameSettings, ProjectSettings},
     SERVER_PROGRESS_DEBOUNCE_TIMEOUT,
 };
+use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::SettingsStore;
@@ -59,6 +60,7 @@ async fn test_host_disconnect(
         .await;
 
     cx_b.update(editor::init);
+    cx_b.update(recent_projects::init);
 
     client_a
         .fs()
@@ -123,11 +125,10 @@ async fn test_host_disconnect(
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.has_update_observer()));
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
-
     workspace_b
         .update(cx_b, |workspace, cx| {
-            assert_eq!(cx.focused(), None);
-            assert!(!workspace.is_edited())
+            assert!(workspace.active_modal::<DisconnectedOverlay>(cx).is_some());
+            assert!(!workspace.is_edited());
         })
         .unwrap();
 

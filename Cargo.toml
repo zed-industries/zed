@@ -68,6 +68,7 @@ members = [
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
+    "crates/proto",
     "crates/quick_action_bar",
     "crates/recent_projects",
     "crates/refineable",
@@ -163,7 +164,6 @@ clock = { path = "crates/clock" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
-color = { path = "crates/color" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
@@ -214,6 +214,7 @@ plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
+proto = { path = "crates/proto" }
 worktree = { path = "crates/worktree" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
@@ -308,6 +309,7 @@ log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
 nix = "0.28"
+num-format = "0.4.4"
 once_cell = "1.19.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
@@ -339,6 +341,7 @@ serde_repr = "0.1"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
+similar = "1.3"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }

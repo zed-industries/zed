@@ -11,6 +11,13 @@ use language::LspAdapterDelegate;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum ContentType {
+    Html,
+    Plaintext,
+    Json,
+}
+
 pub(crate) struct FetchSlashCommand;
 
 impl FetchSlashCommand {
@@ -37,24 +44,50 @@ impl FetchSlashCommand {
             );
         }
 
-        let mut handlers: Vec<Box<dyn HandleTag>> = vec![
-            Box::new(markdown::ParagraphHandler),
-            Box::new(markdown::HeadingHandler),
-            Box::new(markdown::ListHandler),
-            Box::new(markdown::TableHandler::new()),
-            Box::new(markdown::StyledTextHandler),
-        ];
-        if url.contains("wikipedia.org") {
-            use html_to_markdown::structure::wikipedia;
+        let Some(content_type) = response.headers().get("content-type") else {
+            bail!("missing Content-Type header");
+        };
+        let content_type = content_type
+            .to_str()
+            .context("invalid Content-Type header")?;
+        let content_type = match content_type {
+            "text/html" => ContentType::Html,
+            "text/plain" => ContentType::Plaintext,
+            "application/json" => ContentType::Json,
+            _ => ContentType::Html,
+        };
 
-            handlers.push(Box::new(wikipedia::WikipediaChromeRemover));
-            handlers.push(Box::new(wikipedia::WikipediaInfoboxHandler));
-            handlers.push(Box::new(wikipedia::WikipediaCodeHandler::new()));
-        } else {
-            handlers.push(Box::new(markdown::CodeHandler));
+        match content_type {
+            ContentType::Html => {
+                let mut handlers: Vec<Box<dyn HandleTag>> = vec![
+                    Box::new(markdown::ParagraphHandler),
+                    Box::new(markdown::HeadingHandler),
+                    Box::new(markdown::ListHandler),
+                    Box::new(markdown::TableHandler::new()),
+                    Box::new(markdown::StyledTextHandler),
+                ];
+                if url.contains("wikipedia.org") {
+                    use html_to_markdown::structure::wikipedia;
+
+                    handlers.push(Box::new(wikipedia::WikipediaChromeRemover));
+                    handlers.push(Box::new(wikipedia::WikipediaInfoboxHandler));
+                    handlers.push(Box::new(wikipedia::WikipediaCodeHandler::new()));
+                } else {
+                    handlers.push(Box::new(markdown::CodeHandler));
+                }
+
+                convert_html_to_markdown(&body[..], handlers)
+            }
+            ContentType::Plaintext => Ok(std::str::from_utf8(&body)?.to_owned()),
+            ContentType::Json => {
+                let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+                Ok(format!(
+                    "```json\n{}\n```",
+                    serde_json::to_string_pretty(&json)?
+                ))
+            }
         }
-
-        convert_html_to_markdown(&body[..], handlers)
     }
 }
 

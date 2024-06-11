@@ -373,6 +373,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "similar",
  "smol",
  "strsim 0.11.1",
  "strum",
@@ -2365,6 +2366,7 @@ dependencies = [
  "prometheus",
  "prost",
  "rand 0.8.5",
+ "recent_projects",
  "release_channel",
  "reqwest",
  "rpc",
@@ -2453,13 +2455,6 @@ name = "collections"
 version = "0.1.0"
 dependencies = [
  "rustc-hash",
-]
-
-[[package]]
-name = "color"
-version = "0.1.0"
-dependencies = [
- "palette",
 ]
 
 [[package]]
@@ -3454,6 +3449,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
+ "assets",
  "client",
  "clock",
  "collections",
@@ -3835,6 +3831,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "num-format",
  "picker",
  "project",
  "release_channel",
@@ -6738,6 +6735,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-format"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a652d9771a63711fd3c3deb670acfbe5c30a4072e664d7a3bf5a9e1056ac72c3"
+dependencies = [
+ "arrayvec",
+ "itoa",
+]
+
+[[package]]
 name = "num-integer"
 version = "0.1.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7923,6 +7930,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "proto"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "prost",
+ "prost-build",
+ "serde",
+]
+
+[[package]]
 name = "protobuf"
 version = "2.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8505,8 +8523,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "parking_lot",
- "prost",
- "prost-build",
+ "proto",
  "rand 0.8.5",
  "rsa 0.4.0",
  "serde",
@@ -10409,7 +10426,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "color",
  "derive_more",
  "fs",
  "futures 0.3.28",
