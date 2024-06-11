@@ -1026,8 +1026,16 @@ impl InlineAssistEditor {
     ) {
         match event {
             EditorEvent::Edited => {
+                let prompt = self.prompt_editor.read(cx).text(cx);
+                if self
+                    .prompt_history_ix
+                    .map_or(true, |ix| self.prompt_history[ix] != prompt)
+                {
+                    self.prompt_history_ix.take();
+                    self.pending_prompt = prompt;
+                }
+
                 self.edited_since_done = true;
-                self.pending_prompt = self.prompt_editor.read(cx).text(cx);
                 cx.notify();
             }
             EditorEvent::Blurred => {
@@ -1102,13 +1110,19 @@ impl InlineAssistEditor {
         if let Some(ix) = self.prompt_history_ix {
             if ix > 0 {
                 self.prompt_history_ix = Some(ix - 1);
-                let prompt = self.prompt_history[ix - 1].clone();
-                self.set_prompt(&prompt, cx);
+                let prompt = self.prompt_history[ix - 1].as_str();
+                self.prompt_editor.update(cx, |editor, cx| {
+                    editor.set_text(prompt, cx);
+                    editor.move_to_beginning(&Default::default(), cx);
+                });
             }
         } else if !self.prompt_history.is_empty() {
             self.prompt_history_ix = Some(self.prompt_history.len() - 1);
-            let prompt = self.prompt_history[self.prompt_history.len() - 1].clone();
-            self.set_prompt(&prompt, cx);
+            let prompt = self.prompt_history[self.prompt_history.len() - 1].as_str();
+            self.prompt_editor.update(cx, |editor, cx| {
+                editor.set_text(prompt, cx);
+                editor.move_to_beginning(&Default::default(), cx);
+            });
         }
     }
 
@@ -1116,23 +1130,20 @@ impl InlineAssistEditor {
         if let Some(ix) = self.prompt_history_ix {
             if ix < self.prompt_history.len() - 1 {
                 self.prompt_history_ix = Some(ix + 1);
-                let prompt = self.prompt_history[ix + 1].clone();
-                self.set_prompt(&prompt, cx);
+                let prompt = self.prompt_history[ix + 1].as_str();
+                self.prompt_editor.update(cx, |editor, cx| {
+                    editor.set_text(prompt, cx);
+                    editor.move_to_end(&Default::default(), cx)
+                });
             } else {
                 self.prompt_history_ix = None;
-                let pending_prompt = self.pending_prompt.clone();
-                self.set_prompt(&pending_prompt, cx);
+                let prompt = self.pending_prompt.as_str();
+                self.prompt_editor.update(cx, |editor, cx| {
+                    editor.set_text(prompt, cx);
+                    editor.move_to_end(&Default::default(), cx)
+                });
             }
         }
-    }
-
-    fn set_prompt(&mut self, prompt: &str, cx: &mut ViewContext<Self>) {
-        self.prompt_editor.update(cx, |editor, cx| {
-            editor.buffer().update(cx, |buffer, cx| {
-                let len = buffer.len(cx);
-                buffer.edit([(0..len, prompt)], None, cx);
-            });
-        });
     }
 
     fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
