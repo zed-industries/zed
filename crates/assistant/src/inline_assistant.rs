@@ -120,6 +120,7 @@ impl InlineAssistant {
                 gutter_dimensions.clone(),
                 self.prompt_history.clone(),
                 codegen.clone(),
+                workspace.clone(),
                 cx,
             )
         });
@@ -275,8 +276,11 @@ impl InlineAssistant {
     ) {
         let assist_id = inline_assist_editor.read(cx).id;
         match event {
-            InlineAssistEditorEvent::Started { prompt } => {
-                self.start_inline_assist(assist_id, prompt, cx);
+            InlineAssistEditorEvent::Started => {
+                self.start_inline_assist(assist_id, cx);
+            }
+            InlineAssistEditorEvent::Stopped => {
+                self.stop_inline_assist(assist_id, cx);
             }
             InlineAssistEditorEvent::Confirmed => {
                 self.finish_inline_assist(assist_id, false, cx);
@@ -405,16 +409,23 @@ impl InlineAssistant {
         }
     }
 
-    fn start_inline_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-        user_prompt: &str,
-        cx: &mut WindowContext,
-    ) {
+    fn start_inline_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
         let pending_assist = if let Some(pending_assist) = self.pending_assists.get_mut(&assist_id)
         {
             pending_assist
         } else {
+            return;
+        };
+
+        pending_assist
+            .codegen
+            .update(cx, |codegen, cx| codegen.undo(cx));
+
+        let Some(user_prompt) = pending_assist
+            .editor_decorations
+            .as_ref()
+            .map(|decorations| decorations.prompt_editor.read(cx).prompt(cx))
+        else {
             return;
         };
 
@@ -447,8 +458,8 @@ impl InlineAssistant {
             )
         });
 
-        self.prompt_history.retain(|prompt| prompt != user_prompt);
-        self.prompt_history.push_back(user_prompt.into());
+        self.prompt_history.retain(|prompt| *prompt != user_prompt);
+        self.prompt_history.push_back(user_prompt.clone());
         if self.prompt_history.len() > PROMPT_HISTORY_MAX_LEN {
             self.prompt_history.pop_front();
         }
@@ -496,8 +507,6 @@ impl InlineAssistant {
             1.0
         };
 
-        let user_prompt = user_prompt.to_string();
-
         let prompt = cx.background_executor().spawn(async move {
             let language_name = language_name.as_deref();
             generate_content_prompt(user_prompt, language_name, buffer, range, project_name)
@@ -529,6 +538,19 @@ impl InlineAssistant {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn stop_inline_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+        let pending_assist = if let Some(pending_assist) = self.pending_assists.get_mut(&assist_id)
+        {
+            pending_assist
+        } else {
+            return;
+        };
+
+        pending_assist
+            .codegen
+            .update(cx, |codegen, cx| codegen.stop(cx));
     }
 
     fn update_editor_highlights(&self, editor: &View<Editor>, cx: &mut WindowContext) {
@@ -729,7 +751,8 @@ impl InlineAssistId {
 }
 
 enum InlineAssistEditorEvent {
-    Started { prompt: String },
+    Started,
+    Stopped,
     Confirmed,
     Canceled,
     Dismissed,
@@ -740,12 +763,13 @@ struct InlineAssistEditor {
     id: InlineAssistId,
     height_in_lines: u8,
     prompt_editor: View<Editor>,
-    confirmed: bool,
+    edited_since_done: bool,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
     pending_prompt: String,
     codegen: Model<Codegen>,
+    workspace: Option<WeakView<Workspace>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -754,87 +778,170 @@ impl EventEmitter<InlineAssistEditorEvent> for InlineAssistEditor {}
 impl Render for InlineAssistEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let gutter_dimensions = *self.gutter_dimensions.lock();
-        let icon_size = IconSize::default();
-        v_flex()
-            .w_full()
-            .h_full()
-            .border_b_1()
-            .border_color(cx.theme().status().info_border)
-            .bg(cx.theme().colors().editor_background)
-            .child(
-                h_flex()
-                    .pr_3()
-                    .border_b_1()
-                    .border_color(cx.theme().status().info_border)
-                    .flex_1()
-                    .justify_end()
-                    .items_end()
-                    .gap_2()
-                    .child(
-                        Button::new("reject", if self.confirmed { "Reject" } else { "Cancel" })
-                            .color(Color::Muted)
-                            .icon(IconName::Close)
-                            .icon_color(Color::Muted)
-                            .icon_position(IconPosition::Start)
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(|this, _, cx| {
-                                this.cancel(&Default::default(), cx);
-                            })),
-                    )
-                    .child(
-                        Button::new(
-                            "confirm",
-                            if self.confirmed {
-                                "Confirm"
-                            } else {
-                                "Transform"
-                            },
-                        )
-                        .color(Color::Info)
-                        .icon(IconName::Check)
-                        .icon_color(Color::Info)
-                        .icon_position(IconPosition::Start)
-                        .style(ButtonStyle::Subtle)
-                        .on_click(cx.listener(|this, _, cx| {
-                            this.confirm(&Default::default(), cx);
-                        })),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .py_1p5()
-                    .w_full()
-                    .on_action(cx.listener(Self::confirm))
-                    .on_action(cx.listener(Self::cancel))
-                    .on_action(cx.listener(Self::move_up))
-                    .on_action(cx.listener(Self::move_down))
-                    .child(
-                        h_flex()
-                            .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
-                            .pr(gutter_dimensions.fold_area_width())
-                            .justify_end()
-                            .children(
-                                if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
-                                    let error_message = SharedString::from(error.to_string());
-                                    Some(
-                                        div()
-                                            .id("error")
-                                            .tooltip(move |cx| {
-                                                Tooltip::text(error_message.clone(), cx)
+
+        let buttons = match &self.codegen.read(cx).status {
+            CodegenStatus::Idle => {
+                vec![
+                    IconButton::new("start", IconName::Sparkle)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .icon_size(IconSize::XSmall)
+                        .tooltip(|cx| Tooltip::for_action("Transform", &menu::Confirm, cx))
+                        .on_click(
+                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Started)),
+                        ),
+                    IconButton::new("cancel", IconName::Close)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
+                        .on_click(
+                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Canceled)),
+                        ),
+                ]
+            }
+            CodegenStatus::Pending => {
+                vec![
+                    IconButton::new("stop", IconName::Stop)
+                        .icon_color(Color::Error)
+                        .size(ButtonSize::None)
+                        .icon_size(IconSize::XSmall)
+                        .tooltip(|cx| {
+                            Tooltip::with_meta(
+                                "Interrupt Transformation",
+                                Some(&menu::Cancel),
+                                "Changes won't be discarded",
+                                cx,
+                            )
+                        })
+                        .on_click(
+                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Stopped)),
+                        ),
+                    IconButton::new("cancel", IconName::Close)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
+                        .on_click(
+                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Canceled)),
+                        ),
+                ]
+            }
+            CodegenStatus::Error(_) | CodegenStatus::Done => {
+                vec![
+                    if self.edited_since_done {
+                        IconButton::new("restart", IconName::RotateCw)
+                            .icon_color(Color::Info)
+                            .icon_size(IconSize::XSmall)
+                            .size(ButtonSize::None)
+                            .tooltip(|cx| {
+                                Tooltip::with_meta(
+                                    "Restart Transformation",
+                                    Some(&menu::Confirm),
+                                    "Changes will be discarded",
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.emit(InlineAssistEditorEvent::Started);
+                            }))
+                    } else {
+                        IconButton::new("confirm", IconName::Check)
+                            .icon_color(Color::Info)
+                            .size(ButtonSize::None)
+                            .tooltip(|cx| Tooltip::for_action("Confirm Assist", &menu::Confirm, cx))
+                            .on_click(cx.listener(|_, _, cx| {
+                                cx.emit(InlineAssistEditorEvent::Confirmed);
+                            }))
+                    },
+                    IconButton::new("cancel", IconName::Close)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
+                        .on_click(
+                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Canceled)),
+                        ),
+                ]
+            }
+        };
+
+        v_flex().h_full().w_full().justify_end().child(
+            h_flex()
+                .bg(cx.theme().colors().editor_background)
+                .border_y_1()
+                .border_color(cx.theme().status().info_border)
+                .py_1p5()
+                .w_full()
+                .on_action(cx.listener(Self::confirm))
+                .on_action(cx.listener(Self::cancel))
+                .on_action(cx.listener(Self::move_up))
+                .on_action(cx.listener(Self::move_down))
+                .child(
+                    h_flex()
+                        .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
+                        // .pr(gutter_dimensions.fold_area_width())
+                        .justify_center()
+                        .gap_2()
+                        .children(self.workspace.clone().map(|workspace| {
+                            IconButton::new("context", IconName::Context)
+                                .size(ButtonSize::None)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .on_click({
+                                    let workspace = workspace.clone();
+                                    cx.listener(move |_, _, cx| {
+                                        workspace
+                                            .update(cx, |workspace, cx| {
+                                                workspace.focus_panel::<AssistantPanel>(cx);
                                             })
-                                            .child(
-                                                Icon::new(IconName::XCircle)
-                                                    .size(icon_size)
-                                                    .color(Color::Error),
+                                            .ok();
+                                    })
+                                })
+                                .tooltip(move |cx| {
+                                    let token_count = workspace.upgrade().and_then(|workspace| {
+                                        let panel =
+                                            workspace.read(cx).panel::<AssistantPanel>(cx)?;
+                                        let context = panel.read(cx).active_context(cx)?;
+                                        context.read(cx).token_count()
+                                    });
+                                    if let Some(token_count) = token_count {
+                                        Tooltip::with_meta(
+                                            format!(
+                                                "{} Additional Context Tokens from Assistant",
+                                                token_count
                                             ),
-                                    )
-                                } else {
-                                    None
-                                },
-                            ),
-                    )
-                    .child(div().flex_1().child(self.render_prompt_editor(cx))),
-            )
+                                            Some(&crate::ToggleFocus),
+                                            "Click to open…",
+                                            cx,
+                                        )
+                                    } else {
+                                        Tooltip::for_action(
+                                            "Toggle Assistant Panel",
+                                            &crate::ToggleFocus,
+                                            cx,
+                                        )
+                                    }
+                                })
+                        }))
+                        .children(
+                            if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
+                                let error_message = SharedString::from(error.to_string());
+                                Some(
+                                    div()
+                                        .id("error")
+                                        .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
+                                        .child(
+                                            Icon::new(IconName::XCircle)
+                                                .size(IconSize::Small)
+                                                .color(Color::Error),
+                                        ),
+                                )
+                            } else {
+                                None
+                            },
+                        ),
+                )
+                .child(div().flex_1().child(self.render_prompt_editor(cx)))
+                .child(h_flex().gap_2().pr_4().children(buttons)),
+        )
     }
 }
 
@@ -853,16 +960,13 @@ impl InlineAssistEditor {
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
         prompt_history: VecDeque<String>,
         codegen: Model<Codegen>,
+        workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let prompt_editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            let placeholder = match codegen.read(cx).kind() {
-                CodegenKind::Transform { .. } => "Enter transformation prompt…",
-                CodegenKind::Generate { .. } => "Enter generation prompt…",
-            };
-            editor.set_placeholder_text(placeholder, cx);
+            editor.set_placeholder_text("Add a prompt…", cx);
             editor
         });
         cx.focus_view(&prompt_editor);
@@ -877,24 +981,29 @@ impl InlineAssistEditor {
             id,
             height_in_lines: 1,
             prompt_editor,
-            confirmed: false,
+            edited_since_done: false,
             gutter_dimensions,
             prompt_history,
             prompt_history_ix: None,
             pending_prompt: String::new(),
             codegen,
+            workspace,
             _subscriptions: subscriptions,
         };
         this.count_lines(cx);
         this
     }
 
+    fn prompt(&self, cx: &AppContext) -> String {
+        self.prompt_editor.read(cx).text(cx)
+    }
+
     fn count_lines(&mut self, cx: &mut ViewContext<Self>) {
         let height_in_lines = cmp::max(
-            3, // Make the editor at least three lines tall, to account for padding and buttons.
+            2, // Make the editor at least two lines tall, to account for padding and buttons.
             cmp::min(
                 self.prompt_editor
-                    .update(cx, |editor, cx| editor.max_point(cx).row().0 + 2),
+                    .update(cx, |editor, cx| editor.max_point(cx).row().0 + 1),
                 Self::MAX_LINES as u32,
             ),
         ) as u8;
@@ -917,12 +1026,25 @@ impl InlineAssistEditor {
     ) {
         match event {
             EditorEvent::Edited => {
+                self.edited_since_done = true;
                 self.pending_prompt = self.prompt_editor.read(cx).text(cx);
                 cx.notify();
             }
             EditorEvent::Blurred => {
-                if !self.confirmed {
-                    cx.emit(InlineAssistEditorEvent::Canceled);
+                if let CodegenStatus::Idle = &self.codegen.read(cx).status {
+                    let assistant_panel_is_focused = self
+                        .workspace
+                        .as_ref()
+                        .and_then(|workspace| {
+                            let panel =
+                                workspace.upgrade()?.read(cx).panel::<AssistantPanel>(cx)?;
+                            Some(panel.focus_handle(cx).contains_focused(cx))
+                        })
+                        .unwrap_or(false);
+
+                    if !assistant_panel_is_focused {
+                        cx.emit(InlineAssistEditorEvent::Canceled);
+                    }
                 }
             }
             _ => {}
@@ -930,34 +1052,49 @@ impl InlineAssistEditor {
     }
 
     fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
-        if let CodegenStatus::Error(_) = &self.codegen.read(cx).status {
-            self.confirmed = false;
-            self.prompt_editor
-                .update(cx, |editor, _| editor.set_read_only(false));
+        match &self.codegen.read(cx).status {
+            CodegenStatus::Idle => {
+                self.prompt_editor
+                    .update(cx, |editor, _| editor.set_read_only(false));
+            }
+            CodegenStatus::Pending => {
+                self.prompt_editor
+                    .update(cx, |editor, _| editor.set_read_only(true));
+            }
+            CodegenStatus::Done | CodegenStatus::Error(_) => {
+                self.edited_since_done = false;
+                self.prompt_editor
+                    .update(cx, |editor, _| editor.set_read_only(false));
+            }
         }
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(InlineAssistEditorEvent::Canceled);
+        match &self.codegen.read(cx).status {
+            CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
+                cx.emit(InlineAssistEditorEvent::Canceled);
+            }
+            CodegenStatus::Pending => {
+                cx.emit(InlineAssistEditorEvent::Stopped);
+            }
+        }
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        if self.confirmed {
-            match &self.codegen.read(cx).status {
-                CodegenStatus::Idle | CodegenStatus::Pending => {
-                    cx.emit(InlineAssistEditorEvent::Dismissed);
-                }
-                CodegenStatus::Done | CodegenStatus::Error(_) => {
+        match &self.codegen.read(cx).status {
+            CodegenStatus::Idle => {
+                cx.emit(InlineAssistEditorEvent::Started);
+            }
+            CodegenStatus::Pending => {
+                cx.emit(InlineAssistEditorEvent::Dismissed);
+            }
+            CodegenStatus::Done | CodegenStatus::Error(_) => {
+                if self.edited_since_done {
+                    cx.emit(InlineAssistEditorEvent::Started);
+                } else {
                     cx.emit(InlineAssistEditorEvent::Confirmed);
                 }
             }
-        } else {
-            let prompt = self.prompt_editor.read(cx).text(cx);
-            self.prompt_editor
-                .update(cx, |editor, _cx| editor.set_read_only(true));
-            cx.emit(InlineAssistEditorEvent::Started { prompt });
-            self.confirmed = true;
-            cx.notify();
         }
     }
 
@@ -1160,10 +1297,6 @@ impl Codegen {
 
     pub fn range(&self) -> Range<Anchor> {
         self.kind.range(&self.snapshot)
-    }
-
-    pub fn kind(&self) -> &CodegenKind {
-        &self.kind
     }
 
     pub fn last_equal_ranges(&self) -> &[Range<Anchor>] {
@@ -1373,8 +1506,16 @@ impl Codegen {
         cx.notify();
     }
 
+    pub fn stop(&mut self, cx: &mut ModelContext<Self>) {
+        self.last_equal_ranges.clear();
+        self.status = CodegenStatus::Done;
+        self.generation = Task::ready(());
+        cx.emit(CodegenEvent::Finished);
+        cx.notify();
+    }
+
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
-        if let Some(transaction_id) = self.transaction_id {
+        if let Some(transaction_id) = self.transaction_id.take() {
             self.buffer
                 .update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
         }
