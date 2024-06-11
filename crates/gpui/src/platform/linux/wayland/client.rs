@@ -1081,13 +1081,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 ..
             } => {
                 let focused_window = state.keyboard_focused_window.clone();
-                let Some(focused_window) = focused_window else {
-                    return;
-                };
 
                 let keymap_state = state.keymap_state.as_mut().unwrap();
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 state.modifiers = Modifiers::from_xkb(keymap_state);
+
+                let Some(focused_window) = focused_window else {
+                    return;
+                };
 
                 let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: state.modifiers,
