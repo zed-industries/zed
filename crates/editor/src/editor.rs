@@ -2211,7 +2211,6 @@ impl Editor {
                 )
             });
         }
-
         let display_map = self
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
@@ -2299,6 +2298,7 @@ impl Editor {
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
             self.discard_inline_completion(false, cx);
+            linked_editing_ranges::refresh_linked_ranges(self, cx);
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(cx);
             }
@@ -2310,7 +2310,6 @@ impl Editor {
         if self.selections.disjoint_anchors().len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
-        linked_editing_ranges::refresh_linked_ranges(self, cx);
         cx.notify();
     }
 
@@ -3110,6 +3109,7 @@ impl Editor {
 
             let trigger_in_words = !had_active_inline_completion;
             this.trigger_completion_on_input(&text, trigger_in_words, cx);
+            linked_editing_ranges::refresh_linked_ranges(this, cx);
             this.refresh_inline_completion(true, cx);
         });
     }
@@ -5173,6 +5173,7 @@ impl Editor {
                 })
             }
             this.refresh_inline_completion(true, cx);
+            linked_editing_ranges::refresh_linked_ranges(this, cx);
         });
     }
 

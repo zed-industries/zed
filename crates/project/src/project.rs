@@ -6009,7 +6009,7 @@ impl Project {
     fn linked_edit_impl(
         &self,
         buffer: &Model<Buffer>,
-        position: PointUtf16,
+        position: Anchor,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Range<Anchor>>>> {
         let snapshot = buffer.read(cx).snapshot();
@@ -6042,13 +6042,12 @@ impl Project {
         )
     }
 
-    pub fn linked_edit<T: ToPointUtf16>(
+    pub fn linked_edit(
         &self,
         buffer: &Model<Buffer>,
-        position: T,
+        position: Anchor,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Range<Anchor>>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
         self.linked_edit_impl(buffer, position, cx)
     }
 

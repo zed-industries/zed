@@ -994,7 +994,7 @@ message OnTypeFormattingResponse {
 message LinkedEditingRange {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
-    PointUtf16 position = 3;
+    Anchor position = 3;
     repeated VectorClockEntry version = 4;
 }
 

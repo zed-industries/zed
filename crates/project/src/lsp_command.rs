@@ -159,7 +159,7 @@ impl From<lsp::FormattingOptions> for FormattingOptions {
 }
 
 pub(crate) struct LinkedEditingRange {
-    pub position: PointUtf16,
+    pub position: Anchor,
 }
 
 #[async_trait(?Send)]
@@ -2584,14 +2584,15 @@ impl LspCommand for LinkedEditingRange {
     fn to_lsp(
         &self,
         path: &Path,
-        _: &Buffer,
+        buffer: &Buffer,
         _server: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> lsp::LinkedEditingRangeParams {
+        let position = self.position.to_point_utf16(&buffer.snapshot());
         lsp::LinkedEditingRangeParams {
             text_document_position_params: lsp::TextDocumentPositionParams::new(
                 lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path).unwrap()),
-                point_to_lsp(self.position),
+                point_to_lsp(position),
             ),
             work_done_progress_params: Default::default(),
         }
@@ -2629,10 +2630,7 @@ impl LspCommand for LinkedEditingRange {
         proto::LinkedEditingRange {
             project_id,
             buffer_id: buffer.remote_id().to_proto(),
-            position: Some(proto::PointUtf16 {
-                row: self.position.row,
-                column: self.position.column,
-            }),
+            position: Some(serialize_anchor(&self.position)),
             version: serialize_version(&buffer.version()),
         }
     }
@@ -2651,10 +2649,10 @@ impl LspCommand for LinkedEditingRange {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
-        let position = PointUtf16 {
-            row: position.row,
-            column: position.column,
-        };
+        let position = deserialize_anchor(position).ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| buffer.wait_for_anchors([position]))?
+            .await?;
         Ok(Self { position })
     }
 
@@ -2689,7 +2687,7 @@ impl LspCommand for LinkedEditingRange {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
-        let items = message
+        let items: Vec<Range<Anchor>> = message
             .items
             .into_iter()
             .filter_map(|range| {
@@ -2698,6 +2696,14 @@ impl LspCommand for LinkedEditingRange {
                 Some(start..end)
             })
             .collect();
+        for range in &items {
+            buffer
+                .update(&mut cx, |buffer, _| {
+                    buffer.wait_for_anchors([range.start, range.end])
+                })?
+                .await?;
+        }
+        Ok(items)
     }
 
     fn buffer_id_from_proto(message: &proto::LinkedEditingRange) -> Result<BufferId> {
