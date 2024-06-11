@@ -2412,8 +2412,10 @@ impl Render for ProjectPanel {
                             external_paths.paths(),
                             state,
                             workspace::OpenOptions {
-                                open_new_workspace: Some(false),
-                                replace_window: None,
+                                open_new_workspace: Some(true),
+                                replace_window: cx
+                                    .active_window()
+                                    .and_then(|window| window.downcast::<Workspace>()),
                             },
                             cx,
                         )

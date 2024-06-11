@@ -1647,12 +1647,12 @@ impl LocalWorktree {
             .await
             .log_err();
 
-        Ok(cx.read_model(&this, |this, _| {
+        cx.read_model(&this, |this, _| {
             paths_to_refresh
                 .iter()
                 .filter_map(|path| Some(this.entry_for_path(path)?.id))
                 .collect()
-        })?)
+        })
     }
 
     fn expand_entry(
