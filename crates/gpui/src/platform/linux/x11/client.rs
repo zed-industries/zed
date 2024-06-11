@@ -524,15 +524,20 @@ impl X11Client {
                     0,
                     event.locked_group.into(),
                 );
-                let modifiers = Modifiers::from_xkb(&state.xkb);
-                let focused_window_id = state.focused_window?;
-                state.modifiers = modifiers;
-                drop(state);
 
-                let focused_window = self.get_window(focused_window_id)?;
-                focused_window.handle_input(PlatformInput::ModifiersChanged(
-                    ModifiersChangedEvent { modifiers },
-                ));
+                let modifiers = Modifiers::from_xkb(&state.xkb);
+                if state.modifiers == modifiers {
+                    drop(state);
+                } else {
+                    let focused_window_id = state.focused_window?;
+                    state.modifiers = modifiers;
+                    drop(state);
+
+                    let focused_window = self.get_window(focused_window_id)?;
+                    focused_window.handle_input(PlatformInput::ModifiersChanged(
+                        ModifiersChangedEvent { modifiers },
+                    ));
+                }
             }
             Event::KeyPress(event) => {
                 let window = self.get_window(event.event)?;
