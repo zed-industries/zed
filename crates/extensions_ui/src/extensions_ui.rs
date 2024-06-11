@@ -1003,12 +1003,16 @@ pub fn format_download_count(download_count: u64) -> String {
     let mut index = 0;
     let mut count_f64 = download_count as f64;
 
-    while count_f64 >= 1000.0 {
+    while count_f64 >= 1000.0 && index < units.len() - 1 {
         count_f64 /= 1000.0;
         index += 1;
     }
 
-    let count_str = format!("{:.1}", count_f64);
+    let count_str = if count_f64 < 10.0 {
+        format!("{:.2}", count_f64)
+    } else {
+        format!("{:.1}", count_f64)
+    };
     let count_str = count_str.trim_end_matches('0').trim_end_matches('.');
 
     format!("{}{}", count_str, units[index])
@@ -1028,6 +1032,8 @@ mod tests {
         assert_eq!(format_download_count(1200000000), "1.2B");
         assert_eq!(format_download_count(1000000000000), "1T");
         assert_eq!(format_download_count(1200000000000), "1.2T");
+        assert_eq!(format_download_count(9950), "9.95K");
+        assert_eq!(format_download_count(123456), "123.5K");
         assert_eq!(format_download_count(100), "100");
         assert_eq!(format_download_count(10), "10");
         assert_eq!(format_download_count(1), "1");
