@@ -1,7 +1,7 @@
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
-use gpui::{AppContext, RenderOnce, Task, WeakView};
+use gpui::{svg, AppContext, RenderOnce, Task, WeakView};
 use language::LspAdapterDelegate;
 use std::{
     ops::Range,
@@ -59,8 +59,31 @@ impl SlashCommand for DiagnosticsCommand {
             let file_path = file.path.to_string_lossy().to_string();
             text.push_str(&file_path);
             text.push('\n');
+
+            for error in 0..diagnostics.error_count {
+                let prev_len = text.len();
+                text.push_str("Error ");
+                text.push_str(&error.to_string());
+                text.push('\n');
+                sections.push((
+                    prev_len..text.len().saturating_sub(1),
+                    PlaceholderType::Diagnostic(DiagnosticType::Error, "Error".to_string()),
+                ))
+            }
+
+            for warning in 0..diagnostics.warning_count {
+                let prev_len = text.len();
+                text.push_str("Warning ");
+                text.push_str(&warning.to_string());
+                text.push('\n');
+                sections.push((
+                    prev_len..text.len().saturating_sub(1),
+                    PlaceholderType::Diagnostic(DiagnosticType::Warning, "Warning".to_string()),
+                ))
+            }
+
             sections.push((
-                last_end..last_end + file_path.len(),
+                last_end..text.len().saturating_sub(1),
                 PlaceholderType::File(file_path),
             ))
         }
@@ -93,6 +116,13 @@ impl SlashCommand for DiagnosticsCommand {
 pub enum PlaceholderType {
     Root,
     File(String),
+    Diagnostic(DiagnosticType, String),
+}
+
+#[derive(Copy, Clone)]
+pub enum DiagnosticType {
+    Warning,
+    Error,
 }
 
 #[derive(IntoElement)]
@@ -103,15 +133,33 @@ pub struct DiagnosticsPlaceholder {
 }
 
 impl RenderOnce for DiagnosticsPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let unfold = self.unfold;
 
         let (icon, content) = match self.placeholder_type {
             PlaceholderType::Root => (
-                Icon::new(IconName::CopilotDisabled),
+                Icon::new(IconName::CopilotDisabled).into_any_element(),
                 Label::new("Diagnostics"),
             ),
-            PlaceholderType::File(file) => (Icon::new(IconName::File), Label::new(file)),
+            PlaceholderType::File(file) => (
+                Icon::new(IconName::File).into_any_element(),
+                Label::new(file),
+            ),
+            PlaceholderType::Diagnostic(diagnostic_type, message) => (
+                svg()
+                    .size(cx.text_style().font_size)
+                    .flex_none()
+                    .map(|icon| match diagnostic_type {
+                        DiagnosticType::Warning => icon
+                            .path(IconName::XCircle.path())
+                            .text_color(Color::Error.color(cx)),
+                        DiagnosticType::Error => icon
+                            .path(IconName::ExclamationTriangle.path())
+                            .text_color(Color::Warning.color(cx)),
+                    })
+                    .into_any_element(),
+                Label::new(message),
+            ),
         };
 
         ButtonLike::new(self.id)
