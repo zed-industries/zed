@@ -362,7 +362,7 @@ impl X11WindowState {
             ),
             _raw: raw,
             x_root_window: visual_set.root,
-            bounds: params.bounds.map(|v| v.0),
+            bounds: params.bounds,
             scale_factor,
             renderer: BladeRenderer::new(gpu, config),
             atoms: *atoms,
@@ -631,9 +631,10 @@ impl X11WindowStatePtr {
 
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
             if state.renderer.viewport_size() != gpu_size {
-                state
-                    .renderer
-                    .update_drawable_size(size(gpu_size.width as f64, gpu_size.height as f64));
+                state.renderer.update_drawable_size(size(
+                    DevicePixels(gpu_size.width as i32),
+                    DevicePixels(gpu_size.height as i32),
+                ));
                 resize_args = Some((state.content_size(), state.scale_factor));
             }
         }

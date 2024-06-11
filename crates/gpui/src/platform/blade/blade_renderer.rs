@@ -3,8 +3,8 @@
 
 use super::{BladeAtlas, PATH_TEXTURE_FORMAT};
 use crate::{
-    AtlasTextureKind, AtlasTile, Bounds, ContentMask, Hsla, MonochromeSprite, Path, PathId,
-    PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, Hsla, MonochromeSprite, Path,
+    PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
     Underline,
 };
 use bytemuck::{Pod, Zeroable};

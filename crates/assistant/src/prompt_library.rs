@@ -14,8 +14,8 @@ use futures::{
 use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, percentage, point, size, Animation, AnimationExt, AppContext, BackgroundExecutor,
-    Bounds, DevicePixels, EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task,
-    TitlebarOptions, Transformation, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
+    Bounds, EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions,
+    Transformation, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};

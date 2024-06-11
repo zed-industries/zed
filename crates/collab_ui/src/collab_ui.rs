@@ -13,8 +13,8 @@ use call::{report_call_event_for_room, ActiveCall};
 pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::{
-    actions, point, AppContext, DevicePixels, Pixels, PlatformDisplay, Size, Task,
-    WindowBackgroundAppearance, WindowBounds, WindowContext, WindowKind, WindowOptions,
+    actions, point, AppContext, Pixels, PlatformDisplay, Size, Task, WindowBackgroundAppearance,
+    WindowBounds, WindowContext, WindowKind, WindowOptions,
 };
 use panel_settings::MessageEditorSettings;
 pub use panel_settings::{
