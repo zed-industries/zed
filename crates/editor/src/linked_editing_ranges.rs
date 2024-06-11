@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use collections::HashMap;
 use itertools::Itertools;
-use text::{AnchorRangeExt, BufferId};
+use text::{AnchorRangeExt, BufferId, ToPoint};
 use ui::ViewContext;
 use util::ResultExt;
 
@@ -44,16 +44,22 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
     let buffer = this.buffer.read(cx);
     let mut applicable_selections = vec![];
     let selections = this.selections.all::<usize>(cx);
+    let snapshot = buffer.snapshot(cx);
     for selection in selections {
         let cursor_position = selection.head();
-        let (cursor_buffer, start_position) =
-            buffer.text_anchor_for_position(cursor_position, cx)?;
-        let (tail_buffer, end_position) = buffer.text_anchor_for_position(selection.tail(), cx)?;
-        if cursor_buffer != tail_buffer {
+        let start_position = snapshot.anchor_before(cursor_position);
+        let end_position = snapshot.anchor_after(selection.tail());
+        if start_position.buffer_id != end_position.buffer_id || end_position.buffer_id.is_none() {
             // Throw away selections spanning multiple buffers.
             continue;
         }
-        applicable_selections.push((cursor_buffer, start_position, end_position));
+        if let Some(buffer) = end_position.buffer_id.and_then(|id| buffer.buffer(id)) {
+            applicable_selections.push((
+                buffer,
+                start_position.text_anchor,
+                end_position.text_anchor,
+            ));
+        }
     }
 
     this.linked_editing_range_task = Some(cx.spawn(|this, mut cx| async move {
@@ -63,10 +69,12 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
         let highlights = project
             .update(&mut cx, |project, cx| {
                 let mut linked_edits_tasks = vec![];
+
                 for (buffer, start, end) in &applicable_selections {
                     let snapshot = buffer.read(cx).snapshot();
                     let buffer_id = buffer.read(cx).remote_id();
                     let path = buffer.read(cx).file().map(|x| x.path()).cloned();
+
                     let linked_edits_task = project.linked_edit(&buffer, *start, cx);
                     let highlights = move || async move {
                         let edits = linked_edits_task.await.log_err()?;
@@ -75,11 +83,15 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
                         // (think of selecting <`html>foo`</html> - even though there's a matching closing tag, the selection goes beyond the range of the opening tag)
                         // or the language server may not have returned any ranges.
 
+                        let start_point = start.to_point(&snapshot);
+                        let end_point = end.to_point(&snapshot);
                         let _current_selection_contains_range = edits.iter().find(|range| {
-                            range.start.cmp(start, &snapshot).is_le()
-                                && range.end.cmp(end, &snapshot).is_ge()
-                        })?;
-
+                            range.start.to_point(&snapshot) <= start_point
+                                && range.end.to_point(&snapshot) >= end_point
+                        });
+                        if _current_selection_contains_range.is_none() {
+                            return None;
+                        }
                         // Now link every range as each-others sibling.
                         let mut siblings: HashMap<Range<text::Anchor>, Vec<_>> = Default::default();
                         let mut insert_sorted_anchor =
@@ -111,7 +123,6 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
             if this.pending_rename.is_some() {
                 return;
             }
-
             for (buffer_id, ranges) in highlights.into_iter().flatten() {
                 this.linked_edit_ranges
                     .0

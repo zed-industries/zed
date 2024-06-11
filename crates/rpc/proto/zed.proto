@@ -995,6 +995,7 @@ message LinkedEditingRange {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     PointUtf16 position = 3;
+    repeated VectorClockEntry version = 4;
 }
 
 message AnchorRange {
@@ -1004,6 +1005,7 @@ message AnchorRange {
 
 message LinkedEditingRangeResponse {
     repeated AnchorRange items = 1;
+    repeated VectorClockEntry version = 4;
 }
 
 message InlayHints {

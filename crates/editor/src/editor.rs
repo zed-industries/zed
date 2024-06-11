@@ -89,6 +89,7 @@ use language::{
     Point, Selection, SelectionGoal, TransactionId,
 };
 use language::{BufferRow, Runnable, RunnableRange};
+use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
@@ -2210,7 +2211,7 @@ impl Editor {
                 )
             });
         }
-        linked_editing_ranges::refresh_linked_ranges(self, cx);
+
         let display_map = self
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
@@ -2309,7 +2310,7 @@ impl Editor {
         if self.selections.disjoint_anchors().len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
-
+        linked_editing_ranges::refresh_linked_ranges(self, cx);
         cx.notify();
     }
 
@@ -5085,12 +5086,11 @@ impl Editor {
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             this.select_autoclose_pair(cx);
-
+            let mut linked_ranges = HashMap::<_, Vec<_>>::default();
             if !this.linked_edit_ranges.is_empty() {
-                let mut linked_ranges = HashMap::<_, Vec<_>>::default();
                 let selections = this.selections.all::<MultiBufferPoint>(cx);
                 let snapshot = this.buffer.read(cx).snapshot(cx);
-                let empty_str: Arc<str> = Arc::from("");
+
                 for selection in selections.iter() {
                     let selection_start = snapshot.anchor_before(selection.start).text_anchor;
                     let selection_end = snapshot.anchor_after(selection.end).text_anchor;
@@ -5104,30 +5104,6 @@ impl Editor {
                             linked_ranges.entry(buffer).or_default().extend(entries);
                         }
                     }
-                }
-                for (buffer, edits) in linked_ranges {
-                    let snapshot = buffer.read(cx).snapshot();
-                    use text::ToPoint as TP;
-
-                    let edits = edits
-                        .into_iter()
-                        .map(|range| {
-                            let end_point = TP::to_point(&range.end, &snapshot);
-                            let mut start_point = TP::to_point(&range.start, &snapshot);
-
-                            if end_point == start_point {
-                                let offset = text::ToOffset::to_offset(&range.start, &snapshot)
-                                    .saturating_sub(1);
-                                start_point = TP::to_point(&offset, &snapshot);
-                            };
-
-                            (start_point..end_point, empty_str.clone())
-                        })
-                        .sorted_by_key(|(range, _)| range.start)
-                        .collect::<Vec<_>>();
-                    buffer.update(cx, |this, cx| {
-                        this.edit(edits, None, cx);
-                    })
                 }
             }
 
@@ -5171,6 +5147,31 @@ impl Editor {
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
             this.insert("", cx);
+            let empty_str: Arc<str> = Arc::from("");
+            for (buffer, edits) in linked_ranges {
+                let snapshot = buffer.read(cx).snapshot();
+                use text::ToPoint as TP;
+
+                let edits = edits
+                    .into_iter()
+                    .map(|range| {
+                        let end_point = TP::to_point(&range.end, &snapshot);
+                        let mut start_point = TP::to_point(&range.start, &snapshot);
+
+                        if end_point == start_point {
+                            let offset = text::ToOffset::to_offset(&range.start, &snapshot)
+                                .saturating_sub(1);
+                            start_point = TP::to_point(&offset, &snapshot);
+                        };
+
+                        (start_point..end_point, empty_str.clone())
+                    })
+                    .sorted_by_key(|(range, _)| range.start)
+                    .collect::<Vec<_>>();
+                buffer.update(cx, |this, cx| {
+                    this.edit(edits, None, cx);
+                })
+            }
             this.refresh_inline_completion(true, cx);
         });
     }
@@ -10669,7 +10670,6 @@ impl Editor {
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
-                linked_editing_ranges::refresh_linked_ranges(self, cx);
                 if *singleton_buffer_edited {
                     if let Some(project) = &self.project {
                         let project = project.read(cx);
@@ -10701,6 +10701,7 @@ impl Editor {
 
                 let Some(project) = &self.project else { return };
                 let telemetry = project.read(cx).client().telemetry().clone();
+                refresh_linked_ranges(self, cx);
                 telemetry.log_edit_event("editor");
             }
             multi_buffer::Event::ExcerptsAdded {

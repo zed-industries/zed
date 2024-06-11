@@ -2633,18 +2633,24 @@ impl LspCommand for LinkedEditingRange {
                 row: self.position.row,
                 column: self.position.column,
             }),
+            version: serialize_version(&buffer.version()),
         }
     }
 
     async fn from_proto(
         message: proto::LinkedEditingRange,
         _project: Model<Project>,
-        _buffer: Model<Buffer>,
-        _cx: AsyncAppContext,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let position = message
             .position
             .ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
         let position = PointUtf16 {
             row: position.row,
             column: position.column,
@@ -2656,7 +2662,7 @@ impl LspCommand for LinkedEditingRange {
         response: Vec<Range<Anchor>>,
         _: &mut Project,
         _: PeerId,
-        _: &clock::Global,
+        buffer_version: &clock::Global,
         _: &mut AppContext,
     ) -> proto::LinkedEditingRangeResponse {
         proto::LinkedEditingRangeResponse {
@@ -2667,6 +2673,7 @@ impl LspCommand for LinkedEditingRange {
                     end: Some(serialize_anchor(&range.end)),
                 })
                 .collect(),
+            version: serialize_version(buffer_version),
         }
     }
 
@@ -2674,10 +2681,15 @@ impl LspCommand for LinkedEditingRange {
         self,
         message: proto::LinkedEditingRangeResponse,
         _: Model<Project>,
-        _: Model<Buffer>,
-        _: AsyncAppContext,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
     ) -> Result<Vec<Range<Anchor>>> {
-        Ok(message
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        let items = message
             .items
             .into_iter()
             .filter_map(|range| {
@@ -2685,7 +2697,7 @@ impl LspCommand for LinkedEditingRange {
                 let end = deserialize_anchor(range.end?)?;
                 Some(start..end)
             })
-            .collect())
+            .collect();
     }
 
     fn buffer_id_from_proto(message: &proto::LinkedEditingRange) -> Result<BufferId> {
