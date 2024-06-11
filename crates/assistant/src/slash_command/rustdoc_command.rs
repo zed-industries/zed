@@ -42,9 +42,7 @@ impl RustdocSlashCommand {
             local_cargo_doc_path.push("index.html");
 
             if let Ok(contents) = fs.load(&local_cargo_doc_path).await {
-                let (markdown, links) = convert_rustdoc_to_markdown(contents.as_bytes())?;
-
-                dbg!(&links);
+                let (markdown, _items) = convert_rustdoc_to_markdown(contents.as_bytes())?;
 
                 return Ok((RustdocSource::Local, markdown));
             }
