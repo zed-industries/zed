@@ -276,6 +276,7 @@ gpui::actions!(
         ShowCharacterPalette,
         ShowCompletions,
         ShowInlineCompletion,
+        ShowSignatureHelp,
         ShuffleLines,
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,

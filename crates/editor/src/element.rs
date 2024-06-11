@@ -377,6 +377,7 @@ impl EditorElement {
                 cx.propagate();
             }
         });
+        register_action(view, cx, Editor::show_signature_help);
         register_action(view, cx, Editor::next_inline_completion);
         register_action(view, cx, Editor::previous_inline_completion);
         register_action(view, cx, Editor::show_inline_completion);
@@ -2592,6 +2593,51 @@ impl EditorElement {
 
                 current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
             }
+        }
+    }
+
+    fn layout_signature_help(
+        &self,
+        hitbox: &Hitbox,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        display_point: Option<DisplayPoint>,
+        line_height: Pixels,
+        em_width: Pixels,
+        display_snapshot: &DisplaySnapshot,
+        cx: &mut WindowContext
+    ) {
+        let Some(display_point) = display_point else {
+            return;
+        };
+
+        let display_point = display_point.to_point(display_snapshot);
+        let start_x = content_origin.x - scroll_pixel_position.x + Pixels(display_point.column as f32 * em_width.0);
+        let start_y = content_origin.y  - scroll_pixel_position.y + Pixels(line_height.0 * (display_point.row as f32 - 2.5));
+
+        let point = point(start_x, start_y);
+
+        let max_size = size(
+            (120. * em_width) // Default size
+                .min(hitbox.size.width / 2.) // Shrink to half of the editor width
+                .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
+            (16. * line_height) // Default size
+                .min(hitbox.size.height / 2.) // Shrink to half of the editor height
+                .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
+        );
+
+        let maybe_element = self.editor.update(cx, |editor, cx| {
+            if let Some(popover) = &mut editor.signature_help_state {
+                let element = popover.render(&self.style, max_size, editor.workspace.as_ref().map(|(w, _)| w.clone()), cx);
+                Some(element)
+            }
+            else {
+                None
+            }
+        });
+        if let Some(mut element) = maybe_element {
+            element.layout_as_root(Size::<AvailableSpace>::default(), cx);
+            cx.defer_draw(element, point, 1)
         }
     }
 
@@ -4943,6 +4989,17 @@ impl Element for EditorElement {
                         &gutter_hitbox,
                         &snapshot,
                         cx,
+                    );
+
+                    self.layout_signature_help(
+                        &hitbox,
+                        content_origin,
+                        scroll_pixel_position,
+                        newest_selection_head,
+                        line_height,
+                        em_width,
+                        &snapshot.display_snapshot,
+                        cx
                     );
 
                     if !cx.has_active_drag() {
