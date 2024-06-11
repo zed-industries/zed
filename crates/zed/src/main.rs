@@ -303,9 +303,11 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     {
-        if crate::zed::listen_for_cli_connections(open_listener.clone()).is_err() {
-            println!("zed is already running");
-            return;
+        if env::var("ZED_STATELESS").is_err() {
+            if crate::zed::listen_for_cli_connections(open_listener.clone()).is_err() {
+                println!("zed is already running");
+                return;
+            }
         }
     }
     #[cfg(not(target_os = "linux"))]
