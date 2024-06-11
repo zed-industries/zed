@@ -141,9 +141,9 @@ pub fn os_version() -> String {
     #[cfg(target_os = "windows")]
     {
         let mut info = unsafe { std::mem::zeroed() };
-        let status = unsafe { RtlGetVersion(&mut info) };
+        let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut info) };
         if status.is_ok() {
-            SemanticVersion::new(
+            gpui::SemanticVersion::new(
                 info.dwMajorVersion as _,
                 info.dwMinorVersion as _,
                 info.dwBuildNumber as _,

@@ -61,6 +61,9 @@ settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 http = { workspace = true, features = ["test-support"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa.workspace = true
 

@@ -2240,6 +2240,7 @@ dependencies = [
  "tiny_http",
  "url",
  "util",
+ "windows 0.56.0",
 ]
 
 [[package]]
