@@ -1542,10 +1542,6 @@ impl InlayHintRefreshReason {
     }
 }
 
-pub struct SignatureHelpPopover {
-    pub string: String
-}
-
 impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.new_model(|cx| Buffer::local("", cx));
