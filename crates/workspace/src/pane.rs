@@ -1699,13 +1699,15 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
-            .start_slot(
-                div()
-                    .when_some(indicator, |this, indicator| this.child(indicator))
-                    .when_some(file_icon, |this, file_icon| {
+            .start_slot(div().when_some_else(
+                indicator,
+                |this, indicator| this.child(indicator),
+                |this| {
+                    this.when_some(file_icon, |this, file_icon| {
                         this.child(Icon::from_path(file_icon.to_string()).color(label_color))
-                    }),
-            )
+                    })
+                },
+            ))
             .end_slot(
                 IconButton::new("close tab", IconName::Close)
                     .shape(IconButtonShape::Square)
