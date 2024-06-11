@@ -373,7 +373,6 @@ fn trim_codeblocks(input: &str) -> String {
             }
         } else {
             result.push(lines[i]);
-
             i += 1;
         }
     }
@@ -389,11 +388,7 @@ async fn parse_blocks(
     let mut parsed_blocks: Vec<View<Markdown>> = Vec::new();
 
     for block in blocks {
-        println!("vvvvvvvvvvvvvvv");
-        println!("{}", block.clone().text);
-        println!("^^^^^^^^^^^^^^");
         let text = trim_codeblocks(block.clone().text.replace("\\n", "\n").trim());
-        println!("{}", text.clone());
 
         let rendered_block = cx.new_view(|cx| {
             let markdown_style = MarkdownStyle {
