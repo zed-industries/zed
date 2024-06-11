@@ -2078,27 +2078,21 @@ impl ProjectPanel {
                         this.last_drag_over_external_entry = Some(entry_id);
                         this.marked_entries.clear();
 
-                        let Some(worktree) = this
-                            .project
-                            .read(cx)
-                            .worktree_for_id(selection.worktree_id, cx)
-                        else {
-                            return;
-                        };
-                        let worktree = worktree.read(cx);
-                        let Some(abs_path) = worktree.absolutize(&path).log_err() else {
-                            return;
-                        };
-
-                        let path = if abs_path.is_dir() {
-                            path.as_ref()
-                        } else if let Some(parent) = path.parent() {
-                            parent
-                        } else {
-                            return;
-                        };
-
-                        let Some(entry) = worktree.entry_for_path(path) else {
+                        let Some((worktree, path, entry)) = maybe!({
+                            let worktree = this
+                                .project
+                                .read(cx)
+                                .worktree_for_id(selection.worktree_id, cx)?;
+                            let worktree = worktree.read(cx);
+                            let abs_path = worktree.absolutize(&path).log_err()?;
+                            let path = if abs_path.is_dir() {
+                                path.as_ref()
+                            } else {
+                                path.parent()?
+                            };
+                            let entry = worktree.entry_for_path(path)?;
+                            Some((worktree, path, entry))
+                        }) else {
                             return;
                         };
 
@@ -2121,6 +2115,7 @@ impl ProjectPanel {
             .on_drop(
                 cx.listener(move |this, external_paths: &ExternalPaths, cx| {
                     this.last_drag_over_external_entry = None;
+                    this.marked_entries.clear();
                     this.drop_external_files(external_paths.paths(), entry_id, cx);
                     cx.stop_propagation();
                 }),
