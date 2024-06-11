@@ -9,7 +9,9 @@ use crate::{
     JoinLines,
 };
 use futures::StreamExt;
-use gpui::{div, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds, WindowOptions};
+use gpui::{
+    div, AssetSource, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds, WindowOptions,
+};
 use indoc::indoc;
 use language::{
     language_settings::{
@@ -12184,6 +12186,12 @@ pub(crate) fn update_test_project_settings(
 
 pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
     _ = cx.update(|cx| {
+        cx.text_system()
+            .add_fonts(vec![assets::Assets
+                .load("fonts/zed-mono/zed-mono-extended.ttf")
+                .unwrap()
+                .unwrap()])
+            .unwrap();
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
