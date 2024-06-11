@@ -297,11 +297,7 @@ fn main() {
     let session_id = Uuid::new_v4().to_string();
 
     let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
-    reliability::init_panic_hook(
-        installation_id.clone(),
-        app_version.clone(),
-        session_id.clone(),
-    );
+    reliability::init_panic_hook(installation_id.clone(), app_version, session_id.clone());
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
