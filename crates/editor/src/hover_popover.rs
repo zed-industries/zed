@@ -495,7 +495,7 @@ impl InfoPopover {
         self.scroll_handle.set_offset(current);
     }
 
-    pub fn get_rendered_text(&self, cx: &gpui::AppContext) -> String {
+    fn get_rendered_text(&self, cx: &gpui::AppContext) -> String {
         let mut ans = String::new();
 
         for parsed_content in self.parsed_content.clone() {
@@ -612,18 +612,13 @@ mod tests {
         InlayId, PointForPosition,
     };
     use collections::BTreeSet;
-    use gpui::{FontWeight, HighlightStyle, UnderlineStyle};
     use indoc::indoc;
     use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
-    use markdown::parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
-    use project::{HoverBlock, HoverBlockKind};
     use smol::stream::StreamExt;
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;
     use text::Bias;
-    use unindent::Unindent;
-    use util::test::marked_text_ranges;
 
     #[gpui::test]
     async fn test_mouse_hover_info_popover_with_autocomplete_popover(
@@ -715,18 +710,13 @@ mod tests {
                 "Expected exactly one hover but got: {:?}",
                 editor.hover_state.info_popovers
             );
-            let markdown = editor
+            let rendered_text = editor
                 .hover_state
                 .info_popovers
                 .first()
-                .cloned()
                 .unwrap()
-                .parsed_content
-                .first()
-                .unwrap()
-                .read(cx);
-            let parsed = markdown.parsed_markdown();
-            assert_eq!(parsed.source().to_string(), "some basic docs".to_string())
+                .get_rendered_text(cx);
+            assert_eq!(rendered_text, "some basic docs".to_string())
         });
 
         // check that the completion menu is still visible and that there still has only been 1 completion request

@@ -461,7 +461,6 @@ impl MarkdownElement {
         });
         self.on_mouse_event(cx, {
             let rendered_text = rendered_text.clone();
-
             move |markdown, event: &MouseUpEvent, phase, cx| {
                 if phase.bubble() {
                     if let Some(pressed_link) = markdown.pressed_link.take() {
@@ -1123,16 +1122,3 @@ impl RenderedText {
             .find(|link| link.source_range.contains(&source_index))
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use crate::Markdown;
-
-//     #[gpui::test]
-//     async fn test_super_basic(cx: &mut gpui::TestAppContext) {
-//         cx.new_view(|cx| {
-//             let markdown = Markdown::new("Hello world!".to_string(), Default::default(), None, cx);
-//             markdown
-//         });
-//     }
-// }
