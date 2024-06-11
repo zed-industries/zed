@@ -149,11 +149,7 @@ impl MarkdownWriter {
         }
     }
 
-    fn visit_text(
-        &mut self,
-        text: String,
-        handlers: &mut [Rc<RefCell<dyn HandleTag>>],
-    ) -> Result<()> {
+    fn visit_text(&mut self, text: String, handlers: &mut [TagHandler]) -> Result<()> {
         for handler in handlers {
             match handler.borrow_mut().handle_text(&text, self) {
                 HandlerOutcome::Handled => return Ok(()),

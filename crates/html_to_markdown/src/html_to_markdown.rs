@@ -39,7 +39,7 @@ pub fn convert_html_to_markdown(html: impl Read, handlers: &mut Vec<TagHandler>)
 pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<(String, Vec<String>)> {
     let link_collector = Rc::new(RefCell::new(structure::rustdoc::RustdocLinkCollector::new()));
 
-    let mut handlers: Vec<Rc<RefCell<dyn HandleTag>>> = vec![
+    let mut handlers: Vec<TagHandler> = vec![
         Rc::new(RefCell::new(ParagraphHandler)),
         Rc::new(RefCell::new(HeadingHandler)),
         Rc::new(RefCell::new(ListHandler)),
