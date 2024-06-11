@@ -63,7 +63,7 @@ use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
-use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
+use crate::platform::linux::xdg_desktop_portal::{cursor_theme, Event as XDPEvent, XDPEventSource};
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
 use crate::{
@@ -430,7 +430,7 @@ impl WaylandClient {
 
         let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
-        let cursor = Cursor::new(&conn, &globals, 24);
+        let mut cursor = Cursor::new(&conn, &globals, 24);
 
         handle
             .insert_source(XDPEventSource::new(&common.background_executor), {
@@ -446,9 +446,17 @@ impl WaylandClient {
                             }
                         }
                     }
+                    XDPEvent::CursorTheme(theme) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let mut client = client.borrow_mut();
+                            client.cursor.set_theme(theme.as_str());
+                        }
+                    }
                 }
             })
             .unwrap();
+
+        let foreground = common.foreground_executor.clone();
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
@@ -510,6 +518,18 @@ impl WaylandClient {
 
             pending_open_uri: None,
         }));
+
+        foreground
+            .spawn({
+                let state = state.clone();
+                async move {
+                    if let Ok(theme) = cursor_theme().await {
+                        let mut state = state.borrow_mut();
+                        state.cursor.set_theme(theme.as_str());
+                    }
+                }
+            })
+            .detach();
 
         WaylandSource::new(conn, event_queue)
             .insert(handle)

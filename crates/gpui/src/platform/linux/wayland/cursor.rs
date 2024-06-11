@@ -1,14 +1,17 @@
 use crate::Globals;
 use util::ResultExt;
 
-use wayland_client::protocol::wl_pointer::WlPointer;
 use wayland_client::protocol::wl_surface::WlSurface;
+use wayland_client::protocol::{wl_pointer::WlPointer, wl_shm::WlShm};
 use wayland_client::Connection;
 use wayland_cursor::{CursorImageBuffer, CursorTheme};
 
 pub(crate) struct Cursor {
     theme: Option<CursorTheme>,
     surface: WlSurface,
+    size: u32,
+    shm: WlShm,
+    connection: Connection,
 }
 
 impl Drop for Cursor {
@@ -23,7 +26,19 @@ impl Cursor {
         Self {
             theme: CursorTheme::load(&connection, globals.shm.clone(), size).log_err(),
             surface: globals.compositor.create_surface(&globals.qh, ()),
+            shm: globals.shm.clone(),
+            connection: connection.clone(),
+            size,
         }
+    }
+
+    pub fn set_theme(&mut self, theme: &str) {
+        self.theme =
+            CursorTheme::load_from_name(&self.connection, self.shm.clone(), theme, self.size)
+                .log_err()
+                .or_else(|| {
+                    CursorTheme::load(&self.connection, self.shm.clone(), self.size).log_err()
+                });
     }
 
     pub fn set_icon(&mut self, wl_pointer: &WlPointer, serial_id: u32, mut cursor_icon_name: &str) {

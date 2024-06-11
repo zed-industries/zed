@@ -1,18 +1,17 @@
 //! Provides a [calloop] event source from [XDG Desktop Portal] events
 //!
-//! This module uses the [ashpd] crate and handles many async loop
-use std::future::Future;
+//! This module uses the [ashpd] crate
 
 use ashpd::desktop::settings::{ColorScheme, Settings};
-use calloop::channel::{Channel, Sender};
+use calloop::channel::Channel;
 use calloop::{EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
 use smol::stream::StreamExt;
-use util::ResultExt;
 
 use crate::{BackgroundExecutor, WindowAppearance};
 
 pub enum Event {
     WindowAppearance(WindowAppearance),
+    CursorTheme(String),
 }
 
 pub struct XDPEventSource {
@@ -23,34 +22,43 @@ impl XDPEventSource {
     pub fn new(executor: &BackgroundExecutor) -> Self {
         let (sender, channel) = calloop::channel::channel();
 
-        Self::spawn_observer(executor, Self::appearance_observer(sender.clone()));
+        let background = executor.clone();
 
-        Self { channel }
-    }
-
-    fn spawn_observer(
-        executor: &BackgroundExecutor,
-        to_spawn: impl Future<Output = Result<(), anyhow::Error>> + Send + 'static,
-    ) {
         executor
             .spawn(async move {
-                to_spawn.await.log_err();
+                let settings = Settings::new().await?;
+
+                if let Ok(mut cursor_theme_changed) = settings
+                    .receive_setting_changed_with_args(
+                        "org.gnome.desktop.interface",
+                        "cursor-theme",
+                    )
+                    .await
+                {
+                    let sender = sender.clone();
+                    background
+                        .spawn(async move {
+                            while let Some(theme) = cursor_theme_changed.next().await {
+                                let theme = theme?;
+                                sender.send(Event::CursorTheme(theme))?;
+                            }
+                            anyhow::Ok(())
+                        })
+                        .detach();
+                }
+
+                let mut appearance_changed = settings.receive_color_scheme_changed().await?;
+                while let Some(scheme) = appearance_changed.next().await {
+                    sender.send(Event::WindowAppearance(WindowAppearance::from_native(
+                        scheme,
+                    )))?;
+                }
+
+                anyhow::Ok(())
             })
-            .detach()
-    }
+            .detach();
 
-    async fn appearance_observer(sender: Sender<Event>) -> Result<(), anyhow::Error> {
-        let settings = Settings::new().await?;
-
-        // We observe the color change during the execution of the application
-        let mut stream = settings.receive_color_scheme_changed().await?;
-        while let Some(scheme) = stream.next().await {
-            sender.send(Event::WindowAppearance(WindowAppearance::from_native(
-                scheme,
-            )))?;
-        }
-
-        Ok(())
+        Self { channel }
     }
 }
 
@@ -141,4 +149,13 @@ pub fn should_auto_hide_scrollbars(executor: &BackgroundExecutor) -> Result<bool
 
         Ok(auto_hide)
     })
+}
+
+pub async fn cursor_theme() -> Result<String, anyhow::Error> {
+    let settings = Settings::new().await?;
+    let cursor_theme = settings
+        .read::<String>("org.gnome.desktop.interface", "cursor-theme")
+        .await?;
+
+    Ok(cursor_theme)
 }
