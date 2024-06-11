@@ -50,7 +50,7 @@ pub struct ProjectPanel {
     focus_handle: FocusHandle,
     visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
     last_worktree_root_id: Option<ProjectEntryId>,
-    last_drag_over_external_entry: Option<ProjectEntryId>,
+    last_external_paths_drag_over_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
     // Currently selected entry in a file tree
@@ -261,7 +261,7 @@ impl ProjectPanel {
                 focus_handle,
                 visible_entries: Default::default(),
                 last_worktree_root_id: Default::default(),
-                last_drag_over_external_entry: None,
+                last_external_paths_drag_over_entry: None,
                 expanded_dir_ids: Default::default(),
                 unfolded_dir_ids: Default::default(),
                 selection: None,
@@ -2050,10 +2050,10 @@ impl ProjectPanel {
             .on_drag_move::<ExternalPaths>(cx.listener(
                 move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
                     if event.bounds.contains(&event.event.position) {
-                        if this.last_drag_over_external_entry == Some(entry_id) {
+                        if this.last_external_paths_drag_over_entry == Some(entry_id) {
                             return;
                         }
-                        this.last_drag_over_external_entry = Some(entry_id);
+                        this.last_external_paths_drag_over_entry = Some(entry_id);
                         this.marked_entries.clear();
 
                         let Some((worktree, path, entry)) = maybe!({
@@ -2092,7 +2092,7 @@ impl ProjectPanel {
             ))
             .on_drop(
                 cx.listener(move |this, external_paths: &ExternalPaths, cx| {
-                    this.last_drag_over_external_entry = None;
+                    this.last_external_paths_drag_over_entry = None;
                     this.marked_entries.clear();
                     this.drop_external_files(external_paths.paths(), entry_id, cx);
                     cx.stop_propagation();
@@ -2400,24 +2400,21 @@ impl Render for ProjectPanel {
                 })
                 .on_drop(
                     cx.listener(move |this, external_paths: &ExternalPaths, cx| {
-                        this.last_drag_over_external_entry = None;
+                        this.last_external_paths_drag_over_entry = None;
                         this.marked_entries.clear();
-                        let Some(state) = workspace::AppState::global(cx).upgrade() else {
-                            return;
-                        };
-
-                        workspace::open_paths(
-                            external_paths.paths(),
-                            state,
-                            workspace::OpenOptions {
-                                open_new_workspace: Some(true),
-                                replace_window: cx
-                                    .active_window()
-                                    .and_then(|window| window.downcast::<Workspace>()),
-                            },
-                            cx,
-                        )
-                        .detach_and_log_err(cx);
+                        if let Some(task) = this
+                            .workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.open_workspace_for_paths(
+                                    true,
+                                    external_paths.paths().to_owned(),
+                                    cx,
+                                )
+                            })
+                            .log_err()
+                        {
+                            task.detach_and_log_err(cx);
+                        }
                         cx.stop_propagation();
                     }),
                 )

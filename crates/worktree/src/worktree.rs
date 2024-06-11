@@ -850,7 +850,7 @@ impl Worktree {
                 this.copy_external_entries(target_directory, paths, overwrite_existing_files, cx)
             }
             _ => Task::ready(Err(anyhow!(
-                "Dropping external entries is not supported for remote worktrees"
+                "Copying external entries is not supported for remote worktrees"
             ))),
         }
     }
