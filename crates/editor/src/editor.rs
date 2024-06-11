@@ -11029,6 +11029,11 @@ impl Editor {
         if let Some(blame) = self.blame.as_ref() {
             blame.update(cx, GitBlame::blur)
         }
+        let h = cx.focus_handle();
+        if !self.hover_state.focused(cx) {
+            hide_hover(self, cx);
+        }
+
         self.hide_context_menu(cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();

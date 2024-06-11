@@ -24,7 +24,7 @@ use futures::{future::Shared, FutureExt};
 use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
 use refineable::Refineable;
-use slotmap::SlotMap;
+use slotmap::{KeyData, SlotMap};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},

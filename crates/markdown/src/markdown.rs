@@ -407,7 +407,6 @@ impl MarkdownElement {
                                 reversed: false,
                                 pending: true,
                             };
-                            // Need to remove cx.focus(&markdown.focus_handle); in order to allow popovers to stay open.
                             cx.focus(&markdown.focus_handle);
                             cx.prevent_default()
                         }
