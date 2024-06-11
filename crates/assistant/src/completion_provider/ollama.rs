@@ -9,7 +9,6 @@ use http::HttpClient;
 use ollama::{
     get_models, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest, Role as OllamaRole,
 };
-// use open_ai::{stream_completion, Request, RequestMessage, Role as OpenAiRole};
 use std::sync::Arc;
 use std::time::Duration;
 use ui::prelude::*;
@@ -86,7 +85,7 @@ impl OllamaCompletionProvider {
         cx.spawn(|mut cx| async move {
             let models = get_models(http_client.as_ref(), &api_url, None).await?;
 
-            let models = models
+            let mut models: Vec<OllamaModel> = models
                 .into_iter()
                 // Since there is no metadata from the Ollama API
                 // indicating which models are embedding models,
@@ -94,6 +93,8 @@ impl OllamaCompletionProvider {
                 .filter(|model| !model.name.contains("-embed"))
                 .map(|model| OllamaModel::new(&model.name, &model.details.parameter_size))
                 .collect();
+
+            models.sort_by(|a, b| a.name.cmp(&b.name));
 
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
                 if let CompletionProvider::Ollama(provider) = provider {
