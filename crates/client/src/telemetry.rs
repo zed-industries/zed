@@ -12,7 +12,6 @@ use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use std::io::Write;
-use std::path::Path;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
@@ -95,10 +94,13 @@ pub fn os_name() -> String {
 pub fn os_version() -> String {
     #[cfg(target_os = "macos")]
     {
+        use cocoa::base::nil;
+        use cocoa::foundation::NSProcessInfo;
+
         unsafe {
             let process_info = cocoa::foundation::NSProcessInfo::processInfo(nil);
             let version = process_info.operatingSystemVersion();
-            SemanticVersion::new(
+            gpui::SemanticVersion::new(
                 version.majorVersion as usize,
                 version.minorVersion as usize,
                 version.patchVersion as usize,
@@ -108,6 +110,8 @@ pub fn os_version() -> String {
     }
     #[cfg(target_os = "linux")]
     {
+        use std::path::Path;
+
         let content = if let Ok(file) = std::fs::read_to_string(&Path::new("/etc/os-release")) {
             file
         } else if let Ok(file) = std::fs::read_to_string(&Path::new("/usr/lib/os-release")) {

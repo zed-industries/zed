@@ -287,7 +287,7 @@ impl Platform for WindowsPlatform {
         &self,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> Result<Box<dyn PlatformWindow>> {
         let lock = self.state.borrow();
         let window = WindowsWindow::new(
             handle,
@@ -300,7 +300,7 @@ impl Platform for WindowsPlatform {
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
 
-        Box::new(window)
+        Ok(Box::new(window))
     }
 
     // todo(windows)

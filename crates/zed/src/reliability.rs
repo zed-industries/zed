@@ -175,7 +175,6 @@ pub fn monitor_main_thread_hangs(
     let foreground_executor = cx.foreground_executor();
     let background_executor = cx.background_executor();
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
-    let metadata = cx.app_metadata();
 
     // Initialize SIGUSR2 handler to send a backrace to a channel.
     let (backtrace_tx, backtrace_rx) = mpsc::channel();
@@ -251,9 +250,14 @@ pub fn monitor_main_thread_hangs(
         })
         .detach();
 
+    let app_version = release_channel::AppVersion::global(cx);
+    let os_name = client::telemetry::os_name();
+
     background_executor
         .clone()
         .spawn(async move {
+            let os_version = client::telemetry::os_version();
+
             loop {
                 while let Some(_) = backtrace_rx.recv().ok() {
                     if !telemetry_settings.diagnostics {
@@ -299,9 +303,9 @@ pub fn monitor_main_thread_hangs(
 
                     let report = HangReport {
                         backtrace,
-                        app_version: metadata.app_version,
-                        os_name: metadata.os_name.to_owned(),
-                        os_version: metadata.os_version,
+                        app_version: Some(app_version),
+                        os_name: os_name.clone(),
+                        os_version: Some(os_version.clone()),
                         architecture: env::consts::ARCH.into(),
                         installation_id: installation_id.clone(),
                     };
