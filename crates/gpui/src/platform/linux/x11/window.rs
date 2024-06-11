@@ -1,6 +1,6 @@
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
+    px, size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowParams, X11ClientStatePtr,
@@ -160,7 +160,7 @@ pub struct X11WindowState {
     atoms: XcbAtoms,
     x_root_window: xproto::Window,
     _raw: RawWindow,
-    bounds: Bounds<i32>,
+    bounds: Bounds<Pixels>,
     scale_factor: f32,
     renderer: BladeRenderer,
     display: Rc<dyn PlatformDisplay>,
@@ -271,10 +271,10 @@ impl X11WindowState {
                 visual.depth,
                 x_window,
                 visual_set.root,
-                params.bounds.origin.x.0 as i16,
-                params.bounds.origin.y.0 as i16,
-                params.bounds.size.width.0 as u16,
-                params.bounds.size.height.0 as u16,
+                (params.bounds.origin.x.0 * scale_factor) as i16,
+                (params.bounds.origin.y.0 * scale_factor) as i16,
+                (params.bounds.size.width.0 * scale_factor) as u16,
+                (params.bounds.size.height.0 * scale_factor) as u16,
                 0,
                 xproto::WindowClass::INPUT_OUTPUT,
                 visual.id,
@@ -357,7 +357,9 @@ impl X11WindowState {
         Ok(Self {
             client,
             executor,
-            display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
+            display: Rc::new(
+                X11Display::new(xcb_connection, scale_factor, x_screen_index).unwrap(),
+            ),
             _raw: raw,
             x_root_window: visual_set.root,
             bounds: params.bounds.map(|v| v.0),
@@ -614,6 +616,7 @@ impl X11WindowStatePtr {
         let is_resize;
         {
             let mut state = self.state.borrow_mut();
+            let bounds = bounds.map(|f| px(f as f32 / state.scale_factor));
 
             is_resize = bounds.size.width != state.bounds.size.width
                 || bounds.size.height != state.bounds.size.height;
@@ -665,8 +668,8 @@ impl X11WindowStatePtr {
 }
 
 impl PlatformWindow for X11Window {
-    fn bounds(&self) -> Bounds<DevicePixels> {
-        self.0.state.borrow().bounds.map(|v| v.into())
+    fn bounds(&self) -> Bounds<Pixels> {
+        self.0.state.borrow().bounds
     }
 
     fn is_maximized(&self) -> bool {
@@ -680,7 +683,7 @@ impl PlatformWindow for X11Window {
 
     fn window_bounds(&self) -> WindowBounds {
         let state = self.0.state.borrow();
-        WindowBounds::Windowed(state.bounds.map(|p| DevicePixels(p)))
+        WindowBounds::Windowed(state.bounds)
     }
 
     fn content_size(&self) -> Size<Pixels> {

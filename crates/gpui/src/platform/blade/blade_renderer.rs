@@ -417,10 +417,10 @@ impl BladeRenderer {
         }
     }
 
-    pub fn update_drawable_size(&mut self, size: Size<f64>) {
+    pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
         let gpu_size = gpu::Extent {
-            width: size.width as u32,
-            height: size.height as u32,
+            width: size.width.0 as u32,
+            height: size.height.0 as u32,
             depth: 1,
         };
 

@@ -76,13 +76,13 @@ pub struct WaylandWindowState {
     display: Option<(ObjectId, Output)>,
     globals: Globals,
     renderer: BladeRenderer,
-    bounds: Bounds<u32>,
+    bounds: Bounds<DevicePixels>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
     decoration_state: WaylandDecorationState,
     fullscreen: bool,
     maximized: bool,
-    windowed_bounds: Bounds<DevicePixels>,
+    windowed_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
     active: bool,
@@ -108,7 +108,7 @@ impl WaylandWindowState {
         globals: Globals,
         options: WindowParams,
     ) -> anyhow::Result<Self> {
-        let bounds = options.bounds.map(|p| p.0 as u32);
+        let bounds = options.bounds.map(|p| DevicePixels(p.0 as i32));
 
         let raw = RawWindow {
             window: surface.id().as_ptr().cast::<c_void>(),
@@ -134,8 +134,8 @@ impl WaylandWindowState {
         );
         let config = BladeSurfaceConfig {
             size: gpu::Extent {
-                width: bounds.size.width,
-                height: bounds.size.height,
+                width: bounds.size.width.0 as u32,
+                height: bounds.size.height.0 as u32,
                 depth: 1,
             },
             transparent: options.window_background != WindowBackgroundAppearance::Opaque,
@@ -159,7 +159,7 @@ impl WaylandWindowState {
             decoration_state: WaylandDecorationState::Client,
             fullscreen: false,
             maximized: false,
-            windowed_bounds: options.bounds,
+            windowed_bounds: bounds,
             client,
             appearance,
             handle,
@@ -349,10 +349,13 @@ impl WaylandWindowStatePtr {
     pub fn handle_toplevel_event(&self, event: xdg_toplevel::Event) -> bool {
         match event {
             xdg_toplevel::Event::Configure {
-                mut width,
-                mut height,
+                width,
+                height,
                 states,
             } => {
+                let mut width = px(width as f32);
+                let mut height = px(height as f32);
+
                 let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
                 let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
 
@@ -362,12 +365,12 @@ impl WaylandWindowStatePtr {
                 state.maximized = maximized;
 
                 if got_unmaximized {
-                    width = state.windowed_bounds.size.width.0;
-                    height = state.windowed_bounds.size.height.0;
+                    width = state.windowed_bounds.size.width;
+                    height = state.windowed_bounds.size.height;
                 } else if width != 0 && height != 0 && !fullscreen && !maximized {
                     state.windowed_bounds = Bounds {
                         origin: Point::default(),
-                        size: size(width.into(), height.into()),
+                        size: size(DevicePixels(width), DevicePixels(height)),
                     };
                 }
 
@@ -485,11 +488,12 @@ impl WaylandWindowStatePtr {
 
     pub fn set_size_and_scale(
         &self,
+        size: Option<Pixels>,
         width: Option<NonZeroU32>,
         height: Option<NonZeroU32>,
         scale: Option<f32>,
     ) {
-        let (width, height, scale) = {
+        let (scaled_bounds, scale) = {
             let mut state = self.state.borrow_mut();
             if width.map_or(true, |width| width.get() == state.bounds.size.width)
                 && height.map_or(true, |height| height.get() == state.bounds.size.height)
@@ -498,10 +502,10 @@ impl WaylandWindowStatePtr {
                 return;
             }
             if let Some(width) = width {
-                state.bounds.size.width = width.get();
+                state.bounds.size.width = DisplayPixels(width.get() as i32);
             }
             if let Some(height) = height {
-                state.bounds.size.height = height.get();
+                state.bounds.size.height = DevicePixels(height.get() as i32);
             }
             if let Some(scale) = scale {
                 state.scale = scale;
@@ -509,19 +513,18 @@ impl WaylandWindowStatePtr {
             let width = state.bounds.size.width;
             let height = state.bounds.size.height;
             let scale = state.scale;
-            state.renderer.update_drawable_size(size(
-                width as f64 * scale as f64,
-                height as f64 * scale as f64,
-            ));
+            // state.renderer.update_drawable_size(size(
+            //        width as f64 * scale as f64,
+            //        height as f64 * scale as f64,
+            //    ));
+            let scaled_bounds = state.bounds.to_pixels(state.scale);
+            state.renderer.update_drawable_size(scaled_bounds.size);
             (width, height, scale)
         };
 
         if let Some(ref mut fun) = self.callbacks.borrow_mut().resize {
             fun(
-                Size {
-                    width: px(width as f32),
-                    height: px(height as f32),
-                },
+                scaled_bounds.size
                 scale,
             );
         }
@@ -534,12 +537,12 @@ impl WaylandWindowStatePtr {
         }
     }
 
-    pub fn resize(&self, width: Option<NonZeroU32>, height: Option<NonZeroU32>) {
+    pub fn resize(&self, size: O) {
         self.set_size_and_scale(width, height, None);
     }
 
     pub fn rescale(&self, scale: f32) {
-        self.set_size_and_scale(None, None, Some(scale));
+        self.set_size_and_scale(None, Some(scale));
     }
 
     /// Notifies the window of the state of the decorations.
@@ -625,8 +628,9 @@ impl rwh::HasDisplayHandle for WaylandWindow {
 }
 
 impl PlatformWindow for WaylandWindow {
-    fn bounds(&self) -> Bounds<DevicePixels> {
-        self.borrow().bounds.map(|p| DevicePixels(p as i32))
+    fn bounds(&self) -> Bounds<Pixels> {
+        let state = self.borrow();
+        state.bounds.to_pixels(state.scale)
     }
 
     fn is_maximized(&self) -> bool {
@@ -636,20 +640,18 @@ impl PlatformWindow for WaylandWindow {
     fn window_bounds(&self) -> WindowBounds {
         let state = self.borrow();
         if state.fullscreen {
-            WindowBounds::Fullscreen(state.windowed_bounds)
+            WindowBounds::Fullscreen(state.windowed_bounds.to_pixels(state.scale))
         } else if state.maximized {
-            WindowBounds::Maximized(state.windowed_bounds)
+            WindowBounds::Maximized(state.windowed_bounds.to_pixels(state.scale))
         } else {
-            WindowBounds::Windowed(state.bounds.map(|p| DevicePixels(p as i32)))
+            drop(state);
+            WindowBounds::Windowed(self.bounds())
         }
     }
 
     fn content_size(&self) -> Size<Pixels> {
         let state = self.borrow();
-        Size {
-            width: Pixels(state.bounds.size.width as f32),
-            height: Pixels(state.bounds.size.height as f32),
-        }
+        state.bounds.to_pixels(state.scale).size
     }
 
     fn scale_factor(&self) -> f32 {
@@ -661,11 +663,12 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        self.borrow().display.as_ref().map(|(id, display)| {
+        let state = self.borrow();
+        state.display.as_ref().map(|(id, display)| {
             Rc::new(WaylandDisplay {
                 id: id.clone(),
                 name: display.name.clone(),
-                bounds: display.bounds,
+                bounds: display.bounds.to_pixels(state.scale),
             }) as Rc<dyn PlatformDisplay>
         })
     }

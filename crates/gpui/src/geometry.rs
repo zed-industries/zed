@@ -1345,6 +1345,34 @@ impl Bounds<Pixels> {
             size: self.size.scale(factor),
         }
     }
+
+    pub fn to_display_pixels(&self, factor: f32) -> Bounds<DevicePixels> {
+        Bounds {
+            origin: point(
+                DevicePixels((self.origin.x.0 * factor) as i32),
+                DevicePixels((self.origin.y.0 * factor) as i32),
+            ),
+            size: size(
+                DevicePixels((self.size.width.0 * factor) as i32),
+                DevicePixels((self.size.height.0 * factor) as i32),
+            ),
+        }
+    }
+}
+
+impl Bounds<DevicePixels> {
+    pub fn to_pixels(self, scale_factor: f32) -> Bounds<Pixels> {
+        Bounds {
+            origin: point(
+                px(self.origin.x.0 as f32 / scale_factor),
+                px(self.origin.y.0 as f32 / scale_factor),
+            ),
+            size: size(
+                px(self.origin.width.0 as f32 / scale_factor),
+                px(self.origin.height.0 as f32 / scale_factor),
+            ),
+        }
+    }
 }
 
 impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
