@@ -37,6 +37,7 @@ use normal::{
     mark::{create_mark, create_mark_after, create_mark_before},
     normal_replace,
 };
+use registers::Register;
 use replace::multi_replace;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -71,6 +72,9 @@ pub struct PushOperator(pub Operator);
 #[derive(Clone, Deserialize, PartialEq)]
 struct Number(usize);
 
+#[derive(Clone, Deserialize, PartialEq)]
+struct SelectRegister(Register);
+
 actions!(
     vim,
     [
@@ -87,7 +91,7 @@ actions!(
 // in the workspace namespace so it's not filtered out when vim is disabled.
 actions!(workspace, [ToggleVimMode]);
 
-impl_actions!(vim, [SwitchMode, PushOperator, Number]);
+impl_actions!(vim, [SwitchMode, PushOperator, Number, SelectRegister]);
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut AppContext) {
@@ -130,7 +134,9 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, n: &Number, cx: _| {
         Vim::update(cx, |vim, cx| vim.push_count_digit(n.0, cx));
     });
-
+    workspace.register_action(|_: &mut Workspace, SelectRegister(register): &SelectRegister, cx| {
+        Vim::update(cx, |vim, cx| vim.select_register(*register, cx));
+    });
     workspace.register_action(|_: &mut Workspace, _: &Tab, cx| {
         Vim::active_editor_input_ignored(" ".into(), cx)
     });
@@ -530,6 +536,14 @@ impl Vim {
         }
         self.sync_vim_settings(cx);
         count
+    }
+
+    fn select_register(&mut self, register: Register, cx: &mut WindowContext) {
+        self.update_state(|state| {
+            state.selected_register = Some(register);
+            state.operator_stack.clear();
+        });
+        self.sync_vim_settings(cx);
     }
 
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {

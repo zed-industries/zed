@@ -55,8 +55,14 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                             == UseSystemClipboard::OnYank
                             && !system_clipboard_is_newer(vim, cx)
                     {
+                        let register = if let Some(register) = vim.state().selected_register {
+                            vim.update_state(|state| state.selected_register = None);
+                            register
+                        } else {
+                            Register::Default
+                        };
                         (
-                            vim.workspace_state.registers[Register::Default]
+                            vim.workspace_state.registers[register]
                                 .clone()
                                 .unwrap_or_else(|| "".to_string()),
                             None,
@@ -607,4 +613,56 @@ mod test {
             three
         "});
     }
+
+    #[gpui::test]
+    async fn test_registers(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            });
+        });
+
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox jˇumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y y \" 0 p");
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                fox jumps over
+                ˇfox jumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("k k y y \" 0 p \" 1 p");
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                The quick brown
+                ˇfox jumps over
+                fox jumps over
+                fox jumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("\" a y y 2 k \" a shift-p");
+        cx.assert_state(
+            indoc! {"
+                ˇfox jumps over
+                The quick brown
+                The quick brown
+                fox jumps over
+                fox jumps over
+                fox jumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+    }
+
 }

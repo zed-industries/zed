@@ -113,7 +113,15 @@ fn copy_selections_content_internal(
                 .unwrap_or_default(),
         );
     }
-    vim.workspace_state.registers[Register::Default] = Some(text);
+    vim.workspace_state.registers[Register::Default] = Some(text.clone());
+    if let Some(register) = vim.state().selected_register {
+        if register >= Register::A {
+            vim.workspace_state.registers[register] = Some(text);
+        }
+        vim.update_state(|state| state.selected_register = None);
+    } else {
+        vim.workspace_state.registers.push(text);
+    }
     if !is_yank || vim.state().mode == Mode::Visual {
         return;
     }

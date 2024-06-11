@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::Range, sync::Arc};
 
-use crate::registers::Registers;
+use crate::registers::{Registers, Register};
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
 use collections::HashMap;
@@ -68,6 +68,7 @@ pub enum Operator {
     Lowercase,
     Uppercase,
     OppositeCase,
+    Register,
 }
 
 #[derive(Default, Clone)]
@@ -90,6 +91,8 @@ pub struct EditorState {
     pub current_tx: Option<TransactionId>,
     pub current_anchor: Option<Selection<Anchor>>,
     pub undo_modes: HashMap<TransactionId, Mode>,
+    
+    pub selected_register: Option<Register>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -278,6 +281,7 @@ impl Operator {
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
             Operator::OppositeCase => "g~",
+            Operator::Register => "\"",
         }
     }
 
