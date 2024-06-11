@@ -10,19 +10,13 @@ Build a release .tar.gz for Linux.
 
 Options:
   -h    Display this help and exit.
-  -i /prefix  Install the resulting build to /prefix (e.g. /usr/ or ~/.local/)
   "
 }
 
-install_prefix=""
-
-while getopts 'hi:' flag
+while getopts 'h' flag
 do
     case "${flag}" in
-        i)
-           install_prefix="$OPTARG"
-           ;;
-        ?)
+        h)
            help_info
            exit 0
            ;;
@@ -100,45 +94,22 @@ fi
 mkdir -p "${zed_dir}/share/applications"
 envsubst < "crates/zed/resources/zed.desktop.in" > "${zed_dir}/share/applications/zed$suffix.desktop"
 
-if [[ "$install_prefix" = "" ]]; then
+# Licenses
+script/generate-licenses
+cp "assets/licenses.md" "${zed_dir}/licenses.md"
 
-    # Licenses
-    script/generate-licenses
-    cp "assets/licenses.md" "${zed_dir}/licenses.md"
+# Create archive out of everything that's in the temp directory
+target="linux-$(uname -m)"
 
-    # Create archive out of everything that's in the temp directory
-    target="linux-$(uname -m)"
-
-    if [[ "$channel" == "nightly" ]]; then
-    archive="zed-${target}.tar.gz"
-    elif  [[ "$channel" == "dev" ]]; then
-    archive="zed-${commit}-${target}.tar.gz"
-    else
-    archive="zed-${target}.tar.gz"
-    fi
-
-    rm -rf "${archive}"
-    remove_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
-    ls target/release | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f target/release/{} || true
-    tar -czvf target/release/$archive -C ${temp_dir} "zed$suffix.app"
-
+if [[ "$channel" == "nightly" ]]; then
+  archive="zed-${target}.tar.gz"
+elif  [[ "$channel" == "dev" ]]; then
+  archive="zed-${commit}-${target}.tar.gz"
 else
-
-    maysudo=""
-    if [ ! -w "$install_prefix" ]; then
-        maysudo=$(command -v sudo || command -v doas || true)
-    fi
-        # Proceed with installation
-        mkdir -p "$install_prefix/bin" "$install_prefix/libexec" "$install_prefix/share/icons/hicolor/512x512/apps" "$install_prefix/share/icons/hicolor/1024x1024/apps" "$install_prefix/share/applications"
-        cp "${zed_dir}/libexec/zed-editor" "$install_prefix/libexec/zed-editor"
-        cp "${zed_dir}/bin/zed" "$install_prefix/bin/zed"
-        cp -r "${zed_dir}/lib" "$install_prefix/"
-        cp "${zed_dir}/share/icons/hicolor/512x512/apps/zed.png" "$install_prefix/share/icons/hicolor/512x512/apps/zed.png"
-        cp "${zed_dir}/share/icons/hicolor/1024x1024/apps/zed.png" "$install_prefix/share/icons/hicolor/1024x1024/apps/zed.png"
-        cp "${zed_dir}/share/applications/zed$suffix.desktop" "$install_prefix/share/applications/zed$suffix.desktop"
-    else
-        echo "Error: No write permission to $install_prefix/bin/zed"
-        exit 1
-    fi
-
+  archive="zed-${target}.tar.gz"
 fi
+
+rm -rf "${archive}"
+remove_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
+ls target/release | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f target/release/{} || true
+tar -czvf target/release/$archive -C ${temp_dir} "zed$suffix.app"
