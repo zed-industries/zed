@@ -353,6 +353,39 @@ fn show_hover(
     editor.hover_state.info_task = Some(task);
 }
 
+fn trim_codeblocks(input: &str) -> String {
+    let lines: Vec<&str> = input.lines().collect();
+    let mut result: Vec<String> = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        if lines[i].starts_with("```") {
+            // Remove preceding empty lines
+            while !result.is_empty() && result.last().unwrap().trim().is_empty() {
+                result.pop();
+            }
+
+            // Add the current line (which starts with "```")
+            let line = lines[i].replace("\n", "");
+            if line != "" {
+                result.push(line);
+            }
+            i += 1;
+            //skip following empty lines
+            while i < lines.len() && lines[i].trim().is_empty() {
+                i += 1;
+            }
+        } else {
+            let line = lines[i].replace("\n", "");
+            if line != "" {
+                result.push(line);
+            }
+            i += 1;
+        }
+    }
+    result.join("\n")
+}
+
 async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
@@ -362,14 +395,17 @@ async fn parse_blocks(
     let mut parsed_blocks: Vec<View<Markdown>> = Vec::new();
 
     for block in blocks {
-        let text = block.clone().text;
+        println!("{:?}", block.clone().text);
+
+        let text = trim_codeblocks(block.clone().text.replace("\\n", "\n").trim());
+
         let rendered_block = cx.new_view(|cx| {
             let markdown_style = MarkdownStyle {
                 pad_blocks: false,
                 ..MarkdownStyle::get_themed_default(cx)
             };
             Markdown::new(
-                text.trim().into(),
+                text.into(),
                 markdown_style.clone(),
                 Some(language_registry.clone()),
                 cx,
@@ -613,6 +649,7 @@ mod tests {
 
                 for (range, event) in slice.iter() {
                     if vec![MarkdownEvent::Text, MarkdownEvent::Code].contains(event) {
+                        // println!("{:?}", &text[range.clone()]);
                         rendered_text.push_str(&text[range.clone()])
                     }
                 }
@@ -1025,8 +1062,8 @@ mod tests {
             «fn» test() { println!(); }
         "});
 
-        let code_str = "\nlet hovered_point: Vector2F // size = 8, align = 0x4\n";
-        let markdown_string = format!("\n```rust\n{code_str}```");
+        let code_str = "let hovered_point: Vector2F \n// size = 8, align = 0x4\n";
+        let markdown_string = format!("\n\n\n\n```rust\n\n\n{code_str}\n\n\n\n\n```\n\n");
 
         let closure_markdown_string = markdown_string.clone();
         cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
@@ -1061,12 +1098,10 @@ mod tests {
                 .unwrap()
                 .get_rendered_text(cx);
 
-            //TODO: Fix
-            // assert_eq!(
-            //     rendered_text,
-            //     code_str.trim(),
-            //     "Should not have extra line breaks at end of rendered hover"
-            // );
+            assert_eq!(
+                rendered_text, code_str,
+                "Should not have extra line breaks at end of rendered hover"
+            );
         });
     }
 
