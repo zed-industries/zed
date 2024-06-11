@@ -349,7 +349,7 @@ impl Render for AuthenticationPrompt {
                 h_flex()
                     .gap_2()
                     .child(Label::new("Click on").size(LabelSize::Small))
-                    .child(Icon::new(IconName::Ai).size(IconSize::XSmall))
+                    .child(Icon::new(IconName::ZedAssistant).size(IconSize::XSmall))
                     .child(
                         Label::new("in the status bar to close this panel.").size(LabelSize::Small),
                     ),

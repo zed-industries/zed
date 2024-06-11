@@ -21,6 +21,7 @@ use crate::{
     surrounds::{check_and_move_to_valid_bracket_pair, SurroundsType},
     Vim,
 };
+use case::{change_case_motion, change_case_object, CaseTarget};
 use collections::BTreeSet;
 use editor::display_map::ToDisplayPoint;
 use editor::scroll::Autoscroll;
@@ -198,6 +199,15 @@ pub fn normal_motion(
             Some(Operator::AddSurrounds { target: None }) => {}
             Some(Operator::Indent) => indent_motion(vim, motion, times, IndentDirection::In, cx),
             Some(Operator::Outdent) => indent_motion(vim, motion, times, IndentDirection::Out, cx),
+            Some(Operator::Lowercase) => {
+                change_case_motion(vim, motion, times, CaseTarget::Lowercase, cx)
+            }
+            Some(Operator::Uppercase) => {
+                change_case_motion(vim, motion, times, CaseTarget::Uppercase, cx)
+            }
+            Some(Operator::OppositeCase) => {
+                change_case_motion(vim, motion, times, CaseTarget::OppositeCase, cx)
+            }
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -219,6 +229,15 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                 }
                 Some(Operator::Outdent) => {
                     indent_object(vim, object, around, IndentDirection::Out, cx)
+                }
+                Some(Operator::Lowercase) => {
+                    change_case_object(vim, object, around, CaseTarget::Lowercase, cx)
+                }
+                Some(Operator::Uppercase) => {
+                    change_case_object(vim, object, around, CaseTarget::Uppercase, cx)
+                }
+                Some(Operator::OppositeCase) => {
+                    change_case_object(vim, object, around, CaseTarget::OppositeCase, cx)
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {

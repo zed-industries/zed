@@ -95,14 +95,12 @@ mkdir -p "${zed_dir}/share/applications"
 envsubst < "crates/zed/resources/zed.desktop.in" > "${zed_dir}/share/applications/zed$suffix.desktop"
 
 # Licenses
+script/generate-licenses
 cp "assets/licenses.md" "${zed_dir}/licenses.md"
 
 # Create archive out of everything that's in the temp directory
 target="linux-$(uname -m)"
-
-if [[ "$channel" == "nightly" ]]; then
-  archive="zed-${target}.tar.gz"
-elif  [[ "$channel" == "dev" ]]; then
+if  [[ "$channel" == "dev" ]]; then
   archive="zed-${commit}-${target}.tar.gz"
 else
   archive="zed-${target}.tar.gz"

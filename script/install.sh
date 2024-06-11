@@ -43,8 +43,12 @@ main() {
 }
 
 linux() {
-    echo "Downloading Zed"
-    curl "https://zed.dev/api/releases/$channel/latest/zed-linux-$arch.tar.gz" > "$temp/zed-linux-$arch.tar.gz"
+    if [[ -n "${ZED_BUNDLE_PATH:-}" ]]; then
+        cp "$ZED_BUNDLE_PATH" "$temp/zed-linux-$arch.tar.gz"
+    else
+        echo "Downloading Zed"
+        curl "https://zed.dev/api/releases/$channel/latest/zed-linux-$arch.tar.gz" > "$temp/zed-linux-$arch.tar.gz"
+    fi
 
     suffix=""
     if [[ $channel != "stable" ]]; then
@@ -91,7 +95,7 @@ linux() {
     desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"
     cp ~/.local/zed$suffix.app/share/applications/zed$suffix.desktop "${desktop_file_path}"
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
-    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}"
+    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/libexec/zed-editor|g" "${desktop_file_path}"
 
     if which "zed" >/dev/null 2>&1; then
         echo "Zed has been installed. Run with 'zed'"

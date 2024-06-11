@@ -36,7 +36,7 @@ use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
-    OpenInTerminal, Workspace,
+    DraggedSelection, OpenInTerminal, SelectedEntry, Workspace,
 };
 use worktree::CreatedEntry;
 
@@ -65,26 +65,6 @@ pub struct ProjectPanel {
     pending_serialization: Task<Option<()>>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct SelectedEntry {
-    worktree_id: WorktreeId,
-    entry_id: ProjectEntryId,
-}
-
-struct DraggedSelection {
-    active_selection: SelectedEntry,
-    marked_selections: Arc<BTreeSet<SelectedEntry>>,
-}
-
-impl DraggedSelection {
-    fn items<'a>(&'a self) -> Box<dyn Iterator<Item = &'a SelectedEntry> + 'a> {
-        if self.marked_selections.contains(&self.active_selection) {
-            Box::new(self.marked_selections.iter())
-        } else {
-            Box::new(std::iter::once(&self.active_selection))
-        }
-    }
-}
 #[derive(Clone, Debug)]
 struct EditState {
     worktree_id: WorktreeId,
@@ -337,6 +317,7 @@ impl ProjectPanel {
                                 )
                                 .detach_and_prompt_err("Failed to open file", cx, move |e, _| {
                                     match e.error_code() {
+                                        ErrorCode::Disconnected => Some("Disconnected from remote project".to_string()),
                                         ErrorCode::UnsharedItem => Some(format!(
                                             "{} is not shared by the host. This could be because it has been marked as `private`",
                                             file_path.display()

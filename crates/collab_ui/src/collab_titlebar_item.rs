@@ -413,6 +413,17 @@ impl CollabTitlebarItem {
             );
         }
 
+        if self.project.read(cx).is_disconnected() {
+            return Some(
+                Button::new("disconnected", "Disconnected")
+                    .disabled(true)
+                    .color(Color::Disabled)
+                    .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::Small)
+                    .into_any_element(),
+            );
+        }
+
         let host = self.project.read(cx).host()?;
         let host_user = self.user_store.read(cx).get_cached_user(host.user_id)?;
         let participant_index = self
@@ -686,7 +697,7 @@ impl CollabTitlebarItem {
                         .on_click(|_, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
                                 if auto_updater.read(cx).status().is_updated() {
-                                    workspace::restart(&Default::default(), cx);
+                                    workspace::reload(&Default::default(), cx);
                                     return;
                                 }
                             }

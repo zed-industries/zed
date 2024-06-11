@@ -31,8 +31,7 @@
 /// }
 /// ```
 ///
-use crate::proto;
-pub use proto::ErrorCode;
+pub use crate::ErrorCode;
 
 /// ErrorCodeExt provides some helpers for structured error handling.
 ///
@@ -53,7 +52,7 @@ pub trait ErrorCodeExt {
     fn with_tag(self, k: &str, v: &str) -> RpcError;
 }
 
-impl ErrorCodeExt for proto::ErrorCode {
+impl ErrorCodeExt for ErrorCode {
     fn anyhow(self) -> anyhow::Error {
         self.into()
     }
@@ -75,21 +74,21 @@ impl ErrorCodeExt for proto::ErrorCode {
 /// what we use throughout our codebase. Though under the hood this
 pub trait ErrorExt {
     /// error_code() returns the ErrorCode (or ErrorCode::Internal if there is none)
-    fn error_code(&self) -> proto::ErrorCode;
+    fn error_code(&self) -> ErrorCode;
     /// error_tag() returns the value of the tag with the given key, if any.
     fn error_tag(&self, k: &str) -> Option<&str>;
-    /// to_proto() converts the error into a proto::Error
-    fn to_proto(&self) -> proto::Error;
+    /// to_proto() converts the error into a crate::Error
+    fn to_proto(&self) -> crate::Error;
     /// Clones the error and turns into an [anyhow::Error].
     fn cloned(&self) -> anyhow::Error;
 }
 
 impl ErrorExt for anyhow::Error {
-    fn error_code(&self) -> proto::ErrorCode {
+    fn error_code(&self) -> ErrorCode {
         if let Some(rpc_error) = self.downcast_ref::<RpcError>() {
             rpc_error.code
         } else {
-            proto::ErrorCode::Internal
+            ErrorCode::Internal
         }
     }
 
@@ -101,7 +100,7 @@ impl ErrorExt for anyhow::Error {
         }
     }
 
-    fn to_proto(&self) -> proto::Error {
+    fn to_proto(&self) -> crate::Error {
         if let Some(rpc_error) = self.downcast_ref::<RpcError>() {
             rpc_error.to_proto()
         } else {
@@ -118,8 +117,8 @@ impl ErrorExt for anyhow::Error {
     }
 }
 
-impl From<proto::ErrorCode> for anyhow::Error {
-    fn from(value: proto::ErrorCode) -> Self {
+impl From<ErrorCode> for anyhow::Error {
+    fn from(value: ErrorCode) -> Self {
         RpcError {
             request: None,
             code: value,
@@ -134,7 +133,7 @@ impl From<proto::ErrorCode> for anyhow::Error {
 pub struct RpcError {
     request: Option<String>,
     msg: String,
-    code: proto::ErrorCode,
+    code: ErrorCode,
     tags: Vec<String>,
 }
 
@@ -146,9 +145,9 @@ pub struct RpcError {
 /// in the app; however it is useful for chaining .message() and .with_tag() on
 /// ErrorCode.
 impl RpcError {
-    /// from_proto converts a proto::Error into an anyhow::Error containing
+    /// from_proto converts a crate::Error into an anyhow::Error containing
     /// an RpcError.
-    pub fn from_proto(error: &proto::Error, request: &str) -> anyhow::Error {
+    pub fn from_proto(error: &crate::Error, request: &str) -> anyhow::Error {
         RpcError {
             request: Some(request.to_string()),
             code: error.code(),
@@ -188,12 +187,12 @@ impl ErrorExt for RpcError {
         None
     }
 
-    fn error_code(&self) -> proto::ErrorCode {
+    fn error_code(&self) -> ErrorCode {
         self.code
     }
 
-    fn to_proto(&self) -> proto::Error {
-        proto::Error {
+    fn to_proto(&self) -> crate::Error {
+        crate::Error {
             code: self.code as i32,
             message: self.msg.clone(),
             tags: self.tags.clone(),
@@ -225,8 +224,8 @@ impl std::fmt::Display for RpcError {
     }
 }
 
-impl From<proto::ErrorCode> for RpcError {
-    fn from(code: proto::ErrorCode) -> Self {
+impl From<ErrorCode> for RpcError {
+    fn from(code: ErrorCode) -> Self {
         RpcError {
             request: None,
             code,

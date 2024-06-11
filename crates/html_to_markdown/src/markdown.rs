@@ -1,5 +1,5 @@
 use crate::html_element::HtmlElement;
-use crate::markdown_writer::{HandleTag, MarkdownWriter, StartTagOutcome};
+use crate::markdown_writer::{HandleTag, HandlerOutcome, MarkdownWriter, StartTagOutcome};
 
 pub struct ParagraphHandler;
 
@@ -212,5 +212,55 @@ impl HandleTag for StyledTextHandler {
             "em" => writer.push_str("_"),
             _ => {}
         }
+    }
+}
+
+pub struct CodeHandler;
+
+impl HandleTag for CodeHandler {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "pre" | "code" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "code" => {
+                if !writer.is_inside("pre") {
+                    writer.push_str("`");
+                }
+            }
+            "pre" => writer.push_str("\n\n```\n"),
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        match tag.tag.as_str() {
+            "code" => {
+                if !writer.is_inside("pre") {
+                    writer.push_str("`");
+                }
+            }
+            "pre" => writer.push_str("\n```\n"),
+            _ => {}
+        }
+    }
+
+    fn handle_text(&mut self, text: &str, writer: &mut MarkdownWriter) -> HandlerOutcome {
+        if writer.is_inside("pre") {
+            writer.push_str(&text);
+            return HandlerOutcome::Handled;
+        }
+
+        HandlerOutcome::NoOp
     }
 }

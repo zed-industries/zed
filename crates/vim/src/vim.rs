@@ -539,6 +539,9 @@ impl Vim {
                 | Operator::Replace
                 | Operator::Indent
                 | Operator::Outdent
+                | Operator::Lowercase
+                | Operator::Uppercase
+                | Operator::OppositeCase
         ) {
             self.start_recording(cx)
         };
