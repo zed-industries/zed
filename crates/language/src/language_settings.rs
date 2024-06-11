@@ -792,7 +792,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         &mut settings.code_actions_on_format,
         src.code_actions_on_format.clone(),
     );
-    merge(&mut settings.linked_edits, src.linked_edits.clone());
+    merge(&mut settings.linked_edits, src.linked_edits);
 
     merge(
         &mut settings.preferred_line_length,
