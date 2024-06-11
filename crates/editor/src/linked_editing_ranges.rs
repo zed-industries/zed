@@ -45,7 +45,6 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
     let mut applicable_selections = vec![];
     let selections = this.selections.all::<usize>(cx);
     let snapshot = buffer.snapshot(cx);
-    let mut has_language_servers = HashMap::default();
     for selection in selections {
         let cursor_position = selection.head();
         let start_position = snapshot.anchor_before(cursor_position);
@@ -54,21 +53,7 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
             // Throw away selections spanning multiple buffers.
             continue;
         }
-        if let Some(buffer) = end_position
-            .buffer_id
-            .and_then(|id| buffer.buffer(id))
-            .filter(|buffer| {
-                *has_language_servers
-                    .entry(buffer.clone())
-                    .or_insert_with(|| {
-                        project
-                            .read(cx)
-                            .language_servers_for_buffer(buffer.read(cx), cx)
-                            .next()
-                            .is_some()
-                    })
-            })
-        {
+        if let Some(buffer) = end_position.buffer_id.and_then(|id| buffer.buffer(id)) {
             applicable_selections.push((
                 buffer,
                 start_position.text_anchor,
