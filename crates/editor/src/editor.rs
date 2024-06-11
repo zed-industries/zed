@@ -4866,7 +4866,7 @@ impl Editor {
             Some(
                 IconButton::new("code_actions_indicator", ui::IconName::Bolt)
                     .icon_size(IconSize::XSmall)
-                    .size(ui::ButtonSize::None)
+                    .size(ui::ButtonSize::Default)
                     .icon_color(Color::Muted)
                     .selected(is_active)
                     .on_click(cx.listener(move |editor, _e, cx| {
@@ -4903,8 +4903,8 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
         IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
-            .icon_size(IconSize::XSmall)
-            .size(ui::ButtonSize::None)
+            .icon_size(IconSize::Small)
+            .size(ui::ButtonSize::Default)
             .icon_color(Color::Muted)
             .selected(is_active)
             .on_click(cx.listener(move |editor, _e, cx| {
