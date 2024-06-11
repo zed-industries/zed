@@ -52,8 +52,14 @@ use multi_buffer::{
     ToOffset, ToPoint,
 };
 use serde::Deserialize;
-use std::ops::Add;
-use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
+use std::{
+    any::TypeId,
+    borrow::Cow,
+    fmt::Debug,
+    num::NonZeroU32,
+    ops::{Add, Range, Sub},
+    sync::Arc,
+};
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::LineIndent;
@@ -1024,6 +1030,14 @@ impl Add for DisplayRow {
 
     fn add(self, other: Self) -> Self::Output {
         DisplayRow(self.0 + other.0)
+    }
+}
+
+impl Sub for DisplayRow {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self::Output {
+        DisplayRow(self.0 - other.0)
     }
 }
 

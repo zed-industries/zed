@@ -373,6 +373,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "similar",
  "smol",
  "strsim 0.11.1",
  "strum",

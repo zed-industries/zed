@@ -376,6 +376,7 @@ type CompletionId = usize;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
+type GutterHighlight = (fn(&AppContext) -> Hsla, Arc<[Range<Anchor>]>);
 
 struct ScrollbarMarkerState {
     scrollbar_size: Size<Pixels>,
@@ -464,6 +465,7 @@ pub struct Editor {
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: TreeMap<TypeId, BackgroundHighlight>,
+    gutter_highlights: TreeMap<TypeId, GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
@@ -1752,6 +1754,7 @@ impl Editor {
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
             background_highlights: Default::default(),
+            gutter_highlights: TreeMap::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
@@ -10263,6 +10266,25 @@ impl Editor {
         Some(text_highlights)
     }
 
+    pub fn highlight_gutter<T: 'static>(
+        &mut self,
+        ranges: &[Range<Anchor>],
+        color_fetcher: fn(&AppContext) -> Hsla,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.gutter_highlights
+            .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
+        cx.notify();
+    }
+
+    pub fn clear_gutter_highlights<T: 'static>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<GutterHighlight> {
+        cx.notify();
+        self.gutter_highlights.remove(&TypeId::of::<T>())
+    }
+
     #[cfg(feature = "test-support")]
     pub fn all_text_background_highlights(
         &mut self,
@@ -10449,6 +10471,44 @@ impl Editor {
         }
         // We might still have a hunk that was not rendered (if there was a search hit on the last line)
         push_region(start_row, end_row);
+        results
+    }
+
+    pub fn gutter_highlights_in_range(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        cx: &AppContext,
+    ) -> Vec<(Range<DisplayPoint>, Hsla)> {
+        let mut results = Vec::new();
+        for (color_fetcher, ranges) in self.gutter_highlights.values() {
+            let color = color_fetcher(cx);
+            let start_ix = match ranges.binary_search_by(|probe| {
+                let cmp = probe
+                    .end
+                    .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
+                if cmp.is_gt() {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }) {
+                Ok(i) | Err(i) => i,
+            };
+            for range in &ranges[start_ix..] {
+                if range
+                    .start
+                    .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
+                    .is_ge()
+                {
+                    break;
+                }
+
+                let start = range.start.to_display_point(&display_snapshot);
+                let end = range.end.to_display_point(&display_snapshot);
+                results.push((start..end, color))
+            }
+        }
         results
     }
 
