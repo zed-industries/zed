@@ -1,3 +1,6 @@
+use indexmap::IndexMap;
+use strum::{EnumIter, IntoEnumIterator};
+
 use crate::html_element::HtmlElement;
 use crate::markdown_writer::{HandleTag, HandlerOutcome, MarkdownWriter, StartTagOutcome};
 
@@ -195,6 +198,135 @@ impl HandleTag for RustdocChromeRemover {
                 let classes_to_skip = ["nav-container", "sidebar-elems", "out-of-band"];
                 if tag.has_any_classes(&classes_to_skip) {
                     return StartTagOutcome::Skip;
+                }
+            }
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
+pub enum RustdocItemKind {
+    Mod,
+    Macro,
+    Struct,
+    Enum,
+    Constant,
+    Trait,
+    Function,
+    TypeAlias,
+    AttributeMacro,
+    DeriveMacro,
+}
+
+impl RustdocItemKind {
+    const fn class(&self) -> &'static str {
+        match self {
+            Self::Mod => "mod",
+            Self::Macro => "macro",
+            Self::Struct => "struct",
+            Self::Enum => "enum",
+            Self::Constant => "constant",
+            Self::Trait => "trait",
+            Self::Function => "fn",
+            Self::TypeAlias => "type",
+            Self::AttributeMacro => "attr",
+            Self::DeriveMacro => "derive",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RustdocItem {
+    pub kind: RustdocItemKind,
+    pub name: String,
+}
+
+impl RustdocItem {
+    pub fn url_path(&self) -> String {
+        let name = &self.name;
+        match self.kind {
+            RustdocItemKind::Mod => format!("{name}/index.html"),
+            RustdocItemKind::Macro
+            | RustdocItemKind::Struct
+            | RustdocItemKind::Enum
+            | RustdocItemKind::Constant
+            | RustdocItemKind::Trait
+            | RustdocItemKind::Function
+            | RustdocItemKind::TypeAlias
+            | RustdocItemKind::AttributeMacro
+            | RustdocItemKind::DeriveMacro => {
+                format!("{kind}.{name}.html", kind = self.kind.class())
+            }
+        }
+    }
+}
+
+pub struct RustdocItemCollector {
+    pub items: IndexMap<(RustdocItemKind, String), RustdocItem>,
+}
+
+impl RustdocItemCollector {
+    pub fn new() -> Self {
+        Self {
+            items: IndexMap::new(),
+        }
+    }
+
+    fn parse_item(tag: &HtmlElement) -> Option<RustdocItem> {
+        if tag.tag.as_str() != "a" {
+            return None;
+        }
+
+        let href = tag.attr("href")?;
+        if href == "#" {
+            return None;
+        }
+
+        for kind in RustdocItemKind::iter() {
+            if tag.has_class(kind.class()) {
+                let name = href
+                    .trim_start_matches(&format!("{}.", kind.class()))
+                    .trim_end_matches("/index.html")
+                    .trim_end_matches(".html");
+
+                return Some(RustdocItem {
+                    kind,
+                    name: name.to_owned(),
+                });
+            }
+        }
+
+        None
+    }
+}
+
+impl HandleTag for RustdocItemCollector {
+    fn should_handle(&self, tag: &str) -> bool {
+        tag == "a"
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "a" => {
+                let is_reexport = writer.current_element_stack().iter().any(|element| {
+                    if let Some(id) = element.attr("id") {
+                        id.starts_with("reexport.")
+                    } else {
+                        false
+                    }
+                });
+
+                if !is_reexport {
+                    if let Some(item) = Self::parse_item(tag) {
+                        self.items.insert((item.kind, item.name.clone()), item);
+                    }
                 }
             }
             _ => {}

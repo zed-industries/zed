@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -5,7 +7,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use futures::AsyncReadExt;
 use gpui::{AppContext, Task, WeakView};
-use html_to_markdown::{convert_html_to_markdown, markdown, HandleTag};
+use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
@@ -59,24 +61,26 @@ impl FetchSlashCommand {
 
         match content_type {
             ContentType::Html => {
-                let mut handlers: Vec<Box<dyn HandleTag>> = vec![
-                    Box::new(markdown::ParagraphHandler),
-                    Box::new(markdown::HeadingHandler),
-                    Box::new(markdown::ListHandler),
-                    Box::new(markdown::TableHandler::new()),
-                    Box::new(markdown::StyledTextHandler),
+                let mut handlers: Vec<TagHandler> = vec![
+                    Rc::new(RefCell::new(markdown::ParagraphHandler)),
+                    Rc::new(RefCell::new(markdown::HeadingHandler)),
+                    Rc::new(RefCell::new(markdown::ListHandler)),
+                    Rc::new(RefCell::new(markdown::TableHandler::new())),
+                    Rc::new(RefCell::new(markdown::StyledTextHandler)),
                 ];
                 if url.contains("wikipedia.org") {
                     use html_to_markdown::structure::wikipedia;
 
-                    handlers.push(Box::new(wikipedia::WikipediaChromeRemover));
-                    handlers.push(Box::new(wikipedia::WikipediaInfoboxHandler));
-                    handlers.push(Box::new(wikipedia::WikipediaCodeHandler::new()));
+                    handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaChromeRemover)));
+                    handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaInfoboxHandler)));
+                    handlers.push(Rc::new(
+                        RefCell::new(wikipedia::WikipediaCodeHandler::new()),
+                    ));
                 } else {
-                    handlers.push(Box::new(markdown::CodeHandler));
+                    handlers.push(Rc::new(RefCell::new(markdown::CodeHandler)));
                 }
 
-                convert_html_to_markdown(&body[..], handlers)
+                convert_html_to_markdown(&body[..], &mut handlers)
             }
             ContentType::Plaintext => Ok(std::str::from_utf8(&body)?.to_owned()),
             ContentType::Json => {

@@ -5072,10 +5072,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "html5ever",
+ "indexmap 1.9.3",
  "indoc",
  "markup5ever_rcdom",
  "pretty_assertions",
  "regex",
+ "strum",
 ]
 
 [[package]]
