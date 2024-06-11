@@ -687,6 +687,7 @@ impl EditorElement {
         } else {
             editor.hide_hovered_link(cx);
             hover_at(editor, None, cx);
+
             if gutter_hovered {
                 cx.stop_propagation();
             }

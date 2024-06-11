@@ -98,6 +98,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 false
             })
         {
+            println!("hover at inlay");
             hide_hover(editor, cx);
         }
 
@@ -139,7 +140,6 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
 pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
-    // return false;
     let info_popovers = editor.hover_state.info_popovers.drain(..);
     let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
     let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
@@ -455,7 +455,6 @@ impl HoverState {
                 }
             }
         }
-        println!("is focused: {}", hover_popover_is_focused);
         return hover_popover_is_focused;
     }
 }

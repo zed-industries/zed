@@ -150,6 +150,9 @@ impl Markdown {
     }
 
     fn copy(&self, text: &RenderedText, cx: &mut ViewContext<Self>) {
+        if self.selection.end <= self.selection.start {
+            return;
+        }
         let text = text.text_for_range(self.selection.start..self.selection.end);
         cx.write_to_clipboard(ClipboardItem::new(text));
     }
