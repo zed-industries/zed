@@ -110,10 +110,10 @@ impl WindowsWindowState {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         Bounds {
-            origin: self.origin,
-            size: self.physical_size,
+            origin: logical_point(self.origin, self.scale_factor),
+            size: logical_size(self.physical_size, self.scale_factor),
         }
     }
 
@@ -350,7 +350,7 @@ impl Drop for WindowsWindow {
 }
 
 impl PlatformWindow for WindowsWindow {
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.0.state.borrow().bounds()
     }
 
