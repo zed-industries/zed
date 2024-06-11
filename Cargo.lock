@@ -5074,6 +5074,7 @@ dependencies = [
  "markup5ever_rcdom",
  "pretty_assertions",
  "regex",
+ "strum",
 ]
 
 [[package]]

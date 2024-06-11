@@ -1,4 +1,5 @@
 use indexmap::IndexSet;
+use strum::{EnumIter, IntoEnumIterator};
 
 use crate::html_element::HtmlElement;
 use crate::markdown_writer::{HandleTag, HandlerOutcome, MarkdownWriter, StartTagOutcome};
@@ -206,14 +207,47 @@ impl HandleTag for RustdocChromeRemover {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
+pub enum RustdocItemKind {
+    Mod,
+    Macro,
+    Struct,
+    Enum,
+    Constant,
+    Trait,
+    Function,
+    TypeAlias,
+    AttributeMacro,
+    DeriveMacro,
+}
+
+impl RustdocItemKind {
+    const fn class(&self) -> &'static str {
+        match self {
+            Self::Mod => "mod",
+            Self::Macro => "macro",
+            Self::Struct => "struct",
+            Self::Enum => "enum",
+            Self::Constant => "constant",
+            Self::Trait => "trait",
+            Self::Function => "fn",
+            Self::TypeAlias => "type",
+            Self::AttributeMacro => "attr",
+            Self::DeriveMacro => "derive",
+        }
+    }
+}
+
 pub struct RustdocLinkCollector {
     pub links: IndexSet<String>,
+    pub items: IndexSet<(RustdocItemKind, String)>,
 }
 
 impl RustdocLinkCollector {
     pub fn new() -> Self {
         Self {
             links: IndexSet::new(),
+            items: IndexSet::new(),
         }
     }
 }
@@ -231,8 +265,18 @@ impl HandleTag for RustdocLinkCollector {
         match tag.tag.as_str() {
             "a" => {
                 if let Some(href) = tag.attr("href") {
-                    if href.ends_with(".html") {
-                        self.links.insert(href);
+                    if href != "#" {
+                        for kind in RustdocItemKind::iter() {
+                            if tag.has_class(kind.class()) {
+                                let name = href
+                                    .trim_start_matches(&format!("{}.", kind.class()))
+                                    .trim_end_matches("/index.html")
+                                    .trim_end_matches(".html");
+
+                                self.items.insert((kind, name.to_owned()));
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -243,6 +287,7 @@ impl HandleTag for RustdocLinkCollector {
     }
 
     fn links(&self) -> Vec<String> {
+        dbg!(&self.items);
         self.links.iter().cloned().collect()
     }
 }

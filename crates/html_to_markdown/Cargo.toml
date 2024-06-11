@@ -17,6 +17,7 @@ html5ever.workspace = true
 indexmap = "1.6.2"
 markup5ever_rcdom.workspace = true
 regex.workspace = true
+strum.workspace = true
 
 [dev-dependencies]
 indoc.workspace = true
