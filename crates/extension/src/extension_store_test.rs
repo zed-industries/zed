@@ -280,7 +280,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
         assert_eq!(
             language_registry.language_names(),
-            ["ERB", "Plain Text", "Ruby"]
+            ["ERB", "Markdown", "Plain Text", "Ruby"]
         );
         assert_eq!(
             theme_registry.list_names(false),
@@ -398,7 +398,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         assert_eq!(store.extension_index, expected_index);
         assert_eq!(
             language_registry.language_names(),
-            ["ERB", "Plain Text", "Ruby"]
+            ["ERB", "Markdown", "Plain Text", "Ruby"]
         );
         assert_eq!(
             language_registry.grammar_names(),
@@ -433,7 +433,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     store.read_with(cx, |store, _| {
         assert_eq!(store.extension_index, expected_index);
-        assert_eq!(language_registry.language_names(), ["Plain Text"]);
+        assert_eq!(
+            language_registry.language_names(),
+            ["Markdown", "Plain Text"]
+        );
         assert_eq!(language_registry.grammar_names(), []);
     });
 }

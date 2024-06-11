@@ -180,6 +180,19 @@ impl LanguageRegistry {
     pub fn test(executor: BackgroundExecutor) -> Self {
         let mut this = Self::new(Task::ready(()), executor);
         this.language_server_download_dir = Some(Path::new("/the-download-dir").into());
+
+        this.add(Arc::new(crate::Language::new(
+            crate::LanguageConfig {
+                name: "Markdown".into(),
+                matcher: crate::LanguageMatcher {
+                    path_suffixes: vec!["md".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+        )));
+
         this
     }
 
