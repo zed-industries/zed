@@ -1779,10 +1779,8 @@ impl ProjectPanel {
                     return Ok(());
                 }
 
-                let task = this.update(&mut cx, |this, cx| {
-                    this.project.update(cx, |project, cx| {
-                        project.copy_external_entries(worktree, target_directory, paths, cx)
-                    })
+                let task = worktree.update(&mut cx, |worktree, cx| {
+                    worktree.copy_external_entries(target_directory, paths, true, cx)
                 })?;
 
                 let opened_entries = task.await?;

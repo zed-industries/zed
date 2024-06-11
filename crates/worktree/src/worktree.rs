@@ -1620,7 +1620,7 @@ impl LocalWorktree {
             .filter_map(|(_, target)| Some(target.strip_prefix(&worktree_path).ok()?.into()))
             .collect::<Vec<_>>();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|this, cx| async move {
             cx.background_executor()
                 .spawn(async move {
                     for (source, target) in paths {
@@ -1644,7 +1644,7 @@ impl LocalWorktree {
                 .log_err();
             let mut refresh = cx.read_model(
                 &this.upgrade().with_context(|| "Dropped worktree")?,
-                |this, cx| {
+                |this, _| {
                     Ok::<postage::barrier::Receiver, anyhow::Error>(
                         this.as_local()
                             .with_context(|| "Worktree is not local")?

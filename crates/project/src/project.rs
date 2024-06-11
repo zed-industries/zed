@@ -1477,18 +1477,6 @@ impl Project {
         })
     }
 
-    pub fn copy_external_entries(
-        &self,
-        worktree: Model<Worktree>,
-        target_directory: PathBuf,
-        external_paths: Vec<Arc<Path>>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<ProjectEntryId>>> {
-        worktree.update(cx, |worktree, cx| {
-            worktree.copy_external_entries(target_directory, external_paths, true, cx)
-        })
-    }
-
     pub fn rename_entry(
         &mut self,
         entry_id: ProjectEntryId,
