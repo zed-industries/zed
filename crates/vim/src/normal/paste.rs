@@ -10,7 +10,10 @@ use serde::Deserialize;
 use settings::Settings;
 use workspace::Workspace;
 
-use crate::{state::Mode, utils::copy_selections_content, UseSystemClipboard, Vim, VimSettings};
+use crate::{
+    registers::Register, state::Mode, utils::copy_selections_content, UseSystemClipboard, Vim,
+    VimSettings,
+};
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -29,7 +32,7 @@ pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>
 
 fn system_clipboard_is_newer(vim: &Vim, cx: &mut AppContext) -> bool {
     cx.read_from_clipboard().is_some_and(|item| {
-        if let Some(last_state) = vim.workspace_state.registers.get(".system.") {
+        if let Some(last_state) = &vim.workspace_state.registers[Register::System] {
             last_state != item.text()
         } else {
             true
@@ -53,10 +56,8 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                             && !system_clipboard_is_newer(vim, cx)
                     {
                         (
-                            vim.workspace_state
-                                .registers
-                                .get("\"")
-                                .cloned()
+                            vim.workspace_state.registers[Register::Default]
+                                .clone()
                                 .unwrap_or_else(|| "".to_string()),
                             None,
                         )

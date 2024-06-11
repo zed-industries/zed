@@ -11,6 +11,7 @@ mod mode_indicator;
 mod motion;
 mod normal;
 mod object;
+mod registers;
 mod replace;
 mod state;
 mod surrounds;

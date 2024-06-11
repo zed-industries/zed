@@ -6,7 +6,7 @@ use language::{CharKind, Point};
 use multi_buffer::MultiBufferRow;
 use settings::Settings;
 
-use crate::{state::Mode, UseSystemClipboard, Vim, VimSettings};
+use crate::{registers::Register, state::Mode, UseSystemClipboard, Vim, VimSettings};
 
 pub struct HighlightOnYank;
 
@@ -105,18 +105,15 @@ fn copy_selections_content_internal(
     let setting = VimSettings::get_global(cx).use_system_clipboard;
     if setting == UseSystemClipboard::Always || setting == UseSystemClipboard::OnYank && is_yank {
         cx.write_to_clipboard(ClipboardItem::new(text.clone()).with_metadata(clipboard_selections));
-        vim.workspace_state
-            .registers
-            .insert(".system.".to_string(), text.clone());
+        vim.workspace_state.registers[Register::System] = Some(text.clone());
     } else {
-        vim.workspace_state.registers.insert(
-            ".system.".to_string(),
+        vim.workspace_state.registers[Register::System] = Some(
             cx.read_from_clipboard()
                 .map(|item| item.text().clone())
                 .unwrap_or_default(),
         );
     }
-    vim.workspace_state.registers.insert("\"".to_string(), text);
+    vim.workspace_state.registers[Register::Default] = Some(text);
     if !is_yank || vim.state().mode == Mode::Visual {
         return;
     }

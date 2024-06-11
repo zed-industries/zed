@@ -1,5 +1,6 @@
 use std::{fmt::Display, ops::Range, sync::Arc};
 
+use crate::registers::Registers;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
 use collections::HashMap;
@@ -123,7 +124,7 @@ pub struct WorkspaceState {
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
-    pub registers: HashMap<String, String>,
+    pub registers: Registers,
 }
 
 #[derive(Debug)]
