@@ -1816,6 +1816,9 @@ impl Project {
     }
 
     pub fn disconnected_from_host(&mut self, cx: &mut ModelContext<Self>) {
+        if self.is_disconnected() {
+            return;
+        }
         self.disconnected_from_host_internal(cx);
         cx.emit(Event::DisconnectedFromHost);
         cx.notify();
@@ -1863,7 +1866,10 @@ impl Project {
             for open_buffer in self.opened_buffers.values_mut() {
                 // Wake up any tasks waiting for peers' edits to this buffer.
                 if let Some(buffer) = open_buffer.upgrade() {
-                    buffer.update(cx, |buffer, _| buffer.give_up_waiting());
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.give_up_waiting();
+                        buffer.set_capability(Capability::ReadOnly, cx)
+                    });
                 }
 
                 if let OpenBuffer::Strong(buffer) = open_buffer {
@@ -2127,6 +2133,9 @@ impl Project {
         let remote_worktree_id = worktree.read(cx).id();
         let path = path.clone();
         let path_string = path.to_string_lossy().to_string();
+        if self.is_disconnected() {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
         cx.spawn(move |this, mut cx| async move {
             let response = rpc
                 .request(proto::OpenBufferByPath {

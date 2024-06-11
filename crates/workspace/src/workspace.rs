@@ -16,7 +16,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
-    ChannelId, Client, ErrorExt, ProjectId, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, DevServerProjectId, ErrorExt, ProjectId, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
@@ -29,10 +29,9 @@ use futures::{
 use gpui::{
     actions, canvas, impl_actions, point, relative, size, Action, AnyElement, AnyView, AnyWeakView,
     AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DevicePixels, DragMoveEvent,
-    ElementId, Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
-    GlobalElementId, KeyContext, Keystroke, LayoutId, ManagedView, Model, ModelContext,
-    PathPromptOptions, Point, PromptLevel, Render, Size, Subscription, Task, View, WeakView,
-    WindowBounds, WindowHandle, WindowOptions,
+    Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke,
+    ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render, Size,
+    Subscription, Task, View, WeakView, WindowBounds, WindowHandle, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -80,8 +79,8 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{
-    div, h_flex, Context as _, Div, Element, FluentBuilder, InteractiveElement as _, IntoElement,
-    Label, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
+    div, h_flex, Context as _, Div, FluentBuilder, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
     WindowContext,
 };
 use util::{maybe, ResultExt};
@@ -600,6 +599,8 @@ pub struct Workspace {
     centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
     on_prompt_for_new_path: Option<PromptForNewPath>,
+    render_disconnected_overlay:
+        Option<Box<dyn Fn(&mut Self, &mut ViewContext<Self>) -> AnyElement>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -650,7 +651,6 @@ impl Workspace {
                     for pane in panes_to_unfollow {
                         this.unfollow(&pane, cx);
                     }
-                    cx.disable_focus();
                 }
 
                 project::Event::Closed => {
@@ -879,10 +879,11 @@ impl Workspace {
             centered_layout: false,
             bounds_save_task_queued: None,
             on_prompt_for_new_path: None,
+            render_disconnected_overlay: None,
         }
     }
 
-    fn new_local(
+    pub fn new_local(
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
         requesting_window: Option<WindowHandle<Workspace>>,
@@ -1253,6 +1254,13 @@ impl Workspace {
 
     pub fn set_prompt_for_new_path(&mut self, prompt: PromptForNewPath) {
         self.on_prompt_for_new_path = Some(prompt)
+    }
+
+    pub fn set_render_disconnected_overlay(
+        &mut self,
+        render: impl Fn(&mut Self, &mut ViewContext<Self>) -> AnyElement + 'static,
+    ) {
+        self.render_disconnected_overlay = Some(Box::new(render))
     }
 
     pub fn prompt_for_new_path(
@@ -4285,7 +4293,13 @@ impl Render for Workspace {
             )
             .child(self.status_bar.clone())
             .children(if self.project.read(cx).is_disconnected() {
-                Some(DisconnectedOverlay)
+                if let Some(render) = self.render_disconnected_overlay.take() {
+                    let result = render(self, cx);
+                    self.render_disconnected_overlay = Some(render);
+                    Some(result)
+                } else {
+                    None
+                }
             } else {
                 None
             })
@@ -4935,6 +4949,7 @@ pub fn join_hosted_project(
 }
 
 pub fn join_dev_server_project(
+    dev_server_project_id: DevServerProjectId,
     project_id: ProjectId,
     app_state: Arc<AppState>,
     window_to_replace: Option<WindowHandle<Workspace>>,
@@ -4969,10 +4984,19 @@ pub fn join_dev_server_project(
             )
             .await?;
 
+            let serialized_workspace: Option<SerializedWorkspace> =
+                persistence::DB.workspace_for_dev_server_project(dev_server_project_id);
+
+            let workspace_id = if let Some(serialized_workspace) = serialized_workspace {
+                serialized_workspace.id
+            } else {
+                persistence::DB.next_id().await?
+            };
+
             if let Some(window_to_replace) = window_to_replace {
                 cx.update_window(window_to_replace.into(), |_, cx| {
                     cx.replace_root_view(|cx| {
-                        Workspace::new(Default::default(), project, app_state.clone(), cx)
+                        Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
                     });
                 })?;
                 window_to_replace
@@ -4984,7 +5008,7 @@ pub fn join_dev_server_project(
                         window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
                     cx.open_window(options, |cx| {
                         cx.new_view(|cx| {
-                            Workspace::new(Default::default(), project, app_state.clone(), cx)
+                            Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
                         })
                     })
                 })?
@@ -5148,72 +5172,6 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<DevicePixels>> {
     let width: usize = parts.next()?.parse().ok()?;
     let height: usize = parts.next()?.parse().ok()?;
     Some(size((width as i32).into(), (height as i32).into()))
-}
-
-struct DisconnectedOverlay;
-
-impl Element for DisconnectedOverlay {
-    type RequestLayoutState = AnyElement;
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn request_layout(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut background = cx.theme().colors().elevated_surface_background;
-        background.fade_out(0.2);
-        let mut overlay = div()
-            .bg(background)
-            .absolute()
-            .left_0()
-            .top(ui::TitleBar::height(cx))
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .capture_any_mouse_down(|_, cx| cx.stop_propagation())
-            .capture_any_mouse_up(|_, cx| cx.stop_propagation())
-            .child(Label::new(
-                "Your connection to the remote project has been lost.",
-            ))
-            .into_any();
-        (overlay.request_layout(cx), overlay)
-    }
-
-    fn prepaint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        bounds: Bounds<Pixels>,
-        overlay: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
-    ) {
-        cx.insert_hitbox(bounds, true);
-        overlay.prepaint(cx);
-    }
-
-    fn paint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _: Bounds<Pixels>,
-        overlay: &mut Self::RequestLayoutState,
-        _: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
-    ) {
-        overlay.paint(cx)
-    }
-}
-
-impl IntoElement for DisconnectedOverlay {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
 }
 
 #[cfg(test)]

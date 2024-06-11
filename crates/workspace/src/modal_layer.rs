@@ -2,6 +2,7 @@ use gpui::{
     div, prelude::*, px, AnyView, DismissEvent, FocusHandle, ManagedView, Render, Subscription,
     View, ViewContext, WindowContext,
 };
+use theme::ActiveTheme as _;
 use ui::{h_flex, v_flex};
 
 pub enum DismissDecision {
@@ -13,11 +14,16 @@ pub trait ModalView: ManagedView {
     fn on_before_dismiss(&mut self, _: &mut ViewContext<Self>) -> DismissDecision {
         DismissDecision::Dismiss(true)
     }
+
+    fn fade_out_background(&self) -> bool {
+        false
+    }
 }
 
 trait ModalViewHandle {
     fn on_before_dismiss(&mut self, cx: &mut WindowContext) -> DismissDecision;
     fn view(&self) -> AnyView;
+    fn fade_out_background(&self, cx: &WindowContext) -> bool;
 }
 
 impl<V: ModalView> ModalViewHandle for View<V> {
@@ -27,6 +33,10 @@ impl<V: ModalView> ModalViewHandle for View<V> {
 
     fn view(&self) -> AnyView {
         self.clone().into()
+    }
+
+    fn fade_out_background(&self, cx: &WindowContext) -> bool {
+        self.read(cx).fade_out_background()
     }
 }
 
@@ -134,20 +144,34 @@ impl ModalLayer {
 }
 
 impl Render for ModalLayer {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let Some(active_modal) = &self.active_modal else {
             return div();
         };
 
-        div().absolute().size_full().top_0().left_0().child(
-            v_flex()
-                .h(px(0.0))
-                .top_20()
-                .flex()
-                .flex_col()
-                .items_center()
-                .track_focus(&active_modal.focus_handle)
-                .child(h_flex().occlude().child(active_modal.modal.view())),
-        )
+        div()
+            .absolute()
+            .size_full()
+            .top_0()
+            .left_0()
+            .when(active_modal.modal.fade_out_background(cx), |el| {
+                let mut background = cx.theme().colors().elevated_surface_background;
+                background.fade_out(0.2);
+                el.bg(background)
+                    .occlude()
+                    .on_mouse_down_out(cx.listener(|this, _, cx| {
+                        this.hide_modal(cx);
+                    }))
+            })
+            .child(
+                v_flex()
+                    .h(px(0.0))
+                    .top_20()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .track_focus(&active_modal.focus_handle)
+                    .child(h_flex().occlude().child(active_modal.modal.view())),
+            )
     }
 }

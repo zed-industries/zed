@@ -2363,6 +2363,7 @@ dependencies = [
  "prometheus",
  "prost",
  "rand 0.8.5",
+ "recent_projects",
  "release_channel",
  "reqwest",
  "rpc",
