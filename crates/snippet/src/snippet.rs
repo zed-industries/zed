@@ -120,20 +120,48 @@ fn parse_int(source: &str) -> Result<(usize, &str)> {
     Ok((prefix.parse()?, suffix))
 }
 
-fn parse_choices<'a>(source: &'a str, text: &mut String) -> Result<&'a str> {
-    if let Some(default_choice_len) = source.find(|c: char| c == ',') {
-        text.push_str(source.split_at(default_choice_len).0);
+fn parse_choices<'a>(mut source: &'a str, text: &mut String) -> Result<&'a str> {
+    let mut found_default_choice = false;
+
+    loop {
+        match source.chars().next() {
+            None => return Ok(""),
+            Some('\\') => {
+                source = &source[1..];
+
+                if let Some(c) = source.chars().next() {
+                    if !found_default_choice {
+                        text.push(c);
+                    }
+                    source = &source[c.len_utf8()..];
+                }
+            }
+            Some(',') => {
+                found_default_choice = true;
+                source = &source[1..];
+            }
+            Some('|') => {
+                source = &source[1..];
+                return Ok(source);
+            }
+            Some(_) => {
+                let chunk_end = source.find([',', '|', '\\']);
+
+                if chunk_end.is_none() {
+                    return Err(anyhow!(
+                        "Placeholder choice doesn't contain closing pipe-character '|'"
+                    ));
+                }
+
+                let (chunk, rest) = source.split_at(chunk_end.unwrap());
+
+                if !found_default_choice {
+                    text.push_str(chunk);
+                }
+                source = rest;
+            }
+        }
     }
-
-    let Some(len) = source.find(|c: char| c == '|') else {
-        return Err(anyhow!(
-            "expected snippet placeholder choices to have closing pipe-character '|'"
-        ));
-    };
-
-    // TODO: Support enumeration of choices
-    // The code below is skipping over the enumeration of choices
-    Ok(source.split_at(len + 1).1)
 }
 
 #[cfg(test)]
@@ -191,15 +219,17 @@ mod tests {
 
     #[test]
     fn test_snippet_with_choice_placeholders() {
-        let snippet = Snippet::parse(
-            "${1:spi_inst}: entity ${2|work,default|}.spi\n generic map(\n    N => ${4:N}\n)\n port map(\n    clk => ${5:clk},\n    reset => ${6:reset},\n    sck => ${7:sck},\n    sdi => ${8:sdi},\n    sdo => ${9:sdo},\n    start => ${10:start},\n    busy => ${11:busy},\n    length => ${12:length},\n    data_tx => ${13:data_tx},\n    data_rx => ${14:data_rx}\n);"
-        ).unwrap();
-
         let snippet = Snippet::parse("type ${1|i32, u32|} = $2")
             .expect("Should be able to unpack choice placeholders");
 
         assert_eq!(snippet.text, "type i32 = ");
         assert_eq!(tabstops(&snippet), &[vec![5..8], vec![11..11],]);
+
+        let snippet = Snippet::parse(r"${1|\$\{1\|one\,two\,tree\|\}|}")
+            .expect("Should be able to parse choice with escape characters");
+
+        assert_eq!(snippet.text, "${1|one,two,tree|}");
+        assert_eq!(tabstops(&snippet), &[vec![0..18], vec![18..18]]);
     }
 
     #[test]
