@@ -98,7 +98,6 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 false
             })
         {
-            println!("hover at inlay");
             hide_hover(editor, cx);
         }
 
