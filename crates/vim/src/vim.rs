@@ -134,9 +134,6 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, n: &Number, cx: _| {
         Vim::update(cx, |vim, cx| vim.push_count_digit(n.0, cx));
     });
-    workspace.register_action(|_: &mut Workspace, SelectRegister(register): &SelectRegister, cx| {
-        Vim::update(cx, |vim, cx| vim.select_register(*register, cx));
-    });
     workspace.register_action(|_: &mut Workspace, _: &Tab, cx| {
         Vim::active_editor_input_ignored(" ".into(), cx)
     });
@@ -209,7 +206,8 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
             | Operator::ChangeSurrounds { .. }
             | Operator::DeleteSurrounds
             | Operator::Mark
-            | Operator::Jump { .. },
+            | Operator::Jump { .. }
+            | Operator::Register,
         ) => {}
         Some(_) => {
             vim.clear_operator(cx);
@@ -538,9 +536,9 @@ impl Vim {
         count
     }
 
-    fn select_register(&mut self, register: Register, cx: &mut WindowContext) {
+    fn select_register(&mut self, register: Arc<str>, cx: &mut WindowContext) {
         self.update_state(|state| {
-            state.selected_register = Some(register);
+            state.selected_register = register.try_into().map_or(None, |r| Some(r));
             state.operator_stack.clear();
         });
         self.sync_vim_settings(cx);
@@ -755,6 +753,9 @@ impl Vim {
             },
             Some(Operator::Mark) => Vim::update(cx, |vim, cx| {
                 normal::mark::create_mark(vim, text, false, cx)
+            }),
+            Some(Operator::Register) => Vim::update(cx, |vim, cx| {
+                vim.select_register(text, cx);
             }),
             Some(Operator::Jump { line }) => normal::mark::jump(text, line, cx),
             _ => match Vim::read(cx).state().mode {

@@ -1,51 +1,18 @@
 use core::array;
 use std::ops::{Index, IndexMut};
+use std::sync::Arc;
 use serde::Deserialize;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Deserialize, PartialEq, PartialOrd)]
-pub(crate) enum Register {
-    Zero,
-    One,
-    Two,
-    Three,
-    Four,
-    Five,
-    Six,
-    Seven,
-    Eight,
-    Nine,
-    Default, // "
-    System,
-    A,
-    B,
-    C,
-    D,
-    E,
-    F,
-    G,
-    H,
-    I,
-    J,
-    K,
-    L,
-    M,
-    N,
-    O,
-    P,
-    Q,
-    R,
-    S,
-    T,
-    U,
-    V,
-    W,
-    X,
-    Y,
-    Z,
-}
+pub(crate) struct Register(u8);
+const N_REGISTERS: usize = 38;
 
-const N_REGISTERS: usize = Register::Z as usize + 1;
+impl Register {
+    pub const DEFAULT : Self = Self(10);
+    pub const SYSTEM : Self = Self(11);
+    pub const A : Self = Self(12);
+}
 
 #[derive(Clone)]
 pub(crate) struct Registers {
@@ -54,6 +21,7 @@ pub(crate) struct Registers {
 }
 
 impl Registers {
+
     pub(crate) fn push(&mut self, content: String) {
         if self.top == 0 {
             self.top = 9;
@@ -65,10 +33,10 @@ impl Registers {
 }
 
 fn get_true_index(index: Register, top: usize) -> usize {
-    if index > Register::Nine {
-        return index as usize;
+    if index.0 > 9 {
+        return index.0 as usize;
     }
-    return (top + index as usize) % 10;
+    return (top + index.0 as usize) % 10;
 }
 
 impl Index<Register> for Registers {
@@ -91,5 +59,23 @@ impl Default for Registers {
             registers: array::from_fn(|_| None),
             top: 0,
         }
+    }
+}
+
+impl std::convert::TryFrom<Arc<str>> for Register {
+    type Error = ();
+
+    fn try_from(value: Arc<str>) -> Result<Self, Self::Error> {
+        let chars = value.as_bytes();
+        if chars.len() != 1 {
+            return Err(());
+        }
+        let ch = chars[0];
+        if ch >= 0x30 && ch <= 0x39 {
+            return Ok(Register(ch & 0xf));
+        } else if ch >= 0x61 && ch <= 0x7a {
+            return Ok(Register(ch - 85));
+        }
+        Err(())
     }
 }

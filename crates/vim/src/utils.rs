@@ -105,15 +105,15 @@ fn copy_selections_content_internal(
     let setting = VimSettings::get_global(cx).use_system_clipboard;
     if setting == UseSystemClipboard::Always || setting == UseSystemClipboard::OnYank && is_yank {
         cx.write_to_clipboard(ClipboardItem::new(text.clone()).with_metadata(clipboard_selections));
-        vim.workspace_state.registers[Register::System] = Some(text.clone());
+        vim.workspace_state.registers[Register::SYSTEM] = Some(text.clone());
     } else {
-        vim.workspace_state.registers[Register::System] = Some(
+        vim.workspace_state.registers[Register::SYSTEM] = Some(
             cx.read_from_clipboard()
                 .map(|item| item.text().clone())
                 .unwrap_or_default(),
         );
     }
-    vim.workspace_state.registers[Register::Default] = Some(text.clone());
+    vim.workspace_state.registers[Register::DEFAULT] = Some(text.clone());
     if let Some(register) = vim.state().selected_register {
         if register >= Register::A {
             vim.workspace_state.registers[register] = Some(text);

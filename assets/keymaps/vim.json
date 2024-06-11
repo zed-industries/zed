@@ -6,7 +6,7 @@
     }
   },
   {
-    "context": "Editor && VimControl && vim_operator != \" && !VimWaiting && !menu",
+    "context": "Editor && VimControl && !VimWaiting && !menu",
     "bindings": {
       "i": [
         "vim::PushOperator",
@@ -496,47 +496,6 @@
     "context": "Editor && vim_operator == <",
     "bindings": {
       "<": "vim::CurrentLine"
-    }
-  },
-  {
-    "context": "Editor && vim_operator == \"",
-    "bindings": {
-      "0": ["vim::SelectRegister", "Zero"],
-      "1": ["vim::SelectRegister", "One"],
-      "2": ["vim::SelectRegister", "Two"],
-      "3": ["vim::SelectRegister", "Three"],
-      "4": ["vim::SelectRegister", "Four"],
-      "5": ["vim::SelectRegister", "Five"],
-      "6": ["vim::SelectRegister", "Six"],
-      "7": ["vim::SelectRegister", "Seven"],
-      "8": ["vim::SelectRegister", "Eight"],
-      "9": ["vim::SelectRegister", "Nine"],
-      "a": ["vim::SelectRegister", "A"],
-      "b": ["vim::SelectRegister", "B"],
-      "c": ["vim::SelectRegister", "C"],
-      "d": ["vim::SelectRegister", "D"],
-      "e": ["vim::SelectRegister", "E"],
-      "f": ["vim::SelectRegister", "F"],
-      "g": ["vim::SelectRegister", "G"],
-      "h": ["vim::SelectRegister", "H"],
-      "i": ["vim::SelectRegister", "I"],
-      "j": ["vim::SelectRegister", "J"],
-      "k": ["vim::SelectRegister", "K"],
-      "l": ["vim::SelectRegister", "L"],
-      "m": ["vim::SelectRegister", "M"],
-      "n": ["vim::SelectRegister", "N"],
-      "o": ["vim::SelectRegister", "O"],
-      "p": ["vim::SelectRegister", "P"],
-      "q": ["vim::SelectRegister", "Q"],
-      "r": ["vim::SelectRegister", "R"],
-      "s": ["vim::SelectRegister", "S"],
-      "t": ["vim::SelectRegister", "T"],
-      "u": ["vim::SelectRegister", "U"],
-      "v": ["vim::SelectRegister", "V"],
-      "w": ["vim::SelectRegister", "W"],
-      "x": ["vim::SelectRegister", "X"],
-      "y": ["vim::SelectRegister", "Y"],
-      "z": ["vim::SelectRegister", "Z"]
     }
   },
   {

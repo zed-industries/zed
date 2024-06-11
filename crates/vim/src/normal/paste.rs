@@ -32,7 +32,7 @@ pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>
 
 fn system_clipboard_is_newer(vim: &Vim, cx: &mut AppContext) -> bool {
     cx.read_from_clipboard().is_some_and(|item| {
-        if let Some(last_state) = &vim.workspace_state.registers[Register::System] {
+        if let Some(last_state) = &vim.workspace_state.registers[Register::SYSTEM] {
             last_state != item.text()
         } else {
             true
@@ -59,7 +59,7 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                             vim.update_state(|state| state.selected_register = None);
                             register
                         } else {
-                            Register::Default
+                            Register::DEFAULT
                         };
                         (
                             vim.workspace_state.registers[register]

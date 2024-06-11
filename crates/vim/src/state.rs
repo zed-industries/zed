@@ -64,7 +64,6 @@ pub enum Operator {
     Jump { line: bool },
     Indent,
     Outdent,
-
     Lowercase,
     Uppercase,
     OppositeCase,
@@ -292,6 +291,7 @@ impl Operator {
             | Operator::Mark
             | Operator::Jump { .. }
             | Operator::FindBackward { .. }
+            | Operator::Register
             | Operator::Replace
             | Operator::AddSurrounds { target: Some(_) }
             | Operator::ChangeSurrounds { .. }
