@@ -1484,19 +1484,8 @@ impl Project {
         external_paths: Vec<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ProjectEntryId>>> {
-        if !worktree.read(cx).is_local() {
-            return Task::ready(Ok(Vec::new()));
-        };
-
-        cx.spawn(move |_, mut cx| async move {
-            LocalWorktree::copy_external_entries(
-                worktree,
-                target_directory,
-                external_paths,
-                true,
-                &mut cx,
-            )
-            .await
+        worktree.update(cx, |worktree, cx| {
+            worktree.copy_external_entries(target_directory, external_paths, true, cx)
         })
     }
 
