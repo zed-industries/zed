@@ -1,17 +1,15 @@
 use core::array;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
-use serde::Deserialize;
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, Deserialize, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, PartialEq, PartialOrd)]
 pub(crate) struct Register(u8);
 const N_REGISTERS: usize = 38;
 
 impl Register {
-    pub const DEFAULT : Self = Self(10);
-    pub const SYSTEM : Self = Self(11);
-    pub const A : Self = Self(12);
+    pub const DEFAULT: Self = Self(10);
+    pub const SYSTEM: Self = Self(11);
+    pub const A: Self = Self(12);
 }
 
 #[derive(Clone)]
@@ -21,7 +19,6 @@ pub(crate) struct Registers {
 }
 
 impl Registers {
-
     pub(crate) fn push(&mut self, content: String) {
         if self.top == 0 {
             self.top = 9;

@@ -664,5 +664,4 @@ mod test {
             Mode::Normal,
         );
     }
-
 }

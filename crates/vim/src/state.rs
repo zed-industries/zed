@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::Range, sync::Arc};
 
-use crate::registers::{Registers, Register};
+use crate::registers::{Register, Registers};
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
 use collections::HashMap;
@@ -90,7 +90,7 @@ pub struct EditorState {
     pub current_tx: Option<TransactionId>,
     pub current_anchor: Option<Selection<Anchor>>,
     pub undo_modes: HashMap<TransactionId, Mode>,
-    
+
     pub selected_register: Option<Register>,
 }
 
