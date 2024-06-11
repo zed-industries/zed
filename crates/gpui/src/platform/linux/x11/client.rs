@@ -458,6 +458,7 @@ impl X11Client {
         state
             .windows
             .get(&win)
+            .filter(|window_reference| !window_reference.window.state.borrow().destroyed)
             .map(|window_reference| window_reference.window.clone())
     }
 
@@ -888,6 +889,10 @@ impl X11Client {
 }
 
 impl LinuxClient for X11Client {
+    fn compositor_name(&self) -> &'static str {
+        "X11"
+    }
+
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
     }
@@ -928,7 +933,7 @@ impl LinuxClient for X11Client {
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
         let x_window = state.xcb_connection.generate_id().unwrap();
 
@@ -943,7 +948,7 @@ impl LinuxClient for X11Client {
             &state.atoms,
             state.scale_factor,
             state.common.appearance,
-        );
+        )?;
 
         let screen_resources = state
             .xcb_connection
@@ -1011,7 +1016,7 @@ impl LinuxClient for X11Client {
         };
 
         state.windows.insert(x_window, window_ref);
-        Box::new(window)
+        Ok(Box::new(window))
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {

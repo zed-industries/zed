@@ -27,7 +27,7 @@ use log::LevelFilter;
 use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
-use release_channel::AppCommitSha;
+use release_channel::{AppCommitSha, AppVersion};
 use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -56,19 +56,62 @@ use crate::zed::inline_completion_registry;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn fail_to_launch(e: anyhow::Error) {
+    eprintln!("Zed failed to launch: {:?}", e);
     App::new().run(move |cx| {
-        let window = cx.open_window(gpui::WindowOptions::default(), |cx| cx.new_view(|_| gpui::Empty));
-        window.update(cx, |_, cx| {
-            let response = cx.prompt(gpui::PromptLevel::Critical, "Zed failed to launch", Some(&format!("{}\n\nFor help resolving this, please open an issue on https://github.com/zed-industries/zed", e)), &["Exit"]);
+        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |cx| cx.new_view(|_| gpui::Empty)) {
+            window.update(cx, |_, cx| {
+                let response = cx.prompt(gpui::PromptLevel::Critical, "Zed failed to launch", Some(&format!("{}\n\nFor help resolving this, please open an issue on https://github.com/zed-industries/zed", e)), &["Exit"]);
 
-            cx.spawn(|_, mut cx| async move {
-                response.await?;
-                cx.update(|cx| {
-                    cx.quit()
-                })
-            }).detach_and_log_err(cx);
-        }).log_err();
+                cx.spawn(|_, mut cx| async move {
+                    response.await?;
+                    cx.update(|cx| {
+                        cx.quit()
+                    })
+                }).detach_and_log_err(cx);
+            }).log_err();
+        } else {
+            fail_to_open_window(e, cx)
+        }
     })
+}
+
+fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncAppContext) {
+    cx.update(|cx| fail_to_open_window(e, cx)).log_err();
+}
+
+fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
+    eprintln!("Zed failed to open a window: {:?}", e);
+    #[cfg(not(target_os = "linux"))]
+    {
+        process::exit(1);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
+        _cx.spawn(|_cx| async move {
+            let Ok(proxy) = NotificationProxy::new().await else {
+                process::exit(1);
+            };
+
+            let notification_id = "dev.zed.Oops";
+            proxy
+                .add_notification(
+                    notification_id,
+                    Notification::new("Zed failed to launch")
+                        .body(Some(format!("{:?}", e).as_str()))
+                        .priority(Priority::High)
+                        .icon(ashpd::desktop::Icon::with_names(&[
+                            "dialog-question-symbolic",
+                        ])),
+                )
+                .await
+                .ok();
+
+            process::exit(1);
+        })
+        .detach();
+    }
 }
 
 enum AppMode {
@@ -121,10 +164,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
             cx.set_global(AppMode::Ui);
         }
     };
-
-    if let Err(err) = cx.can_open_windows() {
-        return Err(err);
-    }
 
     SystemAppearance::init(cx);
     load_embedded_fonts(cx);
@@ -256,7 +295,9 @@ fn main() {
         .ok()
         .unzip();
     let session_id = Uuid::new_v4().to_string();
-    reliability::init_panic_hook(&app, installation_id.clone(), session_id.clone());
+
+    let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
+    reliability::init_panic_hook(installation_id.clone(), app_version, session_id.clone());
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -319,14 +360,18 @@ fn main() {
         {
             cx.spawn({
                 let app_state = app_state.clone();
-                |cx| async move { restore_or_create_workspace(app_state, cx).await }
+                |mut cx| async move {
+                    if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
+                        fail_to_open_window_async(e, &mut cx)
+                    }
+                }
             })
             .detach();
         }
     });
 
     app.run(move |cx| {
-        release_channel::init(env!("CARGO_PKG_VERSION"), cx);
+        release_channel::init(app_version, cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
@@ -421,7 +466,11 @@ fn main() {
                     init_ui(app_state.clone(), cx).unwrap();
                     cx.spawn({
                         let app_state = app_state.clone();
-                        |cx| async move { restore_or_create_workspace(app_state, cx).await }
+                        |mut cx| async move {
+                            if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
+                                fail_to_open_window_async(e, &mut cx)
+                            }
+                        }
                     })
                     .detach();
                 }
@@ -448,13 +497,12 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         let app_state = app_state.clone();
         cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
             .detach();
-        return;
     }
 
     if let Err(e) = init_ui(app_state.clone(), cx) {
-        log::error!("{}", e);
+        fail_to_open_window(e, cx);
         return;
-    }
+    };
 
     let mut task = None;
     if !request.open_paths.is_empty() {
@@ -478,48 +526,59 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
     if !request.open_channel_notes.is_empty() || request.join_channel.is_some() {
         cx.spawn(|mut cx| async move {
-            if let Some(task) = task {
-                task.await?;
-            }
-            let client = app_state.client.clone();
-            // we continue even if authentication fails as join_channel/ open channel notes will
-            // show a visible error message.
-            authenticate(client, &cx).await.log_err();
+            let result = maybe!(async {
+                if let Some(task) = task {
+                    task.await?;
+                }
+                let client = app_state.client.clone();
+                // we continue even if authentication fails as join_channel/ open channel notes will
+                // show a visible error message.
+                authenticate(client, &cx).await.log_err();
 
-            if let Some(channel_id) = request.join_channel {
-                cx.update(|cx| {
-                    workspace::join_channel(
-                        client::ChannelId(channel_id),
-                        app_state.clone(),
-                        None,
-                        cx,
-                    )
-                })?
-                .await?;
-            }
+                if let Some(channel_id) = request.join_channel {
+                    cx.update(|cx| {
+                        workspace::join_channel(
+                            client::ChannelId(channel_id),
+                            app_state.clone(),
+                            None,
+                            cx,
+                        )
+                    })?
+                    .await?;
+                }
 
-            let workspace_window =
-                workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-            let workspace = workspace_window.root_view(&cx)?;
+                let workspace_window =
+                    workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                let workspace = workspace_window.root_view(&cx)?;
 
-            let mut promises = Vec::new();
-            for (channel_id, heading) in request.open_channel_notes {
-                promises.push(cx.update_window(workspace_window.into(), |_, cx| {
-                    ChannelView::open(
-                        client::ChannelId(channel_id),
-                        heading,
-                        workspace.clone(),
-                        cx,
-                    )
-                    .log_err()
-                })?)
+                let mut promises = Vec::new();
+                for (channel_id, heading) in request.open_channel_notes {
+                    promises.push(cx.update_window(workspace_window.into(), |_, cx| {
+                        ChannelView::open(
+                            client::ChannelId(channel_id),
+                            heading,
+                            workspace.clone(),
+                            cx,
+                        )
+                        .log_err()
+                    })?)
+                }
+                future::join_all(promises).await;
+                anyhow::Ok(())
+            })
+            .await;
+            if let Err(err) = result {
+                fail_to_open_window_async(err, &mut cx);
             }
-            future::join_all(promises).await;
-            anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
+        .detach()
     } else if let Some(task) = task {
-        task.detach_and_log_err(cx)
+        cx.spawn(|mut cx| async move {
+            if let Err(err) = task.await {
+                fail_to_open_window_async(err, &mut cx);
+            }
+        })
+        .detach();
     }
 }
 
@@ -562,41 +621,39 @@ async fn installation_id() -> Result<(String, bool)> {
     Ok((installation_id, false))
 }
 
-async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: AsyncAppContext) {
-    maybe!(async {
-        let restore_behaviour =
-            cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)?;
-        let location = match restore_behaviour {
-            workspace::RestoreOnStartupBehaviour::LastWorkspace => {
-                workspace::last_opened_workspace_paths().await
-            }
-            _ => None,
-        };
-        if let Some(location) = location {
-            cx.update(|cx| {
-                workspace::open_paths(
-                    location.paths().as_ref(),
-                    app_state,
-                    workspace::OpenOptions::default(),
-                    cx,
-                )
-            })?
-            .await
-            .log_err();
-        } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-            cx.update(|cx| show_welcome_view(app_state, cx)).log_err();
-        } else {
-            cx.update(|cx| {
-                workspace::open_new(app_state, cx, |workspace, cx| {
-                    Editor::new_file(workspace, &Default::default(), cx)
-                })
-                .detach();
-            })?;
+async fn restore_or_create_workspace(
+    app_state: Arc<AppState>,
+    cx: &mut AsyncAppContext,
+) -> Result<()> {
+    let restore_behaviour = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)?;
+    let location = match restore_behaviour {
+        workspace::RestoreOnStartupBehaviour::LastWorkspace => {
+            workspace::last_opened_workspace_paths().await
         }
-        anyhow::Ok(())
-    })
-    .await
-    .log_err();
+        _ => None,
+    };
+    if let Some(location) = location {
+        cx.update(|cx| {
+            workspace::open_paths(
+                location.paths().as_ref(),
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })?
+        .await?;
+    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+        cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
+    } else {
+        cx.update(|cx| {
+            workspace::open_new(app_state, cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+        })?
+        .await?;
+    }
+
+    Ok(())
 }
 
 fn init_paths() -> anyhow::Result<()> {

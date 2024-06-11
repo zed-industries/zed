@@ -605,7 +605,7 @@ impl Window {
         handle: AnyWindowHandle,
         options: WindowOptions,
         cx: &mut AppContext,
-    ) -> Self {
+    ) -> Result<Self> {
         let WindowOptions {
             window_bounds,
             titlebar,
@@ -633,7 +633,7 @@ impl Window {
                 display_id,
                 window_background,
             },
-        );
+        )?;
         let display_id = platform_window.display().map(|display| display.id());
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
@@ -761,7 +761,7 @@ impl Window {
             platform_window.set_app_id(&app_id);
         }
 
-        Window {
+        Ok(Window {
             handle,
             removed: false,
             platform_window,
@@ -807,7 +807,7 @@ impl Window {
             focus_enabled: true,
             pending_input: None,
             prompt: None,
-        }
+        })
     }
     fn new_focus_listener(
         &mut self,

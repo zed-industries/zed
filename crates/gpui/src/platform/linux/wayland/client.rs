@@ -559,7 +559,7 @@ impl LinuxClient for WaylandClient {
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
 
         let (window, surface_id) = WaylandWindow::new(
@@ -568,10 +568,10 @@ impl LinuxClient for WaylandClient {
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             state.common.appearance,
-        );
+        )?;
         state.windows.insert(surface_id, window.0.clone());
 
-        Box::new(window)
+        Ok(Box::new(window))
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
@@ -692,6 +692,10 @@ impl LinuxClient for WaylandClient {
             .keyboard_focused_window
             .as_ref()
             .map(|window| window.handle())
+    }
+
+    fn compositor_name(&self) -> &'static str {
+        "Wayland"
     }
 }
 

@@ -260,7 +260,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use gpui::{TestAppContext, VisualContext};
+    use gpui::{SemanticVersion, TestAppContext, VisualContext};
     use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
     use project::FakeFs;
     use serde_json::json;
@@ -395,7 +395,7 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
             language::init(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
