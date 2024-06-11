@@ -11,6 +11,7 @@ use gpui::{BackgroundExecutor, Task};
 use log::warn;
 use parking_lot::Mutex;
 use smol::io::BufReader;
+use util::ResultExt;
 
 use crate::{
     AnyNotification, AnyResponse, IoHandler, IoKind, RequestId, ResponseHandler, CONTENT_LEN_HEADER,
@@ -96,18 +97,19 @@ impl LspStdoutHandler {
                 .unwrap()
                 .as_millis();
 
-            if let Ok(message) = str::from_utf8(&buffer) {
+            let Some(message) = str::from_utf8(&buffer).log_err() else {
+                continue;
+            };
+            {
                 log::trace!("incoming message: {message}");
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdOut, message);
                 }
             }
 
-            if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
-                notifications_sender.unbounded_send(msg)?;
-            } else if let Ok(AnyResponse {
+            if let Ok(AnyResponse {
                 id, error, result, ..
-            }) = serde_json::from_slice(&buffer)
+            }) = serde_json::from_str(&message)
             {
                 let any_parse = SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
@@ -133,11 +135,10 @@ impl LspStdoutHandler {
                         handler(Ok("null".into()));
                     }
                 }
+            } else if let Ok(msg) = serde_json::from_str::<AnyNotification>(&message) {
+                notifications_sender.unbounded_send(msg)?;
             } else {
-                warn!(
-                    "failed to deserialize LSP message:\n{}",
-                    std::str::from_utf8(&buffer)?
-                );
+                warn!("failed to deserialize LSP message:\n{}", message);
             }
         }
     }
