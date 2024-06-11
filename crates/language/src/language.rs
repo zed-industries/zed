@@ -1736,6 +1736,7 @@ mod tests {
             languages.language_names(),
             &[
                 "JSON".to_string(),
+                "Markdown".to_string(),
                 "Plain Text".to_string(),
                 "Rust".to_string(),
             ]
@@ -1749,6 +1750,7 @@ mod tests {
             languages.language_names(),
             &[
                 "JSON".to_string(),
+                "Markdown".to_string(),
                 "Plain Text".to_string(),
                 "Rust".to_string(),
             ]
@@ -1762,6 +1764,7 @@ mod tests {
             languages.language_names(),
             &[
                 "JSON".to_string(),
+                "Markdown".to_string(),
                 "Plain Text".to_string(),
                 "Rust".to_string(),
             ]
