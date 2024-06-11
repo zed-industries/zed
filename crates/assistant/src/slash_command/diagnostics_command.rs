@@ -53,11 +53,11 @@ impl SlashCommand for DiagnosticsCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let exclude_warnings = argument
-            .map(|argument| argument == "--exclude-warnings")
+        let include_warnings = argument
+            .map(|argument| argument == "--include-warnings")
             .unwrap_or(false);
 
-        let task = collect_diagnostics(workspace.read(cx).project().clone(), exclude_warnings, cx);
+        let task = collect_diagnostics(workspace.read(cx).project().clone(), include_warnings, cx);
         cx.spawn(move |_| async move {
             let (text, sections) = task.await?;
             Ok(SlashCommandOutput {
@@ -84,7 +84,7 @@ impl SlashCommand for DiagnosticsCommand {
 
 fn collect_diagnostics(
     project: Model<Project>,
-    exclude_warnings: bool,
+    include_warnings: bool,
     cx: &mut AppContext,
 ) -> Task<Result<(String, Vec<(Range<usize>, PlaceholderType)>)>> {
     let project_handle = project.downgrade();
@@ -98,11 +98,9 @@ fn collect_diagnostics(
         let mut project_summary = DiagnosticSummary::default();
         for (project_path, _, summary) in diagnostic_summaries {
             project_summary.error_count += summary.error_count;
-            if !exclude_warnings {
+            if include_warnings {
                 project_summary.warning_count += summary.warning_count;
-            }
-
-            if summary.error_count == 0 && exclude_warnings {
+            } else if summary.error_count == 0 {
                 continue;
             }
 
@@ -120,7 +118,7 @@ fn collect_diagnostics(
                     &mut text,
                     &mut sections,
                     cx.read_model(&buffer, |buffer, _| buffer.snapshot())?,
-                    exclude_warnings,
+                    include_warnings,
                 );
             }
 
@@ -139,16 +137,16 @@ fn collect_buffer_diagnostics(
     text: &mut String,
     sections: &mut Vec<(Range<usize>, PlaceholderType)>,
     snapshot: BufferSnapshot,
-    exclude_warnings: bool,
+    include_warnings: bool,
 ) {
     const EXCERPT_EXPANSION: u32 = 2;
 
     for (_, group) in snapshot.diagnostic_groups(None) {
-        //TODO Find to link related diagnostics together (primary diagnostic)
+        //TODO Find a way to link related diagnostics together (primary diagnostic)
         for entry in group.entries {
             let ty = match entry.diagnostic.severity {
                 DiagnosticSeverity::WARNING => {
-                    if exclude_warnings {
+                    if !include_warnings {
                         continue;
                     }
                     DiagnosticType::Warning
