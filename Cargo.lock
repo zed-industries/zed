@@ -88,9 +88,8 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6d1ea4484c8676f295307a4892d478c70ac8da1dbd8c7c10830a504b7f1022f"
+version = "0.24.1-dev"
+source = "git+https://github.com/alacritty/alacritty?rev=cacdb5bb3b72bad2c729227537979d95af75978f#cacdb5bb3b72bad2c729227537979d95af75978f"
 dependencies = [
  "base64 0.22.0",
  "bitflags 2.4.2",
@@ -107,7 +106,7 @@ dependencies = [
  "signal-hook",
  "unicode-width",
  "vte",
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -339,7 +338,6 @@ dependencies = [
  "anthropic",
  "anyhow",
  "assistant_slash_command",
- "async-watch",
  "cargo_toml",
  "chrono",
  "client",
@@ -354,6 +352,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "heed",
+ "html_to_markdown",
  "http 0.1.0",
  "indoc",
  "language",
@@ -368,7 +367,6 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rope",
- "rustdoc_to_markdown",
  "schemars",
  "search",
  "semantic_index",
@@ -822,15 +820,6 @@ dependencies = [
  "log",
  "pin-project-lite",
  "tungstenite 0.16.0",
-]
-
-[[package]]
-name = "async-watch"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a078faf4e27c0c6cc0efb20e5da59dcccc04968ebf2801d8e0b2195124cdcdb2"
-dependencies = [
- "event-listener 2.5.3",
 ]
 
 [[package]]
@@ -3844,6 +3833,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "num-format",
  "picker",
  "project",
  "release_channel",
@@ -5075,6 +5065,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.59",
+]
+
+[[package]]
+name = "html_to_markdown"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "html5ever",
+ "indoc",
+ "markup5ever_rcdom",
+ "pretty_assertions",
+ "regex",
 ]
 
 [[package]]
@@ -6732,6 +6734,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "num-format"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a652d9771a63711fd3c3deb670acfbe5c30a4072e664d7a3bf5a9e1056ac72c3"
+dependencies = [
+ "arrayvec",
+ "itoa",
 ]
 
 [[package]]
@@ -8626,18 +8638,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa0f585226d2e68097d4f95d113b15b83a82e819ab25717ec0590d9584ef366"
 dependencies = [
  "semver",
-]
-
-[[package]]
-name = "rustdoc_to_markdown"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "html5ever",
- "indoc",
- "markup5ever_rcdom",
- "pretty_assertions",
- "regex",
 ]
 
 [[package]]
@@ -12898,7 +12898,6 @@ name = "worktree"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "clock",
  "collections",
  "env_logger",
@@ -12910,10 +12909,8 @@ dependencies = [
  "gpui",
  "http 0.1.0",
  "ignore",
- "itertools 0.11.0",
  "language",
  "log",
- "lsp",
  "parking_lot",
  "postage",
  "pretty_assertions",
@@ -13162,7 +13159,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.139.0"
+version = "0.140.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13452,7 +13449,7 @@ dependencies = [
 
 [[package]]
 name = "zed_vue"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]

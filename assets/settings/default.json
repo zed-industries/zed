@@ -131,14 +131,7 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": [
-    "**/.env*",
-    "**/*.pem",
-    "**/*.key",
-    "**/*.cert",
-    "**/*.crt",
-    "**/secrets.yml"
-  ],
+  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -164,6 +157,12 @@
   //   "none"
   // 3. Draw all invisible symbols:
   //   "all"
+  // 4. Draw whitespaces at boundaries only:
+  //   "boundaries"
+  // For a whitespace to be on a boundary, any of the following conditions need to be met:
+  // - It is a tab
+  // - It is adjacent to an edge (start or end)
+  // - It is adjacent to a whitespace (left or right)
   "show_whitespaces": "selection",
   // Settings related to calls in Zed
   "calls": {
@@ -453,7 +452,8 @@
     // Send anonymized usage data like what languages you're using Zed with.
     "metrics": true
   },
-  // Automatically update Zed
+  // Automatically update Zed. This setting may be ignored on Linux if
+  // installed through a package manager.
   "auto_update": true,
   // Diagnostics configuration.
   "diagnostics": {
@@ -697,7 +697,7 @@
       }
     },
     "JavaScript": {
-      "language_servers": ["typescript-language-server", "!vtsls", ".."],
+      "language_servers": ["typescript-language-server", "!vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -740,7 +740,7 @@
       }
     },
     "TSX": {
-      "language_servers": ["typescript-language-server", "!vtsls", ".."],
+      "language_servers": ["typescript-language-server", "!vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -751,7 +751,7 @@
       }
     },
     "TypeScript": {
-      "language_servers": ["typescript-language-server", "!vtsls", ".."],
+      "language_servers": ["typescript-language-server", "!vtsls", "..."],
       "prettier": {
         "allowed": true
       }

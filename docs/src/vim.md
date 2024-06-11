@@ -27,12 +27,14 @@ g S   Find symbol in entire project
 
 g ]   Go to next diagnostic
 g [   Go to previous diagnostic
+] d   Go to next diagnostic
+[ d   Go to previous diagnostic
 g h   Show inline error (hover)
 g .   Open the code actions menu
 
 # Git
-] c   Go to previous git change
-[ c   Go to next git change
+] c   Go to next git change
+[ c   Go to previous git change
 
 # Treesitter
 ] x   Select a smaller syntax node
@@ -46,12 +48,14 @@ g <   The same, but backwards
 g a   Add a visual selection for every copy of the current word
 
 # Pane management
+g /        Open a project-wide search
 g <space>  Open the current search excerpt
 <ctrl-w> <space>  Open the current search excerpt in a split
 <ctrl-w> g d      Go to definition in a split
 <ctrl-w> g D      Go to type definition in a split
 
 # Insert mode
+i a / a a      Select the function argument the cursor is in
 ctrl-x ctrl-o  Open the completion menu
 ctrl-x ctrl-c  Request GitHub Copilot suggestion (if configured)
 ctrl-x ctrl-a  Open the inline AI assistant (if configured)

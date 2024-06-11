@@ -23,7 +23,10 @@ use smol::{fs::File, process::Command};
 use http::{HttpClient, HttpClientWithUrl};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use std::{
-    env::consts::{ARCH, OS},
+    env::{
+        self,
+        consts::{ARCH, OS},
+    },
     ffi::OsString,
     path::PathBuf,
     sync::Arc,
@@ -138,20 +141,24 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     let auto_updater = cx.new_model(|cx| {
         let updater = AutoUpdater::new(version, http_client);
 
-        let mut update_subscription = AutoUpdateSetting::get_global(cx)
-            .0
-            .then(|| updater.start_polling(cx));
+        if option_env!("ZED_UPDATE_EXPLANATION").is_none()
+            && env::var("ZED_UPDATE_EXPLANATION").is_err()
+        {
+            let mut update_subscription = AutoUpdateSetting::get_global(cx)
+                .0
+                .then(|| updater.start_polling(cx));
 
-        cx.observe_global::<SettingsStore>(move |updater, cx| {
-            if AutoUpdateSetting::get_global(cx).0 {
-                if update_subscription.is_none() {
-                    update_subscription = Some(updater.start_polling(cx))
+            cx.observe_global::<SettingsStore>(move |updater, cx| {
+                if AutoUpdateSetting::get_global(cx).0 {
+                    if update_subscription.is_none() {
+                        update_subscription = Some(updater.start_polling(cx))
+                    }
+                } else {
+                    update_subscription.take();
                 }
-            } else {
-                update_subscription.take();
-            }
-        })
-        .detach();
+            })
+            .detach();
+        }
 
         updater
     });
@@ -159,6 +166,26 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
 }
 
 pub fn check(_: &Check, cx: &mut WindowContext) {
+    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION") {
+        drop(cx.prompt(
+            gpui::PromptLevel::Info,
+            "Zed was installed via a package manager.",
+            Some(message),
+            &["Ok"],
+        ));
+        return;
+    }
+
+    if let Some(message) = env::var("ZED_UPDATE_EXPLANATION").ok() {
+        drop(cx.prompt(
+            gpui::PromptLevel::Info,
+            "Zed was installed via a package manager.",
+            Some(&message),
+            &["Ok"],
+        ));
+        return;
+    }
+
     if let Some(updater) = AutoUpdater::get(cx) {
         updater.update(cx, |updater, cx| updater.poll(cx));
     } else {
@@ -342,16 +369,6 @@ impl AutoUpdater {
     }
 
     async fn update(this: Model<Self>, mut cx: AsyncAppContext) -> Result<()> {
-        // Skip auto-update for flatpaks
-        #[cfg(target_os = "linux")]
-        if matches!(std::env::var("ZED_IS_FLATPAK_INSTALL"), Ok(_)) {
-            this.update(&mut cx, |this, cx| {
-                this.status = AutoUpdateStatus::Idle;
-                cx.notify();
-            })?;
-            return Ok(());
-        }
-
         let (client, current_version) = this.read_with(&cx, |this, _| {
             (this.http_client.clone(), this.current_version)
         })?;
@@ -509,7 +526,7 @@ async fn install_release_linux(
     cx: &AsyncAppContext,
 ) -> Result<()> {
     let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name())?;
-    let home_dir = PathBuf::from(std::env::var("HOME").context("no HOME env var set")?);
+    let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
 
     let extracted = temp_dir.path().join("zed");
     fs::create_dir_all(&extracted)

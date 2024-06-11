@@ -12,7 +12,7 @@ We have a growing collection of pre-defined keymaps in [zed repository's keymaps
 - TextMate
 - VSCode (default)
 
-These keymaps can be set via the `base_keymap` setting in your `keymap.json` file. Additionally, if you'd like to work from a clean slate, you can provide `"None"` to the setting.
+These keymaps can be set via the `base_keymap` setting in your `settings.json` file. Additionally, if you'd like to work from a clean slate, you can provide `"None"` to the setting.
 
 ## Custom key bindings
 

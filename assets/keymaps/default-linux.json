@@ -205,18 +205,6 @@
     }
   },
   {
-    "context": "ConversationEditor > Editor",
-    "bindings": {
-      "ctrl-enter": "assistant::Assist",
-      "ctrl-s": "workspace::Save",
-      "ctrl->": "assistant::QuoteSelection",
-      "shift-enter": "assistant::Split",
-      "ctrl-r": "assistant::CycleMessageRole",
-      "enter": "assistant::ConfirmCommand",
-      "alt-enter": "editor::Newline"
-    }
-  },
-  {
     "context": "PromptLibrary",
     "bindings": {
       "ctrl-n": "prompt_library::NewPrompt",
@@ -232,7 +220,8 @@
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
       "ctrl-f": "search::FocusSearch",
-      "ctrl-h": "search::ToggleReplace"
+      "ctrl-h": "search::ToggleReplace",
+      "ctrl-l": "search::ToggleSelection"
     }
   },
   {
@@ -296,6 +285,7 @@
       "ctrl-alt-g": "search::SelectNextMatch",
       "ctrl-alt-shift-g": "search::SelectPrevMatch",
       "ctrl-alt-shift-h": "search::ToggleReplace",
+      "ctrl-alt-shift-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
@@ -552,6 +542,18 @@
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"
+    }
+  },
+  {
+    "context": "ContextEditor > Editor",
+    "bindings": {
+      "ctrl-enter": "assistant::Assist",
+      "ctrl-s": "workspace::Save",
+      "ctrl->": "assistant::QuoteSelection",
+      "shift-enter": "assistant::Split",
+      "ctrl-r": "assistant::CycleMessageRole",
+      "enter": "assistant::ConfirmCommand",
+      "alt-enter": "editor::Newline"
     }
   },
   {

@@ -10,7 +10,7 @@ use language::Buffer;
 use multi_buffer::{
     Anchor, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
 };
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
     div, ActiveTheme, Context as _, IntoElement, ParentElement, Styled, ViewContext, VisualContext,
@@ -21,7 +21,7 @@ use crate::{
     editor_settings::CurrentLineHighlight,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hunk_status, hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle,
-    DiffRowHighlight, Editor, EditorSettings, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
+    DiffRowHighlight, Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
     RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
@@ -591,7 +591,7 @@ fn editor_with_deleted_text(
         let subscription_editor = parent_editor.clone();
         editor._subscriptions.extend([
             cx.on_blur(&editor.focus_handle, |editor, cx| {
-                editor.set_current_line_highlight(CurrentLineHighlight::None);
+                editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                 editor.change_selections(None, cx, |s| {
                     s.try_cancel();
                 });
@@ -602,14 +602,14 @@ fn editor_with_deleted_text(
                 {
                     parent_editor.read(cx).current_line_highlight
                 } else {
-                    EditorSettings::get_global(cx).current_line_highlight
+                    None
                 };
                 editor.set_current_line_highlight(restored_highlight);
                 cx.notify();
             }),
             cx.observe_global::<SettingsStore>(|editor, cx| {
                 if !editor.is_focused(cx) {
-                    editor.set_current_line_highlight(CurrentLineHighlight::None);
+                    editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                 }
             }),
         ]);
