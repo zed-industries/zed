@@ -22,6 +22,7 @@ use crate::markdown::{
 use crate::markdown_writer::MarkdownWriter;
 
 pub use crate::markdown_writer::{HandleTag, TagHandler};
+use crate::structure::rustdoc::{RustdocItem, RustdocItemKind};
 
 /// Converts the provided HTML to Markdown.
 pub fn convert_html_to_markdown(html: impl Read, handlers: &mut Vec<TagHandler>) -> Result<String> {
@@ -36,8 +37,8 @@ pub fn convert_html_to_markdown(html: impl Read, handlers: &mut Vec<TagHandler>)
 }
 
 /// Converts the provided rustdoc HTML to Markdown.
-pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<(String, Vec<String>)> {
-    let link_collector = Rc::new(RefCell::new(structure::rustdoc::RustdocLinkCollector::new()));
+pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<(String, Vec<RustdocItem>)> {
+    let item_collector = Rc::new(RefCell::new(structure::rustdoc::RustdocItemCollector::new()));
 
     let mut handlers: Vec<TagHandler> = vec![
         Rc::new(RefCell::new(ParagraphHandler)),
@@ -49,21 +50,19 @@ pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<(String, Vec<Strin
         Rc::new(RefCell::new(structure::rustdoc::RustdocHeadingHandler)),
         Rc::new(RefCell::new(structure::rustdoc::RustdocCodeHandler)),
         Rc::new(RefCell::new(structure::rustdoc::RustdocItemHandler)),
-        link_collector.clone(),
+        item_collector.clone(),
     ];
 
     let markdown = convert_html_to_markdown(html, &mut handlers)?;
 
-    let items = link_collector
+    let items = item_collector
         .borrow()
         .items
-        .iter()
+        .values()
         .cloned()
         .collect::<Vec<_>>();
 
-    dbg!(&items);
-
-    Ok((markdown, Vec::new()))
+    Ok((markdown, items))
 }
 
 fn parse_html(mut html: impl Read) -> Result<RcDom> {

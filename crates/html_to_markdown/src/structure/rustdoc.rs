@@ -1,4 +1,4 @@
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use strum::{EnumIter, IntoEnumIterator};
 
 use crate::html_element::HtmlElement;
@@ -238,21 +238,72 @@ impl RustdocItemKind {
     }
 }
 
-pub struct RustdocLinkCollector {
-    pub links: IndexSet<String>,
-    pub items: IndexSet<(RustdocItemKind, String)>,
+#[derive(Debug, Clone)]
+pub struct RustdocItem {
+    pub kind: RustdocItemKind,
+    pub name: String,
 }
 
-impl RustdocLinkCollector {
-    pub fn new() -> Self {
-        Self {
-            links: IndexSet::new(),
-            items: IndexSet::new(),
+impl RustdocItem {
+    pub fn url_path(&self) -> String {
+        let name = &self.name;
+        match self.kind {
+            RustdocItemKind::Mod => format!("{name}/index.html"),
+            RustdocItemKind::Macro
+            | RustdocItemKind::Struct
+            | RustdocItemKind::Enum
+            | RustdocItemKind::Constant
+            | RustdocItemKind::Trait
+            | RustdocItemKind::Function
+            | RustdocItemKind::TypeAlias
+            | RustdocItemKind::AttributeMacro
+            | RustdocItemKind::DeriveMacro => {
+                format!("{kind}.{name}.html", kind = self.kind.class())
+            }
         }
     }
 }
 
-impl HandleTag for RustdocLinkCollector {
+pub struct RustdocItemCollector {
+    pub items: IndexMap<(RustdocItemKind, String), RustdocItem>,
+}
+
+impl RustdocItemCollector {
+    pub fn new() -> Self {
+        Self {
+            items: IndexMap::new(),
+        }
+    }
+
+    fn parse_item(tag: &HtmlElement) -> Option<RustdocItem> {
+        if tag.tag.as_str() != "a" {
+            return None;
+        }
+
+        let href = tag.attr("href")?;
+        if href == "#" {
+            return None;
+        }
+
+        for kind in RustdocItemKind::iter() {
+            if tag.has_class(kind.class()) {
+                let name = href
+                    .trim_start_matches(&format!("{}.", kind.class()))
+                    .trim_end_matches("/index.html")
+                    .trim_end_matches(".html");
+
+                return Some(RustdocItem {
+                    kind,
+                    name: name.to_owned(),
+                });
+            }
+        }
+
+        None
+    }
+}
+
+impl HandleTag for RustdocItemCollector {
     fn should_handle(&self, tag: &str) -> bool {
         tag == "a"
     }
@@ -260,23 +311,21 @@ impl HandleTag for RustdocLinkCollector {
     fn handle_tag_start(
         &mut self,
         tag: &HtmlElement,
-        _writer: &mut MarkdownWriter,
+        writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
         match tag.tag.as_str() {
             "a" => {
-                if let Some(href) = tag.attr("href") {
-                    if href != "#" {
-                        for kind in RustdocItemKind::iter() {
-                            if tag.has_class(kind.class()) {
-                                let name = href
-                                    .trim_start_matches(&format!("{}.", kind.class()))
-                                    .trim_end_matches("/index.html")
-                                    .trim_end_matches(".html");
+                let is_reexport = writer.current_element_stack().iter().any(|element| {
+                    if let Some(id) = element.attr("id") {
+                        id.starts_with("reexport.")
+                    } else {
+                        false
+                    }
+                });
 
-                                self.items.insert((kind, name.to_owned()));
-                                break;
-                            }
-                        }
+                if !is_reexport {
+                    if let Some(item) = Self::parse_item(tag) {
+                        self.items.insert((item.kind, item.name.clone()), item);
                     }
                 }
             }
@@ -284,10 +333,5 @@ impl HandleTag for RustdocLinkCollector {
         }
 
         StartTagOutcome::Continue
-    }
-
-    fn links(&self) -> Vec<String> {
-        dbg!(&self.items);
-        self.links.iter().cloned().collect()
     }
 }

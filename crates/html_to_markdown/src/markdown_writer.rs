@@ -191,8 +191,4 @@ pub trait HandleTag {
     fn handle_text(&mut self, _text: &str, _writer: &mut MarkdownWriter) -> HandlerOutcome {
         HandlerOutcome::NoOp
     }
-
-    fn links(&self) -> Vec<String> {
-        Vec::new()
-    }
 }

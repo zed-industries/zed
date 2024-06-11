@@ -79,19 +79,17 @@ impl RustdocSlashCommand {
             );
         }
 
-        let (mut markdown, links) = convert_rustdoc_to_markdown(&body[..])?;
+        let (mut markdown, items) = convert_rustdoc_to_markdown(&body[..])?;
 
-        if !links.is_empty() {
-            for link in links {
-                if link.starts_with("https://") {
-                    continue;
-                }
-
+        if !items.is_empty() {
+            for item in items {
                 let path = format!(
-                    "{crate_name}/{version}/{crate_name}/{module_path}{link}",
-                    module_path = module_path.join("/")
+                    "{crate_name}/{version}/{crate_name}/{module_path}{item_path}",
+                    module_path = module_path.join("/"),
+                    item_path = item.url_path()
                 );
 
+                dbg!(&item.url_path());
                 dbg!(&path);
 
                 let mut response = http_client
@@ -117,7 +115,7 @@ impl RustdocSlashCommand {
                     );
                 }
 
-                let (page_markdown, links) = convert_rustdoc_to_markdown(&body[..])?;
+                let (page_markdown, items) = convert_rustdoc_to_markdown(&body[..])?;
 
                 markdown.push_str("\n\n");
                 markdown.push_str(&page_markdown);
