@@ -1615,10 +1615,11 @@ impl Pane {
         };
 
         let file_icon = if ItemSettings::get_global(cx).file_icons {
-            Some(detail).and_then(|detail| {
-                let path = project_path?;
-                FileIcons::get_icon(path.path.as_ref(), cx)
-            })
+            if let Some(project_path) = project_path {
+                FileIcons::get_icon(project_path.path.as_ref(), cx)
+            } else {
+                None
+            }
         } else {
             None
         };
