@@ -79,48 +79,7 @@ impl RustdocSlashCommand {
             );
         }
 
-        let (mut markdown, items) = convert_rustdoc_to_markdown(&body[..])?;
-
-        if !items.is_empty() {
-            for item in items {
-                let path = format!(
-                    "{crate_name}/{version}/{crate_name}/{module_path}{item_path}",
-                    module_path = module_path.join("/"),
-                    item_path = item.url_path()
-                );
-
-                dbg!(&item.url_path());
-                dbg!(&path);
-
-                let mut response = http_client
-                    .get(
-                        &format!("https://docs.rs/{path}"),
-                        AsyncBody::default(),
-                        true,
-                    )
-                    .await?;
-
-                let mut body = Vec::new();
-                response
-                    .body_mut()
-                    .read_to_end(&mut body)
-                    .await
-                    .context("error reading docs.rs response body")?;
-
-                if response.status().is_client_error() {
-                    let text = String::from_utf8_lossy(body.as_slice());
-                    bail!(
-                        "status error {}, response: {text:?}",
-                        response.status().as_u16()
-                    );
-                }
-
-                let (page_markdown, items) = convert_rustdoc_to_markdown(&body[..])?;
-
-                markdown.push_str("\n\n");
-                markdown.push_str(&page_markdown);
-            }
-        }
+        let (markdown, _items) = convert_rustdoc_to_markdown(&body[..])?;
 
         Ok((RustdocSource::DocsDotRs, markdown))
     }
