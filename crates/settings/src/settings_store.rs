@@ -632,8 +632,6 @@ impl SettingsStore {
             }
 
             // If the global settings file changed, reload the global value for the field.
-            project_settings_stack.clear();
-            paths_stack.clear();
             if changed_local_path.is_none() {
                 if let Some(value) = setting_value
                     .load_setting(
@@ -653,6 +651,8 @@ impl SettingsStore {
             }
 
             // Reload the local values for the setting.
+            paths_stack.clear();
+            project_settings_stack.clear();
             for ((root_id, path), local_settings) in &self.raw_local_settings {
                 // Build a stack of all of the local values for that setting.
                 while let Some(prev_entry) = paths_stack.last() {

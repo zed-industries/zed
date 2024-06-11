@@ -32,11 +32,11 @@ impl SlashCommand for SearchSlashCommand {
     }
 
     fn description(&self) -> String {
-        "semantically search files".into()
+        "semantic search".into()
     }
 
-    fn tooltip_text(&self) -> String {
-        "search".into()
+    fn menu_text(&self) -> String {
+        "Semantic Search".into()
     }
 
     fn requires_argument(&self) -> bool {
@@ -47,7 +47,7 @@ impl SlashCommand for SearchSlashCommand {
         &self,
         _query: String,
         _cancel: Arc<AtomicBool>,
-        _workspace: WeakView<Workspace>,
+        _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Ok(Vec::new()))
@@ -181,7 +181,11 @@ impl SlashCommand for SearchSlashCommand {
                         }),
                     });
 
-                    SlashCommandOutput { text, sections }
+                    SlashCommandOutput {
+                        text,
+                        sections,
+                        run_commands_in_text: false,
+                    }
                 })
                 .await;
 

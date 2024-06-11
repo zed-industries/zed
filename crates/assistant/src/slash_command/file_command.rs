@@ -86,11 +86,11 @@ impl SlashCommand for FileSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert a file".into()
+        "insert file".into()
     }
 
-    fn tooltip_text(&self) -> String {
-        "insert file".into()
+    fn menu_text(&self) -> String {
+        "Insert File".into()
     }
 
     fn requires_argument(&self) -> bool {
@@ -101,10 +101,10 @@ impl SlashCommand for FileSlashCommand {
         &self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        workspace: WeakView<Workspace>,
+        workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
-        let Some(workspace) = workspace.upgrade() else {
+        let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
@@ -187,6 +187,7 @@ impl SlashCommand for FileSlashCommand {
                         .into_any_element()
                     }),
                 }],
+                run_commands_in_text: false,
             })
         })
     }

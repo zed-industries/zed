@@ -30,6 +30,7 @@ use project::{
     project_settings::{InlineBlameSettings, ProjectSettings},
     SERVER_PROGRESS_DEBOUNCE_TIMEOUT,
 };
+use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::SettingsStore;
@@ -42,7 +43,7 @@ use std::{
     },
 };
 use text::Point;
-use workspace::{Workspace, WorkspaceId};
+use workspace::Workspace;
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -59,6 +60,7 @@ async fn test_host_disconnect(
         .await;
 
     cx_b.update(editor::init);
+    cx_b.update(recent_projects::init);
 
     client_a
         .fs()
@@ -83,16 +85,10 @@ async fn test_host_disconnect(
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     cx_a.background_executor.run_until_parked();
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
 
-    let workspace_b = cx_b.add_window(|cx| {
-        Workspace::new(
-            WorkspaceId::default(),
-            project_b.clone(),
-            client_b.app_state.clone(),
-            cx,
-        )
-    });
+    let workspace_b = cx_b
+        .add_window(|cx| Workspace::new(None, project_b.clone(), client_b.app_state.clone(), cx));
     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
     let workspace_b_view = workspace_b.root_view(cx_b).unwrap();
 
@@ -126,14 +122,13 @@ async fn test_host_disconnect(
 
     project_b.read_with(cx_b, |project, _| project.is_read_only());
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| !tree.has_update_observer()));
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
-
     workspace_b
         .update(cx_b, |workspace, cx| {
-            assert_eq!(cx.focused(), None);
-            assert!(!workspace.is_edited())
+            assert!(workspace.active_modal::<DisconnectedOverlay>(cx).is_some());
+            assert!(!workspace.is_edited());
         })
         .unwrap();
 

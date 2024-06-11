@@ -15,6 +15,7 @@ use std::{
     any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, OnceLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
@@ -22,18 +23,22 @@ use util::{maybe, paths, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
 
+// Origin: https://github.com/SchemaStore/schemastore
+const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
+const PACKAGE_JSON_SCHEMA: &str = include_str!("json/schemas/package.json");
+
 pub(super) fn json_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
         TaskTemplate {
             label: "package script $ZED_CUSTOM_script".to_owned(),
-            command: "npm run".to_owned(),
+            command: "npm --prefix $ZED_DIRNAME run".to_owned(),
             args: vec![VariableName::Custom("script".into()).template_value()],
             tags: vec!["package-script".into()],
             ..TaskTemplate::default()
         },
         TaskTemplate {
             label: "composer script $ZED_CUSTOM_script".to_owned(),
-            command: "composer".to_owned(),
+            command: "composer -d $ZED_DIRNAME".to_owned(),
             args: vec![VariableName::Custom("script".into()).template_value()],
             tags: vec!["composer-script".into()],
             ..TaskTemplate::default()
@@ -74,12 +79,23 @@ impl JsonLspAdapter {
             cx,
         );
         let tasks_schema = task::TaskTemplates::generate_json_schema();
+        let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
+        let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
+
         serde_json::json!({
             "json": {
                 "format": {
                     "enable": true,
                 },
                 "schemas": [
+                    {
+                        "fileMatch": ["tsconfig.json"],
+                        "schema":tsconfig_schema
+                    },
+                    {
+                        "fileMatch": ["package.json"],
+                        "schema":package_json_schema
+                    },
                     {
                         "fileMatch": [
                             schema_file_match(&paths::SETTINGS),
@@ -98,6 +114,7 @@ impl JsonLspAdapter {
                         ],
                         "schema": tasks_schema,
                     }
+
                 ]
             }
         })

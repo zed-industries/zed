@@ -4,8 +4,8 @@ use http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::time::Duration;
-use std::{convert::TryFrom, future::Future};
+use std::{convert::TryFrom, future::Future, time::Duration};
+use strum::EnumIter;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
@@ -44,7 +44,7 @@ impl From<Role> for String {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[serde(rename = "gpt-3.5-turbo", alias = "gpt-3.5-turbo-0613")]
     ThreePointFiveTurbo,

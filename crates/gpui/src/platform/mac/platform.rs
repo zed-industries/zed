@@ -826,9 +826,6 @@ impl Platform for MacPlatform {
                 CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
                 CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
                 CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::DisappearingItem => {
-                    msg_send![class!(NSCursor), disappearingItemCursor]
-                }
                 CursorStyle::IBeamCursorForVerticalLayout => {
                     msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
                 }

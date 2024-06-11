@@ -63,7 +63,9 @@ impl TaffyLayoutEngine {
             let parent_id = self
                 .taffy
                 // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
-                .new_with_children(taffy_style, unsafe { std::mem::transmute(children) })
+                .new_with_children(taffy_style, unsafe {
+                    std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(children)
+                })
                 .expect(EXPECT_MESSAGE)
                 .into();
             self.children_to_parents

@@ -176,6 +176,12 @@
           "replace_enabled": true
         }
       ],
+      "cmd-alt-l": [
+        "buffer_search::Deploy",
+        {
+          "selection_search_enabled": true
+        }
+      ],
       "cmd-e": [
         "buffer_search::Deploy",
         {
@@ -214,14 +220,15 @@
     }
   },
   {
-    "context": "AssistantPanel", // Used in the assistant crate, which we're replacing
+    "context": "AssistantPanel",
     "bindings": {
       "cmd-g": "search::SelectNextMatch",
-      "cmd-shift-g": "search::SelectPrevMatch"
+      "cmd-shift-g": "search::SelectPrevMatch",
+      "alt-m": "assistant::ToggleModelSelector"
     }
   },
   {
-    "context": "ConversationEditor > Editor",
+    "context": "ContextEditor > Editor",
     "bindings": {
       "cmd-enter": "assistant::Assist",
       "cmd-s": "workspace::Save",
@@ -233,6 +240,14 @@
     }
   },
   {
+    "context": "PromptLibrary",
+    "bindings": {
+      "cmd-n": "prompt_library::NewPrompt",
+      "cmd-shift-s": "prompt_library::ToggleDefaultPrompt",
+      "cmd-w": "workspace::CloseWindow"
+    }
+  },
+  {
     "context": "BufferSearchBar",
     "bindings": {
       "escape": "buffer_search::Dismiss",
@@ -241,7 +256,8 @@
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
       "cmd-f": "search::FocusSearch",
-      "cmd-alt-f": "search::ToggleReplace"
+      "cmd-alt-f": "search::ToggleReplace",
+      "cmd-alt-l": "search::ToggleSelection"
     }
   },
   {
@@ -307,6 +323,7 @@
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
       "cmd-shift-h": "search::ToggleReplace",
+      "cmd-alt-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
       "alt-cmd-c": "search::ToggleCaseSensitive",
       "alt-cmd-w": "search::ToggleWholeWord",
@@ -638,7 +655,7 @@
   {
     "context": "Picker",
     "bindings": {
-      "alt-e": "picker::UseSelectedQuery",
+      "f2": "picker::UseSelectedQuery",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }]
     }

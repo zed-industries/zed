@@ -2161,6 +2161,9 @@ impl CollabPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
+        self.channel_store.update(cx, |channel_store, _| {
+            channel_store.initialize();
+        });
         v_flex()
             .size_full()
             .child(list(self.list_state.clone()).size_full())

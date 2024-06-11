@@ -704,7 +704,7 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn clone_on_split(
         &self,
-        _workspace_id: workspace::WorkspaceId,
+        _workspace_id: Option<workspace::WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>>
     where
@@ -867,10 +867,12 @@ fn compare_diagnostics(
     snapshot: &language::BufferSnapshot,
 ) -> Ordering {
     use language::ToOffset;
-    // The old diagnostics may point to a previously open Buffer for this file.
-    if !old.range.start.is_valid(snapshot) {
+
+    // The diagnostics may point to a previously open Buffer for this file.
+    if !old.range.start.is_valid(snapshot) || !new.range.start.is_valid(snapshot) {
         return Ordering::Greater;
     }
+
     old.range
         .start
         .to_offset(snapshot)

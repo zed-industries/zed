@@ -91,6 +91,10 @@ impl BufferId {
         self.0 = self.0.saturating_add(1);
         old
     }
+
+    pub fn to_proto(self) -> u64 {
+        self.into()
+    }
 }
 impl From<BufferId> for u64 {
     fn from(id: BufferId) -> Self {

@@ -76,8 +76,11 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
+    #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
+    #[cfg(target_os = "macos")]
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    #[cfg(target_os = "macos")]
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(quit);
 }
@@ -216,25 +219,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
-                {
-                    let project = workspace.project().read(cx);
-                    if project.is_local()
-                        || project
-                            .dev_server_project_id()
-                            .and_then(|dev_server_project_id| {
-                                Some(
-                                    dev_server_projects::Store::global(cx)
-                                        .read(cx)
-                                        .dev_server_for_project(dev_server_project_id)?
-                                        .ssh_connection_string
-                                        .is_some(),
-                                )
-                            })
-                            .unwrap_or(false)
-                    {
-                        workspace.add_panel(terminal_panel, cx);
-                    }
-                }
+                workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
@@ -3043,8 +3028,14 @@ mod tests {
     fn test_bundled_settings_and_themes(cx: &mut AppContext) {
         cx.text_system()
             .add_fonts(vec![
-                Assets.load("fonts/zed-sans/zed-sans-extended.ttf").unwrap(),
-                Assets.load("fonts/zed-mono/zed-mono-extended.ttf").unwrap(),
+                Assets
+                    .load("fonts/zed-sans/zed-sans-extended.ttf")
+                    .unwrap()
+                    .unwrap(),
+                Assets
+                    .load("fonts/zed-mono/zed-mono-extended.ttf")
+                    .unwrap()
+                    .unwrap(),
             ])
             .unwrap();
         let themes = ThemeRegistry::default();

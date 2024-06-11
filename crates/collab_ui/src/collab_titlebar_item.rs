@@ -5,7 +5,7 @@ use client::{proto::PeerId, Client, User, UserStore};
 use gpui::{
     actions, canvas, div, point, px, Action, AnyElement, AppContext, Element, Hsla,
     InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
-    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
@@ -17,7 +17,7 @@ use ui::{
     ButtonStyle, ContextMenu, Icon, IconButton, IconName, Indicator, TintColor, TitleBar, Tooltip,
 };
 use util::ResultExt;
-use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
+use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
@@ -413,6 +413,17 @@ impl CollabTitlebarItem {
             );
         }
 
+        if self.project.read(cx).is_disconnected() {
+            return Some(
+                Button::new("disconnected", "Disconnected")
+                    .disabled(true)
+                    .color(Color::Disabled)
+                    .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::Small)
+                    .into_any_element(),
+            );
+        }
+
         let host = self.project.read(cx).host()?;
         let host_user = self.user_store.read(cx).get_cached_user(host.user_id)?;
         let participant_index = self
@@ -487,7 +498,7 @@ impl CollabTitlebarItem {
             }))
     }
 
-    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
+    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {
@@ -503,22 +514,23 @@ impl CollabTitlebarItem {
             .and_then(RepositoryEntry::branch)
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(
-            popover_menu("project_branch_trigger")
-                .trigger(
-                    Button::new("project_branch_trigger", branch_name)
-                        .color(Color::Muted)
-                        .style(ButtonStyle::Subtle)
-                        .label_size(LabelSize::Small)
-                        .tooltip(move |cx| {
-                            Tooltip::with_meta(
-                                "Recent Branches",
-                                Some(&ToggleVcsMenu),
-                                "Local branches only",
-                                cx,
-                            )
-                        }),
-                )
-                .menu(move |cx| Self::render_vcs_popover(workspace.clone(), cx)),
+            Button::new("project_branch_trigger", branch_name)
+                .color(Color::Muted)
+                .style(ButtonStyle::Subtle)
+                .label_size(LabelSize::Small)
+                .tooltip(move |cx| {
+                    Tooltip::with_meta(
+                        "Recent Branches",
+                        Some(&ToggleVcsMenu),
+                        "Local branches only",
+                        cx,
+                    )
+                })
+                .on_click(move |_, cx| {
+                    let _ = workspace.update(cx, |this, cx| {
+                        BranchList::open(this, &Default::default(), cx)
+                    });
+                }),
         )
     }
 
@@ -650,16 +662,6 @@ impl CollabTitlebarItem {
             .log_err();
     }
 
-    pub fn render_vcs_popover(
-        workspace: View<Workspace>,
-        cx: &mut WindowContext<'_>,
-    ) -> Option<View<BranchList>> {
-        let view = build_branch_list(workspace, cx).log_err()?;
-        let focus_handle = view.focus_handle(cx);
-        cx.focus(&focus_handle);
-        Some(view)
-    }
-
     fn render_connection_status(
         &self,
         status: &client::Status,
@@ -695,7 +697,7 @@ impl CollabTitlebarItem {
                         .on_click(|_, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
                                 if auto_updater.read(cx).status().is_updated() {
-                                    workspace::restart(&Default::default(), cx);
+                                    workspace::reload(&Default::default(), cx);
                                     return;
                                 }
                             }
