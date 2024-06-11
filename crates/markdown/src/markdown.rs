@@ -64,11 +64,7 @@ impl MarkdownStyle {
                 ..Default::default()
             },
             syntax: cx.theme().syntax().clone(),
-            selection_background_color: {
-                let mut selection = cx.theme().players().local().selection;
-                selection.fade_out(0.7);
-                selection
-            },
+            selection_background_color: { cx.theme().players().local().selection },
             pad_blocks: true,
         }
     }
@@ -147,6 +143,10 @@ impl Markdown {
 
     pub fn source(&self) -> &str {
         &self.source
+    }
+
+    pub fn parsed_markdown(&self) -> &ParsedMarkdown {
+        &self.parsed_markdown
     }
 
     fn copy(&self, text: &RenderedText, cx: &mut ViewContext<Self>) {
@@ -248,9 +248,15 @@ impl Selection {
 }
 
 #[derive(Clone)]
-struct ParsedMarkdown {
+pub struct ParsedMarkdown {
     source: SharedString,
     events: Arc<[(Range<usize>, MarkdownEvent)]>,
+}
+
+impl ParsedMarkdown {
+    pub fn source(&self) -> &SharedString {
+        &self.source
+    }
 }
 
 impl Default for ParsedMarkdown {
@@ -1113,3 +1119,16 @@ impl RenderedText {
             .find(|link| link.source_range.contains(&source_index))
     }
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use crate::Markdown;
+
+//     #[gpui::test]
+//     async fn test_super_basic(cx: &mut gpui::TestAppContext) {
+//         cx.new_view(|cx| {
+//             let markdown = Markdown::new("Hello world!".to_string(), Default::default(), None, cx);
+//             markdown
+//         });
+//     }
+// }

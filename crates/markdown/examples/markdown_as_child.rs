@@ -18,6 +18,7 @@ wow so cool
 "#;
 pub fn main() {
     env_logger::init();
+
     App::new().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
@@ -77,12 +78,7 @@ pub fn main() {
                     pad_blocks: true,
                 };
                 let markdown = cx.new_view(|cx| {
-                    Markdown::new(
-                        MARKDOWN_EXAMPLE.into(),
-                        markdown_style,
-                        Some(language_registry),
-                        cx,
-                    )
+                    Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, cx)
                 });
 
                 HelloWorld { markdown }
