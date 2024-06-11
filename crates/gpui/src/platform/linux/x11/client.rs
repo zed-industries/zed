@@ -458,6 +458,7 @@ impl X11Client {
         state
             .windows
             .get(&win)
+            .filter(|window_reference| !window_reference.window.state.borrow().destroyed)
             .map(|window_reference| window_reference.window.clone())
     }
 
