@@ -6381,6 +6381,8 @@ impl Editor {
         }
 
         let text_layout_details = &self.text_layout_details(cx);
+        let selection_count = self.selections.count();
+        let first_selection = self.selections.first_anchor();
 
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
@@ -6397,7 +6399,12 @@ impl Editor {
                 );
                 selection.collapse_to(cursor, goal);
             });
-        })
+        });
+
+        if selection_count == 1 && first_selection.range() == self.selections.first_anchor().range()
+        {
+            cx.propagate();
+        }
     }
 
     pub fn move_up_by_lines(&mut self, action: &MoveUpByLines, cx: &mut ViewContext<Self>) {
@@ -6541,6 +6548,9 @@ impl Editor {
         }
 
         let text_layout_details = &self.text_layout_details(cx);
+        let selection_count = self.selections.count();
+        let first_selection = self.selections.first_anchor();
+
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
@@ -6557,6 +6567,11 @@ impl Editor {
                 selection.collapse_to(cursor, goal);
             });
         });
+
+        if selection_count == 1 && first_selection.range() == self.selections.first_anchor().range()
+        {
+            cx.propagate();
+        }
     }
 
     pub fn move_page_down(&mut self, action: &MovePageDown, cx: &mut ViewContext<Self>) {
