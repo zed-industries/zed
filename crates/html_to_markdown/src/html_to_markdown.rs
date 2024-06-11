@@ -22,7 +22,7 @@ use crate::markdown::{
 use crate::markdown_writer::MarkdownWriter;
 
 pub use crate::markdown_writer::{HandleTag, TagHandler};
-use crate::structure::rustdoc::{RustdocItem, RustdocItemKind};
+use crate::structure::rustdoc::RustdocItem;
 
 /// Converts the provided HTML to Markdown.
 pub fn convert_html_to_markdown(html: impl Read, handlers: &mut Vec<TagHandler>) -> Result<String> {

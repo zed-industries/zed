@@ -1,4 +1,4 @@
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 use strum::{EnumIter, IntoEnumIterator};
 
 use crate::html_element::HtmlElement;
