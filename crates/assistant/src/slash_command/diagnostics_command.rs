@@ -2,8 +2,9 @@ use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
 use gpui::{svg, AppContext, Model, RenderOnce, Task, WeakView};
-use language::{BufferSnapshot, DiagnosticSeverity, LspAdapterDelegate};
+use language::{BufferSnapshot, DiagnosticSeverity, LspAdapterDelegate, OffsetRangeExt, ToOffset};
 use project::{DiagnosticSummary, Project};
+use rope::Point;
 use std::{
     ops::Range,
     sync::{atomic::AtomicBool, Arc},
@@ -38,12 +39,12 @@ impl SlashCommand for DiagnosticsCommand {
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
-        Task::ready(Err(anyhow!("this command does not require argument")))
+        Task::ready(Ok(vec!["--exclude-warnings".to_string()]))
     }
 
     fn run(
         self: Arc<Self>,
-        _argument: Option<&str>,
+        argument: Option<&str>,
         workspace: WeakView<Workspace>,
         _delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut WindowContext,
@@ -52,7 +53,11 @@ impl SlashCommand for DiagnosticsCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let task = collect_diagnostics(workspace.read(cx).project().clone(), cx);
+        let exclude_warnings = argument
+            .map(|argument| argument == "--exclude-warnings")
+            .unwrap_or(false);
+
+        let task = collect_diagnostics(workspace.read(cx).project().clone(), exclude_warnings, cx);
         cx.spawn(move |_| async move {
             let (text, sections) = task.await?;
             Ok(SlashCommandOutput {
@@ -79,6 +84,7 @@ impl SlashCommand for DiagnosticsCommand {
 
 fn collect_diagnostics(
     project: Model<Project>,
+    exclude_warnings: bool,
     cx: &mut AppContext,
 ) -> Task<Result<(String, Vec<(Range<usize>, PlaceholderType)>)>> {
     let project_handle = project.downgrade();
@@ -92,7 +98,13 @@ fn collect_diagnostics(
         let mut project_summary = DiagnosticSummary::default();
         for (project_path, _, summary) in diagnostic_summaries {
             project_summary.error_count += summary.error_count;
-            project_summary.warning_count += summary.warning_count;
+            if !exclude_warnings {
+                project_summary.warning_count += summary.warning_count;
+            }
+
+            if summary.error_count == 0 && exclude_warnings {
+                continue;
+            }
 
             let last_end = text.len();
             let file_path = project_path.path.to_string_lossy().to_string();
@@ -108,6 +120,7 @@ fn collect_diagnostics(
                     &mut text,
                     &mut sections,
                     cx.read_model(&buffer, |buffer, _| buffer.snapshot())?,
+                    exclude_warnings,
                 );
             }
 
@@ -126,17 +139,63 @@ fn collect_buffer_diagnostics(
     text: &mut String,
     sections: &mut Vec<(Range<usize>, PlaceholderType)>,
     snapshot: BufferSnapshot,
+    exclude_warnings: bool,
 ) {
+    const EXCERPT_EXPANSION: u32 = 2;
+
     for (_, group) in snapshot.diagnostic_groups(None) {
         //TODO Find to link related diagnostics together (primary diagnostic)
         for entry in group.entries {
             let ty = match entry.diagnostic.severity {
-                DiagnosticSeverity::WARNING => DiagnosticType::Warning,
+                DiagnosticSeverity::WARNING => {
+                    if exclude_warnings {
+                        continue;
+                    }
+                    DiagnosticType::Warning
+                }
                 DiagnosticSeverity::ERROR => DiagnosticType::Error,
                 _ => continue,
             };
             let prev_len = text.len();
+
+            let range = entry.range.to_point(&snapshot);
+            let diagnostic_row_number = range.start.row + 1;
+
+            let start_row = range.start.row.saturating_sub(EXCERPT_EXPANSION);
+            let end_row = (range.end.row + EXCERPT_EXPANSION).min(snapshot.max_point().row) + 1;
+            let excerpt_range = Point::new(start_row, 0).to_offset(&snapshot)
+                ..Point::new(end_row, 0).to_offset(&snapshot);
+
+            text.push_str(match ty {
+                DiagnosticType::Warning => "Warning",
+                DiagnosticType::Error => "Error",
+            });
+            text.push_str(&format!(" in line {diagnostic_row_number}: \""));
             text.push_str(&entry.diagnostic.message);
+            text.push('\"');
+            text.push('\n');
+
+            text.push_str("```");
+            if let Some(language_name) = snapshot.language().map(|l| l.code_fence_block_name()) {
+                text.push_str(&language_name);
+            }
+            text.push('\n');
+
+            let mut buffer_text = String::new();
+            for chunk in snapshot.text_for_range(excerpt_range) {
+                buffer_text.push_str(chunk);
+            }
+
+            let line_number_width = end_row.to_string().len();
+            for (i, line) in buffer_text.lines().enumerate() {
+                let line_number = start_row + i as u32 + 1;
+                text.push_str(format!("{line_number:>line_number_width$} ",).as_str());
+                text.push_str(line);
+                text.push('\n');
+            }
+
+            text.push_str("```");
+
             text.push('\n');
             sections.push((
                 prev_len..text.len().saturating_sub(1),
@@ -211,10 +270,10 @@ impl RenderOnce for DiagnosticType {
             .size(cx.text_style().font_size)
             .flex_none()
             .map(|icon| match self {
-                DiagnosticType::Warning => icon
+                DiagnosticType::Error => icon
                     .path(IconName::XCircle.path())
                     .text_color(Color::Error.color(cx)),
-                DiagnosticType::Error => icon
+                DiagnosticType::Warning => icon
                     .path(IconName::ExclamationTriangle.path())
                     .text_color(Color::Warning.color(cx)),
             })
