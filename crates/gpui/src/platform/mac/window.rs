@@ -1,11 +1,10 @@
 use super::{ns_string, renderer, MacDisplay, NSRange, NSStringExt};
 use crate::{
-    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DevicePixels,
-    DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind,
-    WindowParams,
+    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DisplayLink,
+    ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -345,7 +344,7 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
-    fullscreen_restore_bounds: Bounds<DevicePixels>,
+    fullscreen_restore_bounds: Bounds<Pixels>,
 }
 
 impl MacWindowState {
@@ -439,7 +438,7 @@ impl MacWindowState {
         }
     }
 
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
         let screen_frame = unsafe {
             let screen = NSWindow::screen(self.native_window);
@@ -452,12 +451,12 @@ impl MacWindowState {
 
         let bounds = Bounds::new(
             point(
-                ((window_frame.origin.x - screen_frame.origin.x) as i32).into(),
-                ((window_frame.origin.y - screen_frame.origin.y) as i32).into(),
+                px((window_frame.origin.x - screen_frame.origin.x) as f32),
+                px((window_frame.origin.y - screen_frame.origin.y) as f32),
             ),
             size(
-                (window_frame.size.width as i32).into(),
-                (window_frame.size.height as i32).into(),
+                px(window_frame.size.width as f32),
+                px(window_frame.size.height as f32),
             ),
         );
         bounds
@@ -772,7 +771,7 @@ impl Drop for MacWindow {
 }
 
 impl PlatformWindow for MacWindow {
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.0.as_ref().lock().bounds()
     }
 

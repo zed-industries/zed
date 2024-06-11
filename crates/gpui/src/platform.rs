@@ -187,12 +187,12 @@ pub trait PlatformDisplay: Send + Sync + Debug {
     fn uuid(&self) -> Result<Uuid>;
 
     /// Get the bounds for this display
-    fn bounds(&self) -> Bounds<DevicePixels>;
+    fn bounds(&self) -> Bounds<Pixels>;
 
     /// Get the default bounds for this display to place a window
-    fn default_bounds(&self) -> Bounds<DevicePixels> {
+    fn default_bounds(&self) -> Bounds<Pixels> {
         let center = self.bounds().center();
-        let offset = DEFAULT_WINDOW_SIZE / 2;
+        let offset = DEFAULT_WINDOW_SIZE / 2.0;
         let origin = point(center.x - offset.width, center.y - offset.height);
         Bounds::new(origin, DEFAULT_WINDOW_SIZE)
     }
@@ -211,7 +211,7 @@ impl Debug for DisplayId {
 unsafe impl Send for DisplayId {}
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
-    fn bounds(&self) -> Bounds<DevicePixels>;
+    fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
@@ -569,7 +569,7 @@ pub struct WindowOptions {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub(crate) struct WindowParams {
-    pub bounds: Bounds<DevicePixels>,
+    pub bounds: Bounds<Pixels>,
 
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
@@ -597,13 +597,13 @@ pub(crate) struct WindowParams {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum WindowBounds {
     /// Indicates that the window should open in a windowed state with the given bounds.
-    Windowed(Bounds<DevicePixels>),
+    Windowed(Bounds<Pixels>),
     /// Indicates that the window should open in a maximized state.
     /// The bounds provided here represent the restore size of the window.
-    Maximized(Bounds<DevicePixels>),
+    Maximized(Bounds<Pixels>),
     /// Indicates that the window should open in fullscreen mode.
     /// The bounds provided here represent the restore size of the window.
-    Fullscreen(Bounds<DevicePixels>),
+    Fullscreen(Bounds<Pixels>),
 }
 
 impl Default for WindowBounds {
@@ -614,7 +614,7 @@ impl Default for WindowBounds {
 
 impl WindowBounds {
     /// Retrieve the inner bounds
-    pub fn get_bounds(&self) -> Bounds<DevicePixels> {
+    pub fn get_bounds(&self) -> Bounds<Pixels> {
         match self {
             WindowBounds::Windowed(bounds) => *bounds,
             WindowBounds::Maximized(bounds) => *bounds,

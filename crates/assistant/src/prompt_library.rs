@@ -80,11 +80,7 @@ pub fn open_prompt_library(
         cx.spawn(|cx| async move {
             let store = store.await?;
             cx.update(|cx| {
-                let bounds = Bounds::centered(
-                    None,
-                    size(DevicePixels::from(1024), DevicePixels::from(768)),
-                    cx,
-                );
+                let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
                 cx.open_window(
                     WindowOptions {
                         titlebar: Some(TitlebarOptions {

@@ -22,6 +22,7 @@ pub use panel_settings::{
 };
 use release_channel::ReleaseChannel;
 use settings::Settings;
+use ui::px;
 use workspace::{notifications::DetachAndPromptErr, AppState};
 
 actions!(
@@ -99,16 +100,15 @@ fn notification_window_options(
     window_size: Size<Pixels>,
     cx: &AppContext,
 ) -> WindowOptions {
-    let notification_margin_width = DevicePixels::from(16);
-    let notification_margin_height = DevicePixels::from(-0) - DevicePixels::from(48);
+    let notification_margin_width = px(16.);
+    let notification_margin_height = px(-48.);
 
     let screen_bounds = screen.bounds();
-    let size: Size<DevicePixels> = window_size.into();
 
-    let bounds = gpui::Bounds::<DevicePixels> {
+    let bounds = gpui::Bounds::<Pixels> {
         origin: screen_bounds.upper_right()
             - point(
-                size.width + notification_margin_width,
+                window_size.width + notification_margin_width,
                 notification_margin_height,
             ),
         size: window_size.into(),

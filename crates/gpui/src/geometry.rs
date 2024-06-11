@@ -722,28 +722,27 @@ pub struct Bounds<T: Clone + Default + Debug> {
     pub size: Size<T>,
 }
 
-impl Bounds<DevicePixels> {
+impl Bounds<Pixels> {
     /// Generate a centered bounds for the given display or primary display if none is provided
     pub fn centered(
         display_id: Option<DisplayId>,
-        size: impl Into<Size<DevicePixels>>,
+        size: Size<Pixels>,
         cx: &mut AppContext,
     ) -> Self {
         let display = display_id
             .and_then(|id| cx.find_display(id))
             .or_else(|| cx.primary_display());
 
-        let size = size.into();
         display
             .map(|display| {
                 let center = display.bounds().center();
                 Bounds {
-                    origin: point(center.x - size.width / 2, center.y - size.height / 2),
+                    origin: point(center.x - size.width / 2., center.y - size.height / 2.),
                     size,
                 }
             })
             .unwrap_or_else(|| Bounds {
-                origin: point(DevicePixels(0), DevicePixels(0)),
+                origin: point(px(0.), px(0.)),
                 size,
             })
     }
@@ -757,8 +756,8 @@ impl Bounds<DevicePixels> {
         display
             .map(|display| display.bounds())
             .unwrap_or_else(|| Bounds {
-                origin: point(DevicePixels(0), DevicePixels(0)),
-                size: size(DevicePixels(1024), DevicePixels(768)),
+                origin: point(px(0.), px(0.)),
+                size: size(px(1024.), px(768.)),
             })
     }
 }
