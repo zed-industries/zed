@@ -12,7 +12,7 @@ use gpui::{
 };
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{parser::MarkdownEvent, Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
 use project::{HoverBlock, InlayHintLabelPart};
 use settings::Settings;
@@ -369,7 +369,7 @@ async fn parse_blocks(
                 ..MarkdownStyle::get_themed_default(cx)
             };
             Markdown::new(
-                text.into(),
+                text.trim().into(),
                 markdown_style.clone(),
                 Some(language_registry.clone()),
                 cx,
@@ -494,6 +494,27 @@ impl InfoPopover {
         cx.notify();
         self.scroll_handle.set_offset(current);
     }
+
+    pub fn get_rendered_text(&self, cx: &gpui::AppContext) -> String {
+        let mut ans = String::new();
+
+        for parsed_content in self.parsed_content.clone() {
+            let markdown = parsed_content.read(cx);
+            let text = markdown.parsed_markdown().source().to_string();
+            let data = markdown.parsed_markdown().events();
+            let slice = &*data;
+
+            // Iterating over the slice
+            for (range, event) in slice.iter() {
+                // if event.
+                if event == &MarkdownEvent::Text {
+                    ans.push_str(&text[range.clone()])
+                }
+                println!("{:?}: {:?}", range, event);
+            }
+        }
+        ans
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -597,6 +618,7 @@ mod tests {
     use indoc::indoc;
     use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
+    use markdown::parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
     use project::{HoverBlock, HoverBlockKind};
     use smol::stream::StreamExt;
     use std::sync::atomic;
@@ -740,18 +762,13 @@ mod tests {
                 "Expected exactly one hover but got: {:?}",
                 editor.hover_state.info_popovers
             );
-            let markdown = editor
+            let rendered_text = editor
                 .hover_state
                 .info_popovers
                 .first()
-                .cloned()
                 .unwrap()
-                .parsed_content
-                .first()
-                .unwrap()
-                .read(cx);
-            let parsed = markdown.parsed_markdown();
-            let rendered_text = parsed.source().to_string();
+                .get_rendered_text(cx);
+
             assert_eq!(rendered_text, "some basic docs".to_string())
         });
 
@@ -838,18 +855,13 @@ mod tests {
                 "Expected exactly one hover but got: {:?}",
                 editor.hover_state.info_popovers
             );
-            let markdown = editor
+            let rendered_text = editor
                 .hover_state
                 .info_popovers
                 .first()
-                .cloned()
                 .unwrap()
-                .parsed_content
-                .first()
-                .unwrap()
-                .read(cx);
-            let parsed = markdown.parsed_markdown();
-            let rendered_text = parsed.source().to_string();
+                .get_rendered_text(cx);
+
             assert_eq!(rendered_text, "some basic docs".to_string())
         });
 
@@ -897,6 +909,17 @@ mod tests {
             «fn» test() { println!(); }
         "});
 
+        cx.editor(|editor, _cx| {
+            assert!(!editor.hover_state.visible());
+
+            assert_eq!(
+                editor.hover_state.info_popovers.len(),
+                0,
+                "Expected no hovers but got but got: {:?}",
+                editor.hover_state.info_popovers
+            );
+        });
+
         let mut requests =
             cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
                 Ok(Some(lsp::Hover {
@@ -909,6 +932,7 @@ mod tests {
             });
 
         requests.next().await;
+        cx.dispatch_action(Hover);
 
         cx.condition(|editor, _| editor.hover_state.visible()).await;
         cx.editor(|editor, cx| {
@@ -919,159 +943,142 @@ mod tests {
                 editor.hover_state.info_popovers
             );
 
-            println!("vvvvvvvv");
-            for popover in editor.hover_state.info_popovers.clone() {
-                println!("1");
-                for parsed_content in popover.parsed_content {
-                    println!("2");
-                    let markdown = parsed_content.read(cx);
-                    let parsed = markdown.parsed_markdown();
-                    let rendered_text = parsed.source().to_string();
-                    println!("{}", rendered_text);
-                }
-            }
-
-            println!("^^^^^^^^^");
-
-            let markdown = editor
+            let rendered_text = editor
                 .hover_state
                 .info_popovers
                 .first()
-                .cloned()
                 .unwrap()
-                .parsed_content
-                .first()
-                .unwrap()
-                .read(cx);
-            let parsed = markdown.parsed_markdown();
-            let rendered_text = parsed.source().to_string();
+                .get_rendered_text(cx);
+
             assert_eq!(rendered_text, "some other basic docs".to_string())
         });
     }
 
-    // #[gpui::test]
-    // async fn test_empty_hovers_filtered(cx: &mut gpui::TestAppContext) {
-    //     init_test(cx, |_| {});
+    #[gpui::test]
+    async fn test_empty_hovers_filtered(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
 
-    //     let mut cx = EditorLspTestContext::new_rust(
-    //         lsp::ServerCapabilities {
-    //             hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-    //             ..Default::default()
-    //         },
-    //         cx,
-    //     )
-    //     .await;
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
 
-    //     // Hover with keyboard has no delay
-    //     cx.set_state(indoc! {"
-    //         fˇn test() { println!(); }
-    //     "});
-    //     cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
-    //     let symbol_range = cx.lsp_range(indoc! {"
-    //         «fn» test() { println!(); }
-    //     "});
-    //     cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
-    //         Ok(Some(lsp::Hover {
-    //             contents: lsp::HoverContents::Array(vec![
-    //                 lsp::MarkedString::String("regular text for hover to show".to_string()),
-    //                 lsp::MarkedString::String("".to_string()),
-    //                 lsp::MarkedString::LanguageString(lsp::LanguageString {
-    //                     language: "Rust".to_string(),
-    //                     value: "".to_string(),
-    //                 }),
-    //             ]),
-    //             range: Some(symbol_range),
-    //         }))
-    //     })
-    //     .next()
-    //     .await;
+        // Hover with keyboard has no delay
+        cx.set_state(indoc! {"
+            fˇn test() { println!(); }
+        "});
+        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        let symbol_range = cx.lsp_range(indoc! {"
+            «fn» test() { println!(); }
+        "});
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Array(vec![
+                    lsp::MarkedString::String("regular text for hover to show".to_string()),
+                    lsp::MarkedString::String("".to_string()),
+                    lsp::MarkedString::LanguageString(lsp::LanguageString {
+                        language: "Rust".to_string(),
+                        value: "".to_string(),
+                    }),
+                ]),
+                range: Some(symbol_range),
+            }))
+        })
+        .next()
+        .await;
+        cx.dispatch_action(Hover);
+        cx.condition(|editor, _| editor.hover_state.visible()).await;
+        cx.editor(|editor, cx| {
+            assert_eq!(
+                editor.hover_state.info_popovers.len(),
+                1,
+                "Expected exactly one hover but got: {:?}",
+                editor.hover_state.info_popovers
+            );
+            let rendered_text = editor
+                .hover_state
+                .info_popovers
+                .first()
+                .unwrap()
+                .get_rendered_text(cx);
 
-    //     cx.condition(|editor, _| editor.hover_state.visible()).await;
-    //     cx.editor(|editor, _| {
-    //         assert_eq!(
-    //             editor.hover_state.info_popovers.len(),
-    //             1,
-    //             "Expected exactly one hover but got: {:?}",
-    //             editor.hover_state.info_popovers
-    //         );
-    //         let rendered = editor
-    //             .hover_state
-    //             .info_popovers
-    //             .first()
-    //             .cloned()
-    //             .unwrap()
-    //             .parsed_content;
-    //         assert_eq!(
-    //             rendered.text,
-    //             "regular text for hover to show".to_string(),
-    //             "No empty string hovers should be shown"
-    //         );
-    //     });
-    // }
+            assert_eq!(
+                rendered_text,
+                "regular text for hover to show".to_string(),
+                "No empty string hovers should be shown"
+            );
+        });
+    }
 
-    // #[gpui::test]
-    // async fn test_line_ends_trimmed(cx: &mut gpui::TestAppContext) {
-    //     init_test(cx, |_| {});
+    #[gpui::test]
+    async fn test_line_ends_trimmed(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
 
-    //     let mut cx = EditorLspTestContext::new_rust(
-    //         lsp::ServerCapabilities {
-    //             hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-    //             ..Default::default()
-    //         },
-    //         cx,
-    //     )
-    //     .await;
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
 
-    //     // Hover with keyboard has no delay
-    //     cx.set_state(indoc! {"
-    //         fˇn test() { println!(); }
-    //     "});
-    //     cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
-    //     let symbol_range = cx.lsp_range(indoc! {"
-    //         «fn» test() { println!(); }
-    //     "});
+        // Hover with keyboard has no delay
+        cx.set_state(indoc! {"
+            fˇn test() { println!(); }
+        "});
+        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        let symbol_range = cx.lsp_range(indoc! {"
+            «fn» test() { println!(); }
+        "});
 
-    //     let code_str = "\nlet hovered_point: Vector2F // size = 8, align = 0x4\n";
-    //     let markdown_string = format!("\n```rust\n{code_str}```");
+        let code_str = "\nlet hovered_point: Vector2F // size = 8, align = 0x4\n";
+        let markdown_string = format!("\n```rust\n{code_str}```");
 
-    //     let closure_markdown_string = markdown_string.clone();
-    //     cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
-    //         let future_markdown_string = closure_markdown_string.clone();
-    //         async move {
-    //             Ok(Some(lsp::Hover {
-    //                 contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-    //                     kind: lsp::MarkupKind::Markdown,
-    //                     value: future_markdown_string,
-    //                 }),
-    //                 range: Some(symbol_range),
-    //             }))
-    //         }
-    //     })
-    //     .next()
-    //     .await;
+        let closure_markdown_string = markdown_string.clone();
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
+            let future_markdown_string = closure_markdown_string.clone();
+            async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: future_markdown_string,
+                    }),
+                    range: Some(symbol_range),
+                }))
+            }
+        })
+        .next()
+        .await;
 
-    //     cx.condition(|editor, _| editor.hover_state.visible()).await;
-    //     cx.editor(|editor, _| {
-    //         assert_eq!(
-    //             editor.hover_state.info_popovers.len(),
-    //             1,
-    //             "Expected exactly one hover but got: {:?}",
-    //             editor.hover_state.info_popovers
-    //         );
-    //         let rendered = editor
-    //             .hover_state
-    //             .info_popovers
-    //             .first()
-    //             .cloned()
-    //             .unwrap()
-    //             .parsed_content;
-    //         assert_eq!(
-    //             rendered.text,
-    //             code_str.trim(),
-    //             "Should not have extra line breaks at end of rendered hover"
-    //         );
-    //     });
-    // }
+        cx.dispatch_action(Hover);
+
+        cx.condition(|editor, _| editor.hover_state.visible()).await;
+        cx.editor(|editor, cx| {
+            assert_eq!(
+                editor.hover_state.info_popovers.len(),
+                1,
+                "Expected exactly one hover but got: {:?}",
+                editor.hover_state.info_popovers
+            );
+            let rendered_text = editor
+                .hover_state
+                .info_popovers
+                .first()
+                .unwrap()
+                .get_rendered_text(cx);
+
+            assert_eq!(
+                rendered_text,
+                code_str.trim(),
+                "Should not have extra line breaks at end of rendered hover"
+            );
+        });
+    }
 
     // #[gpui::test]
     // async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) {

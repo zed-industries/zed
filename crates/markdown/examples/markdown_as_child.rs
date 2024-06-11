@@ -15,6 +15,12 @@ this text should be selectable
 wow so cool
 
 ## Heading 2
+```rust
+
+
+
+let hovered_point: Vector2F
+```
 "#;
 pub fn main() {
     env_logger::init();

@@ -1,4 +1,4 @@
-mod parser;
+pub mod parser;
 
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
@@ -256,6 +256,10 @@ pub struct ParsedMarkdown {
 impl ParsedMarkdown {
     pub fn source(&self) -> &SharedString {
         &self.source
+    }
+
+    pub fn events(&self) -> &Arc<[(Range<usize>, MarkdownEvent)]> {
+        return &self.events;
     }
 }
 
