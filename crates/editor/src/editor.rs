@@ -4050,6 +4050,7 @@ impl Editor {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut range_to_replace: Option<Range<isize>> = None;
         let mut ranges = Vec::new();
+        let mut linked_edits = HashMap::<_, Vec<_>>::default();
         for selection in &selections {
             if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
                 let start = selection.start.saturating_sub(lookbehind);
@@ -4079,6 +4080,21 @@ impl Editor {
                 }));
                 break;
             }
+            if !self.linked_edit_ranges.is_empty() {
+                let start_anchor = snapshot.anchor_before(selection.head());
+                let end_anchor = snapshot.anchor_after(selection.tail());
+                if let Some(ranges) = self
+                    .linked_editing_ranges_for(start_anchor.text_anchor..end_anchor.text_anchor, cx)
+                {
+                    for (buffer, edits) in ranges {
+                        linked_edits.entry(buffer.clone()).or_default().extend(
+                            edits
+                                .into_iter()
+                                .map(|range| (range, text[common_prefix_len..].to_owned())),
+                        );
+                    }
+                }
+            }
         }
         let text = &text[common_prefix_len..];
 
@@ -4104,6 +4120,22 @@ impl Editor {
                         cx,
                     );
                 });
+            }
+            for (buffer, edits) in linked_edits {
+                buffer.update(cx, |buffer, cx| {
+                    let snapshot = buffer.snapshot();
+                    let edits = edits
+                        .into_iter()
+                        .map(|(range, text)| {
+                            use text::ToPoint as TP;
+                            let end_point = TP::to_point(&range.end, &snapshot);
+                            let start_point = TP::to_point(&range.start, &snapshot);
+                            (start_point..end_point, text)
+                        })
+                        .sorted_by_key(|(range, _)| range.start)
+                        .collect::<Vec<_>>();
+                    buffer.edit(edits, None, cx);
+                })
             }
 
             this.refresh_inline_completion(true, cx);
