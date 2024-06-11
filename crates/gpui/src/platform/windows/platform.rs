@@ -16,17 +16,14 @@ use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
-use semantic_version::SemanticVersion;
 use smallvec::SmallVec;
 use time::UtcOffset;
 use windows::{
     core::*,
-    Wdk::System::SystemServices::*,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
         Security::Credentials::*,
-        Storage::FileSystem::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
