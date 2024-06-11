@@ -161,6 +161,12 @@ impl LspAdapter for VtslsLspAdapter {
                 "format": {
                     "enable": true
                 },
+                "tsserver":{
+                     "enableTracing": true,
+                     "log": "verbose"
+                },
+
+
                 "inlayHints":{
                     "parameterNames":
                     {

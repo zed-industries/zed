@@ -1,5 +1,5 @@
-use std::str;
 use std::sync::Arc;
+use std::{str, time::SystemTime};
 
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -91,6 +91,10 @@ impl LspStdoutHandler {
 
             buffer.resize(message_len, 0);
             stdout.read_exact(&mut buffer).await?;
+            let t = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
 
             if let Ok(message) = str::from_utf8(&buffer) {
                 log::trace!("incoming message: {message}");
@@ -105,6 +109,16 @@ impl LspStdoutHandler {
                 id, error, result, ..
             }) = serde_json::from_slice(&buffer)
             {
+                let any_parse = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
+                log::info!(
+                    "message {:?} arrived at {:?}, io stuff took {:?}",
+                    id,
+                    t,
+                    any_parse
+                );
                 let mut response_handlers = response_handlers.lock();
                 if let Some(handler) = response_handlers
                     .as_mut()

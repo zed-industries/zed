@@ -117,6 +117,7 @@ use settings::{update_settings_file, Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
 use std::ops::Not as _;
+use std::time::SystemTime;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -3970,6 +3971,10 @@ impl Editor {
                     if this.focus_handle.is_focused(cx) && menu.is_some() {
                         let menu = menu.unwrap();
                         *context_menu = Some(ContextMenu::Completions(menu));
+                        dbg!(std::time::SystemTime::now()
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis());
                         drop(context_menu);
                         this.discard_inline_completion(false, cx);
                         cx.notify();

@@ -31,7 +31,7 @@ use std::{
         Arc, Weak,
     },
     task::Poll,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use std::{path::Path, process::Stdio};
 use util::{ResultExt, TryFutureExt};
@@ -1001,7 +1001,14 @@ impl LanguageServer {
             select! {
                 response = rx.fuse() => {
                     let elapsed = started.elapsed();
-                    log::trace!("Took {elapsed:?} to receive response to {method:?} id {id}");
+                    log::info!(
+                        "message {id} ended at {:?}",
+                        SystemTime::now()
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis(),
+                    );
+                    log::info!("Took {elapsed:?} to receive response to {method:?} id {id}");
                     cancel_on_drop.abort();
                     response?
                 }
