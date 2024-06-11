@@ -40,25 +40,11 @@ docker compose up -d
 
 Once you have the dependencies installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
 
-For a debug build:
+For a debug build of the editor:
 
 ```
 cargo run
 ```
-
-For a release build:
-
-```
-cargo run --release
-```
-
-For a release package:
-
-```
-cargo build --release
-```
-
-the binary can be found in `target/release` folder.
 
 And to run the tests:
 
@@ -66,15 +52,21 @@ And to run the tests:
 cargo test --workspace
 ```
 
+In release mode, the primary user interface is the `cli` crate. You can run it in development with:
+
+```
+cargo run -p cli
+```
+
 ## Installing a development build
 
-You can install a development build on your machine with:
+You can install a local build on your machine with:
 
 ```
 ./script/install-linux
 ```
 
-This will build the main editor, and the cli, and make it available at ~/.local/bin/zed, installing .desktop files to ~/.local/share.
+This will build zed and the cli in release mode and make them available at `~/.local/bin/zed`, installing .desktop files to `~/.local/share`.
 
 If you'd like to install things to a different prefix you can use:
 
