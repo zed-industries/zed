@@ -532,6 +532,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    pending_modifiers: Option<Modifiers>,
     prompt: Option<RenderablePromptHandle>,
 }
 
@@ -805,6 +806,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            pending_modifiers: None,
             prompt: None,
         }
     }
@@ -3054,38 +3056,47 @@ impl<'a> WindowContext<'a> {
         let mut pending = false;
         let mut keystroke: Option<Keystroke> = None;
 
-        if let Some(modifier_change_event) = event.downcast_ref::<ModifiersChangedEvent>() {
-            //TODO: ensure this is atomic
-            let key = match modifier_change_event.modifiers {
-                modifiers if modifiers.shift => Some("shift"),
-                modifiers if modifiers.control => Some("control"),
-                modifiers if modifiers.alt => Some("alt"),
-                modifiers if modifiers.platform => Some("platform"),
-                modifiers if modifiers.function => Some("function"),
-                _ => None,
-            };
-            if let Some(key) = key {
-                let key = Keystroke {
-                    key: key.to_string(),
-                    ime_key: None,
-                    modifiers: Modifiers::default(),
-                };
-                let KeymatchResult {
-                    bindings: modifier_bindings,
-                    pending: pending_bindings,
-                } = self
-                    .window
-                    .rendered_frame
-                    .dispatch_tree
-                    .dispatch_key(&key, &dispatch_path);
+        if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            if let Some(previous) = self.window.pending_modifiers.take() {
+                if event.modifiers.number_of_modifiers() == 0 {
+                    let key = match previous {
+                        modifiers if modifiers.shift => Some("shift"),
+                        modifiers if modifiers.control => Some("control"),
+                        modifiers if modifiers.alt => Some("alt"),
+                        modifiers if modifiers.platform => Some("platform"),
+                        modifiers if modifiers.function => Some("function"),
+                        _ => None,
+                    };
+                    if let Some(key) = key {
+                        let key = Keystroke {
+                            key: key.to_string(),
+                            ime_key: None,
+                            modifiers: Modifiers::default(),
+                        };
+                        let KeymatchResult {
+                            bindings: modifier_bindings,
+                            pending: pending_bindings,
+                        } = self
+                            .window
+                            .rendered_frame
+                            .dispatch_tree
+                            .dispatch_key(&key, &dispatch_path);
 
-                keystroke = Some(key);
-                bindings = modifier_bindings;
-                pending = pending_bindings;
+                        keystroke = Some(key);
+                        bindings = modifier_bindings;
+                        pending = pending_bindings;
+                    }
+                }
+            } else if event.modifiers.number_of_modifiers() == 1 {
+                self.window.pending_modifiers = Some(event.modifiers);
+            }
+            if keystroke.is_none() {
+                return;
             }
         }
 
         if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+            self.window.pending_modifiers.take();
             let KeymatchResult {
                 bindings: key_down_bindings,
                 pending: key_down_pending,

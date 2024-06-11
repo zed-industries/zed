@@ -198,6 +198,10 @@ impl std::fmt::Display for Keystroke {
             "right" => '→',
             "tab" => '⇥',
             "escape" => '⎋',
+            "shift" => '⇧',
+            "control" => '⌃',
+            "alt" => '⌥',
+            "platform" => '⌘',
             key => {
                 if key.len() == 1 {
                     key.chars().next().unwrap().to_ascii_uppercase()
@@ -251,6 +255,15 @@ impl Modifiers {
         {
             return self.control;
         }
+    }
+
+    /// How many modifier keys are pressed
+    pub fn number_of_modifiers(&self) -> u8 {
+        self.control as u8
+            + self.alt as u8
+            + self.shift as u8
+            + self.platform as u8
+            + self.function as u8
     }
 
     /// helper method for Modifiers with no modifiers
