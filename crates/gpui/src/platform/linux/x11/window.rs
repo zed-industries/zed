@@ -154,6 +154,7 @@ pub struct Callbacks {
 }
 
 pub struct X11WindowState {
+    pub destroyed: bool,
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
@@ -368,6 +369,7 @@ impl X11WindowState {
             input_handler: None,
             appearance,
             handle,
+            destroyed: false,
         }
     }
 
@@ -393,6 +395,10 @@ impl Drop for X11Window {
             .destroy_window(self.0.x_window)
             .unwrap();
         self.0.xcb_connection.flush().unwrap();
+
+        // Mark window as destroyed so that we can filter out when X11 events
+        // for it still come in.
+        state.destroyed = true;
 
         let this_ptr = self.0.clone();
         let client_ptr = state.client.clone();
