@@ -5,7 +5,9 @@ pub mod markdown;
 mod markdown_writer;
 pub mod structure;
 
+use std::cell::RefCell;
 use std::io::Read;
+use std::rc::Rc;
 
 use anyhow::{Context, Result};
 use html5ever::driver::ParseOpts;
@@ -19,13 +21,10 @@ use crate::markdown::{
 };
 use crate::markdown_writer::MarkdownWriter;
 
-pub use crate::markdown_writer::HandleTag;
+pub use crate::markdown_writer::{HandleTag, TagHandler};
 
 /// Converts the provided HTML to Markdown.
-pub fn convert_html_to_markdown(
-    html: impl Read,
-    handlers: &mut Vec<Box<dyn HandleTag>>,
-) -> Result<String> {
+pub fn convert_html_to_markdown(html: impl Read, handlers: &mut Vec<TagHandler>) -> Result<String> {
     let dom = parse_html(html).context("failed to parse HTML")?;
 
     let markdown_writer = MarkdownWriter::new();
@@ -38,28 +37,33 @@ pub fn convert_html_to_markdown(
 
 /// Converts the provided rustdoc HTML to Markdown.
 pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<(String, Vec<String>)> {
-    let mut handlers: Vec<Box<dyn HandleTag>> = vec![
-        Box::new(ParagraphHandler),
-        Box::new(HeadingHandler),
-        Box::new(ListHandler),
-        Box::new(TableHandler::new()),
-        Box::new(StyledTextHandler),
-        Box::new(structure::rustdoc::RustdocChromeRemover),
-        Box::new(structure::rustdoc::RustdocHeadingHandler),
-        Box::new(structure::rustdoc::RustdocCodeHandler),
-        Box::new(structure::rustdoc::RustdocItemHandler),
-        Box::new(structure::rustdoc::RustdocLinkCollector::new()),
+    let link_collector = Rc::new(RefCell::new(structure::rustdoc::RustdocLinkCollector::new()));
+
+    let mut handlers: Vec<Rc<RefCell<dyn HandleTag>>> = vec![
+        Rc::new(RefCell::new(ParagraphHandler)),
+        Rc::new(RefCell::new(HeadingHandler)),
+        Rc::new(RefCell::new(ListHandler)),
+        Rc::new(RefCell::new(TableHandler::new())),
+        Rc::new(RefCell::new(StyledTextHandler)),
+        Rc::new(RefCell::new(structure::rustdoc::RustdocChromeRemover)),
+        Rc::new(RefCell::new(structure::rustdoc::RustdocHeadingHandler)),
+        Rc::new(RefCell::new(structure::rustdoc::RustdocCodeHandler)),
+        Rc::new(RefCell::new(structure::rustdoc::RustdocItemHandler)),
+        link_collector.clone(),
     ];
 
     let markdown = convert_html_to_markdown(html, &mut handlers)?;
 
-    let links = if let Some(link_collector) = handlers.last() {
-        link_collector.links()
-    } else {
-        Vec::new()
-    };
+    let items = link_collector
+        .borrow()
+        .items
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
 
-    Ok((markdown, links))
+    dbg!(&items);
+
+    Ok((markdown, Vec::new()))
 }
 
 fn parse_html(mut html: impl Read) -> Result<RcDom> {
@@ -85,17 +89,17 @@ mod tests {
 
     use super::*;
 
-    fn rustdoc_handlers() -> Vec<Box<dyn HandleTag>> {
+    fn rustdoc_handlers() -> Vec<TagHandler> {
         vec![
-            Box::new(ParagraphHandler),
-            Box::new(HeadingHandler),
-            Box::new(ListHandler),
-            Box::new(TableHandler::new()),
-            Box::new(StyledTextHandler),
-            Box::new(structure::rustdoc::RustdocChromeRemover),
-            Box::new(structure::rustdoc::RustdocHeadingHandler),
-            Box::new(structure::rustdoc::RustdocCodeHandler),
-            Box::new(structure::rustdoc::RustdocItemHandler),
+            Rc::new(RefCell::new(ParagraphHandler)),
+            Rc::new(RefCell::new(HeadingHandler)),
+            Rc::new(RefCell::new(ListHandler)),
+            Rc::new(RefCell::new(TableHandler::new())),
+            Rc::new(RefCell::new(StyledTextHandler)),
+            Rc::new(RefCell::new(structure::rustdoc::RustdocChromeRemover)),
+            Rc::new(RefCell::new(structure::rustdoc::RustdocHeadingHandler)),
+            Rc::new(RefCell::new(structure::rustdoc::RustdocCodeHandler)),
+            Rc::new(RefCell::new(structure::rustdoc::RustdocItemHandler)),
         ]
     }
 
