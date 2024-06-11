@@ -2417,6 +2417,30 @@ impl Render for ProjectPanel {
                                 .log_err();
                         })),
                 )
+                .drag_over::<ExternalPaths>(|style, _, cx| {
+                    style.bg(cx.theme().colors().drop_target_background)
+                })
+                .on_drop(
+                    cx.listener(move |this, external_paths: &ExternalPaths, cx| {
+                        this.last_drag_over_external_entry = None;
+                        this.marked_entries.clear();
+                        let Some(state) = workspace::AppState::global(cx).upgrade() else {
+                            return;
+                        };
+
+                        workspace::open_paths(
+                            external_paths.paths(),
+                            state,
+                            workspace::OpenOptions {
+                                open_new_workspace: Some(false),
+                                replace_window: None,
+                            },
+                            cx,
+                        )
+                        .detach_and_log_err(cx);
+                        cx.stop_propagation();
+                    }),
+                )
         }
     }
 }
