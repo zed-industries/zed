@@ -10,7 +10,9 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use file_icons::FileIcons;
 use futures::{stream::FuturesUnordered, StreamExt};
+use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
     AppContext, AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId,
@@ -1551,6 +1553,31 @@ impl Pane {
         });
     }
 
+    pub fn entry_label_color(selected: bool) -> Color {
+        if selected {
+            Color::Default
+        } else {
+            Color::Muted
+        }
+    }
+
+    pub fn entry_git_aware_label_color(
+        git_status: Option<GitFileStatus>,
+        ignored: bool,
+        selected: bool,
+    ) -> Color {
+        if ignored {
+            Color::Ignored
+        } else {
+            match git_status {
+                Some(GitFileStatus::Added) => Color::Created,
+                Some(GitFileStatus::Modified) => Color::Modified,
+                Some(GitFileStatus::Conflict) => Color::Conflict,
+                None => Self::entry_label_color(selected),
+            }
+        }
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -1572,6 +1599,30 @@ impl Pane {
             },
             cx,
         );
+
+        let project_path = item.project_path(cx);
+
+        let label_color = if ItemSettings::get_global(cx).git_status {
+            project_path
+                .as_ref()
+                .and_then(|path| self.project.read(cx).entry_for_path(&path, cx))
+                .map(|entry| {
+                    Self::entry_git_aware_label_color(entry.git_status, entry.is_ignored, is_active)
+                })
+                .unwrap_or_else(|| Self::entry_label_color(is_active))
+        } else {
+            Self::entry_label_color(is_active)
+        };
+
+        let file_icon = if ItemSettings::get_global(cx).file_icons {
+            Some(detail).and_then(|detail| {
+                let path = project_path?;
+                FileIcons::get_icon(path.path.as_ref(), cx)
+            })
+        } else {
+            None
+        };
+
         let close_side = &ItemSettings::get_global(cx).close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
@@ -1647,7 +1698,13 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
-            .start_slot::<Indicator>(indicator)
+            .start_slot(
+                div()
+                    .when_some(indicator, |this, indicator| this.child(indicator))
+                    .when_some(file_icon, |this, file_icon| {
+                        this.child(Icon::from_path(file_icon.to_string()).color(label_color))
+                    }),
+            )
             .end_slot(
                 IconButton::new("close tab", IconName::Close)
                     .shape(IconButtonShape::Square)
