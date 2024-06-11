@@ -11,11 +11,11 @@ use collections::{hash_map, BTreeSet, HashMap};
 use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
-    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, InteractiveElement, KeyContext, ListSizingBehavior,
-    Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
-    VisualContext as _, WeakView, WindowContext,
+    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent,
+    EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement, KeyContext,
+    ListSizingBehavior, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
+    PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
+    ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -50,6 +50,7 @@ pub struct ProjectPanel {
     focus_handle: FocusHandle,
     visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
     last_worktree_root_id: Option<ProjectEntryId>,
+    last_drag_over_external_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
     // Currently selected entry in a file tree
@@ -280,6 +281,7 @@ impl ProjectPanel {
                 focus_handle,
                 visible_entries: Default::default(),
                 last_worktree_root_id: Default::default(),
+                last_drag_over_external_entry: None,
                 expanded_dir_ids: Default::default(),
                 unfolded_dir_ids: Default::default(),
                 selection: None,
@@ -1737,7 +1739,7 @@ impl ProjectPanel {
         });
     }
 
-    fn drop_entry(
+    fn drop_external_files(
         &mut self,
         paths: &[PathBuf],
         entry_id: ProjectEntryId,
@@ -1753,7 +1755,13 @@ impl ProjectPanel {
         let Some((target_directory, worktree)) = maybe!({
             let worktree = self.project.read(cx).worktree_for_entry(entry_id, cx)?;
             let entry = worktree.read(cx).entry_for_id(entry_id)?;
-            Some((worktree.read(cx).absolutize(&entry.path).ok()?, worktree))
+            let path = worktree.read(cx).absolutize(&entry.path).ok()?;
+            let target_directory = if path.is_dir() {
+                path
+            } else {
+                path.parent()?.to_path_buf()
+            };
+            Some((target_directory, worktree))
         }) else {
             return;
         };
@@ -2049,6 +2057,7 @@ impl ProjectPanel {
             .canonical_path
             .as_ref()
             .map(|f| f.to_string_lossy().to_string());
+        let path = details.path.clone();
 
         let depth = details.depth;
         let worktree_id = details.worktree_id;
@@ -2060,12 +2069,59 @@ impl ProjectPanel {
         };
         div()
             .id(entry_id.to_proto() as usize)
-            .drag_over(|style, _: &ExternalPaths, cx| {
-                style.bg(cx.theme().colors().drop_target_background)
-            })
+            .on_drag_move::<ExternalPaths>(cx.listener(
+                move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
+                    if event.bounds.contains(&event.event.position) {
+                        if this.last_drag_over_external_entry == Some(entry_id) {
+                            return;
+                        }
+                        this.last_drag_over_external_entry = Some(entry_id);
+                        this.marked_entries.clear();
+
+                        let Some(worktree) = this
+                            .project
+                            .read(cx)
+                            .worktree_for_id(selection.worktree_id, cx)
+                        else {
+                            return;
+                        };
+                        let worktree = worktree.read(cx);
+                        let Some(abs_path) = worktree.absolutize(&path).log_err() else {
+                            return;
+                        };
+
+                        let path = if abs_path.is_dir() {
+                            path.as_ref()
+                        } else if let Some(parent) = path.parent() {
+                            parent
+                        } else {
+                            return;
+                        };
+
+                        let Some(entry) = worktree.entry_for_path(path) else {
+                            return;
+                        };
+
+                        this.marked_entries.insert(SelectedEntry {
+                            entry_id: entry.id,
+                            worktree_id: worktree.id(),
+                        });
+
+                        for entry in worktree.child_entries(path) {
+                            this.marked_entries.insert(SelectedEntry {
+                                entry_id: entry.id,
+                                worktree_id: worktree.id(),
+                            });
+                        }
+
+                        cx.notify();
+                    }
+                },
+            ))
             .on_drop(
-                cx.listener(move |project_panel, external_paths: &ExternalPaths, cx| {
-                    project_panel.drop_entry(external_paths.paths(), entry_id, cx);
+                cx.listener(move |this, external_paths: &ExternalPaths, cx| {
+                    this.last_drag_over_external_entry = None;
+                    this.drop_external_files(external_paths.paths(), entry_id, cx);
                     cx.stop_propagation();
                 }),
             )
