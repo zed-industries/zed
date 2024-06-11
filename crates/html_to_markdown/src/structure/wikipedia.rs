@@ -173,7 +173,7 @@ mod tests {
         .trim();
 
         assert_eq!(
-            convert_html_to_markdown(html.as_bytes(), wikipedia_handlers()).unwrap(),
+            convert_html_to_markdown(html.as_bytes(), &mut wikipedia_handlers()).unwrap(),
             expected
         )
     }

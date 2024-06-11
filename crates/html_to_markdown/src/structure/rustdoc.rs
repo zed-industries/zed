@@ -1,3 +1,5 @@
+use indexmap::IndexSet;
+
 use crate::html_element::HtmlElement;
 use crate::markdown_writer::{HandleTag, HandlerOutcome, MarkdownWriter, StartTagOutcome};
 
@@ -201,5 +203,46 @@ impl HandleTag for RustdocChromeRemover {
         }
 
         StartTagOutcome::Continue
+    }
+}
+
+pub struct RustdocLinkCollector {
+    pub links: IndexSet<String>,
+}
+
+impl RustdocLinkCollector {
+    pub fn new() -> Self {
+        Self {
+            links: IndexSet::new(),
+        }
+    }
+}
+
+impl HandleTag for RustdocLinkCollector {
+    fn should_handle(&self, tag: &str) -> bool {
+        tag == "a"
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        _writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag.as_str() {
+            "a" => {
+                if let Some(href) = tag.attr("href") {
+                    if href.ends_with(".html") {
+                        self.links.insert(href);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+
+    fn links(&self) -> Vec<String> {
+        self.links.iter().cloned().collect()
     }
 }

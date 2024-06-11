@@ -63,9 +63,9 @@ impl MarkdownWriter {
     pub fn run(
         mut self,
         root_node: &Handle,
-        mut handlers: Vec<Box<dyn HandleTag>>,
+        handlers: &mut Vec<Box<dyn HandleTag>>,
     ) -> Result<String> {
-        self.visit_node(&root_node, &mut handlers)?;
+        self.visit_node(&root_node, handlers)?;
         Ok(Self::prettify_markdown(self.markdown))
     }
 
@@ -194,5 +194,9 @@ pub trait HandleTag {
 
     fn handle_text(&mut self, _text: &str, _writer: &mut MarkdownWriter) -> HandlerOutcome {
         HandlerOutcome::NoOp
+    }
+
+    fn links(&self) -> Vec<String> {
+        Vec::new()
     }
 }

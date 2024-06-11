@@ -76,7 +76,7 @@ impl FetchSlashCommand {
                     handlers.push(Box::new(markdown::CodeHandler));
                 }
 
-                convert_html_to_markdown(&body[..], handlers)
+                convert_html_to_markdown(&body[..], &mut handlers)
             }
             ContentType::Plaintext => Ok(std::str::from_utf8(&body)?.to_owned()),
             ContentType::Json => {

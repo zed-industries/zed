@@ -24,7 +24,7 @@ pub use crate::markdown_writer::HandleTag;
 /// Converts the provided HTML to Markdown.
 pub fn convert_html_to_markdown(
     html: impl Read,
-    handlers: Vec<Box<dyn HandleTag>>,
+    handlers: &mut Vec<Box<dyn HandleTag>>,
 ) -> Result<String> {
     let dom = parse_html(html).context("failed to parse HTML")?;
 
@@ -37,21 +37,29 @@ pub fn convert_html_to_markdown(
 }
 
 /// Converts the provided rustdoc HTML to Markdown.
-pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<String> {
-    convert_html_to_markdown(
-        html,
-        vec![
-            Box::new(ParagraphHandler),
-            Box::new(HeadingHandler),
-            Box::new(ListHandler),
-            Box::new(TableHandler::new()),
-            Box::new(StyledTextHandler),
-            Box::new(structure::rustdoc::RustdocChromeRemover),
-            Box::new(structure::rustdoc::RustdocHeadingHandler),
-            Box::new(structure::rustdoc::RustdocCodeHandler),
-            Box::new(structure::rustdoc::RustdocItemHandler),
-        ],
-    )
+pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<(String, Vec<String>)> {
+    let mut handlers: Vec<Box<dyn HandleTag>> = vec![
+        Box::new(ParagraphHandler),
+        Box::new(HeadingHandler),
+        Box::new(ListHandler),
+        Box::new(TableHandler::new()),
+        Box::new(StyledTextHandler),
+        Box::new(structure::rustdoc::RustdocChromeRemover),
+        Box::new(structure::rustdoc::RustdocHeadingHandler),
+        Box::new(structure::rustdoc::RustdocCodeHandler),
+        Box::new(structure::rustdoc::RustdocItemHandler),
+        Box::new(structure::rustdoc::RustdocLinkCollector::new()),
+    ];
+
+    let markdown = convert_html_to_markdown(html, &mut handlers)?;
+
+    let links = if let Some(link_collector) = handlers.last() {
+        link_collector.links()
+    } else {
+        Vec::new()
+    };
+
+    Ok((markdown, links))
 }
 
 fn parse_html(mut html: impl Read) -> Result<RcDom> {
@@ -77,6 +85,20 @@ mod tests {
 
     use super::*;
 
+    fn rustdoc_handlers() -> Vec<Box<dyn HandleTag>> {
+        vec![
+            Box::new(ParagraphHandler),
+            Box::new(HeadingHandler),
+            Box::new(ListHandler),
+            Box::new(TableHandler::new()),
+            Box::new(StyledTextHandler),
+            Box::new(structure::rustdoc::RustdocChromeRemover),
+            Box::new(structure::rustdoc::RustdocHeadingHandler),
+            Box::new(structure::rustdoc::RustdocCodeHandler),
+            Box::new(structure::rustdoc::RustdocItemHandler),
+        ]
+    }
+
     #[test]
     fn test_main_heading_buttons_get_removed() {
         let html = indoc! {r##"
@@ -93,7 +115,7 @@ mod tests {
         .trim();
 
         assert_eq!(
-            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            convert_html_to_markdown(html.as_bytes(), &mut rustdoc_handlers()).unwrap(),
             expected
         )
     }
@@ -113,7 +135,7 @@ mod tests {
         .trim();
 
         assert_eq!(
-            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            convert_html_to_markdown(html.as_bytes(), &mut rustdoc_handlers()).unwrap(),
             expected
         )
     }
@@ -159,7 +181,7 @@ mod tests {
         .trim();
 
         assert_eq!(
-            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            convert_html_to_markdown(html.as_bytes(), &mut rustdoc_handlers()).unwrap(),
             expected
         )
     }
@@ -178,7 +200,7 @@ mod tests {
         .trim();
 
         assert_eq!(
-            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            convert_html_to_markdown(html.as_bytes(), &mut rustdoc_handlers()).unwrap(),
             expected
         )
     }
@@ -220,7 +242,7 @@ mod tests {
         .trim();
 
         assert_eq!(
-            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            convert_html_to_markdown(html.as_bytes(), &mut rustdoc_handlers()).unwrap(),
             expected
         )
     }
@@ -252,7 +274,7 @@ mod tests {
         .trim();
 
         assert_eq!(
-            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            convert_html_to_markdown(html.as_bytes(), &mut rustdoc_handlers()).unwrap(),
             expected
         )
     }
@@ -288,7 +310,7 @@ mod tests {
         .trim();
 
         assert_eq!(
-            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            convert_html_to_markdown(html.as_bytes(), &mut rustdoc_handlers()).unwrap(),
             expected
         )
     }
@@ -342,7 +364,7 @@ mod tests {
         .trim();
 
         assert_eq!(
-            convert_rustdoc_to_markdown(html.as_bytes()).unwrap(),
+            convert_html_to_markdown(html.as_bytes(), &mut rustdoc_handlers()).unwrap(),
             expected
         )
     }
