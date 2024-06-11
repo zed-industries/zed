@@ -42,7 +42,9 @@ use gpui::{
 use http::{HttpClient, Url};
 use itertools::Itertools;
 use language::{
-    language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
+    language_settings::{
+        language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
+    },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
@@ -712,6 +714,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_restart_language_servers);
         client.add_model_request_handler(Self::handle_task_context_for_location);
         client.add_model_request_handler(Self::handle_task_templates);
+        client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
     }
 
     pub fn local(
@@ -5802,6 +5805,62 @@ impl Project {
     ) -> Task<Vec<Hover>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.hover_impl(buffer, position, cx)
+    }
+
+    fn linked_edit_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: Anchor,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Range<Anchor>>>> {
+        let snapshot = buffer.read(cx).snapshot();
+        let scope = snapshot.language_scope_at(position);
+        let Some(server_id) = self
+            .language_servers_for_buffer(buffer.read(cx), cx)
+            .filter(|(_, server)| {
+                server
+                    .capabilities()
+                    .linked_editing_range_provider
+                    .is_some()
+            })
+            .filter(|(adapter, _)| {
+                scope
+                    .as_ref()
+                    .map(|scope| scope.language_allowed(&adapter.name))
+                    .unwrap_or(true)
+            })
+            .map(|(_, server)| LanguageServerToQuery::Other(server.server_id()))
+            .next()
+            .or_else(|| self.is_remote().then_some(LanguageServerToQuery::Primary))
+            .filter(|_| {
+                maybe!({
+                    let language_name = buffer.read(cx).language_at(position)?.name();
+                    Some(
+                        AllLanguageSettings::get_global(cx)
+                            .language(Some(&language_name))
+                            .linked_edits,
+                    )
+                }) == Some(true)
+            })
+        else {
+            return Task::ready(Ok(vec![]));
+        };
+
+        self.request_lsp(
+            buffer.clone(),
+            server_id,
+            LinkedEditingRange { position },
+            cx,
+        )
+    }
+
+    pub fn linked_edit(
+        &self,
+        buffer: &Model<Buffer>,
+        position: Anchor,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Range<Anchor>>>> {
+        self.linked_edit_impl(buffer, position, cx)
     }
 
     #[inline(never)]
