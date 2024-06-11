@@ -910,6 +910,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_non_existing_file(cx: &mut TestAppContext) {
+        // TODO: This tests prints an error in the console:
+        // "failed to canonicalize root path: path does not exist: /root/a/new"
         let app_state = init_test(cx);
         app_state
             .fs
@@ -1697,6 +1699,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_opening_excluded_paths(cx: &mut TestAppContext) {
+        // TODO: This outputs and error message (not failure) to the console:
+        // "failed to get git blame data: Failed to blame ".git/HEAD"
         let app_state = init_test(cx);
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
@@ -1784,6 +1788,8 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         opened_paths.sort();
+        // TODO: This test outputs a error (not failure) when run
+        // "failed to get git blame data: Failed to blame ".git/HEAD""
         assert_eq!(
             opened_paths,
             vec![
