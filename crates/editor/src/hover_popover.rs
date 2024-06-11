@@ -494,25 +494,6 @@ impl InfoPopover {
         cx.notify();
         self.scroll_handle.set_offset(current);
     }
-
-    fn get_rendered_text(&self, cx: &gpui::AppContext) -> String {
-        let mut ans = String::new();
-
-        for parsed_content in self.parsed_content.clone() {
-            let markdown = parsed_content.read(cx);
-            let text = markdown.parsed_markdown().source().to_string();
-            let data = markdown.parsed_markdown().events();
-            let slice = &*data;
-
-            for (range, event) in slice.iter() {
-                if vec![MarkdownEvent::Text, MarkdownEvent::Code].contains(event) {
-                    ans.push_str(&text[range.clone()])
-                }
-                // println!("{:?}: {:?}", range, event);
-            }
-        }
-        ans
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -619,6 +600,26 @@ mod tests {
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;
     use text::Bias;
+
+    impl InfoPopover {
+        fn get_rendered_text(&self, cx: &gpui::AppContext) -> String {
+            let mut rendered_text = String::new();
+
+            for parsed_content in self.parsed_content.clone() {
+                let markdown = parsed_content.read(cx);
+                let text = markdown.parsed_markdown().source().to_string();
+                let data = markdown.parsed_markdown().events();
+                let slice = &*data;
+
+                for (range, event) in slice.iter() {
+                    if vec![MarkdownEvent::Text, MarkdownEvent::Code].contains(event) {
+                        rendered_text.push_str(&text[range.clone()])
+                    }
+                }
+            }
+            rendered_text
+        }
+    }
 
     #[gpui::test]
     async fn test_mouse_hover_info_popover_with_autocomplete_popover(
