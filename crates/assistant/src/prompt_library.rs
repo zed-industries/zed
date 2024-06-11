@@ -97,7 +97,7 @@ pub fn open_prompt_library(
                     },
                     |cx| cx.new_view(|cx| PromptLibrary::new(store, language_registry, cx)),
                 )
-            })
+            })?
         })
     }
 }
