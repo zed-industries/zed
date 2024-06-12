@@ -359,8 +359,8 @@ impl X11Client {
                             window.window.set_appearance(appearance);
                         }
                     }
-                    XDPEvent::CursorTheme(_theme) => {
-                        // TODO: Implement GNOME cursor theme switching_
+                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
+                        // noop, X11 manages this for us.
                     }
                 }
             })

@@ -12,6 +12,7 @@ use crate::{BackgroundExecutor, WindowAppearance};
 pub enum Event {
     WindowAppearance(WindowAppearance),
     CursorTheme(String),
+    CursorSize(u32),
 }
 
 pub struct XDPEventSource {
@@ -41,6 +42,25 @@ impl XDPEventSource {
                             while let Some(theme) = cursor_theme_changed.next().await {
                                 let theme = theme?;
                                 sender.send(Event::CursorTheme(theme))?;
+                            }
+                            anyhow::Ok(())
+                        })
+                        .detach();
+                }
+
+                if let Ok(mut cursor_size_changed) = settings
+                    .receive_setting_changed_with_args::<u32>(
+                        "org.gnome.desktop.interface",
+                        "cursor-size",
+                    )
+                    .await
+                {
+                    let sender = sender.clone();
+                    background
+                        .spawn(async move {
+                            while let Some(size) = cursor_size_changed.next().await {
+                                let size = size?;
+                                sender.send(Event::CursorSize(size))?;
                             }
                             anyhow::Ok(())
                         })
@@ -151,11 +171,15 @@ pub fn should_auto_hide_scrollbars(executor: &BackgroundExecutor) -> Result<bool
     })
 }
 
-pub async fn cursor_theme() -> Result<String, anyhow::Error> {
+pub async fn cursor_settings() -> Result<(String, Option<u32>), anyhow::Error> {
     let settings = Settings::new().await?;
     let cursor_theme = settings
         .read::<String>("org.gnome.desktop.interface", "cursor-theme")
         .await?;
+    let cursor_size = settings
+        .read::<u32>("org.gnome.desktop.interface", "cursor-size")
+        .await
+        .ok();
 
-    Ok(cursor_theme)
+    Ok((cursor_theme, cursor_size))
 }
