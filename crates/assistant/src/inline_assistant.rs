@@ -180,8 +180,21 @@ impl InlineAssistant {
                 _subscriptions: vec![
                     cx.subscribe(&prompt_editor, |inline_assist_editor, event, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
-                            this.handle_inline_assistant_event(inline_assist_editor, event, cx)
+                            this.handle_inline_assistant_editor_event(
+                                inline_assist_editor,
+                                event,
+                                cx,
+                            )
                         })
+                    }),
+                    editor.update(cx, |editor, _cx| {
+                        editor.register_action(
+                            move |_: &editor::actions::Newline, cx: &mut WindowContext| {
+                                InlineAssistant::update_global(cx, |this, cx| {
+                                    this.handle_editor_newline(assist_id, cx)
+                                })
+                            },
+                        )
                     }),
                     cx.subscribe(editor, move |editor, event, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
@@ -256,7 +269,7 @@ impl InlineAssistant {
         self.update_editor_highlights(editor, cx);
     }
 
-    fn handle_inline_assistant_event(
+    fn handle_inline_assistant_editor_event(
         &mut self,
         inline_assist_editor: View<InlineAssistEditor>,
         event: &InlineAssistEditorEvent,
@@ -283,6 +296,28 @@ impl InlineAssistant {
                 self.resize_inline_assist(assist_id, *height_in_lines, cx);
             }
         }
+    }
+
+    fn handle_editor_newline(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+        let Some(assist) = self.pending_assists.get(&assist_id) else {
+            return;
+        };
+        let Some(editor) = assist.editor.upgrade() else {
+            return;
+        };
+
+        let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let assist_range = assist.codegen.read(cx).range().to_offset(&buffer);
+        let editor = editor.read(cx);
+        if editor.selections.count() == 1 {
+            let selection = editor.selections.newest::<usize>(cx);
+            if assist_range.contains(&selection.start) && assist_range.contains(&selection.end) {
+                self.finish_inline_assist(assist_id, false, cx);
+                return;
+            }
+        }
+
+        cx.propagate();
     }
 
     fn handle_editor_event(
