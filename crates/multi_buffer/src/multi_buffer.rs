@@ -6130,8 +6130,8 @@ mod tests {
 
             // Verify edited ranges for transaction 1
             assert_eq!(
-                multibuffer.edited_ranges_for_transaction::<Point>(transaction_1, cx),
-                vec![
+                multibuffer.edited_ranges_for_transaction(transaction_1, cx),
+                &[
                     Point::new(0, 0)..Point::new(0, 2),
                     Point::new(1, 0)..Point::new(1, 2)
                 ]
