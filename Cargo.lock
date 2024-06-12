@@ -8696,10 +8696,13 @@ dependencies = [
  "collections",
  "fs",
  "futures 0.3.28",
+ "fuzzy",
+ "gpui",
  "html_to_markdown",
  "http 0.1.0",
  "indexmap 1.9.3",
  "indoc",
+ "parking_lot",
  "pretty_assertions",
  "strum",
 ]
