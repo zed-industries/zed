@@ -58,7 +58,7 @@ pub fn convert_rustdoc_to_markdown(html: impl Read) -> Result<(String, Vec<Rustd
     let items = item_collector
         .borrow()
         .items
-        .values()
+        .iter()
         .cloned()
         .collect::<Vec<_>>();
 

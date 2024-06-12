@@ -1,4 +1,6 @@
-use indexmap::IndexMap;
+use std::sync::Arc;
+
+use indexmap::IndexSet;
 use strum::{EnumIter, IntoEnumIterator};
 
 use crate::html_element::HtmlElement;
@@ -238,17 +240,25 @@ impl RustdocItemKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct RustdocItem {
     pub kind: RustdocItemKind,
-    pub name: String,
+    /// The item path, up until the name of the item.
+    pub path: Vec<Arc<str>>,
+    /// The name of the item.
+    pub name: Arc<str>,
 }
 
 impl RustdocItem {
     pub fn url_path(&self) -> String {
         let name = &self.name;
+        let mut path_components = self.path.clone();
+
         match self.kind {
-            RustdocItemKind::Mod => format!("{name}/index.html"),
+            RustdocItemKind::Mod => {
+                path_components.push(name.clone());
+                path_components.push("index.html".into());
+            }
             RustdocItemKind::Macro
             | RustdocItemKind::Struct
             | RustdocItemKind::Enum
@@ -258,20 +268,23 @@ impl RustdocItem {
             | RustdocItemKind::TypeAlias
             | RustdocItemKind::AttributeMacro
             | RustdocItemKind::DeriveMacro => {
-                format!("{kind}.{name}.html", kind = self.kind.class())
+                path_components
+                    .push(format!("{kind}.{name}.html", kind = self.kind.class()).into());
             }
         }
+
+        path_components.join("/")
     }
 }
 
 pub struct RustdocItemCollector {
-    pub items: IndexMap<(RustdocItemKind, String), RustdocItem>,
+    pub items: IndexSet<RustdocItem>,
 }
 
 impl RustdocItemCollector {
     pub fn new() -> Self {
         Self {
-            items: IndexMap::new(),
+            items: IndexSet::new(),
         }
     }
 
@@ -281,21 +294,30 @@ impl RustdocItemCollector {
         }
 
         let href = tag.attr("href")?;
-        if href == "#" {
+        if href.starts_with('#') || href.starts_with("https://") || href.starts_with("../") {
             return None;
         }
 
         for kind in RustdocItemKind::iter() {
             if tag.has_class(kind.class()) {
-                let name = href
-                    .trim_start_matches(&format!("{}.", kind.class()))
-                    .trim_end_matches("/index.html")
-                    .trim_end_matches(".html");
+                let mut parts = href.trim_end_matches("/index.html").split('/');
 
-                return Some(RustdocItem {
-                    kind,
-                    name: name.to_owned(),
-                });
+                if let Some(last_component) = parts.next_back() {
+                    let last_component = match last_component.split_once('#') {
+                        Some((component, _fragment)) => component,
+                        None => last_component,
+                    };
+
+                    let name = last_component
+                        .trim_start_matches(&format!("{}.", kind.class()))
+                        .trim_end_matches(".html");
+
+                    return Some(RustdocItem {
+                        kind,
+                        name: name.into(),
+                        path: parts.map(Into::into).collect(),
+                    });
+                }
             }
         }
 
@@ -317,7 +339,7 @@ impl HandleTag for RustdocItemCollector {
             "a" => {
                 let is_reexport = writer.current_element_stack().iter().any(|element| {
                     if let Some(id) = element.attr("id") {
-                        id.starts_with("reexport.")
+                        id.starts_with("reexport.") || id.starts_with("method.")
                     } else {
                         false
                     }
@@ -325,7 +347,7 @@ impl HandleTag for RustdocItemCollector {
 
                 if !is_reexport {
                     if let Some(item) = Self::parse_item(tag) {
-                        self.items.insert((item.kind, item.name.clone()), item);
+                        self.items.insert(item);
                     }
                 }
             }

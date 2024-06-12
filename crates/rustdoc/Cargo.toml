@@ -1,0 +1,23 @@
+[package]
+name = "rustdoc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/rustdoc.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+collections.workspace = true
+fs.workspace = true
+futures.workspace = true
+html_to_markdown.workspace = true
+http.workspace = true
+
+[dev-dependencies]

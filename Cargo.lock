@@ -8665,6 +8665,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustdoc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "html_to_markdown",
+ "http 0.1.0",
+]
+
+[[package]]
 name = "rustix"
 version = "0.37.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
