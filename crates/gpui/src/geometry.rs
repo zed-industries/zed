@@ -363,15 +363,6 @@ pub struct Size<T: Clone + Default + Debug> {
     pub height: T,
 }
 
-impl From<Size<DevicePixels>> for Size<Pixels> {
-    fn from(size: Size<DevicePixels>) -> Self {
-        Size {
-            width: Pixels(size.width.0 as f32),
-            height: Pixels(size.height.0 as f32),
-        }
-    }
-}
-
 /// Constructs a new `Size<T>` with the provided width and height.
 ///
 /// # Arguments
@@ -629,15 +620,6 @@ impl<T: Clone + Default + Debug> From<Point<T>> for Size<T> {
         Self {
             width: point.x,
             height: point.y,
-        }
-    }
-}
-
-impl From<Size<Pixels>> for Size<DevicePixels> {
-    fn from(size: Size<Pixels>) -> Self {
-        Size {
-            width: DevicePixels(size.width.0 as i32),
-            height: DevicePixels(size.height.0 as i32),
         }
     }
 }

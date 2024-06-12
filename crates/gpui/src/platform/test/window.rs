@@ -121,7 +121,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.bounds().size.into()
+        self.bounds().size
     }
 
     fn scale_factor(&self) -> f32 {
