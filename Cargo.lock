@@ -368,7 +368,6 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rope",
- "rustdoc",
  "schemars",
  "search",
  "semantic_index",
@@ -8676,9 +8675,6 @@ dependencies = [
  "futures 0.3.28",
  "html_to_markdown",
  "http 0.1.0",
- "indexmap 1.9.3",
- "strum",
- "util",
 ]
 
 [[package]]
