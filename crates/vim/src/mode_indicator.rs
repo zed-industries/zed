@@ -42,24 +42,14 @@ impl ModeIndicator {
             .pre_count
             .map(|count| format!("{}", count))
             .into_iter()
-            .chain(
-                vim.state()
-                    .selected_register
-                    .map(|reg| format!("\"{reg}"))
-                    .into_iter(),
-            )
+            .chain(vim.state().selected_register.map(|reg| format!("\"{reg}")))
             .chain(
                 vim.state()
                     .operator_stack
                     .iter()
                     .map(|item| item.id().to_string()),
             )
-            .chain(
-                vim.state()
-                    .post_count
-                    .map(|count| format!("{}", count))
-                    .into_iter(),
-            )
+            .chain(vim.state().post_count.map(|count| format!("{}", count)))
             .collect::<Vec<_>>()
             .join("")
     }
