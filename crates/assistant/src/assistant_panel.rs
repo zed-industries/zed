@@ -79,7 +79,6 @@ pub fn init(cx: &mut AppContext) {
                     workspace.toggle_panel_focus::<AssistantPanel>(cx);
                 })
                 .register_action(AssistantPanel::inline_assist)
-                .register_action(AssistantPanel::cancel_last_inline_assist)
                 .register_action(ContextEditor::quote_selection);
         },
     )
@@ -418,19 +417,6 @@ impl AssistantPanel {
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx)
-        }
-    }
-
-    fn cancel_last_inline_assist(
-        _workspace: &mut Workspace,
-        _: &editor::actions::Cancel,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        let canceled = InlineAssistant::update_global(cx, |assistant, cx| {
-            assistant.cancel_last_inline_assist(cx)
-        });
-        if !canceled {
-            cx.propagate();
         }
     }
 

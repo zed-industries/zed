@@ -16,8 +16,8 @@ use editor::{
 };
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{
-    AnyWindowHandle, AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight,
-    Global, HighlightStyle, Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View,
+    AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global,
+    HighlightStyle, Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View,
     ViewContext, WeakView, WhiteSpace, WindowContext,
 };
 use language::{Buffer, Point, TransactionId};
@@ -46,14 +46,9 @@ const PROMPT_HISTORY_MAX_LEN: usize = 20;
 pub struct InlineAssistant {
     next_assist_id: InlineAssistId,
     pending_assists: HashMap<InlineAssistId, PendingInlineAssist>,
-    pending_assist_ids_by_editor: HashMap<WeakView<Editor>, EditorPendingAssists>,
+    pending_assist_ids_by_editor: HashMap<WeakView<Editor>, Vec<InlineAssistId>>,
     prompt_history: VecDeque<String>,
     telemetry: Option<Arc<Telemetry>>,
-}
-
-struct EditorPendingAssists {
-    window: AnyWindowHandle,
-    assist_ids: Vec<InlineAssistId>,
 }
 
 impl Global for InlineAssistant {}
@@ -191,7 +186,16 @@ impl InlineAssistant {
                         editor.register_action(
                             move |_: &editor::actions::Newline, cx: &mut WindowContext| {
                                 InlineAssistant::update_global(cx, |this, cx| {
-                                    this.handle_editor_newline(assist_id, cx)
+                                    this.handle_editor_action(assist_id, false, cx)
+                                })
+                            },
+                        )
+                    }),
+                    editor.update(cx, |editor, _cx| {
+                        editor.register_action(
+                            move |_: &editor::actions::Cancel, cx: &mut WindowContext| {
+                                InlineAssistant::update_global(cx, |this, cx| {
+                                    this.handle_editor_action(assist_id, true, cx)
                                 })
                             },
                         )
@@ -260,11 +264,7 @@ impl InlineAssistant {
 
         self.pending_assist_ids_by_editor
             .entry(editor.downgrade())
-            .or_insert_with(|| EditorPendingAssists {
-                window: cx.window_handle(),
-                assist_ids: Vec::new(),
-            })
-            .assist_ids
+            .or_default()
             .push(assist_id);
         self.update_editor_highlights(editor, cx);
     }
@@ -298,7 +298,12 @@ impl InlineAssistant {
         }
     }
 
-    fn handle_editor_newline(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    fn handle_editor_action(
+        &mut self,
+        assist_id: InlineAssistId,
+        undo: bool,
+        cx: &mut WindowContext,
+    ) {
         let Some(assist) = self.pending_assists.get(&assist_id) else {
             return;
         };
@@ -312,7 +317,7 @@ impl InlineAssistant {
         if editor.selections.count() == 1 {
             let selection = editor.selections.newest::<usize>(cx);
             if assist_range.contains(&selection.start) && assist_range.contains(&selection.end) {
-                self.finish_inline_assist(assist_id, false, cx);
+                self.finish_inline_assist(assist_id, undo, cx);
                 return;
             }
         }
@@ -364,22 +369,6 @@ impl InlineAssistant {
         }
     }
 
-    pub fn cancel_last_inline_assist(&mut self, cx: &mut WindowContext) -> bool {
-        for (editor, pending_assists) in &self.pending_assist_ids_by_editor {
-            if pending_assists.window == cx.window_handle() {
-                if let Some(editor) = editor.upgrade() {
-                    if editor.read(cx).is_focused(cx) {
-                        if let Some(assist_id) = pending_assists.assist_ids.last().copied() {
-                            self.finish_inline_assist(assist_id, true, cx);
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        false
-    }
-
     fn finish_inline_assist(
         &mut self,
         assist_id: InlineAssistId,
@@ -393,8 +382,8 @@ impl InlineAssistant {
                 .pending_assist_ids_by_editor
                 .entry(pending_assist.editor.clone())
             {
-                entry.get_mut().assist_ids.retain(|id| *id != assist_id);
-                if entry.get().assist_ids.is_empty() {
+                entry.get_mut().retain(|id| *id != assist_id);
+                if entry.get().is_empty() {
                     entry.remove();
                 }
             }
@@ -629,9 +618,7 @@ impl InlineAssistant {
         let assist_ids = self
             .pending_assist_ids_by_editor
             .get(&editor.downgrade())
-            .map_or(&empty_assist_ids, |pending_assists| {
-                &pending_assists.assist_ids
-            });
+            .unwrap_or(&empty_assist_ids);
 
         for assist_id in assist_ids {
             if let Some(pending_assist) = self.pending_assists.get(assist_id) {

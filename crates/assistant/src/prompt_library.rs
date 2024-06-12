@@ -592,19 +592,6 @@ impl PromptLibrary {
         }
     }
 
-    fn cancel_last_inline_assist(
-        &mut self,
-        _: &editor::actions::Cancel,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let canceled = InlineAssistant::update_global(cx, |assistant, cx| {
-            assistant.cancel_last_inline_assist(cx)
-        });
-        if !canceled {
-            cx.propagate();
-        }
-    }
-
     fn handle_prompt_editor_event(
         &mut self,
         prompt_id: PromptId,
@@ -743,7 +730,6 @@ impl PromptLibrary {
                             div()
                                 .on_action(cx.listener(Self::focus_picker))
                                 .on_action(cx.listener(Self::inline_assist))
-                                .on_action(cx.listener(Self::cancel_last_inline_assist))
                                 .flex_grow()
                                 .h_full()
                                 .pt(Spacing::XXLarge.rems(cx))
