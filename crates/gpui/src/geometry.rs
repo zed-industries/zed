@@ -2368,7 +2368,7 @@ impl From<usize> for Pixels {
     Add, AddAssign, Clone, Copy, Default, Div, Eq, Hash, Ord, PartialEq, PartialOrd, Sub, SubAssign,
 )]
 #[repr(transparent)]
-pub(crate) struct DevicePixels(pub(crate) i32);
+pub struct DevicePixels(pub(crate) i32);
 
 impl DevicePixels {
     /// Converts the `DevicePixels` value to the number of bytes needed to represent it in memory.
@@ -2461,7 +2461,7 @@ impl From<usize> for DevicePixels {
 /// display resolutions.
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
-pub(crate) struct ScaledPixels(pub(crate) f32);
+pub struct ScaledPixels(pub(crate) f32);
 
 impl ScaledPixels {
     /// Floors the `ScaledPixels` value to the nearest whole number.
