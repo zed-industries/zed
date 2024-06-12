@@ -640,7 +640,6 @@ mod tests {
 
                 for (range, event) in slice.iter() {
                     if [MarkdownEvent::Text, MarkdownEvent::Code].contains(event) {
-                        // println!("{:?}", &text[range.clone()]);
                         rendered_text.push_str(&text[range.clone()])
                     }
                 }
