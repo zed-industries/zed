@@ -5,8 +5,8 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, NewCenterTerminal, NewFile, NewSearch, NewTerminal, OpenInTerminal, OpenTerminal,
-    OpenVisible, SplitDirection, ToggleZoom, Workspace,
+    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenTerminal, OpenVisible, SplitDirection,
+    ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
