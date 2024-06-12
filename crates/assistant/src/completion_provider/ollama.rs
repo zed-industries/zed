@@ -11,7 +11,9 @@ use ollama::{
 };
 use std::sync::Arc;
 use std::time::Duration;
-use ui::prelude::*;
+use ui::{prelude::*, ButtonLike, ElevationIndex};
+
+const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 
 pub struct OllamaCompletionProvider {
     api_url: String,
@@ -105,7 +107,7 @@ impl OllamaCompletionProvider {
     }
 
     pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| AuthenticationPrompt::new(cx)).into()
+        cx.new_view(|cx| DownloadOllamaMessage::new(cx)).into()
     }
 
     pub fn model(&self) -> OllamaModel {
@@ -207,24 +209,37 @@ impl From<Role> for ollama::Role {
     }
 }
 
-struct AuthenticationPrompt {}
+struct DownloadOllamaMessage {}
 
-impl AuthenticationPrompt {
+impl DownloadOllamaMessage {
     pub fn new(_cx: &mut ViewContext<Self>) -> Self {
         Self {}
     }
+
+    fn render_download_button(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        ButtonLike::new("download_ollama_button")
+            .style(ButtonStyle::Filled)
+            .size(ButtonSize::Large)
+            .layer(ElevationIndex::ModalSurface)
+            .child(Label::new("Get Ollama"))
+            .on_click(move |_, cx| cx.open_url(OLLAMA_DOWNLOAD_URL))
+    }
 }
 
-impl Render for AuthenticationPrompt {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const INSTRUCTIONS: [&str; 1] =
-            ["To use Ollama as a completion provider, Ollama must be running on your machine."];
-
+impl Render for DownloadOllamaMessage {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .p_4()
             .size_full()
-            .children(
-                INSTRUCTIONS.map(|instruction| Label::new(instruction).size(LabelSize::Small)),
+            .child(Label::new("To use Ollama models via the assistant, Ollama must be running on your machine.").size(LabelSize::Large))
+            .child(
+                h_flex()
+                    .w_full()
+                    .p_4()
+                    .justify_center()
+                    .child(
+                        self.render_download_button(cx)
+                    )
             )
             .into_any()
     }
