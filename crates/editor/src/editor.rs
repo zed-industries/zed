@@ -3978,6 +3978,12 @@ impl Editor {
                     cx.notify();
                 });
             }
+            else {
+                let _ = this.update(&mut cx, |editor, cx| {
+                    editor.signature_help_state = None;
+                    cx.notify();
+                });
+            }
         });
         self.signature_help_task.push(task);
     }

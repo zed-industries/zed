@@ -63,6 +63,7 @@ use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
+use crate::actions::ShowSignatureHelp;
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -4990,6 +4991,14 @@ impl Element for EditorElement {
                         &snapshot,
                         cx,
                     );
+
+                    self.editor.update(cx, |editor, cx| {
+                        let is_signature_help_displayed = editor.signature_help_state.is_some();
+                        if is_signature_help_displayed {
+                            editor.show_signature_help(&ShowSignatureHelp, cx);
+                        }
+                        snapshot = editor.snapshot(cx);
+                    });
 
                     self.layout_signature_help(
                         &hitbox,
