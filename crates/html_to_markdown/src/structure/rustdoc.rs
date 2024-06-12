@@ -241,6 +241,7 @@ impl RustdocItemKind {
 #[derive(Debug, Clone)]
 pub struct RustdocItem {
     pub kind: RustdocItemKind,
+    pub path: Vec<String>,
     pub name: String,
 }
 
@@ -295,6 +296,7 @@ impl RustdocItemCollector {
                 return Some(RustdocItem {
                     kind,
                     name: name.to_owned(),
+                    path: Vec::new(),
                 });
             }
         }
