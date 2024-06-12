@@ -129,7 +129,7 @@ struct RustdocItemWithHistory {
     pub history: Vec<String>,
 }
 
-pub struct CrawledCrate {
+pub struct CrateDocs {
     pub crate_root_markdown: String,
     pub items: IndexMap<RustdocItem, String>,
 }
@@ -143,7 +143,7 @@ impl RustdocCrawler {
         Self { provider }
     }
 
-    pub async fn crawl(&self, crate_name: String) -> Result<Option<CrawledCrate>> {
+    pub async fn crawl(&self, crate_name: String) -> Result<Option<CrateDocs>> {
         let Some(crate_root_content) = self.provider.fetch_page(&crate_name, None).await? else {
             return Ok(None);
         };
@@ -219,7 +219,7 @@ impl RustdocCrawler {
             }
         }
 
-        Ok(Some(CrawledCrate {
+        Ok(Some(CrateDocs {
             crate_root_markdown,
             items: docs_by_item,
         }))

@@ -43,6 +43,13 @@ pub struct RustdocItem {
 }
 
 impl RustdocItem {
+    pub fn display(&self) -> String {
+        let mut path_segments = self.path.clone();
+        path_segments.push(self.name.clone());
+
+        path_segments.join("::")
+    }
+
     pub fn url_path(&self) -> String {
         let name = &self.name;
         let mut path_components = self.path.clone();
