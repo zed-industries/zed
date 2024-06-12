@@ -23,7 +23,6 @@ pub trait RustdocProvider {
     async fn fetch_page(
         &self,
         crate_name: &str,
-        item_path: &Vec<String>,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>>;
 }
@@ -47,13 +46,14 @@ impl RustdocProvider for LocalProvider {
     async fn fetch_page(
         &self,
         crate_name: &str,
-        item_path: &Vec<String>,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>> {
         let mut local_cargo_doc_path = self.cargo_workspace_root.join("target/doc");
         local_cargo_doc_path.push(&crate_name);
-        if !item_path.is_empty() {
-            local_cargo_doc_path.push(item_path.join("/"));
+        if let Some(item) = item {
+            if !item.path.is_empty() {
+                local_cargo_doc_path.push(item.path.join("/"));
+            }
         }
         local_cargo_doc_path.push("index.html");
 
@@ -80,35 +80,15 @@ impl RustdocProvider for DocsDotRsProvider {
     async fn fetch_page(
         &self,
         crate_name: &str,
-        item_path: &Vec<String>,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>> {
         let version = "latest";
-        // TODO: This is messy. Refactor.
-        let path = match item {
-            Some(item) if item.kind == RustdocItemKind::Mod => {
-                format!(
-                    "{crate_name}/{version}/{crate_name}/{item_path}/index.html",
-                    item_path = item_path.join("/")
-                )
-            }
-            Some(item) => {
-                format!(
-                    "{crate_name}/{version}/{crate_name}/{item_path}/{path}",
-                    item_path = item_path
-                        .iter()
-                        .take(item_path.len() - 1)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join("/"),
-                    path = item.url_path()
-                )
-            }
-            _ => format!(
-                "{crate_name}/{version}/{crate_name}/{item_path}",
-                item_path = item_path.join("/")
-            ),
-        };
+        let path = format!(
+            "{crate_name}/{version}/{crate_name}{item_path}",
+            item_path = item
+                .map(|item| format!("/{}", item.url_path()))
+                .unwrap_or_default()
+        );
 
         println!("Fetching {}", &format!("https://docs.rs/{path}"));
 
@@ -154,40 +134,39 @@ impl RustdocCrawler {
         crate_name: String,
         item_path: Vec<String>,
     ) -> Result<Option<String>> {
-        let Some(page_content) = self
-            .provider
-            .fetch_page(&crate_name, &item_path, None)
-            .await?
-        else {
+        let Some(crate_index_content) = self.provider.fetch_page(&crate_name, None).await? else {
             return Ok(None);
         };
 
-        let (markdown, items) = convert_rustdoc_to_markdown(page_content.as_bytes())?;
+        let (markdown, items) = convert_rustdoc_to_markdown(crate_index_content.as_bytes())?;
 
         let mut seen_items = HashSet::default();
         let mut items_to_visit: VecDeque<RustdocItem> = VecDeque::from_iter(items);
 
         while let Some(item) = items_to_visit.pop_front() {
-            let mut item_path = item_path.clone();
-            item_path.push(item.name.clone());
-
             println!("Visiting {:?} {:?} {}", &item.kind, &item_path, &item.name);
 
-            let Some(result) = self
-                .provider
-                .fetch_page(&crate_name, &item_path, Some(&item))
-                .await?
-            else {
+            let Some(result) = self.provider.fetch_page(&crate_name, Some(&item)).await? else {
                 continue;
             };
 
-            let (markdown, items) = convert_rustdoc_to_markdown(result.as_bytes())?;
+            let (markdown, mut items) = convert_rustdoc_to_markdown(result.as_bytes())?;
 
-            seen_items.insert((item.kind, item.name.clone()));
+            seen_items.insert(item.clone());
 
-            let unseen_items = items
-                .into_iter()
-                .filter(|item| !seen_items.contains(&(item.kind, item.name.clone())));
+            for child in &mut items {
+                child.path = item.path.clone();
+                match item.kind {
+                    RustdocItemKind::Mod => {
+                        child.path.push(item.name.clone());
+                    }
+                    _ => {}
+                }
+            }
+
+            dbg!(&items);
+
+            let unseen_items = items.into_iter().filter(|item| !seen_items.contains(&item));
 
             items_to_visit.extend(unseen_items);
         }

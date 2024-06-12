@@ -1,4 +1,6 @@
-use indexmap::IndexMap;
+use std::sync::Arc;
+
+use indexmap::IndexSet;
 use strum::{EnumIter, IntoEnumIterator};
 
 use crate::html_element::HtmlElement;
@@ -238,18 +240,25 @@ impl RustdocItemKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct RustdocItem {
     pub kind: RustdocItemKind,
-    pub path: Vec<String>,
-    pub name: String,
+    /// The item path, up until the name of the item.
+    pub path: Vec<Arc<str>>,
+    /// The name of the item.
+    pub name: Arc<str>,
 }
 
 impl RustdocItem {
     pub fn url_path(&self) -> String {
         let name = &self.name;
+        let mut path_components = self.path.clone();
+
         match self.kind {
-            RustdocItemKind::Mod => format!("{name}/index.html"),
+            RustdocItemKind::Mod => {
+                path_components.push(name.clone());
+                path_components.push("index.html".into());
+            }
             RustdocItemKind::Macro
             | RustdocItemKind::Struct
             | RustdocItemKind::Enum
@@ -259,20 +268,23 @@ impl RustdocItem {
             | RustdocItemKind::TypeAlias
             | RustdocItemKind::AttributeMacro
             | RustdocItemKind::DeriveMacro => {
-                format!("{kind}.{name}.html", kind = self.kind.class())
+                path_components
+                    .push(format!("{kind}.{name}.html", kind = self.kind.class()).into());
             }
         }
+
+        path_components.join("/")
     }
 }
 
 pub struct RustdocItemCollector {
-    pub items: IndexMap<(RustdocItemKind, String), RustdocItem>,
+    pub items: IndexSet<RustdocItem>,
 }
 
 impl RustdocItemCollector {
     pub fn new() -> Self {
         Self {
-            items: IndexMap::new(),
+            items: IndexSet::new(),
         }
     }
 
@@ -282,7 +294,7 @@ impl RustdocItemCollector {
         }
 
         let href = tag.attr("href")?;
-        if href == "#" {
+        if href.starts_with("#") || href.starts_with("https://") || href.starts_with("../") {
             return None;
         }
 
@@ -295,7 +307,7 @@ impl RustdocItemCollector {
 
                 return Some(RustdocItem {
                     kind,
-                    name: name.to_owned(),
+                    name: name.into(),
                     path: Vec::new(),
                 });
             }
@@ -327,7 +339,7 @@ impl HandleTag for RustdocItemCollector {
 
                 if !is_reexport {
                     if let Some(item) = Self::parse_item(tag) {
-                        self.items.insert((item.kind, item.name.clone()), item);
+                        self.items.insert(item);
                     }
                 }
             }

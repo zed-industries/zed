@@ -11,7 +11,7 @@ use html_to_markdown::convert_rustdoc_to_markdown;
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
-use rustdoc::crawler::{DocsDotRsProvider, LocalProvider, RustdocCrawler};
+use rustdoc::crawler::{DocsDotRsProvider, RustdocCrawler};
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use util::ResultExt;
 use workspace::Workspace;
