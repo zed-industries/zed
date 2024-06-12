@@ -92,11 +92,8 @@ impl RustdocStore {
             let candidates = items
                 .iter()
                 .enumerate()
-                .filter_map(|(ix, (crate_name, item))| {
-                    Some(StringMatchCandidate::new(
-                        ix,
-                        format!("{crate_name}::{}", item.display()),
-                    ))
+                .map(|(ix, (crate_name, item))| {
+                    StringMatchCandidate::new(ix, format!("{crate_name}::{}", item.display()))
                 })
                 .collect::<Vec<_>>();
 
