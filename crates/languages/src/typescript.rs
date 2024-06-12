@@ -37,7 +37,7 @@ pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
                 VariableName::Symbol.template_value(),
                 VariableName::File.template_value(),
             ],
-            tags: vec!["ts-test".into(), "js-test".into()],
+            tags: vec!["ts-test".into(), "js-test".into(), "tsx-test".into()],
             ..TaskTemplate::default()
         },
         TaskTemplate {
