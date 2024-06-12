@@ -19,7 +19,6 @@ fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
-heed.workspace = true
 html_to_markdown.workspace = true
 http.workspace = true
 indexmap.workspace = true
