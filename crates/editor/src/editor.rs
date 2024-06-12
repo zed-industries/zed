@@ -41,6 +41,8 @@ pub mod tasks;
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+mod signature_help_popover;
+
 use ::git::diff::{DiffHunk, DiffHunkStatus};
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 pub(crate) use actions::*;
@@ -48,7 +50,7 @@ use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
 use client::{Collaborator, ParticipantIndex};
-use clock::{Lamport, ReplicaId};
+use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
@@ -63,7 +65,7 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::GitBlame;
 use git::diff_hunk_to_display;
-use gpui::{div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext, ScrollHandle};
+use gpui::{div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext};
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 use hunk_diff::ExpandedHunks;
@@ -140,8 +142,8 @@ use workspace::{
 };
 use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
-use crate::hover_links::{find_url, RangeInEditor};
-use crate::hover_popover::InfoPopover;
+use crate::hover_links::find_url;
+use crate::signature_help_popover::SignatureHelpPopover;
 
 pub const DEFAULT_MULTIBUFFER_CONTEXT: u32 = 2;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -469,7 +471,7 @@ pub struct Editor {
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     signature_help_task: Vec<Task<()>>,
-    signature_help_state: Option<InfoPopover>,
+    signature_help_state: Option<SignatureHelpPopover>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
@@ -3935,36 +3937,11 @@ impl Editor {
                 });
                 Some((maybe_markdown, language_registry))
             });
-            let maybe_info_popover = if let Ok(Some((markdown, language_registry))) = markdown_task_result {
+            let maybe_signature_help_popover = if let Ok(Some((markdown, language_registry))) = markdown_task_result {
                 let markdown = markdown.await;
                 if let Some(markdown) = markdown {
                     let parsed_markdown = parse_markdown(markdown.as_str(), &language_registry, None).await;
-                    Some(InfoPopover {
-                        symbol_range: RangeInEditor::Text(
-                            Anchor {
-                                buffer_id: Some(BufferId::new(1).unwrap()),
-                                excerpt_id: ExcerptId::min(),
-                                text_anchor: text::Anchor {
-                                    timestamp: Lamport::MIN,
-                                    offset: 0,
-                                    bias: Bias::Right,
-                                    buffer_id: Some(BufferId::new(1).unwrap())
-                                }
-                            }..
-                                Anchor {
-                                    buffer_id: Some(BufferId::new(2).unwrap()),
-                                    excerpt_id: ExcerptId::min(),
-                                    text_anchor: text::Anchor {
-                                        timestamp: Lamport::MIN,
-                                        offset: 0,
-                                        bias: Bias::Right,
-                                        buffer_id: Some(BufferId::new(2).unwrap())
-                                    }
-                                }
-                        ),
-                        parsed_content: parsed_markdown,
-                        scroll_handle: ScrollHandle::new(),
-                    })
+                    Some(SignatureHelpPopover { parsed_content: parsed_markdown })
                 }
                 else {
                     None
@@ -3972,9 +3949,9 @@ impl Editor {
             } else {
                 None
             };
-            if let Some(info_popover) = maybe_info_popover {
+            if let Some(signature_help_popover) = maybe_signature_help_popover {
                 let _ = this.update(&mut cx, |editor, cx| {
-                    editor.signature_help_state = Some(info_popover);
+                    editor.signature_help_state = Some(signature_help_popover);
                     cx.notify();
                 });
             }
