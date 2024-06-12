@@ -168,7 +168,9 @@ pub async fn stream_chat_completion(
             .lines()
             .filter_map(|line| async move {
                 match line {
-                    Ok(line) => Some(serde_json::from_str(&line).context("Failed to parse JSON")),
+                    Ok(line) => {
+                        Some(serde_json::from_str(&line).context("Unable to parse chat response"))
+                    }
                     Err(e) => Some(Err(e.into())),
                 }
             })
@@ -209,7 +211,7 @@ pub async fn get_models(
 
     if response.status().is_success() {
         let response: LocalModelsResponse =
-            serde_json::from_str(&body).context("Failed to parse JSON")?;
+            serde_json::from_str(&body).context("Unable to parse Ollama tag listing")?;
 
         Ok(response.models)
     } else {
