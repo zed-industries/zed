@@ -188,7 +188,7 @@ impl Status {
 }
 
 struct RegisteredBuffer {
-    uri: lsp::Url,
+    uri: lsp::RawUri,
     language_id: String,
     snapshot: BufferSnapshot,
     snapshot_version: i32,
@@ -644,7 +644,7 @@ impl Copilot {
             registered_buffers
                 .entry(buffer.entity_id())
                 .or_insert_with(|| {
-                    let uri: lsp::Url = uri_for_buffer(buffer, cx);
+                    let uri = uri_for_buffer(buffer, cx);
                     let language_id = id_for_language(buffer.read(cx).language());
                     let snapshot = buffer.read(cx).snapshot();
                     server
@@ -959,9 +959,9 @@ fn id_for_language(language: Option<&Arc<Language>>) -> String {
         .unwrap_or_else(|| "plaintext".to_string())
 }
 
-fn uri_for_buffer(buffer: &Model<Buffer>, cx: &AppContext) -> lsp::Url {
+fn uri_for_buffer(buffer: &Model<Buffer>, cx: &AppContext) -> lsp::RawUri {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
-        lsp::Url::from_file_path(file.abs_path(cx)).unwrap()
+        lsp::Uri::from_file_path(file.abs_path(cx)).unwrap().into()
     } else {
         format!("buffer://{}", buffer.entity_id()).parse().unwrap()
     }
@@ -1119,7 +1119,7 @@ mod tests {
                 text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri),
             }
         );
-        let buffer_1_uri = lsp::Url::from_file_path("/root/child/buffer-1").unwrap();
+        let buffer_1_uri = lsp::Uri::from_file_path("/root/child/buffer-1").unwrap();
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,

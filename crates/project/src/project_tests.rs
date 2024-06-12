@@ -379,7 +379,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            uri: lsp::Uri::from_file_path("/the-root/test.rs").unwrap(),
             version: 0,
             text: "const A: i32 = 1;".to_string(),
             language_id: "rust".to_string(),
@@ -405,7 +405,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::VersionedTextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            lsp::Uri::from_file_path("/the-root/test.rs").unwrap(),
             1
         )
     );
@@ -426,7 +426,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+            uri: lsp::Uri::from_file_path("/the-root/package.json").unwrap(),
             version: 0,
             text: "{\"a\": 1}".to_string(),
             language_id: "json".to_string(),
@@ -465,7 +465,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::VersionedTextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/test2.rs").unwrap(),
+            lsp::Uri::from_file_path("/the-root/test2.rs").unwrap(),
             1
         )
     );
@@ -480,14 +480,14 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidSaveTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap())
+        lsp::TextDocumentIdentifier::new(lsp::Uri::from_file_path("/the-root/Cargo.toml").unwrap())
     );
     assert_eq!(
         fake_json_server
             .receive_notification::<lsp::notification::DidSaveTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap())
+        lsp::TextDocumentIdentifier::new(lsp::Uri::from_file_path("/the-root/Cargo.toml").unwrap())
     );
 
     // Renames are reported only to servers matching the buffer's language.
@@ -503,7 +503,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidCloseTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/test2.rs").unwrap()),
+        lsp::TextDocumentIdentifier::new(lsp::Uri::from_file_path("/the-root/test2.rs").unwrap()),
     );
     assert_eq!(
         fake_rust_server
@@ -511,7 +511,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),
+            uri: lsp::Uri::from_file_path("/the-root/test3.rs").unwrap(),
             version: 0,
             text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
             language_id: "rust".to_string(),
@@ -553,7 +553,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidCloseTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),),
+        lsp::TextDocumentIdentifier::new(lsp::Uri::from_file_path("/the-root/test3.rs").unwrap(),),
     );
     assert_eq!(
         fake_json_server
@@ -561,7 +561,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+            uri: lsp::Uri::from_file_path("/the-root/test3.json").unwrap(),
             version: 0,
             text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
             language_id: "json".to_string(),
@@ -587,7 +587,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::VersionedTextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+            lsp::Uri::from_file_path("/the-root/test3.json").unwrap(),
             1
         )
     );
@@ -616,7 +616,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            uri: lsp::Uri::from_file_path("/the-root/test.rs").unwrap(),
             version: 0,
             text: rust_buffer.update(cx, |buffer, _| buffer.text()),
             language_id: "rust".to_string(),
@@ -637,13 +637,13 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         ],
         [
             lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+                uri: lsp::Uri::from_file_path("/the-root/package.json").unwrap(),
                 version: 0,
                 text: json_buffer.update(cx, |buffer, _| buffer.text()),
                 language_id: "json".to_string(),
             },
             lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+                uri: lsp::Uri::from_file_path("/the-root/test3.json").unwrap(),
                 version: 0,
                 text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
                 language_id: "json".to_string(),
@@ -655,7 +655,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     cx.update(|_| drop(json_buffer));
     let close_message = lsp::DidCloseTextDocumentParams {
         text_document: lsp::TextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+            lsp::Uri::from_file_path("/the-root/package.json").unwrap(),
         ),
     };
     assert_eq!(
@@ -845,15 +845,15 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         &*file_changes.lock(),
         &[
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/src/b.rs").unwrap(),
+                uri: lsp::Uri::from_file_path("/the-root/src/b.rs").unwrap(),
                 typ: lsp::FileChangeType::DELETED,
             },
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/src/c.rs").unwrap(),
+                uri: lsp::Uri::from_file_path("/the-root/src/c.rs").unwrap(),
                 typ: lsp::FileChangeType::CREATED,
             },
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/target/y/out/y2.rs").unwrap(),
+                uri: lsp::Uri::from_file_path("/the-root/target/y/out/y2.rs").unwrap(),
                 typ: lsp::FileChangeType::CREATED,
             },
         ]
@@ -1402,7 +1402,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     // Before restarting the server, report diagnostics with an unknown buffer version.
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: lsp::Uri::from_file_path("/dir/a.rs").unwrap(),
         version: Some(10000),
         diagnostics: Vec::new(),
     });
@@ -1578,7 +1578,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
     // Report some diagnostics for the initial version of the buffer
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: lsp::Uri::from_file_path("/dir/a.rs").unwrap(),
         version: Some(open_notification.text_document.version),
         diagnostics: vec![
             lsp::Diagnostic {
@@ -1664,7 +1664,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
     // Ensure overlapping diagnostics are highlighted correctly.
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: lsp::Uri::from_file_path("/dir/a.rs").unwrap(),
         version: Some(open_notification.text_document.version),
         diagnostics: vec![
             lsp::Diagnostic {
@@ -1756,7 +1756,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
     // Handle out-of-order diagnostics
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: lsp::Uri::from_file_path("/dir/a.rs").unwrap(),
         version: Some(change_notification_2.text_document.version),
         diagnostics: vec![
             lsp::Diagnostic {
@@ -2357,7 +2357,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+                lsp::Uri::from_file_path("/dir/a.rs").unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
             ),
         )))
@@ -2665,7 +2665,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                                 edit: lsp::WorkspaceEdit {
                                     changes: Some(
                                         [(
-                                            lsp::Url::from_file_path("/dir/a.ts").unwrap(),
+                                            lsp::Uri::from_file_path("/dir/a.ts").unwrap(),
                                             vec![lsp::TextEdit {
                                                 range: lsp::Range::new(
                                                     lsp::Position::new(0, 0),
@@ -3790,14 +3790,14 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
                 changes: Some(
                     [
                         (
-                            lsp::Url::from_file_path("/dir/one.rs").unwrap(),
+                            lsp::Uri::from_file_path("/dir/one.rs").unwrap(),
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                                 "THREE".to_string(),
                             )],
                         ),
                         (
-                            lsp::Url::from_file_path("/dir/two.rs").unwrap(),
+                            lsp::Uri::from_file_path("/dir/two.rs").unwrap(),
                             vec![
                                 lsp::TextEdit::new(
                                     lsp::Range::new(

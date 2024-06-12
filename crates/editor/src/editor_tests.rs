@@ -5818,7 +5818,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -5844,7 +5844,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Url::from_file_path("/file.rs").unwrap()
+            lsp::Uri::from_file_path("/file.rs").unwrap()
         );
         futures::future::pending::<()>().await;
         unreachable!()
@@ -5893,7 +5893,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
@@ -6170,7 +6170,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -6196,7 +6196,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -6246,7 +6246,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
@@ -6320,7 +6320,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -6342,7 +6342,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Url::from_file_path("/file.rs").unwrap()
+            lsp::Uri::from_file_path("/file.rs").unwrap()
         );
         futures::future::pending::<()>().await;
         unreachable!()
@@ -7985,7 +7985,7 @@ async fn go_to_prev_overlapping_diagnostic(
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path("/root/file").unwrap(),
+                        uri: lsp::Uri::from_file_path("/root/file").unwrap(),
                         version: None,
                         diagnostics: vec![
                             lsp::Diagnostic {
@@ -8357,7 +8357,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
         assert_eq!(
             params.text_document_position.text_document.uri,
-            lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            lsp::Uri::from_file_path("/a/main.rs").unwrap(),
         );
         assert_eq!(
             params.text_document_position.position,
