@@ -84,6 +84,7 @@ if [[ -n $pacman ]]; then
     alsa-lib
     fontconfig
     wayland
+    libgit2
     libxkbcommon-x11
     openssl
     zstd
