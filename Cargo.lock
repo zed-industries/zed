@@ -2150,7 +2150,6 @@ dependencies = [
  "exec",
  "fork",
  "ipc-channel",
- "libc",
  "once_cell",
  "plist",
  "release_channel",
