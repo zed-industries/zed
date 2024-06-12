@@ -3,7 +3,7 @@ use crate::{
     size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowParams, X11ClientStatePtr,
+    WindowKind, WindowParams, X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
@@ -47,6 +47,8 @@ x11rb::atom_manager! {
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
         _NET_WM_MOVERESIZE,
+        _NET_WM_WINDOW_TYPE,
+        _NET_WM_WINDOW_TYPE_NOTIFICATION,
         _GTK_SHOW_WINDOW_MENU,
     }
 }
@@ -295,6 +297,17 @@ impl X11WindowState {
                     )
                     .unwrap();
             }
+        }
+        if params.kind == WindowKind::PopUp {
+            xcb_connection
+                .change_property32(
+                    xproto::PropMode::REPLACE,
+                    x_window,
+                    atoms._NET_WM_WINDOW_TYPE,
+                    xproto::AtomEnum::ATOM,
+                    &[atoms._NET_WM_WINDOW_TYPE_NOTIFICATION],
+                )
+                .unwrap();
         }
 
         xcb_connection
