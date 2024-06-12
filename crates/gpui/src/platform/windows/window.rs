@@ -67,8 +67,8 @@ impl WindowsWindowState {
         current_cursor: HCURSOR,
         display: WindowsDisplay,
     ) -> Self {
-        let origin = point(cs.x.into(), cs.y.into());
-        let physical_size = size(cs.cx.into(), cs.cy.into());
+        let origin = point(px(cs.x as f32), px(cs.y as f32));
+        let physical_size = size(px(cs.cx as f32), px(cs.cy as f32));
         let fullscreen_restore_bounds = Bounds {
             origin,
             size: physical_size,
@@ -112,8 +112,8 @@ impl WindowsWindowState {
 
     fn bounds(&self) -> Bounds<Pixels> {
         Bounds {
-            origin: logical_point(self.origin, self.scale_factor),
-            size: logical_size(self.physical_size, self.scale_factor),
+            origin: self.origin,
+            size: self.physical_size,
         }
     }
 
@@ -128,12 +128,12 @@ impl WindowsWindowState {
         };
         let bounds = Bounds {
             origin: point(
-                DevicePixels(placement.rcNormalPosition.left),
-                DevicePixels(placement.rcNormalPosition.top),
+                px(placement.rcNormalPosition.left as f32),
+                px(placement.rcNormalPosition.top as f32),
             ),
             size: size(
-                DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
-                DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
+                px((placement.rcNormalPosition.right - placement.rcNormalPosition.left) as f32),
+                px((placement.rcNormalPosition.bottom - placement.rcNormalPosition.top) as f32),
             ),
         };
 
@@ -151,7 +151,7 @@ impl WindowsWindowState {
     /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
-        logical_size(self.physical_size, self.scale_factor)
+        self.physical_size
     }
 
     fn title_bar_padding(&self) -> Pixels {

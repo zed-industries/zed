@@ -3,8 +3,8 @@
 
 use super::{BladeAtlas, PATH_TEXTURE_FORMAT};
 use crate::{
-    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, Hsla, MonochromeSprite, Path,
-    PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    AtlasTextureKind, AtlasTile, Bounds, ContentMask, Hsla, MonochromeSprite, Path, PathId,
+    PathVertex, Pixels, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
     Underline,
 };
 use bytemuck::{Pod, Zeroable};
@@ -417,7 +417,7 @@ impl BladeRenderer {
         }
     }
 
-    pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
+    pub fn update_drawable_size(&mut self, size: Size<Pixels>) {
         let gpu_size = gpu::Extent {
             width: size.width.0 as u32,
             height: size.height.0 as u32,
