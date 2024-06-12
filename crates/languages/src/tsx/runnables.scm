@@ -9,6 +9,6 @@
                 (string_fragment) @run
             )
         )
-    ) @tsx-test
+    ) @_tsx-test
     (#set! tag tsx-test)
 )
