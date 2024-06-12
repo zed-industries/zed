@@ -12,7 +12,7 @@ mod streaming_diff;
 
 pub use assistant_panel::AssistantPanel;
 
-use assistant_settings::{AnthropicModel, AssistantSettings, CloudModel, OpenAiModel};
+use assistant_settings::{AnthropicModel, AssistantSettings, CloudModel, OllamaModel, OpenAiModel};
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
@@ -25,8 +25,8 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, fetch_command, file_command, project_command, prompt_command,
-    rustdoc_command, search_command, tabs_command,
+    active_command, default_command, fetch_command, file_command, now_command, project_command,
+    prompt_command, rustdoc_command, search_command, tabs_command,
 };
 use std::{
     fmt::{self, Display},
@@ -91,6 +91,7 @@ pub enum LanguageModel {
     Cloud(CloudModel),
     OpenAi(OpenAiModel),
     Anthropic(AnthropicModel),
+    Ollama(OllamaModel),
 }
 
 impl Default for LanguageModel {
@@ -105,6 +106,7 @@ impl LanguageModel {
             LanguageModel::OpenAi(model) => format!("openai/{}", model.id()),
             LanguageModel::Anthropic(model) => format!("anthropic/{}", model.id()),
             LanguageModel::Cloud(model) => format!("zed.dev/{}", model.id()),
+            LanguageModel::Ollama(model) => format!("ollama/{}", model.id()),
         }
     }
 
@@ -113,6 +115,7 @@ impl LanguageModel {
             LanguageModel::OpenAi(model) => model.display_name().into(),
             LanguageModel::Anthropic(model) => model.display_name().into(),
             LanguageModel::Cloud(model) => model.display_name().into(),
+            LanguageModel::Ollama(model) => model.display_name().into(),
         }
     }
 
@@ -121,6 +124,7 @@ impl LanguageModel {
             LanguageModel::OpenAi(model) => model.max_token_count(),
             LanguageModel::Anthropic(model) => model.max_token_count(),
             LanguageModel::Cloud(model) => model.max_token_count(),
+            LanguageModel::Ollama(model) => model.max_token_count(),
         }
     }
 
@@ -129,6 +133,7 @@ impl LanguageModel {
             LanguageModel::OpenAi(model) => model.id(),
             LanguageModel::Anthropic(model) => model.id(),
             LanguageModel::Cloud(model) => model.id(),
+            LanguageModel::Ollama(model) => model.id(),
         }
     }
 }
@@ -179,6 +184,7 @@ impl LanguageModelRequest {
         match &self.model {
             LanguageModel::OpenAi(_) => {}
             LanguageModel::Anthropic(_) => {}
+            LanguageModel::Ollama(_) => {}
             LanguageModel::Cloud(model) => match model {
                 CloudModel::Claude3Opus | CloudModel::Claude3Sonnet | CloudModel::Claude3Haiku => {
                     preprocess_anthropic_request(self);
@@ -307,6 +313,7 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(search_command::SearchSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
+    slash_command_registry.register_command(now_command::NowSlashCommand, true);
     slash_command_registry.register_command(rustdoc_command::RustdocSlashCommand, false);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 }

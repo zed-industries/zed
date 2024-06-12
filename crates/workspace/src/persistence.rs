@@ -468,6 +468,99 @@ impl WorkspaceDb {
         })
     }
 
+    pub(crate) fn workspace_for_dev_server_project(
+        &self,
+        dev_server_project_id: DevServerProjectId,
+    ) -> Option<SerializedWorkspace> {
+        // Note that we re-assign the workspace_id here in case it's empty
+        // and we've grabbed the most recent workspace
+        let (
+            workspace_id,
+            local_paths,
+            local_paths_order,
+            dev_server_project_id,
+            window_bounds,
+            display,
+            centered_layout,
+            docks,
+        ): (
+            WorkspaceId,
+            Option<LocalPaths>,
+            Option<LocalPathsOrder>,
+            Option<u64>,
+            Option<SerializedWindowBounds>,
+            Option<Uuid>,
+            Option<bool>,
+            DockStructure,
+        ) = self
+            .select_row_bound(sql! {
+                SELECT
+                    workspace_id,
+                    local_paths,
+                    local_paths_order,
+                    dev_server_project_id,
+                    window_state,
+                    window_x,
+                    window_y,
+                    window_width,
+                    window_height,
+                    display,
+                    centered_layout,
+                    left_dock_visible,
+                    left_dock_active_panel,
+                    left_dock_zoom,
+                    right_dock_visible,
+                    right_dock_active_panel,
+                    right_dock_zoom,
+                    bottom_dock_visible,
+                    bottom_dock_active_panel,
+                    bottom_dock_zoom
+                FROM workspaces
+                WHERE dev_server_project_id = ?
+            })
+            .and_then(|mut prepared_statement| (prepared_statement)(dev_server_project_id.0))
+            .context("No workspaces found")
+            .warn_on_err()
+            .flatten()?;
+
+        let location = if let Some(dev_server_project_id) = dev_server_project_id {
+            let dev_server_project: SerializedDevServerProject = self
+                .select_row_bound(sql! {
+                    SELECT id, path, dev_server_name
+                    FROM dev_server_projects
+                    WHERE id = ?
+                })
+                .and_then(|mut prepared_statement| (prepared_statement)(dev_server_project_id))
+                .context("No remote project found")
+                .warn_on_err()
+                .flatten()?;
+            SerializedWorkspaceLocation::DevServer(dev_server_project)
+        } else if let Some(local_paths) = local_paths {
+            match local_paths_order {
+                Some(order) => SerializedWorkspaceLocation::Local(local_paths, order),
+                None => {
+                    let order = LocalPathsOrder::default_for_paths(&local_paths);
+                    SerializedWorkspaceLocation::Local(local_paths, order)
+                }
+            }
+        } else {
+            return None;
+        };
+
+        Some(SerializedWorkspace {
+            id: workspace_id,
+            location,
+            center_group: self
+                .get_center_pane_group(workspace_id)
+                .context("Getting center group")
+                .log_err()?,
+            window_bounds,
+            centered_layout: centered_layout.unwrap_or(false),
+            display,
+            docks,
+        })
+    }
+
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {

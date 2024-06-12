@@ -24,6 +24,7 @@ chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
 feature_flags.workspace = true
+fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http.workspace = true
@@ -59,6 +60,12 @@ rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 http = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 async-native-tls = {"version" = "0.5.0", features = ["vendored"]}

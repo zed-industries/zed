@@ -80,6 +80,7 @@
       "g shift-e": ["vim::PreviousWordEnd", { "ignorePunctuation": true }],
 
       "/": "vim::Search",
+      "g /": "pane::DeploySearch",
       "?": [
         "vim::Search",
         {
@@ -384,6 +385,7 @@
       "g u": ["vim::PushOperator", "Lowercase"],
       "g shift-u": ["vim::PushOperator", "Uppercase"],
       "g ~": ["vim::PushOperator", "OppositeCase"],
+      "\"": ["vim::PushOperator", "Register"],
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       // tree-sitter related commands
@@ -398,6 +400,7 @@
   {
     "context": "Editor && vim_mode == visual && vim_operator == none && !VimWaiting",
     "bindings": {
+      "\"": ["vim::PushOperator", "Register"],
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode"
@@ -431,6 +434,27 @@
     "context": "Editor && vim_operator == d",
     "bindings": {
       "d": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == gu",
+    "bindings": {
+      "g u": "vim::CurrentLine",
+      "u": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == gU",
+    "bindings": {
+      "g shift-u": "vim::CurrentLine",
+      "shift-u": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == g~",
+    "bindings": {
+      "g ~": "vim::CurrentLine",
+      "~": "vim::CurrentLine"
     }
   },
   {

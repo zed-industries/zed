@@ -6,7 +6,7 @@ Zed includes a vim emulation layer known as "vim mode". This document aims to de
 
 Vim mode in Zed is supposed to primarily "do what you expect": it mostly tries to copy vim exactly, but will use Zed-specific functionality when available to make things smoother.
 
-This means Zed will never be 100% vim compatible, but should be 100% vim familiar! We expect that our vim mode already copes with 90% of your workflow, and we'd like to keep improving it. If you find things that you can’t yet do in vim mode, but which you rely on in your current workflow, please leave feedback in the editor itself (`:feedback`), or [file an issue](https://github.com/zed-industries/zed/issues).
+This means Zed will never be 100% Vim compatible, but should be 100% Vim familiar! We expect that our Vim mode already copes with 90% of your workflow, and we'd like to keep improving it. If you find things that you can’t yet do in Vim mode, but which you rely on in your current workflow, please leave feedback in the editor itself (`:feedback`), or [file an issue](https://github.com/zed-industries/zed/issues).
 
 ## Zed-specific features
 
@@ -48,12 +48,14 @@ g <   The same, but backwards
 g a   Add a visual selection for every copy of the current word
 
 # Pane management
+g /        Open a project-wide search
 g <space>  Open the current search excerpt
 <ctrl-w> <space>  Open the current search excerpt in a split
 <ctrl-w> g d      Go to definition in a split
 <ctrl-w> g D      Go to type definition in a split
 
 # Insert mode
+i a / a a      Select the function argument the cursor is in
 ctrl-x ctrl-o  Open the completion menu
 ctrl-x ctrl-c  Request GitHub Copilot suggestion (if configured)
 ctrl-x ctrl-a  Open the inline AI assistant (if configured)
@@ -213,9 +215,9 @@ Some vim settings are available to modify the default vim behavior:
 ```json
 {
   "vim": {
-    // "always": use system clipboard
-    // "never": don't use system clipboard
-    // "on_yank": use system clipboard for yank operations
+    // "always": use system clipboard when no register is specified
+    // "never": don't use system clipboard unless "+ or "* is specified
+    // "on_yank": use system clipboard for yank operations when no register is specified
     "use_system_clipboard": "always",
     // Lets `f` and `t` motions extend across multiple lines
     "use_multiline_find": true

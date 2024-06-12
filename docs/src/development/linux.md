@@ -40,31 +40,41 @@ docker compose up -d
 
 Once you have the dependencies installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
 
-For a debug build:
+For a debug build of the editor:
 
 ```
 cargo run
 ```
-
-For a release build:
-
-```
-cargo run --release
-```
-
-For a release package:
-
-```
-cargo build --release
-```
-
-the binary can be found in `target/release` folder.
 
 And to run the tests:
 
 ```
 cargo test --workspace
 ```
+
+In release mode, the primary user interface is the `cli` crate. You can run it in development with:
+
+```
+cargo run -p cli
+```
+
+## Installing a development build
+
+You can install a local build on your machine with:
+
+```
+./script/install-linux
+```
+
+This will build zed and the cli in release mode and make them available at `~/.local/bin/zed`, installing .desktop files to `~/.local/share`.
+
+If you'd like to install things to a different prefix you can use:
+
+```
+./script/install-linux /usr/
+```
+
+In this case the binary will be `/usr/bin/zed` and the `.desktop` file in `/usr/share`. The script should prompt for sudo as required so that the rust build runs as the current user.
 
 ## Wayland & X11
 
@@ -92,7 +102,7 @@ At Zed, our priority has been to move fast and bring the latest technology to ou
 However, we realize that many distros have other priorities. We want to work with everyone to bring Zed to their favorite platforms. But there is a long way to go:
 
 * Zed is a fast moving early-phase project. We typically release 2-3 builds a week to fix user-reported issues and release major features.
-* There are a couple of other `zed` binaries that may be present on linux systems ([1](https://openzfs.github.io/openzfs-docs/man/v2.2/8/zed.8.html), [2](https://zed.brimdata.io/docs/commands/zed)).
+* There are a couple of other `zed` binaries that may be present on linux systems ([1](https://openzfs.github.io/openzfs-docs/man/v2.2/8/zed.8.html), [2](https://zed.brimdata.io/docs/commands/zed)). If you want to rename our CLI binary because of these issues, we suggest `zedit`, `zeditor`, or `zed-cli`.
 * Zed automatically installs the correct version of common developer tools in the same way as rustup/rbenv/pyenv, etc. We understand that this is contentious, [see here](https://github.com/zed-industries/zed/issues/12589).
 * We allow users to install extensions on their own and from [zed-industries/extensions](https://github.com/zed-industries/extensions). These extensions may install further tooling as needed, such as language servers. In the long run we would like to make this safer, [see here](https://github.com/zed-industries/zed/issues/12358).
 * Zed connects to a number of online services by default (AI, telemetry, collaboration). AI and our telemetry can be disabled by your users with their own zed settings or by patching our [default settings file](https://github.com/zed-industries/zed/blob/main/assets/settings/default.json).

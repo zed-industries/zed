@@ -3,7 +3,7 @@ use crate::{
     size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowParams, X11ClientStatePtr,
+    WindowKind, WindowParams, X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
@@ -47,6 +47,8 @@ x11rb::atom_manager! {
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
         _NET_WM_MOVERESIZE,
+        _NET_WM_WINDOW_TYPE,
+        _NET_WM_WINDOW_TYPE_NOTIFICATION,
         _GTK_SHOW_WINDOW_MENU,
     }
 }
@@ -154,6 +156,7 @@ pub struct Callbacks {
 }
 
 pub struct X11WindowState {
+    pub destroyed: bool,
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
@@ -216,7 +219,7 @@ impl X11WindowState {
         atoms: &XcbAtoms,
         scale_factor: f32,
         appearance: WindowAppearance,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let x_screen_index = params
             .display_id
             .map_or(x_main_screen_index, |did| did.0 as usize);
@@ -248,8 +251,7 @@ impl X11WindowState {
             xcb_connection
                 .create_colormap(xproto::ColormapAlloc::NONE, id, visual_set.root, visual.id)
                 .unwrap()
-                .check()
-                .unwrap();
+                .check()?;
             id
         };
 
@@ -281,8 +283,7 @@ impl X11WindowState {
                 &win_aux,
             )
             .unwrap()
-            .check()
-            .unwrap();
+            .check()?;
 
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
@@ -296,6 +297,17 @@ impl X11WindowState {
                     )
                     .unwrap();
             }
+        }
+        if params.kind == WindowKind::PopUp {
+            xcb_connection
+                .change_property32(
+                    xproto::PropMode::REPLACE,
+                    x_window,
+                    atoms._NET_WM_WINDOW_TYPE,
+                    xproto::AtomEnum::ATOM,
+                    &[atoms._NET_WM_WINDOW_TYPE_NOTIFICATION],
+                )
+                .unwrap();
         }
 
         xcb_connection
@@ -345,7 +357,7 @@ impl X11WindowState {
                     },
                 )
             }
-            .unwrap(),
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
         );
 
         let config = BladeSurfaceConfig {
@@ -355,7 +367,7 @@ impl X11WindowState {
             transparent: params.window_background != WindowBackgroundAppearance::Opaque,
         };
 
-        Self {
+        Ok(Self {
             client,
             executor,
             display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
@@ -368,7 +380,8 @@ impl X11WindowState {
             input_handler: None,
             appearance,
             handle,
-        }
+            destroyed: false,
+        })
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -393,6 +406,10 @@ impl Drop for X11Window {
             .destroy_window(self.0.x_window)
             .unwrap();
         self.0.xcb_connection.flush().unwrap();
+
+        // Mark window as destroyed so that we can filter out when X11 events
+        // for it still come in.
+        state.destroyed = true;
 
         let this_ptr = self.0.clone();
         let client_ptr = state.client.clone();
@@ -426,8 +443,8 @@ impl X11Window {
         atoms: &XcbAtoms,
         scale_factor: f32,
         appearance: WindowAppearance,
-    ) -> Self {
-        Self(X11WindowStatePtr {
+    ) -> anyhow::Result<Self> {
+        Ok(Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
                 handle,
                 client,
@@ -439,11 +456,11 @@ impl X11Window {
                 atoms,
                 scale_factor,
                 appearance,
-            ))),
+            )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
             x_window,
-        })
+        }))
     }
 
     fn set_wm_hints(&self, wm_hint_property_state: WmHintPropertyState, prop1: u32, prop2: u32) {

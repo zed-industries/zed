@@ -161,10 +161,7 @@ mod linux {
         env,
         ffi::OsString,
         io,
-        os::{
-            linux::net::SocketAddrExt,
-            unix::net::{SocketAddr, UnixDatagram},
-        },
+        os::unix::net::{SocketAddr, UnixDatagram},
         path::{Path, PathBuf},
         process::{self, ExitStatus},
         thread,
@@ -175,6 +172,7 @@ mod linux {
     use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
     use fork::Fork;
     use once_cell::sync::Lazy;
+    use util::paths;
 
     use crate::{Detect, InstalledApp};
 
@@ -223,12 +221,9 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let uid: u32 = unsafe { libc::getuid() };
-            let sock_addr =
-                SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL, uid))?;
-
+            let sock_path = paths::SUPPORT_DIR.join(format!("zed-{}.sock", *RELEASE_CHANNEL));
             let sock = UnixDatagram::unbound()?;
-            if sock.connect_addr(&sock_addr).is_err() {
+            if sock.connect(&sock_path).is_err() {
                 self.boot_background(ipc_url)?;
             } else {
                 sock.send(ipc_url.as_bytes())?;

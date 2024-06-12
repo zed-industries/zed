@@ -10,7 +10,11 @@ use serde::Deserialize;
 use settings::Settings;
 use workspace::Workspace;
 
-use crate::{state::Mode, utils::copy_selections_content, UseSystemClipboard, Vim, VimSettings};
+use crate::{
+    state::Mode,
+    utils::{copy_selections_content, SYSTEM_CLIPBOARD},
+    UseSystemClipboard, Vim, VimSettings,
+};
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -29,7 +33,7 @@ pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>
 
 fn system_clipboard_is_newer(vim: &Vim, cx: &mut AppContext) -> bool {
     cx.read_from_clipboard().is_some_and(|item| {
-        if let Some(last_state) = vim.workspace_state.registers.get(".system.") {
+        if let Some(last_state) = vim.workspace_state.registers.get(&SYSTEM_CLIPBOARD) {
             last_state != item.text()
         } else {
             true
@@ -46,33 +50,36 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
-                let (clipboard_text, clipboard_selections): (String, Option<_>) =
-                    if VimSettings::get_global(cx).use_system_clipboard == UseSystemClipboard::Never
-                        || VimSettings::get_global(cx).use_system_clipboard
-                            == UseSystemClipboard::OnYank
-                            && !system_clipboard_is_newer(vim, cx)
-                    {
-                        (
-                            vim.workspace_state
-                                .registers
-                                .get("\"")
-                                .cloned()
-                                .unwrap_or_else(|| "".to_string()),
-                            None,
-                        )
+                let (clipboard_text, clipboard_selections): (String, Option<_>) = if let Some(
+                    register,
+                ) =
+                    vim.update_state(|state| state.selected_register.take())
+                {
+                    (
+                        vim.read_register(register, Some(editor), cx)
+                            .unwrap_or_default(),
+                        None,
+                    )
+                } else if VimSettings::get_global(cx).use_system_clipboard
+                    == UseSystemClipboard::Never
+                    || VimSettings::get_global(cx).use_system_clipboard
+                        == UseSystemClipboard::OnYank
+                        && !system_clipboard_is_newer(vim, cx)
+                {
+                    (vim.read_register('"', None, cx).unwrap_or_default(), None)
+                } else {
+                    if let Some(item) = cx.read_from_clipboard() {
+                        let clipboard_selections = item
+                            .metadata::<Vec<ClipboardSelection>>()
+                            .filter(|clipboard_selections| {
+                                clipboard_selections.len() > 1
+                                    && vim.state().mode != Mode::VisualLine
+                            });
+                        (item.text().clone(), clipboard_selections)
                     } else {
-                        if let Some(item) = cx.read_from_clipboard() {
-                            let clipboard_selections = item
-                                .metadata::<Vec<ClipboardSelection>>()
-                                .filter(|clipboard_selections| {
-                                    clipboard_selections.len() > 1
-                                        && vim.state().mode != Mode::VisualLine
-                                });
-                            (item.text().clone(), clipboard_selections)
-                        } else {
-                            ("".into(), None)
-                        }
-                    };
+                        ("".into(), None)
+                    }
+                };
 
                 if clipboard_text.is_empty() {
                     return;
@@ -605,5 +612,120 @@ mod test {
             twotwotwotwˇo
             three
         "});
+    }
+
+    #[gpui::test]
+    async fn test_numbered_registers(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            });
+        });
+
+        cx.set_shared_state(indoc! {"
+                The quick brown
+                fox jˇumps over
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("y y \" 0 p").await;
+        cx.shared_register('0').await.assert_eq("fox jumps over\n");
+        cx.shared_register('"').await.assert_eq("fox jumps over\n");
+
+        cx.shared_state().await.assert_eq(indoc! {"
+                The quick brown
+                fox jumps over
+                ˇfox jumps over
+                the lazy dog"});
+        cx.simulate_shared_keystrokes("k k d d").await;
+        cx.shared_register('0').await.assert_eq("fox jumps over\n");
+        cx.shared_register('1').await.assert_eq("The quick brown\n");
+        cx.shared_register('"').await.assert_eq("The quick brown\n");
+
+        cx.simulate_shared_keystrokes("d d shift-g d d").await;
+        cx.shared_register('0').await.assert_eq("fox jumps over\n");
+        cx.shared_register('3').await.assert_eq("The quick brown\n");
+        cx.shared_register('2').await.assert_eq("fox jumps over\n");
+        cx.shared_register('1').await.assert_eq("the lazy dog\n");
+
+        cx.shared_state().await.assert_eq(indoc! {"
+        ˇfox jumps over"});
+
+        cx.simulate_shared_keystrokes("d d \" 3 p p \" 1 p").await;
+        cx.set_shared_state(indoc! {"
+                The quick brown
+                fox jumps over
+                ˇthe lazy dog"})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_named_registers(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            });
+        });
+
+        cx.set_shared_state(indoc! {"
+                The quick brown
+                fox jˇumps over
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("\" a d a w").await;
+        cx.shared_register('a').await.assert_eq("jumps ");
+        cx.simulate_shared_keystrokes("\" shift-a d i w").await;
+        cx.shared_register('a').await.assert_eq("jumps over");
+        cx.simulate_shared_keystrokes("\" a p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                The quick brown
+                fox jumps oveˇr
+                the lazy dog"});
+        cx.simulate_shared_keystrokes("\" a d a w").await;
+        cx.shared_register('a').await.assert_eq(" over");
+    }
+
+    #[gpui::test]
+    async fn test_special_registers(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            });
+        });
+
+        cx.set_shared_state(indoc! {"
+                The quick brown
+                fox jˇumps over
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d i w").await;
+        cx.shared_register('-').await.assert_eq("jumps");
+        cx.simulate_shared_keystrokes("\" _ d d").await;
+        cx.shared_register('_').await.assert_eq("");
+
+        cx.shared_state().await.assert_eq(indoc! {"
+                The quick brown
+                the ˇlazy dog"});
+        cx.simulate_shared_keystrokes("\" \" d ^").await;
+        cx.shared_register('0').await.assert_eq("the ");
+        cx.shared_register('"').await.assert_eq("the ");
+
+        cx.simulate_shared_keystrokes("^ \" + d $").await;
+        cx.shared_clipboard().await.assert_eq("lazy dog");
+        cx.shared_register('"').await.assert_eq("lazy dog");
+
+        // not testing nvim as it doesn't have a filename
+        cx.simulate_keystrokes("\" % p");
+        cx.assert_state(
+            indoc! {"
+                    The quick brown
+                    dir/file.rˇs"},
+            Mode::Normal,
+        );
     }
 }

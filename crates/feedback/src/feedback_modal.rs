@@ -141,15 +141,15 @@ impl FeedbackModal {
                 return;
             }
 
+            let system_specs = SystemSpecs::new(cx);
             cx.spawn(|workspace, mut cx| async move {
                 let markdown = markdown.await.log_err();
                 let buffer = project.update(&mut cx, |project, cx| {
                     project.create_local_buffer("", markdown, cx)
                 })?;
+                let system_specs = system_specs.await;
 
                 workspace.update(&mut cx, |workspace, cx| {
-                    let system_specs = SystemSpecs::new(cx);
-
                     workspace.toggle_modal(cx, move |cx| {
                         FeedbackModal::new(system_specs, project, buffer, cx)
                     });

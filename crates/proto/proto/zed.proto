@@ -220,7 +220,7 @@ message Envelope {
 
         MultiLspQuery multi_lsp_query = 175;
         MultiLspQueryResponse multi_lsp_query_response = 176;
-        RestartLanguageServers restart_language_servers = 208;  // current max
+        RestartLanguageServers restart_language_servers = 208;
 
         CreateDevServerProject create_dev_server_project = 177;
         CreateDevServerProjectResponse create_dev_server_project_response = 188;
@@ -253,6 +253,9 @@ message Envelope {
         TaskContext task_context = 204;
         TaskTemplatesResponse task_templates_response = 205;
         TaskTemplates task_templates = 206;
+
+        LinkedEditingRange linked_editing_range = 209;
+        LinkedEditingRangeResponse linked_editing_range_response = 210; // current max
     }
 
     reserved 158 to 161;
@@ -985,6 +988,24 @@ message OnTypeFormatting {
 
 message OnTypeFormattingResponse {
     Transaction transaction = 1;
+}
+
+
+message LinkedEditingRange {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message AnchorRange {
+    Anchor start = 1;
+    Anchor end = 2;
+}
+
+message LinkedEditingRangeResponse {
+    repeated AnchorRange items = 1;
+    repeated VectorClockEntry version = 4;
 }
 
 message InlayHints {

@@ -116,6 +116,8 @@ pub struct LanguageSettings {
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
     pub code_actions_on_format: HashMap<String, bool>,
+    /// Whether to perform linked edits
+    pub linked_edits: bool,
 }
 
 impl LanguageSettings {
@@ -326,6 +328,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
     pub code_actions_on_format: Option<HashMap<String, bool>>,
+    /// Whether to perform linked edits of associated ranges, if the language server supports it.
+    /// For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
+    ///
+    /// Default: true
+    pub linked_edits: Option<bool>,
 }
 
 /// The contents of the inline completion settings.
@@ -785,6 +792,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         &mut settings.code_actions_on_format,
         src.code_actions_on_format.clone(),
     );
+    merge(&mut settings.linked_edits, src.linked_edits);
 
     merge(
         &mut settings.preferred_line_length,

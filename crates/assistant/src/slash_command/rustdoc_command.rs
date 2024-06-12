@@ -42,10 +42,9 @@ impl RustdocSlashCommand {
             local_cargo_doc_path.push("index.html");
 
             if let Ok(contents) = fs.load(&local_cargo_doc_path).await {
-                return Ok((
-                    RustdocSource::Local,
-                    convert_rustdoc_to_markdown(contents.as_bytes())?,
-                ));
+                let (markdown, _items) = convert_rustdoc_to_markdown(contents.as_bytes())?;
+
+                return Ok((RustdocSource::Local, markdown));
             }
         }
 
@@ -78,10 +77,9 @@ impl RustdocSlashCommand {
             );
         }
 
-        Ok((
-            RustdocSource::DocsDotRs,
-            convert_rustdoc_to_markdown(&body[..])?,
-        ))
+        let (markdown, _items) = convert_rustdoc_to_markdown(&body[..])?;
+
+        Ok((RustdocSource::DocsDotRs, markdown))
     }
 
     fn path_to_cargo_toml(project: Model<Project>, cx: &mut AppContext) -> Option<Arc<Path>> {

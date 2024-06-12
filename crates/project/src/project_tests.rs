@@ -1,7 +1,7 @@
 use crate::{Event, *};
 use fs::FakeFs;
 use futures::{future, StreamExt};
-use gpui::{AppContext, UpdateGlobal};
+use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
@@ -5135,7 +5135,7 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        release_channel::init("0.0.0", cx);
+        release_channel::init(SemanticVersion::default(), cx);
         language::init(cx);
         Project::init_settings(cx);
     });

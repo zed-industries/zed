@@ -107,7 +107,7 @@ impl WaylandWindowState {
         client: WaylandClientStatePtr,
         globals: Globals,
         options: WindowParams,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let bounds = options.bounds.map(|p| p.0 as u32);
 
         let raw = RawWindow {
@@ -130,7 +130,7 @@ impl WaylandWindowState {
                     },
                 )
             }
-            .unwrap(),
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
         );
         let config = BladeSurfaceConfig {
             size: gpu::Extent {
@@ -141,7 +141,7 @@ impl WaylandWindowState {
             transparent: options.window_background != WindowBackgroundAppearance::Opaque,
         };
 
-        Self {
+        Ok(Self {
             xdg_surface,
             acknowledged_first_configure: false,
             surface,
@@ -164,7 +164,7 @@ impl WaylandWindowState {
             appearance,
             handle,
             active: false,
-        }
+        })
     }
 }
 
@@ -224,7 +224,7 @@ impl WaylandWindow {
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
-    ) -> (Self, ObjectId) {
+    ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let xdg_surface = globals
             .wm_base
@@ -267,14 +267,14 @@ impl WaylandWindow {
                 client,
                 globals,
                 params,
-            ))),
+            )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
         });
 
         // Kick things off
         surface.commit();
 
-        (this, surface.id())
+        Ok((this, surface.id()))
     }
 }
 

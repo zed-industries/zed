@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
+use client::telemetry;
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{App, AppContext, SemanticVersion};
+use gpui::{AppContext, SemanticVersion};
 use http::Method;
 use isahc::config::Configurable;
 
@@ -26,9 +27,12 @@ use util::{paths, ResultExt};
 use crate::stdout_is_a_pty;
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
-pub fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: String) {
+pub fn init_panic_hook(
+    installation_id: Option<String>,
+    app_version: SemanticVersion,
+    session_id: String,
+) {
     let is_pty = stdout_is_a_pty();
-    let app_metadata = app.metadata();
 
     panic::set_hook(Box::new(move |info| {
         let prior_panic_count = PANIC_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -64,14 +68,6 @@ pub fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: S
             std::process::exit(-1);
         }
 
-        let app_version = if let Some(version) = app_metadata.app_version {
-            version.to_string()
-        } else {
-            option_env!("CARGO_PKG_VERSION")
-                .unwrap_or("dev")
-                .to_string()
-        };
-
         let backtrace = Backtrace::new();
         let mut backtrace = backtrace
             .frames()
@@ -101,11 +97,8 @@ pub fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: S
             }),
             app_version: app_version.to_string(),
             release_channel: RELEASE_CHANNEL.display_name().into(),
-            os_name: app_metadata.os_name.into(),
-            os_version: app_metadata
-                .os_version
-                .as_ref()
-                .map(SemanticVersion::to_string),
+            os_name: telemetry::os_name(),
+            os_version: Some(telemetry::os_version()),
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
             backtrace,
@@ -182,7 +175,6 @@ pub fn monitor_main_thread_hangs(
     let foreground_executor = cx.foreground_executor();
     let background_executor = cx.background_executor();
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
-    let metadata = cx.app_metadata();
 
     // Initialize SIGUSR2 handler to send a backrace to a channel.
     let (backtrace_tx, backtrace_rx) = mpsc::channel();
@@ -258,9 +250,14 @@ pub fn monitor_main_thread_hangs(
         })
         .detach();
 
+    let app_version = release_channel::AppVersion::global(cx);
+    let os_name = client::telemetry::os_name();
+
     background_executor
         .clone()
         .spawn(async move {
+            let os_version = client::telemetry::os_version();
+
             loop {
                 while let Some(_) = backtrace_rx.recv().ok() {
                     if !telemetry_settings.diagnostics {
@@ -306,9 +303,9 @@ pub fn monitor_main_thread_hangs(
 
                     let report = HangReport {
                         backtrace,
-                        app_version: metadata.app_version,
-                        os_name: metadata.os_name.to_owned(),
-                        os_version: metadata.os_version,
+                        app_version: Some(app_version),
+                        os_name: os_name.clone(),
+                        os_version: Some(os_version.clone()),
                         architecture: env::consts::ARCH.into(),
                         installation_id: installation_id.clone(),
                     };
