@@ -229,6 +229,7 @@ pub async fn preload_model(client: &dyn HttpClient, api_url: &str, model: &str) 
         .body(AsyncBody::from(serde_json::to_string(
             &serde_json::json!({
                 "model": model,
+                "keep_alive": "15m",
             }),
         )?))?;
 
