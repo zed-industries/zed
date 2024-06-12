@@ -34,6 +34,7 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{prelude::*, Tooltip};
+use util::RangeExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
 pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
@@ -310,6 +311,18 @@ impl InlineAssistant {
             EditorEvent::Saved => {
                 if let CodegenStatus::Done = &assist.codegen.read(cx).status {
                     self.finish_inline_assist(assist_id, false, cx)
+                }
+            }
+            EditorEvent::Edited { transaction_id } => {
+                let buffer = editor.read(cx).buffer().read(cx);
+                let edited_ranges =
+                    buffer.edited_ranges_for_transaction::<usize>(*transaction_id, cx);
+                let assist_range = assist.codegen.read(cx).range().to_offset(&buffer.read(cx));
+                if edited_ranges
+                    .iter()
+                    .any(|range| range.overlaps(&assist_range))
+                {
+                    self.finish_inline_assist(assist_id, false, cx);
                 }
             }
             _ => {}
