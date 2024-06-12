@@ -120,7 +120,8 @@ impl RustdocProvider for DocsDotRsProvider {
     }
 }
 
-pub struct RustdocItemWithHistory {
+#[derive(Debug)]
+struct RustdocItemWithHistory {
     pub item: RustdocItem,
     #[cfg(debug_assertions)]
     pub history: Vec<String>,
@@ -142,7 +143,7 @@ impl RustdocCrawler {
 
         let (_markdown, items) = convert_rustdoc_to_markdown(crate_index_content.as_bytes())?;
 
-        let mut seen_items = HashSet::default();
+        let mut seen_items = HashSet::from_iter(items.clone());
         let mut items_to_visit: VecDeque<RustdocItemWithHistory> =
             VecDeque::from_iter(items.into_iter().map(|item| RustdocItemWithHistory {
                 item,
@@ -152,6 +153,7 @@ impl RustdocCrawler {
 
         while let Some(item_with_history) = items_to_visit.pop_front() {
             let item = &item_with_history.item;
+
             println!("Visiting {:?} {:?} {}", &item.kind, &item.path, &item.name);
 
             let Some(result) = self
@@ -176,23 +178,25 @@ impl RustdocCrawler {
                 continue;
             };
 
-            let (_markdown, mut items) = convert_rustdoc_to_markdown(result.as_bytes())?;
+            let (_markdown, referenced_items) = convert_rustdoc_to_markdown(result.as_bytes())?;
 
-            seen_items.insert(item.clone());
+            let parent_item = item;
+            for mut item in referenced_items {
+                if seen_items.contains(&item) {
+                    continue;
+                }
 
-            for child in &mut items {
-                child.path.extend(item.path.clone());
-                match item.kind {
+                seen_items.insert(item.clone());
+
+                item.path.extend(parent_item.path.clone());
+                match parent_item.kind {
                     RustdocItemKind::Mod => {
-                        child.path.push(item.name.clone());
+                        item.path.push(parent_item.name.clone());
                     }
                     _ => {}
                 }
-            }
 
-            let unseen_items = items
-                .into_iter()
-                .map(|item| RustdocItemWithHistory {
+                items_to_visit.push_back(RustdocItemWithHistory {
                     #[cfg(debug_assertions)]
                     history: {
                         let mut history = item_with_history.history.clone();
@@ -200,10 +204,8 @@ impl RustdocCrawler {
                         history
                     },
                     item,
-                })
-                .filter(|item| !seen_items.contains(&item.item));
-
-            items_to_visit.extend(unseen_items);
+                });
+            }
         }
 
         Ok(Some(String::new()))
