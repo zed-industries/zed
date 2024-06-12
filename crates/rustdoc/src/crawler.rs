@@ -51,11 +51,12 @@ impl RustdocProvider for LocalProvider {
         let mut local_cargo_doc_path = self.cargo_workspace_root.join("target/doc");
         local_cargo_doc_path.push(&crate_name);
         if let Some(item) = item {
-            if !item.path.is_empty() {
-                local_cargo_doc_path.push(item.path.join("/"));
-            }
+            local_cargo_doc_path.push(item.url_path());
+        } else {
+            local_cargo_doc_path.push("index.html");
         }
-        local_cargo_doc_path.push("index.html");
+
+        println!("Fetching {}", local_cargo_doc_path.display());
 
         let Ok(contents) = self.fs.load(&local_cargo_doc_path).await else {
             return Ok(None);
@@ -141,7 +142,11 @@ impl RustdocCrawler {
             return Ok(None);
         };
 
-        let (_markdown, items) = convert_rustdoc_to_markdown(crate_index_content.as_bytes())?;
+        let mut all_markdown = String::new();
+
+        let (markdown, items) = convert_rustdoc_to_markdown(crate_index_content.as_bytes())?;
+
+        all_markdown.push_str(&markdown);
 
         let mut seen_items = HashSet::from_iter(items.clone());
         let mut items_to_visit: VecDeque<RustdocItemWithHistory> =
@@ -178,7 +183,9 @@ impl RustdocCrawler {
                 continue;
             };
 
-            let (_markdown, referenced_items) = convert_rustdoc_to_markdown(result.as_bytes())?;
+            let (markdown, referenced_items) = convert_rustdoc_to_markdown(result.as_bytes())?;
+
+            all_markdown.push_str(&markdown);
 
             let parent_item = item;
             for mut item in referenced_items {
@@ -208,6 +215,6 @@ impl RustdocCrawler {
             }
         }
 
-        Ok(Some(String::new()))
+        Ok(Some(all_markdown))
     }
 }

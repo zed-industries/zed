@@ -33,15 +33,20 @@ impl RustdocSlashCommand {
         crate_name: String,
         module_path: Vec<String>,
         path_to_cargo_toml: Option<&Path>,
+        include_all: bool,
     ) -> Result<(RustdocSource, String)> {
         let cargo_workspace_root = path_to_cargo_toml.and_then(|path| path.parent());
         if let Some(cargo_workspace_root) = cargo_workspace_root {
-            let crawler = RustdocCrawler::new(Box::new(LocalProvider::new(
-                fs.clone(),
-                cargo_workspace_root.to_path_buf(),
-            )));
+            if include_all {
+                let crawler = RustdocCrawler::new(Box::new(LocalProvider::new(
+                    fs.clone(),
+                    cargo_workspace_root.to_path_buf(),
+                )));
 
-            let result = crawler.crawl(crate_name.clone()).await.log_err().flatten();
+                if let Some(result) = crawler.crawl(crate_name.clone()).await.log_err().flatten() {
+                    return Ok((RustdocSource::Local, result));
+                }
+            }
 
             let mut local_cargo_doc_path = cargo_workspace_root.join("target/doc");
             local_cargo_doc_path.push(&crate_name);
@@ -149,7 +154,21 @@ impl SlashCommand for RustdocSlashCommand {
         let project = workspace.read(cx).project().clone();
         let fs = project.read(cx).fs().clone();
         let http_client = workspace.read(cx).client().http_client();
-        let mut path_components = argument.split("::");
+
+        let mut item_path = String::new();
+        let mut include_all = false;
+
+        let args = argument.split(' ').map(|word| word.trim());
+        for arg in args {
+            if arg == "--all" {
+                include_all = true;
+                continue;
+            }
+
+            item_path.push_str(arg);
+        }
+
+        let mut path_components = item_path.split("::");
         let crate_name = match path_components
             .next()
             .ok_or_else(|| anyhow!("missing crate name"))
@@ -170,6 +189,7 @@ impl SlashCommand for RustdocSlashCommand {
                     crate_name,
                     module_path,
                     path_to_cargo_toml.as_deref(),
+                    include_all,
                 )
                 .await
             }
