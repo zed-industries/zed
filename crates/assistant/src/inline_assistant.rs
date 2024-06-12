@@ -103,7 +103,7 @@ impl InlineAssistant {
             }
         };
 
-        let inline_assist_id = self.next_assist_id.post_inc();
+        let assist_id = self.next_assist_id.post_inc();
         let codegen = cx.new_model(|cx| {
             Codegen::new(
                 editor.read(cx).buffer().clone(),
@@ -116,7 +116,7 @@ impl InlineAssistant {
         let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
         let prompt_editor = cx.new_view(|cx| {
             InlineAssistEditor::new(
-                inline_assist_id,
+                assist_id,
                 gutter_dimensions.clone(),
                 self.prompt_history.clone(),
                 codegen.clone(),
@@ -164,7 +164,7 @@ impl InlineAssistant {
         });
 
         self.pending_assists.insert(
-            inline_assist_id,
+            assist_id,
             PendingInlineAssist {
                 include_context,
                 editor: editor.downgrade(),
@@ -182,21 +182,10 @@ impl InlineAssistant {
                             this.handle_inline_assistant_event(inline_assist_editor, event, cx)
                         })
                     }),
-                    cx.subscribe(editor, {
-                        let inline_assist_editor = prompt_editor.downgrade();
-                        move |editor, event, cx| {
-                            if let Some(inline_assist_editor) = inline_assist_editor.upgrade() {
-                                if let EditorEvent::SelectionsChanged { local } = event {
-                                    if *local
-                                        && inline_assist_editor
-                                            .focus_handle(cx)
-                                            .contains_focused(cx)
-                                    {
-                                        cx.focus_view(&editor);
-                                    }
-                                }
-                            }
-                        }
+                    cx.subscribe(editor, move |editor, event, cx| {
+                        InlineAssistant::update_global(cx, |this, cx| {
+                            this.handle_editor_event(assist_id, editor, event, cx)
+                        })
                     }),
                     cx.observe(&codegen, {
                         let editor = editor.downgrade();
@@ -204,19 +193,17 @@ impl InlineAssistant {
                             if let Some(editor) = editor.upgrade() {
                                 InlineAssistant::update_global(cx, |this, cx| {
                                     this.update_editor_highlights(&editor, cx);
-                                    this.update_editor_blocks(&editor, inline_assist_id, cx);
+                                    this.update_editor_blocks(&editor, assist_id, cx);
                                 })
                             }
                         }
                     }),
                     cx.subscribe(&codegen, move |codegen, event, cx| {
                         InlineAssistant::update_global(cx, |this, cx| match event {
-                            CodegenEvent::Undone => {
-                                this.finish_inline_assist(inline_assist_id, false, cx)
-                            }
+                            CodegenEvent::Undone => this.finish_inline_assist(assist_id, false, cx),
                             CodegenEvent::Finished => {
                                 let pending_assist = if let Some(pending_assist) =
-                                    this.pending_assists.get(&inline_assist_id)
+                                    this.pending_assists.get(&assist_id)
                                 {
                                     pending_assist
                                 } else {
@@ -238,7 +225,7 @@ impl InlineAssistant {
                                                 let id = NotificationId::identified::<
                                                     InlineAssistantError,
                                                 >(
-                                                    inline_assist_id.0
+                                                    assist_id.0
                                                 );
 
                                                 workspace.show_toast(Toast::new(id, error), cx);
@@ -248,7 +235,7 @@ impl InlineAssistant {
                                 }
 
                                 if pending_assist.editor_decorations.is_none() {
-                                    this.finish_inline_assist(inline_assist_id, false, cx);
+                                    this.finish_inline_assist(assist_id, false, cx);
                                 }
                             }
                         })
@@ -264,7 +251,7 @@ impl InlineAssistant {
                 assist_ids: Vec::new(),
             })
             .assist_ids
-            .push(inline_assist_id);
+            .push(assist_id);
         self.update_editor_highlights(editor, cx);
     }
 
@@ -294,6 +281,38 @@ impl InlineAssistant {
             InlineAssistEditorEvent::Resized { height_in_lines } => {
                 self.resize_inline_assist(assist_id, *height_in_lines, cx);
             }
+        }
+    }
+
+    fn handle_editor_event(
+        &mut self,
+        assist_id: InlineAssistId,
+        editor: View<Editor>,
+        event: &EditorEvent,
+        cx: &mut WindowContext,
+    ) {
+        let Some(assist) = self.pending_assists.get(&assist_id) else {
+            return;
+        };
+
+        match event {
+            EditorEvent::SelectionsChanged { local } if *local => {
+                if let Some(decorations) = assist.editor_decorations.as_ref() {
+                    if decorations
+                        .prompt_editor
+                        .focus_handle(cx)
+                        .contains_focused(cx)
+                    {
+                        cx.focus_view(&editor);
+                    }
+                }
+            }
+            EditorEvent::Saved => {
+                if let CodegenStatus::Done = &assist.codegen.read(cx).status {
+                    self.finish_inline_assist(assist_id, false, cx)
+                }
+            }
+            _ => {}
         }
     }
 
@@ -558,16 +577,16 @@ impl InlineAssistant {
         let mut gutter_transformed_ranges = Vec::new();
         let mut foreground_ranges = Vec::new();
         let mut inserted_row_ranges = Vec::new();
-        let empty_inline_assist_ids = Vec::new();
-        let inline_assist_ids = self
+        let empty_assist_ids = Vec::new();
+        let assist_ids = self
             .pending_assist_ids_by_editor
             .get(&editor.downgrade())
-            .map_or(&empty_inline_assist_ids, |pending_assists| {
+            .map_or(&empty_assist_ids, |pending_assists| {
                 &pending_assists.assist_ids
             });
 
-        for inline_assist_id in inline_assist_ids {
-            if let Some(pending_assist) = self.pending_assists.get(inline_assist_id) {
+        for assist_id in assist_ids {
+            if let Some(pending_assist) = self.pending_assists.get(assist_id) {
                 let codegen = pending_assist.codegen.read(cx);
                 foreground_ranges.extend(codegen.last_equal_ranges().iter().cloned());
 
