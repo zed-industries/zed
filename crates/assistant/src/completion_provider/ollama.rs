@@ -93,7 +93,7 @@ impl OllamaCompletionProvider {
                 // indicating which models are embedding models,
                 // simply filter out models with "-embed" in their name
                 .filter(|model| !model.name.contains("-embed"))
-                .map(|model| OllamaModel::new(&model.name, &model.details.parameter_size))
+                .map(|model| OllamaModel::new(&model.name))
                 .collect();
 
             models.sort_by(|a, b| a.name.cmp(&b.name));

@@ -42,18 +42,14 @@ impl From<Role> for String {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
-    pub parameter_size: String,
     pub max_tokens: usize,
     pub keep_alive: Option<String>,
 }
 
 impl Model {
-    pub fn new(name: &str, parameter_size: &str) -> Self {
+    pub fn new(name: &str) -> Self {
         Self {
             name: name.to_owned(),
-            parameter_size: parameter_size.to_owned(),
-            // todo: determine if there's an endpoint to find the max tokens
-            //       I'm not seeing it in the API docs but it's on the model cards
             max_tokens: 2048,
             keep_alive: Some("10m".to_owned()),
         }
