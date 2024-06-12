@@ -4903,7 +4903,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
         IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
-            .icon_size(IconSize::Small)
+            .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::Default)
             .icon_color(Color::Muted)
             .selected(is_active)
