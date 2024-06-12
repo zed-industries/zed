@@ -8,7 +8,12 @@ pub struct Snippet {
     pub tabstops: Vec<TabStop>,
 }
 
-type TabStop = SmallVec<[Range<isize>; 2]>;
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TabStop {
+    pub ranges: SmallVec<[Range<isize>; 2]>,
+    pub choices: Option<Vec<String>>,
+}
+// type TabStop = SmallVec<[Range<isize>; 2]>;
 
 impl Snippet {
     pub fn parse(source: &str) -> Result<Self> {
@@ -24,7 +29,11 @@ impl Snippet {
         if let Some(final_tabstop) = final_tabstop {
             tabstops.push(final_tabstop);
         } else {
-            let end_tabstop = [len..len].into_iter().collect();
+            let end_tabstop = TabStop {
+                ranges: [len..len].into_iter().collect(),
+                choices: None,
+            };
+
             if !tabstops.last().map_or(false, |t| *t == end_tabstop) {
                 tabstops.push(end_tabstop);
             }
@@ -105,6 +114,7 @@ fn parse_tabstop<'a>(
     tabstops
         .entry(tabstop_index)
         .or_default()
+        .ranges
         .push(tabstop_start as isize..text.len() as isize);
     Ok(source)
 }
@@ -263,6 +273,6 @@ mod tests {
     }
 
     fn tabstops(snippet: &Snippet) -> Vec<Vec<Range<isize>>> {
-        snippet.tabstops.iter().map(|t| t.to_vec()).collect()
+        snippet.tabstops.iter().map(|t| t.ranges.to_vec()).collect()
     }
 }

@@ -768,6 +768,7 @@ struct AutocloseRegion {
 struct SnippetState {
     ranges: Vec<Vec<Range<Anchor>>>,
     active_index: usize,
+    choices: Vec<Option<Vec<String>>>,
 }
 
 #[doc(hidden)]
@@ -4253,7 +4254,12 @@ impl Editor {
         self.transact(cx, |this, cx| {
             if let Some(mut snippet) = snippet {
                 snippet.text = text.to_string();
-                for tabstop in snippet.tabstops.iter_mut().flatten() {
+                for tabstop in snippet
+                    .tabstops
+                    .iter_mut()
+                    .map(|tabstop| tabstop.ranges.iter_mut())
+                    .flatten()
+                {
                     tabstop.start -= common_prefix_len as isize;
                     tabstop.end -= common_prefix_len as isize;
                 }
@@ -5109,6 +5115,7 @@ impl Editor {
         struct Tabstop<T> {
             is_end_tabstop: bool,
             ranges: Vec<Range<T>>,
+            choices: Option<Vec<String>>,
         }
 
         let tabstops = self.buffer.update(cx, |buffer, cx| {
@@ -5128,10 +5135,11 @@ impl Editor {
                 .tabstops
                 .iter()
                 .map(|tabstop| {
-                    let is_end_tabstop = tabstop.first().map_or(false, |tabstop| {
+                    let is_end_tabstop = tabstop.ranges.first().map_or(false, |tabstop| {
                         tabstop.is_empty() && tabstop.start == snippet.text.len() as isize
                     });
                     let mut tabstop_ranges = tabstop
+                        .ranges
                         .iter()
                         .flat_map(|tabstop_range| {
                             let mut delta = 0_isize;
@@ -5153,6 +5161,7 @@ impl Editor {
                     Tabstop {
                         is_end_tabstop,
                         ranges: tabstop_ranges,
+                        choices: tabstop.choices.clone(),
                     }
                 })
                 .collect::<Vec<_>>()
@@ -5163,16 +5172,27 @@ impl Editor {
                 s.select_ranges(tabstop.ranges.iter().cloned());
             });
 
+            if let Some(choices) = tabstop.choices {
+                self.context_menu.try_write() = Some(ContextMenu::Completions(choices))
+            }
+
             // If we're already at the last tabstop and it's at the end of the snippet,
             // we're done, we don't need to keep the state around.
             if !tabstop.is_end_tabstop {
+                let choices = tabstops
+                    .iter()
+                    .map(|tabstop| tabstop.choices.clone())
+                    .collect();
+
                 let ranges = tabstops
                     .into_iter()
                     .map(|tabstop| tabstop.ranges)
                     .collect::<Vec<_>>();
+
                 self.snippet_stack.push(SnippetState {
                     active_index: 0,
                     ranges,
+                    choices,
                 });
             }
 
