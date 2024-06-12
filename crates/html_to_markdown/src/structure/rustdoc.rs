@@ -253,6 +253,9 @@ impl RustdocItem {
     pub fn url_path(&self) -> String {
         let name = &self.name;
         let mut path_components = self.path.clone();
+        if name.as_ref() == "HandleErrorFuture" {
+            dbg!(&path_components);
+        }
 
         match self.kind {
             RustdocItemKind::Mod => {
@@ -273,7 +276,11 @@ impl RustdocItem {
             }
         }
 
-        path_components.join("/")
+        if name.as_ref() == "HandleErrorFuture" {
+            dbg!(path_components.join("/"))
+        } else {
+            path_components.join("/")
+        }
     }
 }
 
@@ -300,16 +307,25 @@ impl RustdocItemCollector {
 
         for kind in RustdocItemKind::iter() {
             if tag.has_class(kind.class()) {
-                let name = href
-                    .trim_start_matches(&format!("{}.", kind.class()))
-                    .trim_end_matches("/index.html")
-                    .trim_end_matches(".html");
+                println!("Before split: {href}");
+                let mut parts = href.trim_end_matches("/index.html").split('/');
 
-                return Some(RustdocItem {
-                    kind,
-                    name: name.into(),
-                    path: Vec::new(),
-                });
+                if let Some(last_component) = parts.next_back() {
+                    let last_component = match last_component.split_once('#') {
+                        Some((component, _fragment)) => component,
+                        None => last_component,
+                    };
+
+                    let name = last_component
+                        .trim_start_matches(&format!("{}.", kind.class()))
+                        .trim_end_matches(".html");
+
+                    return Some(RustdocItem {
+                        kind,
+                        name: name.into(),
+                        path: dbg!(parts.map(Into::into).collect()),
+                    });
+                }
             }
         }
 
@@ -331,7 +347,7 @@ impl HandleTag for RustdocItemCollector {
             "a" => {
                 let is_reexport = writer.current_element_stack().iter().any(|element| {
                     if let Some(id) = element.attr("id") {
-                        id.starts_with("reexport.")
+                        id.starts_with("reexport.") || id.starts_with("method.")
                     } else {
                         false
                     }

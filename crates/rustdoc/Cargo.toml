@@ -21,5 +21,6 @@ html_to_markdown.workspace = true
 http.workspace = true
 indexmap.workspace = true
 strum.workspace = true
+util.workspace = true
 
 [dev-dependencies]

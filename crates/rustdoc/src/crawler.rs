@@ -120,6 +120,12 @@ impl RustdocProvider for DocsDotRsProvider {
     }
 }
 
+pub struct RustdocItemWithHistory {
+    pub item: RustdocItem,
+    #[cfg(debug_assertions)]
+    pub history: Vec<String>,
+}
+
 pub struct RustdocCrawler {
     provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
 }
@@ -132,7 +138,7 @@ impl RustdocCrawler {
     pub async fn crawl(
         &self,
         crate_name: String,
-        item_path: Vec<String>,
+        _item_path: Vec<String>,
     ) -> Result<Option<String>> {
         let Some(crate_index_content) = self.provider.fetch_page(&crate_name, None).await? else {
             return Ok(None);
@@ -141,12 +147,35 @@ impl RustdocCrawler {
         let (markdown, items) = convert_rustdoc_to_markdown(crate_index_content.as_bytes())?;
 
         let mut seen_items = HashSet::default();
-        let mut items_to_visit: VecDeque<RustdocItem> = VecDeque::from_iter(items);
+        let mut items_to_visit: VecDeque<RustdocItemWithHistory> =
+            VecDeque::from_iter(items.into_iter().map(|item| RustdocItemWithHistory {
+                item,
+                history: Vec::new(),
+            }));
 
-        while let Some(item) = items_to_visit.pop_front() {
-            println!("Visiting {:?} {:?} {}", &item.kind, &item_path, &item.name);
+        while let Some(item_with_history) = items_to_visit.pop_front() {
+            let item = &item_with_history.item;
+            println!("Visiting {:?} {:?} {}", &item.kind, &item.path, &item.name);
 
-            let Some(result) = self.provider.fetch_page(&crate_name, Some(&item)).await? else {
+            let Some(result) = self
+                .provider
+                .fetch_page(&crate_name, Some(&item))
+                .await
+                .with_context(|| {
+                    #[cfg(debug_assertions)]
+                    {
+                        format!(
+                            "failed to fetch {item:?}: {history:?}",
+                            history = item_with_history.history
+                        )
+                    }
+
+                    #[cfg(not(debug_assertions))]
+                    {
+                        format!("failed to fetch {item:?}")
+                    }
+                })?
+            else {
                 continue;
             };
 
@@ -155,7 +184,7 @@ impl RustdocCrawler {
             seen_items.insert(item.clone());
 
             for child in &mut items {
-                child.path = item.path.clone();
+                child.path.extend(item.path.clone());
                 match item.kind {
                     RustdocItemKind::Mod => {
                         child.path.push(item.name.clone());
@@ -166,7 +195,18 @@ impl RustdocCrawler {
 
             dbg!(&items);
 
-            let unseen_items = items.into_iter().filter(|item| !seen_items.contains(&item));
+            let unseen_items = items
+                .into_iter()
+                .map(|item| RustdocItemWithHistory {
+                    #[cfg(debug_assertions)]
+                    history: {
+                        let mut history = item_with_history.history.clone();
+                        history.push(item.url_path());
+                        history
+                    },
+                    item,
+                })
+                .filter(|item| !seen_items.contains(&item.item));
 
             items_to_visit.extend(unseen_items);
         }
