@@ -158,15 +158,6 @@ impl Keystroke {
         }
         self
     }
-
-    /// Returns true if the keystroke is a single modifier key
-    pub fn is_single_modifer_key(&self) -> bool {
-        self.key == "shift"
-            || self.key == "control"
-            || self.key == "alt"
-            || self.key == "platform"
-            || self.key == "function"
-    }
 }
 
 impl std::fmt::Display for Keystroke {
