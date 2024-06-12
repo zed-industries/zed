@@ -290,7 +290,7 @@ impl InlineAssistant {
                 self.finish_inline_assist(assist_id, true, cx);
             }
             InlineAssistEditorEvent::Dismissed => {
-                self.hide_inline_assist_decorations(assist_id, cx);
+                self.dismiss_inline_assist(assist_id, cx);
             }
             InlineAssistEditorEvent::Resized { height_in_lines } => {
                 self.resize_inline_assist(assist_id, *height_in_lines, cx);
@@ -317,7 +317,14 @@ impl InlineAssistant {
         if editor.selections.count() == 1 {
             let selection = editor.selections.newest::<usize>(cx);
             if assist_range.contains(&selection.start) && assist_range.contains(&selection.end) {
-                self.finish_inline_assist(assist_id, undo, cx);
+                if undo {
+                    self.finish_inline_assist(assist_id, true, cx);
+                } else if matches!(assist.codegen.read(cx).status, CodegenStatus::Pending) {
+                    self.dismiss_inline_assist(assist_id, cx);
+                } else {
+                    self.finish_inline_assist(assist_id, false, cx);
+                }
+
                 return;
             }
         }
@@ -353,7 +360,12 @@ impl InlineAssistant {
                     self.finish_inline_assist(assist_id, false, cx)
                 }
             }
-            EditorEvent::Edited { transaction_id } => {
+            EditorEvent::Edited { transaction_id }
+                if matches!(
+                    assist.codegen.read(cx).status,
+                    CodegenStatus::Error(_) | CodegenStatus::Done
+                ) =>
+            {
                 let buffer = editor.read(cx).buffer().read(cx);
                 let edited_ranges =
                     buffer.edited_ranges_for_transaction::<usize>(*transaction_id, cx);
@@ -375,7 +387,7 @@ impl InlineAssistant {
         undo: bool,
         cx: &mut WindowContext,
     ) {
-        self.hide_inline_assist_decorations(assist_id, cx);
+        self.dismiss_inline_assist(assist_id, cx);
 
         if let Some(pending_assist) = self.pending_assists.remove(&assist_id) {
             if let hash_map::Entry::Occupied(mut entry) = self
@@ -400,11 +412,7 @@ impl InlineAssistant {
         }
     }
 
-    fn hide_inline_assist_decorations(
-        &mut self,
-        assist_id: InlineAssistId,
-        cx: &mut WindowContext,
-    ) -> bool {
+    fn dismiss_inline_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
         let Some(pending_assist) = self.pending_assists.get_mut(&assist_id) else {
             return false;
         };
