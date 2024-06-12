@@ -20,7 +20,6 @@ use util::{ResultExt, TryFutureExt};
 
 #[derive(Clone)]
 pub struct MarkdownStyle {
-    pub text: TextStyleRefinement,
     pub code_block: TextStyleRefinement,
     pub inline_code: TextStyleRefinement,
     pub block_quote: TextStyleRefinement,
@@ -36,15 +35,8 @@ impl MarkdownStyle {
     pub fn get_themed_default<V>(cx: &mut ViewContext<V>) -> Self {
         let settings = ThemeSettings::get_global(cx);
         let buffer_font_family = settings.buffer_font.family.clone();
-        // let ui_font_family = settings.ui_font.family.clone();
-        //Todo: Check buffer font size
-        Self {
-            text: gpui::TextStyleRefinement {
-                font_family: Some(buffer_font_family.clone()),
-                color: Some(cx.theme().colors().editor_foreground),
 
-                ..Default::default()
-            },
+        Self {
             code_block: gpui::TextStyleRefinement {
                 font_family: Some(buffer_font_family.clone()),
                 color: Some(cx.theme().colors().editor_foreground),
@@ -63,7 +55,6 @@ impl MarkdownStyle {
                 ..Default::default()
             },
             link: gpui::TextStyleRefinement {
-                font_family: Some(buffer_font_family.clone()),
                 color: Some(Color::Accent.color(cx)),
                 underline: Some(gpui::UnderlineStyle {
                     thickness: px(1.),
@@ -81,7 +72,6 @@ impl MarkdownStyle {
 impl Default for MarkdownStyle {
     fn default() -> Self {
         Self {
-            text: Default::default(),
             code_block: Default::default(),
             inline_code: Default::default(),
             block_quote: Default::default(),
@@ -546,7 +536,6 @@ impl Element for MarkdownElement {
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let mut builder = MarkdownElementBuilder::new(cx.text_style(), self.style.syntax.clone());
-        // builder.push_text_style(self.style.text.clone());
         let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
         for (range, event) in parsed_markdown.events.iter() {
             match event {
@@ -710,7 +699,6 @@ impl Element for MarkdownElement {
                 _ => log::error!("unsupported markdown event {:?}", event),
             }
         }
-        // builder.pop_text_style();
         let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(cx);
         let layout_id = cx.request_layout(Style::default(), [child_layout_id]);
