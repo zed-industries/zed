@@ -42,17 +42,19 @@ enum GoToLineRowHighlights {}
 impl GoToLine {
     fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         let handle = cx.view().downgrade();
-        editor.register_action(move |_: &Toggle, cx| {
-            let Some(editor) = handle.upgrade() else {
-                return;
-            };
-            let Some(workspace) = editor.read(cx).workspace() else {
-                return;
-            };
-            workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
+        editor
+            .register_action(move |_: &Toggle, cx| {
+                let Some(editor) = handle.upgrade() else {
+                    return;
+                };
+                let Some(workspace) = editor.read(cx).workspace() else {
+                    return;
+                };
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
+                })
             })
-        });
+            .detach();
     }
 
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {

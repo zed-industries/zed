@@ -116,15 +116,16 @@ use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
-use std::ops::Not as _;
 use std::{
     any::TypeId,
     borrow::Cow,
+    cell::RefCell,
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
-    ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
+    ops::{ControlFlow, Deref, DerefMut, Not as _, Range, RangeInclusive},
     path::Path,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -374,6 +375,19 @@ impl Default for EditorStyle {
 
 type CompletionId = usize;
 
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
+struct EditorActionId(usize);
+
+impl EditorActionId {
+    pub fn post_inc(&mut self) -> Self {
+        let answer = self.0;
+
+        *self = Self(answer + 1);
+
+        Self(answer)
+    }
+}
+
 // type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
@@ -509,7 +523,8 @@ pub struct Editor {
     gutter_dimensions: GutterDimensions,
     pub vim_replace_map: HashMap<Range<usize>, String>,
     style: Option<EditorStyle>,
-    editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
+    next_editor_action_id: EditorActionId,
+    editor_actions: Rc<RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&mut ViewContext<Self>)>>>>,
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
     show_git_blame_gutter: bool,
@@ -1802,7 +1817,8 @@ impl Editor {
             style: None,
             show_cursor_names: false,
             hovered_cursors: Default::default(),
-            editor_actions: Default::default(),
+            next_editor_action_id: EditorActionId::default(),
+            editor_actions: Rc::default(),
             vim_replace_map: Default::default(),
             show_inline_completions: mode == EditorMode::Full,
             custom_context_menu: None,
@@ -11286,21 +11302,28 @@ impl Editor {
     pub fn register_action<A: Action>(
         &mut self,
         listener: impl Fn(&A, &mut WindowContext) + 'static,
-    ) -> &mut Self {
+    ) -> Subscription {
+        let id = self.next_editor_action_id.post_inc();
         let listener = Arc::new(listener);
+        self.editor_actions.borrow_mut().insert(
+            id,
+            Box::new(move |cx| {
+                let _view = cx.view().clone();
+                let cx = cx.window_context();
+                let listener = listener.clone();
+                cx.on_action(TypeId::of::<A>(), move |action, phase, cx| {
+                    let action = action.downcast_ref().unwrap();
+                    if phase == DispatchPhase::Bubble {
+                        listener(action, cx)
+                    }
+                })
+            }),
+        );
 
-        self.editor_actions.push(Box::new(move |cx| {
-            let _view = cx.view().clone();
-            let cx = cx.window_context();
-            let listener = listener.clone();
-            cx.on_action(TypeId::of::<A>(), move |action, phase, cx| {
-                let action = action.downcast_ref().unwrap();
-                if phase == DispatchPhase::Bubble {
-                    listener(action, cx)
-                }
-            })
-        }));
-        self
+        let editor_actions = self.editor_actions.clone();
+        Subscription::new(move || {
+            editor_actions.borrow_mut().remove(&id);
+        })
     }
 }
 
