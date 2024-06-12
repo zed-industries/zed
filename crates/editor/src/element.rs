@@ -4996,8 +4996,8 @@ impl Element for EditorElement {
                         let is_signature_help_displayed = editor.signature_help_state.is_some();
                         if is_signature_help_displayed {
                             editor.show_signature_help(&ShowSignatureHelp, cx);
+                            snapshot = editor.snapshot(cx);
                         }
-                        snapshot = editor.snapshot(cx);
                     });
 
                     self.layout_signature_help(
