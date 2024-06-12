@@ -8665,6 +8665,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustdoc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "indexmap 1.9.3",
+ "strum",
+]
+
+[[package]]
 name = "rustix"
 version = "0.37.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
