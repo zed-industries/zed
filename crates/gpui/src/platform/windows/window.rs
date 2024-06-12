@@ -27,14 +27,14 @@ use windows::{
 };
 
 use crate::platform::blade::BladeRenderer;
-use crate::*;
+use crate::{Pixels, *};
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
 
 pub struct WindowsWindowState {
-    pub origin: Point<DevicePixels>,
-    pub physical_size: Size<DevicePixels>,
-    pub fullscreen_restore_bounds: Bounds<DevicePixels>,
+    pub origin: Point<Pixels>,
+    pub physical_size: Size<Pixels>,
+    pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub scale_factor: f32,
 
     pub callbacks: Callbacks,
@@ -303,10 +303,10 @@ impl WindowsWindow {
             } else {
                 display.default_bounds()
             };
-            placement.rcNormalPosition.left = bounds.left().0;
-            placement.rcNormalPosition.right = bounds.right().0;
-            placement.rcNormalPosition.top = bounds.top().0;
-            placement.rcNormalPosition.bottom = bounds.bottom().0;
+            placement.rcNormalPosition.left = bounds.left().0 as i32;
+            placement.rcNormalPosition.right = bounds.right().0 as i32;
+            placement.rcNormalPosition.top = bounds.top().0 as i32;
+            placement.rcNormalPosition.bottom = bounds.bottom().0 as i32;
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
         unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
@@ -551,10 +551,10 @@ impl PlatformWindow for WindowsWindow {
                     unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
                     let _ = lock.fullscreen.insert(StyleAndBounds {
                         style,
-                        x: rc.left,
-                        y: rc.top,
-                        cx: rc.right - rc.left,
-                        cy: rc.bottom - rc.top,
+                        x: px(rc.left as f32),
+                        y: px(rc.top as f32),
+                        cx: px((rc.right - rc.left) as f32),
+                        cy: px((rc.bottom - rc.top) as f32),
                     });
                     let style = style
                         & !(WS_THICKFRAME
@@ -565,10 +565,10 @@ impl PlatformWindow for WindowsWindow {
                     let bounds = lock.display.bounds();
                     StyleAndBounds {
                         style,
-                        x: bounds.left().0,
-                        y: bounds.top().0,
-                        cx: bounds.size.width.0,
-                        cy: bounds.size.height.0,
+                        x: bounds.left(),
+                        y: bounds.top(),
+                        cx: bounds.size.width,
+                        cy: bounds.size.height,
                     }
                 };
                 drop(lock);
@@ -577,10 +577,10 @@ impl PlatformWindow for WindowsWindow {
                     SetWindowPos(
                         state_ptr.hwnd,
                         HWND::default(),
-                        x,
-                        y,
-                        cx,
-                        cy,
+                        x.0 as i32,
+                        y.0 as i32,
+                        cx.0 as i32,
+                        cy.0 as i32,
                         SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
                     )
                 }
@@ -833,10 +833,10 @@ impl ClickState {
 
 struct StyleAndBounds {
     style: WINDOW_STYLE,
-    x: i32,
-    y: i32,
-    cx: i32,
-    cy: i32,
+    x: Pixels,
+    y: Pixels,
+    cx: Pixels,
+    cy: Pixels,
 }
 
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
