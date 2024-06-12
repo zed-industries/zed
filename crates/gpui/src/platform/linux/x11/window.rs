@@ -684,7 +684,11 @@ impl PlatformWindow for X11Window {
 
     fn window_bounds(&self) -> WindowBounds {
         let state = self.0.state.borrow();
-        WindowBounds::Windowed(state.bounds)
+        if self.is_maximized() {
+            WindowBounds::Maximized(state.bounds)
+        } else {
+            WindowBounds::Windowed(state.bounds)
+        }
     }
 
     fn content_size(&self) -> Size<Pixels> {
