@@ -12,7 +12,7 @@ use gpui::{
 };
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
-use markdown::{parser::MarkdownEvent, Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
 use project::{HoverBlock, InlayHintLabelPart};
 use settings::Settings;
@@ -395,14 +395,14 @@ async fn parse_blocks(
                 ..MarkdownStyle::get_themed_default(cx)
             };
             Markdown::new(
-                text.into(),
+                text,
                 markdown_style.clone(),
                 Some(language_registry.clone()),
                 cx,
             )
         });
-        if rendered_block.is_ok() {
-            parsed_blocks.push(rendered_block.unwrap());
+        if let Ok(rendered_block) = rendered_block {
+            parsed_blocks.push(rendered_block);
         }
     }
     parsed_blocks
@@ -507,7 +507,7 @@ impl InfoPopover {
             .on_mouse_move(|_, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             .p_2()
-            .children(self.parsed_content.clone().into_iter())
+            .children(self.parsed_content.clone())
             .into_any_element()
     }
 
@@ -622,6 +622,7 @@ mod tests {
     use indoc::indoc;
     use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
+    use markdown::parser::MarkdownEvent;
     use smol::stream::StreamExt;
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;
@@ -635,10 +636,10 @@ mod tests {
                 let markdown = parsed_content.read(cx);
                 let text = markdown.parsed_markdown().source().to_string();
                 let data = markdown.parsed_markdown().events();
-                let slice = &*data;
+                let slice = data;
 
                 for (range, event) in slice.iter() {
-                    if vec![MarkdownEvent::Text, MarkdownEvent::Code].contains(event) {
+                    if [MarkdownEvent::Text, MarkdownEvent::Code].contains(event) {
                         // println!("{:?}", &text[range.clone()]);
                         rendered_text.push_str(&text[range.clone()])
                     }
