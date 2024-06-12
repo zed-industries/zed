@@ -24,6 +24,8 @@ if [[ -n $apt ]]; then
     libvulkan1
     libgit2-dev
     make
+    clang
+    mold
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -36,6 +38,8 @@ if [[ -n $dnf ]]; then
   deps=(
     gcc
     g++
+    clang
+    mold
     alsa-lib-devel
     fontconfig-devel
     wayland-devel
