@@ -19,5 +19,9 @@ fs.workspace = true
 futures.workspace = true
 html_to_markdown.workspace = true
 http.workspace = true
+indexmap.workspace = true
+strum.workspace = true
 
 [dev-dependencies]
+indoc.workspace = true
+pretty_assertions.workspace = true

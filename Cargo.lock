@@ -368,6 +368,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rope",
+ "rustdoc",
  "schemars",
  "search",
  "semantic_index",
@@ -5072,12 +5073,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "html5ever",
- "indexmap 1.9.3",
  "indoc",
  "markup5ever_rcdom",
  "pretty_assertions",
  "regex",
- "strum",
 ]
 
 [[package]]
@@ -8675,6 +8674,10 @@ dependencies = [
  "futures 0.3.28",
  "html_to_markdown",
  "http 0.1.0",
+ "indexmap 1.9.3",
+ "indoc",
+ "pretty_assertions",
+ "strum",
 ]
 
 [[package]]

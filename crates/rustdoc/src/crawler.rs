@@ -6,9 +6,9 @@ use async_trait::async_trait;
 use collections::{HashSet, VecDeque};
 use fs::Fs;
 use futures::AsyncReadExt;
-use html_to_markdown::convert_rustdoc_to_markdown;
-use html_to_markdown::structure::rustdoc::{RustdocItem, RustdocItemKind};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+
+use crate::{convert_rustdoc_to_markdown, RustdocItem, RustdocItemKind};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RustdocSource {

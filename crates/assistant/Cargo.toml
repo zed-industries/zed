@@ -42,6 +42,7 @@ parking_lot.workspace = true
 project.workspace = true
 regex.workspace = true
 rope.workspace = true
+rustdoc.workspace = true
 schemars.workspace = true
 search.workspace = true
 semantic_index.workspace = true
