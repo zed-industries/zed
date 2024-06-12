@@ -62,6 +62,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
             client.http_client(),
             low_speed_timeout_in_seconds.map(Duration::from_secs),
             settings_version,
+            cx,
         )),
     };
     cx.set_global(provider);
@@ -114,6 +115,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                         api_url.clone(),
                         low_speed_timeout_in_seconds.map(Duration::from_secs),
                         settings_version,
+                        cx,
                     );
                 }
 
@@ -174,6 +176,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                         client.http_client(),
                         low_speed_timeout_in_seconds.map(Duration::from_secs),
                         settings_version,
+                        cx,
                     ));
                 }
             }

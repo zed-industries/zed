@@ -7,7 +7,8 @@ use futures::{future::BoxFuture, stream::BoxStream, FutureExt};
 use gpui::{AnyView, AppContext, Task};
 use http::HttpClient;
 use ollama::{
-    get_models, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest, Role as OllamaRole,
+    get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
+    Role as OllamaRole,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,7 +32,17 @@ impl OllamaCompletionProvider {
         http_client: Arc<dyn HttpClient>,
         low_speed_timeout: Option<Duration>,
         settings_version: usize,
+        cx: &AppContext,
     ) -> Self {
+        cx.spawn({
+            let api_url = api_url.clone();
+            let client = http_client.clone();
+            let model = model.name.clone();
+
+            |_| async move { preload_model(client.as_ref(), &api_url, &model).await }
+        })
+        .detach_and_log_err(cx);
+
         Self {
             api_url,
             model,
@@ -48,7 +59,17 @@ impl OllamaCompletionProvider {
         api_url: String,
         low_speed_timeout: Option<Duration>,
         settings_version: usize,
+        cx: &AppContext,
     ) {
+        cx.spawn({
+            let api_url = api_url.clone();
+            let client = self.http_client.clone();
+            let model = model.name.clone();
+
+            |_| async move { preload_model(client.as_ref(), &api_url, &model).await }
+        })
+        .detach_and_log_err(cx);
+
         self.model = model;
         self.api_url = api_url;
         self.low_speed_timeout = low_speed_timeout;
@@ -93,7 +114,7 @@ impl OllamaCompletionProvider {
                 // indicating which models are embedding models,
                 // simply filter out models with "-embed" in their name
                 .filter(|model| !model.name.contains("-embed"))
-                .map(|model| OllamaModel::new(&model.name, &model.details.parameter_size))
+                .map(|model| OllamaModel::new(&model.name))
                 .collect();
 
             models.sort_by(|a, b| a.name.cmp(&b.name));

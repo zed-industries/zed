@@ -42,18 +42,14 @@ impl From<Role> for String {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
-    pub parameter_size: String,
     pub max_tokens: usize,
     pub keep_alive: Option<String>,
 }
 
 impl Model {
-    pub fn new(name: &str, parameter_size: &str) -> Self {
+    pub fn new(name: &str) -> Self {
         Self {
             name: name.to_owned(),
-            parameter_size: parameter_size.to_owned(),
-            // todo: determine if there's an endpoint to find the max tokens
-            //       I'm not seeing it in the API docs but it's on the model cards
             max_tokens: 2048,
             keep_alive: Some("10m".to_owned()),
         }
@@ -215,6 +211,46 @@ pub async fn get_models(
 
         Ok(response.models)
     } else {
+        Err(anyhow!(
+            "Failed to connect to Ollama API: {} {}",
+            response.status(),
+            body,
+        ))
+    }
+}
+
+/// Sends an empty request to Ollama to trigger loading the model
+pub async fn preload_model(client: &dyn HttpClient, api_url: &str, model: &str) -> Result<()> {
+    let uri = format!("{api_url}/api/generate");
+    let request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .body(AsyncBody::from(serde_json::to_string(
+            &serde_json::json!({
+                "model": model,
+                "keep_alive": "15m",
+            }),
+        )?))?;
+
+    let mut response = match client.send(request).await {
+        Ok(response) => response,
+        Err(err) => {
+            // Be ok with a timeout during preload of the model
+            if err.is_timeout() {
+                return Ok(());
+            } else {
+                return Err(err.into());
+            }
+        }
+    };
+
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+
         Err(anyhow!(
             "Failed to connect to Ollama API: {} {}",
             response.status(),
