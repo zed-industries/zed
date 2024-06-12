@@ -78,6 +78,11 @@ impl Uri {
     }
 }
 
+impl PartialEq<lsp_types::Uri> for Uri {
+    fn eq(&self, other: &lsp_types::Uri) -> bool {
+        self.0.eq(other)
+    }
+}
 impl From<lsp_types::Uri> for Uri {
     fn from(uri: lsp_types::Uri) -> Self {
         Self(uri)
@@ -1354,7 +1359,6 @@ impl FakeLanguageServer {
 mod tests {
     use super::*;
     use gpui::{SemanticVersion, TestAppContext};
-    use std::str::FromStr;
 
     #[ctor::ctor]
     fn init_logger() {
@@ -1397,7 +1401,7 @@ mod tests {
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
-                    Url::from_str("file://a/b").unwrap(),
+                    Uri::from_file_path("file://a/b").unwrap().into(),
                     "rust".to_string(),
                     0,
                     "".to_string(),
@@ -1418,7 +1422,7 @@ mod tests {
             message: "ok".to_string(),
         });
         fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
-            uri: Url::from_str("file://b/c").unwrap(),
+            uri: Uri::from_file_path("file://b/c").unwrap().into(),
             version: Some(5),
             diagnostics: vec![],
         });
