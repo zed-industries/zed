@@ -8,7 +8,7 @@ use windows::{
     Win32::{Foundation::*, Graphics::Gdi::*},
 };
 
-use crate::{Bounds, px, DisplayId, PlatformDisplay, Point, Size};
+use crate::{px, Bounds, DisplayId, PlatformDisplay, Point, Size};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowsDisplay {
@@ -39,7 +39,7 @@ impl WindowsDisplay {
                 },
                 size: Size {
                     width: px((size.right - size.left) as f32),
-                    height: px((size.bottom - size.top)) as f32),
+                    height: px((size.bottom - size.top) as f32),
                 },
             },
             uuid,
