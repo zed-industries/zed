@@ -57,10 +57,10 @@ fn test_edit_events(cx: &mut TestAppContext) {
         let events = events.clone();
         |cx| {
             let view = cx.view().clone();
-            cx.subscribe(&view, move |_, _, event: &EditorEvent, _| {
-                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
-                    events.borrow_mut().push(("editor1", event.clone()));
-                }
+            cx.subscribe(&view, move |_, _, event: &EditorEvent, _| match event {
+                EditorEvent::Edited { .. } => events.borrow_mut().push(("editor1", "edited")),
+                EditorEvent::BufferEdited => events.borrow_mut().push(("editor1", "buffer edited")),
+                _ => {}
             })
             .detach();
             Editor::for_buffer(buffer.clone(), None, cx)
@@ -70,11 +70,16 @@ fn test_edit_events(cx: &mut TestAppContext) {
     let editor2 = cx.add_window({
         let events = events.clone();
         |cx| {
-            cx.subscribe(&cx.view().clone(), move |_, _, event: &EditorEvent, _| {
-                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
-                    events.borrow_mut().push(("editor2", event.clone()));
-                }
-            })
+            cx.subscribe(
+                &cx.view().clone(),
+                move |_, _, event: &EditorEvent, _| match event {
+                    EditorEvent::Edited { .. } => events.borrow_mut().push(("editor2", "edited")),
+                    EditorEvent::BufferEdited => {
+                        events.borrow_mut().push(("editor2", "buffer edited"))
+                    }
+                    _ => {}
+                },
+            )
             .detach();
             Editor::for_buffer(buffer.clone(), None, cx)
         }
@@ -87,9 +92,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -98,9 +103,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -109,9 +114,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -120,9 +125,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -131,9 +136,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -142,9 +147,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 

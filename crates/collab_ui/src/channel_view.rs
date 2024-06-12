@@ -232,7 +232,7 @@ impl ChannelView {
                         this.focus_position_from_link(position.clone(), false, cx);
                         this._reparse_subscription.take();
                     }
-                    EditorEvent::Edited | EditorEvent::SelectionsChanged { local: true } => {
+                    EditorEvent::Edited { .. } | EditorEvent::SelectionsChanged { local: true } => {
                         this._reparse_subscription.take();
                     }
                     _ => {}

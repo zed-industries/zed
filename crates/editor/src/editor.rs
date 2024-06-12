@@ -6444,29 +6444,9 @@ impl Editor {
             return;
         }
 
-        if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
-            if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
-                self.change_selections(None, cx, |s| {
-                    s.select_anchors(selections.to_vec());
-                });
-            }
-            self.request_autoscroll(Autoscroll::fit(), cx);
-            self.unmark_text(cx);
-            self.refresh_inline_completion(true, cx);
-            cx.emit(EditorEvent::Edited);
-            cx.emit(EditorEvent::TransactionUndone {
-                transaction_id: tx_id,
-            });
-        }
-    }
-
-    pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
-        if self.read_only(cx) {
-            return;
-        }
-
-        if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
-            if let Some((_, Some(selections))) = self.selection_history.transaction(tx_id).cloned()
+        if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
+            if let Some((selections, _)) =
+                self.selection_history.transaction(transaction_id).cloned()
             {
                 self.change_selections(None, cx, |s| {
                     s.select_anchors(selections.to_vec());
@@ -6475,7 +6455,28 @@ impl Editor {
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
             self.refresh_inline_completion(true, cx);
-            cx.emit(EditorEvent::Edited);
+            cx.emit(EditorEvent::Edited { transaction_id });
+            cx.emit(EditorEvent::TransactionUndone { transaction_id });
+        }
+    }
+
+    pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
+        if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
+            if let Some((_, Some(selections))) =
+                self.selection_history.transaction(transaction_id).cloned()
+            {
+                self.change_selections(None, cx, |s| {
+                    s.select_anchors(selections.to_vec());
+                });
+            }
+            self.request_autoscroll(Autoscroll::fit(), cx);
+            self.unmark_text(cx);
+            self.refresh_inline_completion(true, cx);
+            cx.emit(EditorEvent::Edited { transaction_id });
         }
     }
 
@@ -9586,18 +9587,20 @@ impl Editor {
         now: Instant,
         cx: &mut ViewContext<Self>,
     ) -> Option<TransactionId> {
-        if let Some(tx_id) = self
+        if let Some(transaction_id) = self
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
-            if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
+            if let Some((_, end_selections)) =
+                self.selection_history.transaction_mut(transaction_id)
+            {
                 *end_selections = Some(self.selections.disjoint_anchors());
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
 
-            cx.emit(EditorEvent::Edited);
-            Some(tx_id)
+            cx.emit(EditorEvent::Edited { transaction_id });
+            Some(transaction_id)
         } else {
             None
         }
@@ -11744,7 +11747,9 @@ pub enum EditorEvent {
         ids: Vec<ExcerptId>,
     },
     BufferEdited,
-    Edited,
+    Edited {
+        transaction_id: clock::Lamport,
+    },
     Reparsed,
     Focused,
     Blurred,

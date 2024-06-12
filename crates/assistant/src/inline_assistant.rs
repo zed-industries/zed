@@ -1044,7 +1044,7 @@ impl InlineAssistEditor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            EditorEvent::Edited => {
+            EditorEvent::Edited { .. } => {
                 let prompt = self.prompt_editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix
