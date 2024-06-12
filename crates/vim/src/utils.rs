@@ -1,12 +1,13 @@
 use std::time::Duration;
 
 use editor::{ClipboardSelection, Editor};
-use gpui::{ClipboardItem, ViewContext};
+use gpui::ViewContext;
 use language::{CharKind, Point};
 use multi_buffer::MultiBufferRow;
-use settings::Settings;
 
-use crate::{registers::Register, state::Mode, UseSystemClipboard, Vim, VimSettings};
+use crate::{state::Mode, Vim};
+
+pub const SYSTEM_CLIPBOARD: char = '\0';
 
 pub struct HighlightOnYank;
 
@@ -102,26 +103,8 @@ fn copy_selections_content_internal(
         }
     }
 
-    let setting = VimSettings::get_global(cx).use_system_clipboard;
-    if setting == UseSystemClipboard::Always || setting == UseSystemClipboard::OnYank && is_yank {
-        cx.write_to_clipboard(ClipboardItem::new(text.clone()).with_metadata(clipboard_selections));
-        vim.workspace_state.registers[Register::SYSTEM] = Some(text.clone());
-    } else {
-        vim.workspace_state.registers[Register::SYSTEM] = Some(
-            cx.read_from_clipboard()
-                .map(|item| item.text().clone())
-                .unwrap_or_default(),
-        );
-    }
-    vim.workspace_state.registers[Register::DEFAULT] = Some(text.clone());
-    if let Some(register) = vim.state().selected_register {
-        if register >= Register::A {
-            vim.workspace_state.registers[register] = Some(text);
-        }
-        vim.update_state(|state| state.selected_register = None);
-    } else {
-        vim.workspace_state.registers.push(text);
-    }
+    vim.write_registers(is_yank, linewise, text, clipboard_selections, cx);
+
     if !is_yank || vim.state().mode == Mode::Visual {
         return;
     }
