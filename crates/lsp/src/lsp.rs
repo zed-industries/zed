@@ -23,6 +23,7 @@ use smol::{
 use smol::process::windows::CommandExt;
 
 use std::{
+    borrow::Cow,
     ffi::OsString,
     fmt,
     io::Write,
@@ -63,7 +64,25 @@ pub struct Uri(lsp_types::Uri);
 const FILE_SCHEME: &str = "file://";
 impl Uri {
     pub fn from_file_path<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let uri = format!("{FILE_SCHEME}{}", path.as_ref().display());
+        let mut uri = FILE_SCHEME.to_owned();
+        for part in path.as_ref().components() {
+            let part: Cow<_> = match part {
+                std::path::Component::Prefix(prefix) => prefix.as_os_str().to_string_lossy(),
+                std::path::Component::RootDir => "/".into(),
+                std::path::Component::CurDir => ".".into(),
+                std::path::Component::ParentDir => "..".into(),
+                std::path::Component::Normal(component) => {
+                    let as_str = component.to_string_lossy();
+                    pct_str::PctString::encode(as_str.chars(), pct_str::URIReserved)
+                        .to_string()
+                        .into()
+                }
+            };
+            if !uri.ends_with('/') {
+                uri.push('/');
+            }
+            uri.push_str(&part);
+        }
         Ok(lsp_types::Uri::from_str(&uri)?.into())
     }
     pub fn to_file_path(self) -> Result<PathBuf> {
@@ -1401,7 +1420,7 @@ mod tests {
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
-                    Uri::from_file_path("file://a/b").unwrap().into(),
+                    RawUri::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
                     0,
                     "".to_string(),
@@ -1422,7 +1441,7 @@ mod tests {
             message: "ok".to_string(),
         });
         fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
-            uri: Uri::from_file_path("file://b/c").unwrap().into(),
+            uri: RawUri::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
         });
