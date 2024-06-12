@@ -322,7 +322,6 @@ fn show_hover(
                     },
                 ));
             }
-            // .collect::<FuturesUnordered<_>>();
             for (highlight_range, info_popover) in info_popover_tasks {
                 hover_highlights.push(highlight_range);
                 info_popovers.push(info_popover);
