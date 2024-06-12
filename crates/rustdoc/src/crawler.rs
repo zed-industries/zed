@@ -135,21 +135,18 @@ impl RustdocCrawler {
         Self { provider }
     }
 
-    pub async fn crawl(
-        &self,
-        crate_name: String,
-        _item_path: Vec<String>,
-    ) -> Result<Option<String>> {
+    pub async fn crawl(&self, crate_name: String) -> Result<Option<String>> {
         let Some(crate_index_content) = self.provider.fetch_page(&crate_name, None).await? else {
             return Ok(None);
         };
 
-        let (markdown, items) = convert_rustdoc_to_markdown(crate_index_content.as_bytes())?;
+        let (_markdown, items) = convert_rustdoc_to_markdown(crate_index_content.as_bytes())?;
 
         let mut seen_items = HashSet::default();
         let mut items_to_visit: VecDeque<RustdocItemWithHistory> =
             VecDeque::from_iter(items.into_iter().map(|item| RustdocItemWithHistory {
                 item,
+                #[cfg(debug_assertions)]
                 history: Vec::new(),
             }));
 
@@ -179,7 +176,7 @@ impl RustdocCrawler {
                 continue;
             };
 
-            let (markdown, mut items) = convert_rustdoc_to_markdown(result.as_bytes())?;
+            let (_markdown, mut items) = convert_rustdoc_to_markdown(result.as_bytes())?;
 
             seen_items.insert(item.clone());
 
@@ -192,8 +189,6 @@ impl RustdocCrawler {
                     _ => {}
                 }
             }
-
-            dbg!(&items);
 
             let unseen_items = items
                 .into_iter()

@@ -11,9 +11,7 @@ use html_to_markdown::convert_rustdoc_to_markdown;
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
-use rustdoc::crawler::{DocsDotRsProvider, RustdocCrawler};
 use ui::{prelude::*, ButtonLike, ElevationIndex};
-use util::ResultExt;
 use workspace::Workspace;
 
 #[derive(Debug, Clone, Copy)]
@@ -34,14 +32,6 @@ impl RustdocSlashCommand {
         module_path: Vec<String>,
         path_to_cargo_toml: Option<&Path>,
     ) -> Result<(RustdocSource, String)> {
-        let crawler = RustdocCrawler::new(Box::new(DocsDotRsProvider::new(http_client.clone())));
-
-        let result = crawler
-            .crawl(crate_name.clone(), module_path.clone())
-            .await
-            .log_err();
-        dbg!(&result);
-
         let cargo_workspace_root = path_to_cargo_toml.and_then(|path| path.parent());
         if let Some(cargo_workspace_root) = cargo_workspace_root {
             let mut local_cargo_doc_path = cargo_workspace_root.join("target/doc");

@@ -253,9 +253,6 @@ impl RustdocItem {
     pub fn url_path(&self) -> String {
         let name = &self.name;
         let mut path_components = self.path.clone();
-        if name.as_ref() == "HandleErrorFuture" {
-            dbg!(&path_components);
-        }
 
         match self.kind {
             RustdocItemKind::Mod => {
@@ -276,11 +273,7 @@ impl RustdocItem {
             }
         }
 
-        if name.as_ref() == "HandleErrorFuture" {
-            dbg!(path_components.join("/"))
-        } else {
-            path_components.join("/")
-        }
+        path_components.join("/")
     }
 }
 
@@ -301,13 +294,12 @@ impl RustdocItemCollector {
         }
 
         let href = tag.attr("href")?;
-        if href.starts_with("#") || href.starts_with("https://") || href.starts_with("../") {
+        if href.starts_with('#') || href.starts_with("https://") || href.starts_with("../") {
             return None;
         }
 
         for kind in RustdocItemKind::iter() {
             if tag.has_class(kind.class()) {
-                println!("Before split: {href}");
                 let mut parts = href.trim_end_matches("/index.html").split('/');
 
                 if let Some(last_component) = parts.next_back() {
@@ -323,7 +315,7 @@ impl RustdocItemCollector {
                     return Some(RustdocItem {
                         kind,
                         name: name.into(),
-                        path: dbg!(parts.map(Into::into).collect()),
+                        path: parts.map(Into::into).collect(),
                     });
                 }
             }
