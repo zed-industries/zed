@@ -180,16 +180,10 @@ impl SlashCommand for RustdocSlashCommand {
         let path_to_cargo_toml = Self::path_to_cargo_toml(project, cx);
 
         let mut item_path = String::new();
-        let mut include_all = false;
         let mut crate_name_to_index = None;
 
         let mut args = argument.split(' ').map(|word| word.trim());
         while let Some(arg) = args.next() {
-            if arg == "--all" {
-                include_all = true;
-                continue;
-            }
-
             if arg == "--index" {
                 let Some(crate_name) = args.next() else {
                     return Task::ready(Err(anyhow!("no crate name provided to --index")));
