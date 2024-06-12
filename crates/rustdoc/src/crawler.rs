@@ -7,6 +7,7 @@ use collections::{HashSet, VecDeque};
 use fs::Fs;
 use futures::AsyncReadExt;
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+use indexmap::IndexMap;
 
 use crate::{convert_rustdoc_to_markdown, RustdocItem, RustdocItemKind};
 
@@ -128,6 +129,11 @@ struct RustdocItemWithHistory {
     pub history: Vec<String>,
 }
 
+pub struct CrawledCrate {
+    pub crate_root_markdown: String,
+    pub items: IndexMap<RustdocItem, String>,
+}
+
 pub struct RustdocCrawler {
     provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
 }
@@ -137,17 +143,15 @@ impl RustdocCrawler {
         Self { provider }
     }
 
-    pub async fn crawl(&self, crate_name: String) -> Result<Option<String>> {
-        let Some(crate_index_content) = self.provider.fetch_page(&crate_name, None).await? else {
+    pub async fn crawl(&self, crate_name: String) -> Result<Option<CrawledCrate>> {
+        let Some(crate_root_content) = self.provider.fetch_page(&crate_name, None).await? else {
             return Ok(None);
         };
 
-        let mut all_markdown = String::new();
+        let (crate_root_markdown, items) =
+            convert_rustdoc_to_markdown(crate_root_content.as_bytes())?;
 
-        let (markdown, items) = convert_rustdoc_to_markdown(crate_index_content.as_bytes())?;
-
-        all_markdown.push_str(&markdown);
-
+        let mut docs_by_item = IndexMap::new();
         let mut seen_items = HashSet::from_iter(items.clone());
         let mut items_to_visit: VecDeque<RustdocItemWithHistory> =
             VecDeque::from_iter(items.into_iter().map(|item| RustdocItemWithHistory {
@@ -185,7 +189,7 @@ impl RustdocCrawler {
 
             let (markdown, referenced_items) = convert_rustdoc_to_markdown(result.as_bytes())?;
 
-            all_markdown.push_str(&markdown);
+            docs_by_item.insert(item.clone(), markdown);
 
             let parent_item = item;
             for mut item in referenced_items {
@@ -215,6 +219,9 @@ impl RustdocCrawler {
             }
         }
 
-        Ok(Some(all_markdown))
+        Ok(Some(CrawledCrate {
+            crate_root_markdown,
+            items: docs_by_item,
+        }))
     }
 }

@@ -44,7 +44,23 @@ impl RustdocSlashCommand {
                 )));
 
                 if let Some(result) = crawler.crawl(crate_name.clone()).await.log_err().flatten() {
-                    return Ok((RustdocSource::Local, result));
+                    let mut markdown = result.crate_root_markdown;
+
+                    for (item, _item_markdown) in &result.items {
+                        markdown.push_str(&item.name);
+                        markdown.push_str("\n");
+                    }
+
+                    if let Some((_styled, styled_docs)) = result
+                        .items
+                        .iter()
+                        .find(|(item, _)| item.name.as_ref() == "Global")
+                    {
+                        markdown.push_str("\n\n");
+                        markdown.push_str(styled_docs);
+                    }
+
+                    return Ok((RustdocSource::Local, markdown));
                 }
             }
 
