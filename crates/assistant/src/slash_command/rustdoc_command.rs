@@ -10,10 +10,9 @@ use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
-use rustdoc::crawler::{LocalProvider, RustdocCrawler};
+use rustdoc::crawler::LocalProvider;
 use rustdoc::{convert_rustdoc_to_markdown, RustdocStore};
 use ui::{prelude::*, ButtonLike, ElevationIndex};
-use util::ResultExt;
 use workspace::Workspace;
 
 #[derive(Debug, Clone, Copy)]
@@ -33,37 +32,9 @@ impl RustdocSlashCommand {
         crate_name: String,
         module_path: Vec<String>,
         path_to_cargo_toml: Option<&Path>,
-        include_all: bool,
     ) -> Result<(RustdocSource, String)> {
         let cargo_workspace_root = path_to_cargo_toml.and_then(|path| path.parent());
         if let Some(cargo_workspace_root) = cargo_workspace_root {
-            if include_all {
-                let crawler = RustdocCrawler::new(Box::new(LocalProvider::new(
-                    fs.clone(),
-                    cargo_workspace_root.to_path_buf(),
-                )));
-
-                if let Some(result) = crawler.crawl(crate_name.clone()).await.log_err().flatten() {
-                    let mut markdown = result.crate_root_markdown;
-
-                    for (item, _item_markdown) in &result.items {
-                        markdown.push_str(&item.name);
-                        markdown.push_str("\n");
-                    }
-
-                    if let Some((_styled, styled_docs)) = result
-                        .items
-                        .iter()
-                        .find(|(item, _)| item.name.as_ref() == "Global")
-                    {
-                        markdown.push_str("\n\n");
-                        markdown.push_str(styled_docs);
-                    }
-
-                    return Ok((RustdocSource::Local, markdown));
-                }
-            }
-
             let mut local_cargo_doc_path = cargo_workspace_root.join("target/doc");
             local_cargo_doc_path.push(&crate_name);
             if !module_path.is_empty() {
@@ -253,20 +224,21 @@ impl SlashCommand for RustdocSlashCommand {
             let item_path = item_path.clone();
             async move {
                 let item_docs = rustdoc_store
-                    .load(crate_name, Some(item_path.join("::")))
-                    .await?;
+                    .load(crate_name.clone(), Some(item_path.join("::")))
+                    .await;
 
-                anyhow::Ok((RustdocSource::Local, item_docs))
-
-                // Self::build_message(
-                //     fs,
-                //     http_client,
-                //     crate_name,
-                //     module_path,
-                //     path_to_cargo_toml.as_deref(),
-                //     include_all,
-                // )
-                // .await
+                if let Ok(item_docs) = item_docs {
+                    anyhow::Ok((RustdocSource::Local, item_docs))
+                } else {
+                    Self::build_message(
+                        fs,
+                        http_client,
+                        crate_name,
+                        item_path,
+                        path_to_cargo_toml.as_deref(),
+                    )
+                    .await
+                }
             }
         });
 
