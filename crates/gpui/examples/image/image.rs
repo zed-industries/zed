@@ -80,7 +80,7 @@ fn main() {
             }),
 
             window_bounds: Some(WindowBounds::Windowed(Bounds {
-                size: size(px(1100.), px(600.)).into(),
+                size: size(px(1100.), px(600.)),
                 origin: Point::new(px(200.), px(200.)),
             })),
 
