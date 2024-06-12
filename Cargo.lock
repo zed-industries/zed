@@ -359,6 +359,7 @@ dependencies = [
  "log",
  "menu",
  "multi_buffer",
+ "ollama",
  "open_ai",
  "ordered-float 2.10.0",
  "parking_lot",
@@ -6919,6 +6920,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f44155e7fb718d3cfddcf70690b2b51ac4412f347cd9e4fbe511abe9cd7b5f2"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "ollama"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "http 0.1.0",
+ "isahc",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
