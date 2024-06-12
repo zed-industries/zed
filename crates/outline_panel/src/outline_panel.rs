@@ -84,7 +84,7 @@ pub struct OutlinePanel {
     unfolded_dirs: HashMap<WorktreeId, BTreeSet<ProjectEntryId>>,
     last_visible_range: Range<usize>,
     selected_entry: Option<EntryOwned>,
-    displayed_item: Option<DisplayedActiveItem>,
+    active_item: Option<ActiveItem>,
     _subscriptions: Vec<Subscription>,
     update_task: Task<()>,
     outline_fetch_tasks: Vec<Task<()>>,
@@ -177,22 +177,6 @@ impl PartialEq for FsEntry {
     }
 }
 
-impl Hash for FsEntry {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        match self {
-            Self::ExternalFile(buffer_id) => buffer_id.hash(state),
-            Self::Directory(worktree_id, entry) => {
-                worktree_id.hash(state);
-                entry.id.hash(state);
-            }
-            Self::File(worktree_id, entry) => {
-                worktree_id.hash(state);
-                entry.id.hash(state);
-            }
-        }
-    }
-}
-
 impl FsEntry {
     fn abs_path(&self, project: &Model<Project>, cx: &AppContext) -> Option<PathBuf> {
         match self {
@@ -241,7 +225,7 @@ impl FsEntry {
     }
 }
 
-struct DisplayedActiveItem {
+struct ActiveItem {
     item_id: EntityId,
     active_editor: WeakView<Editor>,
     _editor_subscrpiption: Option<Subscription>,
@@ -336,10 +320,10 @@ impl OutlinePanel {
                             .and_then(|item| item.act_as::<Editor>(cx))
                         {
                             let active_editor_updated = outline_panel
-                                .displayed_item
+                                .active_item
                                 .as_ref()
-                                .map_or(true, |displayed_item| {
-                                    displayed_item.item_id != new_active_editor.item_id()
+                                .map_or(true, |active_item| {
+                                    active_item.item_id != new_active_editor.item_id()
                                 });
                             if active_editor_updated {
                                 outline_panel.replace_visible_entries(new_active_editor, cx);
@@ -378,7 +362,7 @@ impl OutlinePanel {
                 selected_entry: None,
                 context_menu: None,
                 width: None,
-                displayed_item: None,
+                active_item: None,
                 pending_serialization: Task::ready(None),
                 update_task: Task::ready(()),
                 outline_fetch_tasks: Vec::new(),
@@ -429,7 +413,7 @@ impl OutlinePanel {
 
     fn unfold_directory(&mut self, _: &UnfoldDirectory, cx: &mut ViewContext<Self>) {
         let Some(editor) = self
-            .displayed_item
+            .active_item
             .as_ref()
             .and_then(|item| item.active_editor.upgrade())
         else {
@@ -446,7 +430,7 @@ impl OutlinePanel {
 
     fn fold_directory(&mut self, _: &FoldDirectory, cx: &mut ViewContext<Self>) {
         let Some(editor) = self
-            .displayed_item
+            .active_item
             .as_ref()
             .and_then(|item| item.active_editor.upgrade())
         else {
@@ -875,7 +859,7 @@ impl OutlinePanel {
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
         let Some(editor) = self
-            .displayed_item
+            .active_item
             .as_ref()
             .and_then(|item| item.active_editor.upgrade())
         else {
@@ -903,7 +887,7 @@ impl OutlinePanel {
 
     fn collapse_selected_entry(&mut self, _: &CollapseSelectedEntry, cx: &mut ViewContext<Self>) {
         let Some(editor) = self
-            .displayed_item
+            .active_item
             .as_ref()
             .and_then(|item| item.active_editor.upgrade())
         else {
@@ -930,7 +914,7 @@ impl OutlinePanel {
 
     pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
         let Some(editor) = self
-            .displayed_item
+            .active_item
             .as_ref()
             .and_then(|item| item.active_editor.upgrade())
         else {
@@ -951,7 +935,7 @@ impl OutlinePanel {
 
     fn toggle_expanded(&mut self, entry: &EntryOwned, cx: &mut ViewContext<Self>) {
         let Some(editor) = self
-            .displayed_item
+            .active_item
             .as_ref()
             .and_then(|item| item.active_editor.upgrade())
         else {
@@ -1387,7 +1371,7 @@ impl OutlinePanel {
                             }
 
                             let Some(active_editor) = outline_panel
-                                .displayed_item
+                                .active_item
                                 .as_ref()
                                 .and_then(|item| item.active_editor.upgrade())
                             else {
@@ -1611,8 +1595,8 @@ impl OutlinePanel {
         }
 
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
-        let displayed_multi_buffer = active_editor.read(cx).buffer().clone();
-        let multi_buffer_snapshot = displayed_multi_buffer.read(cx).snapshot(cx);
+        let active_multi_buffer = active_editor.read(cx).buffer().clone();
+        let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
         let mut new_collapsed_dirs = self.collapsed_dirs.clone();
         let mut new_unfolded_dirs = self.unfolded_dirs.clone();
         let mut root_entries = HashSet::default();
@@ -1919,7 +1903,7 @@ impl OutlinePanel {
         cx: &mut ViewContext<Self>,
     ) {
         self.clear_previous();
-        self.displayed_item = Some(DisplayedActiveItem {
+        self.active_item = Some(ActiveItem {
             item_id: new_active_editor.item_id(),
             _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
             active_editor: new_active_editor.downgrade(),
@@ -1935,7 +1919,7 @@ impl OutlinePanel {
         self.last_visible_range = 0..0;
         self.selected_entry = None;
         self.update_task = Task::ready(());
-        self.displayed_item = None;
+        self.active_item = None;
         self.fs_entries.clear();
         self.fs_entries_depth.clear();
         self.outline_fetch_tasks.clear();
@@ -1993,7 +1977,7 @@ impl OutlinePanel {
 
     fn fetch_outlines(&mut self, range: &Range<usize>, cx: &mut ViewContext<Self>) {
         let Some(editor) = self
-            .displayed_item
+            .active_item
             .as_ref()
             .and_then(|item| item.active_editor.upgrade())
         else {
@@ -2338,7 +2322,7 @@ impl Panel for OutlinePanel {
     }
 
     fn starts_open(&self, _: &WindowContext) -> bool {
-        self.displayed_item.is_some()
+        self.active_item.is_some()
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
@@ -2346,7 +2330,7 @@ impl Panel for OutlinePanel {
         self.active = active;
         if active && old_active != active {
             if let Some(active_editor) = self
-                .displayed_item
+                .active_item
                 .as_ref()
                 .and_then(|item| item.active_editor.upgrade())
             {
