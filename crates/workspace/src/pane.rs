@@ -5,8 +5,8 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleZoom, Workspace,
+    CloseWindow, NewCenterTerminal, NewFile, NewSearch, NewTerminal, OpenInTerminal, OpenTerminal,
+    OpenVisible, SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -366,8 +366,14 @@ impl Pane {
                             .on_click(cx.listener(|pane, _, cx| {
                                 let menu = ContextMenu::build(cx, |menu, _| {
                                     menu.action("New File", NewFile.boxed_clone())
-                                        .action("New Terminal", NewCenterTerminal.boxed_clone())
-                                        .action("New Search", NewSearch.boxed_clone())
+                                        .action("New Terminal", NewTerminal.boxed_clone())
+                                        .action(
+                                            "New Search",
+                                            DeploySearch {
+                                                replace_enabled: false,
+                                            }
+                                            .boxed_clone(),
+                                        )
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
                                     pane.focus(cx);
