@@ -1222,6 +1222,10 @@ impl Context {
         }
     }
 
+    pub(crate) fn token_count(&self) -> Option<usize> {
+        self.token_count
+    }
+
     pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
         let request = self.to_completion_request(cx);
         self.pending_token_count = cx.spawn(|this, mut cx| {

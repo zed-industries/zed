@@ -34,16 +34,20 @@ pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
             label: "jest test $ZED_SYMBOL".to_owned(),
             command: "npx jest".to_owned(),
             args: vec![
-                VariableName::Symbol.template_value(),
+                "--testNamePattern".into(),
+                format!("\"{}\"", VariableName::Symbol.template_value()),
                 VariableName::File.template_value(),
             ],
-            tags: vec!["ts-test".into(), "js-test".into()],
+            tags: vec!["ts-test".into(), "js-test".into(), "tsx-test".into()],
             ..TaskTemplate::default()
         },
         TaskTemplate {
             label: "execute selection $ZED_SELECTED_TEXT".to_owned(),
             command: "node".to_owned(),
-            args: vec!["-e".into(), VariableName::SelectedText.template_value()],
+            args: vec![
+                "-e".into(),
+                format!("\"{}\"", VariableName::SelectedText.template_value()),
+            ],
             ..TaskTemplate::default()
         },
     ]))

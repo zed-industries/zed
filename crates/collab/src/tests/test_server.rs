@@ -161,7 +161,7 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
             client::init_settings(cx);
         });
 
@@ -327,7 +327,7 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
             client::init_settings(cx);
         });
         let (dev_server_id, _) = split_dev_server_token(&access_token).unwrap();

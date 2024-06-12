@@ -1317,7 +1317,7 @@ impl FakeLanguageServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{SemanticVersion, TestAppContext};
     use std::str::FromStr;
 
     #[ctor::ctor]
@@ -1330,7 +1330,7 @@ mod tests {
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
         });
         let (server, mut fake) = FakeLanguageServer::new(
             LanguageServerId(0),

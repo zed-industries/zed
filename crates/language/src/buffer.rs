@@ -797,6 +797,10 @@ impl Buffer {
             .set_language_registry(language_registry);
     }
 
+    pub fn language_registry(&self) -> Option<Arc<LanguageRegistry>> {
+        self.syntax_map.lock().language_registry()
+    }
+
     /// Assign the buffer a new [Capability].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
         self.capability = capability;

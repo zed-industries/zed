@@ -193,19 +193,22 @@ impl TestAppContext {
             },
             |cx| cx.new_view(build_window),
         )
+        .unwrap()
     }
 
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
         let mut cx = self.app.borrow_mut();
         let bounds = Bounds::maximized(None, &mut cx);
-        let window = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |cx| cx.new_view(|_| Empty),
-        );
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |cx| cx.new_view(|_| Empty),
+            )
+            .unwrap();
         drop(cx);
         let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
         cx.run_until_parked();
@@ -222,13 +225,15 @@ impl TestAppContext {
     {
         let mut cx = self.app.borrow_mut();
         let bounds = Bounds::maximized(None, &mut cx);
-        let window = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |cx| cx.new_view(build_root_view),
-        );
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |cx| cx.new_view(build_root_view),
+            )
+            .unwrap();
         drop(cx);
         let view = window.root_view(self).unwrap();
         let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
