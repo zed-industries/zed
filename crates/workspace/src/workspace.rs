@@ -4144,14 +4144,10 @@ impl Render for Workspace {
         } else {
             (None, None)
         };
-        let (ui_font, ui_font_size) = {
-            let theme_settings = ThemeSettings::get_global(cx);
-            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
-        };
+        let ui_font = theme::setup_ui_font(cx);
 
         let theme = cx.theme().clone();
         let colors = theme.colors();
-        cx.set_rem_size(ui_font_size);
 
         self.actions(div(), cx)
             .key_context(context)

@@ -832,13 +832,8 @@ impl PromptLibrary {
 
 impl Render for PromptLibrary {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let (ui_font, ui_font_size) = {
-            let theme_settings = ThemeSettings::get_global(cx);
-            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
-        };
-
+        let ui_font = theme::setup_ui_font(cx);
         let theme = cx.theme().clone();
-        cx.set_rem_size(ui_font_size);
 
         h_flex()
             .id("prompt-manager")

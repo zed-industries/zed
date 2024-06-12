@@ -9,14 +9,14 @@ pub fn app_menus() -> Vec<Menu<'static>> {
         Menu {
             name: "Zed",
             items: vec![
-                MenuItem::action("About Zed…", super::About),
+                MenuItem::action("About Zed…", zed_actions::About),
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu {
                     name: "Preferences",
                     items: vec![
                         MenuItem::action("Open Settings", super::OpenSettings),
-                        MenuItem::action("Open Key Bindings", super::OpenKeymap),
+                        MenuItem::action("Open Key Bindings", zed_actions::OpenKeymap),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::action("Open Default Key Bindings", super::OpenDefaultKeymap),
                         MenuItem::action("Open Local Settings", super::OpenLocalSettings),
@@ -104,9 +104,9 @@ pub fn app_menus() -> Vec<Menu<'static>> {
         Menu {
             name: "View",
             items: vec![
-                MenuItem::action("Zoom In", super::IncreaseBufferFontSize),
-                MenuItem::action("Zoom Out", super::DecreaseBufferFontSize),
-                MenuItem::action("Reset Zoom", super::ResetBufferFontSize),
+                MenuItem::action("Zoom In", zed_actions::IncreaseBufferFontSize),
+                MenuItem::action("Zoom Out", zed_actions::DecreaseBufferFontSize),
+                MenuItem::action("Reset Zoom", zed_actions::ResetBufferFontSize),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
                 MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
@@ -163,8 +163,8 @@ pub fn app_menus() -> Vec<Menu<'static>> {
         Menu {
             name: "Help",
             items: vec![
-                MenuItem::action("View Telemetry", super::OpenTelemetryLog),
-                MenuItem::action("View Dependency Licenses", super::OpenLicenses),
+                MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
+                MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
                 MenuItem::action("Give Feedback...", feedback::GiveFeedback),
                 MenuItem::separator(),

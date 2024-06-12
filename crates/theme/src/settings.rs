@@ -4,7 +4,7 @@ use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
-    ViewContext,
+    ViewContext, WindowContext,
 };
 use refineable::Refineable;
 use schemars::{
@@ -166,6 +166,11 @@ impl SystemAppearance {
 pub(crate) struct AdjustedBufferFontSize(Pixels);
 
 impl Global for AdjustedBufferFontSize {}
+
+#[derive(Default)]
+pub(crate) struct AdjustedUiFontSize(Pixels);
+
+impl Global for AdjustedUiFontSize {}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
@@ -358,7 +363,13 @@ pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
     .max(MIN_FONT_SIZE)
 }
 
-pub fn adjust_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
+pub fn get_buffer_font_size(cx: &AppContext) -> Pixels {
+    let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+    cx.try_global::<AdjustedBufferFontSize>()
+        .map_or(buffer_font_size, |adjusted_size| adjusted_size.0)
+}
+
+pub fn adjust_buffer_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
     let mut adjusted_size = cx
         .try_global::<AdjustedBufferFontSize>()
@@ -370,9 +381,45 @@ pub fn adjust_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     cx.refresh();
 }
 
-pub fn reset_font_size(cx: &mut AppContext) {
+pub fn reset_buffer_font_size(cx: &mut AppContext) {
     if cx.has_global::<AdjustedBufferFontSize>() {
         cx.remove_global::<AdjustedBufferFontSize>();
+        cx.refresh();
+    }
+}
+
+pub fn setup_ui_font(cx: &mut WindowContext) -> gpui::Font {
+    let (ui_font, ui_font_size) = {
+        let theme_settings = ThemeSettings::get_global(cx);
+        let font = theme_settings.ui_font.clone();
+        (font, get_ui_font_size(cx))
+    };
+
+    cx.set_rem_size(ui_font_size);
+    ui_font
+}
+
+pub fn get_ui_font_size(cx: &WindowContext) -> Pixels {
+    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+    cx.try_global::<AdjustedUiFontSize>()
+        .map_or(ui_font_size, |adjusted_size| adjusted_size.0)
+}
+
+pub fn adjust_ui_font_size(cx: &mut WindowContext, f: fn(&mut Pixels)) {
+    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+    let mut adjusted_size = cx
+        .try_global::<AdjustedUiFontSize>()
+        .map_or(ui_font_size, |adjusted_size| adjusted_size.0);
+
+    f(&mut adjusted_size);
+    adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
+    cx.set_global(AdjustedUiFontSize(adjusted_size));
+    cx.refresh();
+}
+
+pub fn reset_ui_font_size(cx: &mut WindowContext) {
+    if cx.has_global::<AdjustedUiFontSize>() {
+        cx.remove_global::<AdjustedUiFontSize>();
         cx.refresh();
     }
 }

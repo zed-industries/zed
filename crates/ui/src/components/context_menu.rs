@@ -24,6 +24,7 @@ enum ContextMenuItem {
     CustomEntry {
         entry_render: Box<dyn Fn(&mut WindowContext) -> AnyElement>,
         handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
+        selectable: bool,
     },
 }
 
@@ -121,6 +122,18 @@ impl ContextMenu {
         self
     }
 
+    pub fn custom_row(
+        mut self,
+        entry_render: impl Fn(&mut WindowContext) -> AnyElement + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::CustomEntry {
+            entry_render: Box::new(entry_render),
+            handler: Rc::new(|_, _| {}),
+            selectable: false,
+        });
+        self
+    }
+
     pub fn custom_entry(
         mut self,
         entry_render: impl Fn(&mut WindowContext) -> AnyElement + 'static,
@@ -129,6 +142,7 @@ impl ContextMenu {
         self.items.push(ContextMenuItem::CustomEntry {
             entry_render: Box::new(entry_render),
             handler: Rc::new(move |_, cx| handler(cx)),
+            selectable: true,
         });
         self
     }
@@ -266,7 +280,12 @@ impl ContextMenu {
 
 impl ContextMenuItem {
     fn is_selectable(&self) -> bool {
-        matches!(self, Self::Entry { .. } | Self::CustomEntry { .. })
+        match self {
+            ContextMenuItem::Separator => false,
+            ContextMenuItem::Header(_) => false,
+            ContextMenuItem::Entry { .. } => true,
+            ContextMenuItem::CustomEntry { selectable, .. } => *selectable,
+        }
     }
 }
 
@@ -382,21 +401,30 @@ impl Render for ContextMenu {
                                 ContextMenuItem::CustomEntry {
                                     entry_render,
                                     handler,
+                                    selectable,
                                 } => {
                                     let handler = handler.clone();
                                     let menu = cx.view().downgrade();
                                     ListItem::new(ix)
                                         .inset(true)
-                                        .selected(Some(ix) == self.selected_index)
+                                        .selected(if *selectable {
+                                            Some(ix) == self.selected_index
+                                        } else {
+                                            false
+                                        })
+                                        .selectable(*selectable)
                                         .on_click({
                                             let context = self.action_context.clone();
+                                            let selectable = *selectable;
                                             move |_, cx| {
-                                                handler(context.as_ref(), cx);
-                                                menu.update(cx, |menu, cx| {
-                                                    menu.clicked = true;
-                                                    cx.emit(DismissEvent);
-                                                })
-                                                .ok();
+                                                if selectable {
+                                                    handler(context.as_ref(), cx);
+                                                    menu.update(cx, |menu, cx| {
+                                                        menu.clicked = true;
+                                                        cx.emit(DismissEvent);
+                                                    })
+                                                    .ok();
+                                                }
                                             }
                                         })
                                         .child(entry_render(cx))

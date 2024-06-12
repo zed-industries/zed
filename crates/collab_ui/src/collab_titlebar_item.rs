@@ -73,6 +73,7 @@ impl Render for CollabTitlebarItem {
             .child(
                 h_flex()
                     .gap_1()
+                    .child(self.render_application_menu(cx))
                     .children(self.render_project_host(cx))
                     .child(self.render_project_name(cx))
                     .children(self.render_project_branch(cx))
@@ -386,8 +387,129 @@ impl CollabTitlebarItem {
         }
     }
 
-    // resolve if you are in a room -> render_project_owner
-    // render_project_owner -> resolve if you are in a room -> Option<foo>
+    pub fn render_application_menu(&self, _cx: &mut ViewContext<Self>) -> AnyElement {
+        popover_menu("application-menu")
+            .menu(|cx| {
+                ContextMenu::build(cx, |menu, _| {
+                    menu.header("Workspace")
+                        .action("Open Command Palette", Box::new(command_palette::Toggle))
+                        .custom_row(|cx| {
+                            div()
+                                .w_full()
+                                .flex()
+                                .flex_row()
+                                .justify_between()
+                                .cursor(gpui::CursorStyle::Arrow)
+                                .child(Label::new("Buffer Font Size"))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .child(div().w(px(16.0)))
+                                        .child(Button::new("reset-buffer-zoom", "Reset").on_click(
+                                            |_, cx| {
+                                                cx.dispatch_action(Box::new(
+                                                    zed_actions::ResetBufferFontSize,
+                                                ))
+                                            },
+                                        ))
+                                        .child(
+                                            IconButton::new("--buffer-zoom", IconName::Dash)
+                                                .on_click(|_, cx| {
+                                                    cx.dispatch_action(Box::new(
+                                                        zed_actions::DecreaseBufferFontSize,
+                                                    ))
+                                                }),
+                                        )
+                                        .child(Label::new(
+                                            theme::get_buffer_font_size(cx).to_string(),
+                                        ))
+                                        .child(
+                                            IconButton::new("+-buffer-zoom", IconName::Plus)
+                                                .on_click(|_, cx| {
+                                                    cx.dispatch_action(Box::new(
+                                                        zed_actions::IncreaseBufferFontSize,
+                                                    ))
+                                                }),
+                                        ),
+                                )
+                                .into_any_element()
+                        })
+                        .custom_row(|cx| {
+                            div()
+                                .w_full()
+                                .flex()
+                                .flex_row()
+                                .justify_between()
+                                .cursor(gpui::CursorStyle::Arrow)
+                                .child(Label::new("UI Font Size"))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .child(Button::new("reset-ui-zoom", "Reset").on_click(
+                                            |_, cx| {
+                                                cx.dispatch_action(Box::new(
+                                                    zed_actions::ResetUiFontSize,
+                                                ))
+                                            },
+                                        ))
+                                        .child(
+                                            IconButton::new("--ui-zoom", IconName::Dash).on_click(
+                                                |_, cx| {
+                                                    cx.dispatch_action(Box::new(
+                                                        zed_actions::DecreaseUiFontSize,
+                                                    ))
+                                                },
+                                            ),
+                                        )
+                                        .child(Label::new(theme::get_ui_font_size(cx).to_string()))
+                                        .child(
+                                            IconButton::new("+-ui-zoom", IconName::Plus).on_click(
+                                                |_, cx| {
+                                                    cx.dispatch_action(Box::new(
+                                                        zed_actions::IncreaseUiFontSize,
+                                                    ))
+                                                },
+                                            ),
+                                        ),
+                                )
+                                .into_any_element()
+                        })
+                        .header("Preferences")
+                        .action("Settings", Box::new(zed_actions::OpenSettings))
+                        .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                        .action("Themes", Box::new(theme_selector::Toggle::default()))
+                        .action("Extensions", Box::new(extensions_ui::Extensions))
+                        .header("Help")
+                        .action("About Zed", Box::new(zed_actions::About))
+                        .action("Welcome", Box::new(workspace::Welcome))
+                        .action(
+                            "Documentation",
+                            Box::new(zed_actions::OpenBrowser {
+                                url: "https://zed.dev/docs".into(),
+                            }),
+                        )
+                        .action("Give Feedback", Box::new(feedback::GiveFeedback))
+                        .action("Check for Updates", Box::new(auto_update::Check))
+                        .action("View Telemetry", Box::new(zed_actions::OpenTelemetryLog))
+                        .action(
+                            "View Dependency Licenses",
+                            Box::new(zed_actions::OpenLicenses),
+                        )
+                        .separator()
+                        .action("Quit", Box::new(zed_actions::Quit))
+                })
+                .into()
+            })
+            .trigger(
+                IconButton::new("application-menu", ui::IconName::Hash)
+                    .style(ButtonStyle::Subtle)
+                    .tooltip(|cx| Tooltip::text("Open Application Menu", cx))
+                    .icon_size(IconSize::Small),
+            )
+            .into_any_element()
+    }
 
     pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         if let Some(dev_server) =
