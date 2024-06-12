@@ -89,6 +89,7 @@ pub struct OutlinePanel {
     update_task: Task<()>,
     outline_fetch_tasks: Vec<Task<()>>,
     outlines: HashMap<OutlinesContainer, Vec<Outline>>,
+    cached_entries_with_depth: Option<Vec<(usize, EntryOwned)>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -383,6 +384,7 @@ impl OutlinePanel {
                 outline_fetch_tasks: Vec::new(),
                 outlines: HashMap::default(),
                 last_visible_range: 0..0,
+                cached_entries_with_depth: None,
                 _subscriptions: vec![
                     settings_subscription,
                     icons_subscription,
@@ -740,11 +742,11 @@ impl OutlinePanel {
     }
 
     fn autoscroll(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(selected_entry) = &self.selected_entry {
+        if let Some(selected_entry) = self.selected_entry.clone() {
             let index = self
                 .entries_with_depths(cx)
-                .into_iter()
-                .position(|(_, entry)| &entry == selected_entry);
+                .iter()
+                .position(|(_, entry)| entry == &selected_entry);
             if let Some(index) = index {
                 self.scroll_handle.scroll_to_item(index);
                 cx.notify();
@@ -1891,6 +1893,7 @@ impl OutlinePanel {
                     outline_panel.unfolded_dirs = new_unfolded_dirs;
                     outline_panel.fs_entries = new_fs_entries;
                     outline_panel.fs_entries_depth = new_depth_map;
+                    outline_panel.cached_entries_with_depth = None;
                     if new_selected_entry.is_some() {
                         outline_panel.selected_entry = new_selected_entry;
                     }
@@ -1937,6 +1940,7 @@ impl OutlinePanel {
         self.fs_entries_depth.clear();
         self.outline_fetch_tasks.clear();
         self.outlines.clear();
+        self.cached_entries_with_depth = None;
     }
 
     fn location_for_editor_selection(
@@ -2089,104 +2093,108 @@ impl OutlinePanel {
                                 }
                             }
                         }
+                        outline_panel.cached_entries_with_depth = None;
                         cx.notify();
                     })
                     .ok();
             }));
     }
 
-    fn entries_with_depths(&self, cx: &AppContext) -> Vec<(usize, EntryOwned)> {
-        let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
-        let mut folded_dirs_entry = None::<(usize, WorktreeId, Vec<Entry>)>;
-        let mut entries = Vec::new();
+    fn entries_with_depths(&mut self, cx: &AppContext) -> &[(usize, EntryOwned)] {
+        self.cached_entries_with_depth.get_or_insert_with(|| {
+            let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
+            let mut folded_dirs_entry = None::<(usize, WorktreeId, Vec<Entry>)>;
+            let mut entries = Vec::new();
 
-        for entry in &self.fs_entries {
-            let mut depth = match entry {
-                FsEntry::Directory(worktree_id, dir_entry) => {
-                    let depth = self
-                        .fs_entries_depth
-                        .get(&(*worktree_id, dir_entry.id))
-                        .map(|&(_, depth)| depth)
-                        .unwrap_or(0);
-                    if auto_fold_dirs {
-                        let folded = self
-                            .unfolded_dirs
-                            .get(worktree_id)
-                            .map_or(true, |unfolded_dirs| !unfolded_dirs.contains(&dir_entry.id));
-                        if folded {
-                            if let Some((folded_depth, folded_worktree_id, mut folded_dirs)) =
-                                folded_dirs_entry.take()
-                            {
-                                if worktree_id == &folded_worktree_id
-                                    && dir_entry.path.parent()
-                                        == folded_dirs.last().map(|entry| entry.path.as_ref())
+            for entry in &self.fs_entries {
+                let mut depth = match entry {
+                    FsEntry::Directory(worktree_id, dir_entry) => {
+                        let depth = self
+                            .fs_entries_depth
+                            .get(&(*worktree_id, dir_entry.id))
+                            .map(|&(_, depth)| depth)
+                            .unwrap_or(0);
+                        if auto_fold_dirs {
+                            let folded = self
+                                .unfolded_dirs
+                                .get(worktree_id)
+                                .map_or(true, |unfolded_dirs| {
+                                    !unfolded_dirs.contains(&dir_entry.id)
+                                });
+                            if folded {
+                                if let Some((folded_depth, folded_worktree_id, mut folded_dirs)) =
+                                    folded_dirs_entry.take()
                                 {
-                                    folded_dirs.push(dir_entry.clone());
-                                    folded_dirs_entry =
-                                        Some((folded_depth, folded_worktree_id, folded_dirs))
+                                    if worktree_id == &folded_worktree_id
+                                        && dir_entry.path.parent()
+                                            == folded_dirs.last().map(|entry| entry.path.as_ref())
+                                    {
+                                        folded_dirs.push(dir_entry.clone());
+                                        folded_dirs_entry =
+                                            Some((folded_depth, folded_worktree_id, folded_dirs))
+                                    } else {
+                                        entries.push((
+                                            folded_depth,
+                                            EntryOwned::FoldedDirs(folded_worktree_id, folded_dirs),
+                                        ));
+                                        folded_dirs_entry =
+                                            Some((depth, *worktree_id, vec![dir_entry.clone()]))
+                                    }
                                 } else {
-                                    entries.push((
-                                        folded_depth,
-                                        EntryOwned::FoldedDirs(folded_worktree_id, folded_dirs),
-                                    ));
                                     folded_dirs_entry =
                                         Some((depth, *worktree_id, vec![dir_entry.clone()]))
                                 }
-                            } else {
-                                folded_dirs_entry =
-                                    Some((depth, *worktree_id, vec![dir_entry.clone()]))
-                            }
 
-                            continue;
+                                continue;
+                            }
                         }
+                        depth
                     }
-                    depth
+                    FsEntry::ExternalFile(_) => 0,
+                    FsEntry::File(worktree_id, file_entry) => self
+                        .fs_entries_depth
+                        .get(&(*worktree_id, file_entry.id))
+                        .map(|&(_, depth)| depth)
+                        .unwrap_or(0),
+                };
+                if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take() {
+                    entries.push((
+                        folded_depth,
+                        EntryOwned::FoldedDirs(worktree_id, folded_dirs),
+                    ));
                 }
-                FsEntry::ExternalFile(_) => 0,
-                FsEntry::File(worktree_id, file_entry) => self
-                    .fs_entries_depth
-                    .get(&(*worktree_id, file_entry.id))
-                    .map(|&(_, depth)| depth)
-                    .unwrap_or(0),
-            };
+
+                entries.push((depth, EntryOwned::Entry(entry.clone())));
+                let mut outline_depth = None::<usize>;
+                entries.extend(
+                    entry
+                        .outlines_container()
+                        .and_then(|container| Some((container, self.outlines.get(&container)?)))
+                        .into_iter()
+                        .flat_map(|(container, outlines)| {
+                            outlines.iter().map(move |outline| (container, outline))
+                        })
+                        .map(move |(container, outline)| {
+                            if let Some(outline_depth) = outline_depth {
+                                match outline_depth.cmp(&outline.depth) {
+                                    cmp::Ordering::Less => depth += 1,
+                                    cmp::Ordering::Equal => {}
+                                    cmp::Ordering::Greater => depth -= 1,
+                                };
+                            }
+                            outline_depth = Some(outline.depth);
+                            (depth, EntryOwned::Outline(container, outline.clone()))
+                        }),
+                )
+            }
             if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take() {
                 entries.push((
                     folded_depth,
                     EntryOwned::FoldedDirs(worktree_id, folded_dirs),
                 ));
             }
-
-            entries.push((depth, EntryOwned::Entry(entry.clone())));
-            let mut outline_depth = None::<usize>;
-            entries.extend(
-                entry
-                    .outlines_container()
-                    .and_then(|container| Some((container, self.outlines.get(&container)?)))
-                    .into_iter()
-                    .flat_map(|(container, outlines)| {
-                        outlines.iter().map(move |outline| (container, outline))
-                    })
-                    .map(move |(container, outline)| {
-                        if let Some(outline_depth) = outline_depth {
-                            match outline_depth.cmp(&outline.depth) {
-                                cmp::Ordering::Less => depth += 1,
-                                cmp::Ordering::Equal => {}
-                                cmp::Ordering::Greater => depth -= 1,
-                            };
-                        }
-                        outline_depth = Some(outline.depth);
-                        (depth, EntryOwned::Outline(container, outline.clone()))
-                    }),
-            )
-        }
-        if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take() {
-            entries.push((
-                folded_depth,
-                EntryOwned::FoldedDirs(worktree_id, folded_dirs),
-            ));
-        }
-
-        entries
+            entries
+        })
     }
 }
 
@@ -2410,23 +2418,26 @@ impl Render for OutlinePanel {
                 )
                 .track_focus(&self.focus_handle)
                 .child({
-                    let entries = self.entries_with_depths(cx);
-                    uniform_list(cx.view().clone(), "entries", entries.len(), {
+                    let items_len = self.entries_with_depths(cx).len();
+                    uniform_list(cx.view().clone(), "entries", items_len, {
                         move |outline_panel, range, cx| {
                             outline_panel.last_visible_range = range.clone();
                             outline_panel.fetch_outlines(&range, cx);
-                            entries
+                            outline_panel
+                                .entries_with_depths(cx)
                                 .get(range)
+                                .map(|entries| entries.to_vec())
                                 .into_iter()
                                 .flatten()
                                 .map(|(depth, dipslayed_item)| match dipslayed_item {
                                     EntryOwned::Entry(entry) => {
-                                        outline_panel.render_entry(entry, *depth, cx)
+                                        outline_panel.render_entry(&entry, depth, cx)
                                     }
                                     EntryOwned::FoldedDirs(worktree_id, entries) => outline_panel
-                                        .render_folded_dirs(*worktree_id, entries, *depth, cx),
-                                    EntryOwned::Outline(container, outline) => outline_panel
-                                        .render_outline(*container, outline, *depth, cx),
+                                        .render_folded_dirs(worktree_id, &entries, depth, cx),
+                                    EntryOwned::Outline(container, outline) => {
+                                        outline_panel.render_outline(container, &outline, depth, cx)
+                                    }
                                 })
                                 .collect()
                         }
