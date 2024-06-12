@@ -7,10 +7,10 @@ use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutp
 use fs::Fs;
 use futures::AsyncReadExt;
 use gpui::{AppContext, Model, Task, WeakView};
-use html_to_markdown::convert_rustdoc_to_markdown;
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
+use rustdoc::convert_rustdoc_to_markdown;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
 
