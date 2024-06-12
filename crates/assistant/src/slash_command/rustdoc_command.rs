@@ -202,7 +202,7 @@ impl SlashCommand for RustdocSlashCommand {
         }
 
         if let Some(crate_name_to_index) = crate_name_to_index {
-            let index_task: Task<Result<String>> = cx.background_executor().spawn({
+            let index_task = cx.background_executor().spawn({
                 let rustdoc_store = RustdocStore::global(cx);
                 let fs = fs.clone();
                 let crate_name_to_index = crate_name_to_index.clone();
@@ -217,7 +217,7 @@ impl SlashCommand for RustdocSlashCommand {
                         .index(crate_name_to_index.clone(), provider)
                         .await?;
 
-                    Ok(format!("Indexed {crate_name_to_index}"))
+                    anyhow::Ok(format!("Indexed {crate_name_to_index}"))
                 }
             });
 
@@ -251,29 +251,36 @@ impl SlashCommand for RustdocSlashCommand {
             Ok(crate_name) => crate_name.to_string(),
             Err(err) => return Task::ready(Err(err)),
         };
-        let module_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
+        let item_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
 
         let text = cx.background_executor().spawn({
+            let rustdoc_store = RustdocStore::global(cx);
             let crate_name = crate_name.clone();
-            let module_path = module_path.clone();
+            let item_path = item_path.clone();
             async move {
-                Self::build_message(
-                    fs,
-                    http_client,
-                    crate_name,
-                    module_path,
-                    path_to_cargo_toml.as_deref(),
-                    include_all,
-                )
-                .await
+                let item_docs = rustdoc_store
+                    .load(crate_name, Some(item_path.join("::")))
+                    .await?;
+
+                anyhow::Ok((RustdocSource::Local, item_docs))
+
+                // Self::build_message(
+                //     fs,
+                //     http_client,
+                //     crate_name,
+                //     module_path,
+                //     path_to_cargo_toml.as_deref(),
+                //     include_all,
+                // )
+                // .await
             }
         });
 
         let crate_name = SharedString::from(crate_name);
-        let module_path = if module_path.is_empty() {
+        let module_path = if item_path.is_empty() {
             None
         } else {
-            Some(SharedString::from(module_path.join("::")))
+            Some(SharedString::from(item_path.join("::")))
         };
         cx.foreground_executor().spawn(async move {
             let (source, text) = text.await?;

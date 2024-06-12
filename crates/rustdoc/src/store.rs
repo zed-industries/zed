@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use collections::HashMap;
 use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, Task, UpdateGlobal};
@@ -36,6 +36,22 @@ impl RustdocStore {
             executor,
             docs: Arc::new(RwLock::new(HashMap::default())),
         }
+    }
+
+    pub fn load(&self, crate_name: String, item_path: Option<String>) -> Task<Result<String>> {
+        let item_docs = self
+            .docs
+            .read()
+            .iter()
+            .find_map(|((item_crate_name, item), item_docs)| {
+                if item_crate_name == &crate_name && item_path == Some(item.display()) {
+                    Some(item_docs.clone())
+                } else {
+                    None
+                }
+            });
+
+        Task::ready(item_docs.ok_or_else(|| anyhow!("no docs found")))
     }
 
     pub fn index(
