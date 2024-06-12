@@ -218,3 +218,32 @@ pub async fn get_models(
         ))
     }
 }
+
+/// Sends an empty request to Ollama to trigger loading the model
+pub async fn preload_model(client: &dyn HttpClient, api_url: &str, model: &str) -> Result<()> {
+    let uri = format!("{api_url}/api/generate");
+    let request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .body(AsyncBody::from(serde_json::to_string(
+            &serde_json::json!({
+                "model": model,
+            }),
+        )?))?;
+
+    let mut response = client.send(request).await?;
+
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+
+        Err(anyhow!(
+            "Failed to connect to Ollama API: {} {}",
+            response.status(),
+            body,
+        ))
+    }
+}
