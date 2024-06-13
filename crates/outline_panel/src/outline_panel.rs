@@ -18,7 +18,6 @@ use editor::{
 };
 use file_icons::FileIcons;
 use futures::{stream::FuturesUnordered, StreamExt};
-use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, px, uniform_list, Action, AppContext, AssetSource,
     AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId, EventEmitter,
@@ -32,7 +31,7 @@ use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
-use project::{EntryKind, File, Fs, Project};
+use project::{File, Fs, Project};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use unicase::UniCase;
@@ -225,7 +224,7 @@ impl FsEntry {
 struct ActiveItem {
     item_id: EntityId,
     active_editor: WeakView<Editor>,
-    _editor_subscrpiption: Option<Subscription>,
+    _editor_subscrpiption: Subscription,
 }
 
 #[derive(Debug)]
@@ -236,22 +235,6 @@ pub enum Event {
 #[derive(Serialize, Deserialize)]
 struct SerializedOutlinePanel {
     width: Option<Pixels>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct EntryDetails {
-    filename: String,
-    icon: Option<Arc<str>>,
-    path: Arc<Path>,
-    depth: usize,
-    kind: EntryKind,
-    is_ignored: bool,
-    is_expanded: bool,
-    is_selected: bool,
-    git_status: Option<GitFileStatus>,
-    is_private: bool,
-    worktree_id: WorktreeId,
-    canonical_path: Option<PathBuf>,
 }
 
 pub fn init_settings(cx: &mut AppContext) {
@@ -1109,31 +1092,24 @@ impl OutlinePanel {
         editor: &View<Editor>,
         cx: &mut ViewContext<'_, Self>,
     ) {
+        if !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
+            return;
+        }
         let Some((buffer_id, excerpt_id, outline)) = self.location_for_editor_selection(editor, cx)
         else {
             return;
         };
-
-        let file_entry_to_expand = self.fs_entries.iter().find(|entry| match entry {
-            FsEntry::File(_, _, file_buffer_id, excerpts)
-            | FsEntry::ExternalFile(file_buffer_id, excerpts) => {
-                file_buffer_id == &buffer_id && excerpts.contains(&excerpt_id)
-            }
-            _ => false,
-        });
-        let Some(entry_to_select) = outline
-            .map(|outline| EntryOwned::Outline(buffer_id, excerpt_id, outline))
-            .or_else(|| Some(EntryOwned::Entry(file_entry_to_expand.cloned()?)))
+        let Some((file_entry_with_selection, entry_with_selection)) =
+            self.entry_for_selection(buffer_id, excerpt_id, outline)
         else {
             return;
         };
-
-        if self.selected_entry.as_ref() == Some(&entry_to_select) {
+        if self.selected_entry.as_ref() == Some(&entry_with_selection) {
             return;
         }
 
-        if let Some(FsEntry::File(file_worktree_id, file_entry, ..)) = file_entry_to_expand {
-            if let Some(worktree) = self.project.read(cx).worktree_for_id(*file_worktree_id, cx) {
+        if let FsEntry::File(file_worktree_id, file_entry, ..) = file_entry_with_selection {
+            if let Some(worktree) = self.project.read(cx).worktree_for_id(file_worktree_id, cx) {
                 let parent_entry = {
                     let mut traversal = worktree.read(cx).traverse_from_path(
                         true,
@@ -1157,11 +1133,31 @@ impl OutlinePanel {
         self.update_fs_entries(
             &editor,
             HashSet::default(),
-            Some(entry_to_select),
+            Some(entry_with_selection),
             None,
             false,
             cx,
         );
+    }
+
+    fn entry_for_selection(
+        &mut self,
+        buffer_id: BufferId,
+        excerpt_id: ExcerptId,
+        outline: Option<OutlineItem<language::Anchor>>,
+    ) -> Option<(FsEntry, EntryOwned)> {
+        let fs_entry_with_selection = self.fs_entries.iter().find(|entry| match entry {
+            FsEntry::File(_, _, file_buffer_id, excerpts)
+            | FsEntry::ExternalFile(file_buffer_id, excerpts) => {
+                file_buffer_id == &buffer_id && excerpts.contains(&excerpt_id)
+            }
+            _ => false,
+        });
+        let entry_with_selection = outline
+            .map(|outline| EntryOwned::Outline(buffer_id, excerpt_id, outline))
+            .or_else(|| Some(EntryOwned::Entry(fs_entry_with_selection.cloned()?)));
+
+        fs_entry_with_selection.cloned().zip(entry_with_selection)
     }
 
     fn expand_entry(
@@ -1885,9 +1881,22 @@ impl OutlinePanel {
             _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
             active_editor: new_active_editor.downgrade(),
         });
+        let new_selected_entry = self
+            .location_for_editor_selection(&new_active_editor, cx)
+            .and_then(|(buffer_id, excerpt_id, outline)| {
+                let (_, entry) = self.entry_for_selection(buffer_id, excerpt_id, outline)?;
+                Some(entry)
+            });
         let new_entries =
             HashSet::from_iter(new_active_editor.read(cx).buffer().read(cx).excerpt_ids());
-        self.update_fs_entries(&new_active_editor, new_entries, None, None, true, cx);
+        self.update_fs_entries(
+            &new_active_editor,
+            new_entries,
+            new_selected_entry,
+            None,
+            true,
+            cx,
+        );
     }
 
     fn clear_previous(&mut self) {
@@ -2344,7 +2353,21 @@ impl Panel for OutlinePanel {
                 if self.active_item.as_ref().map(|item| item.item_id)
                     == Some(active_editor.item_id())
                 {
-                    self.update_fs_entries(&active_editor, HashSet::default(), None, None, true, cx)
+                    let new_selected_entry = self
+                        .location_for_editor_selection(&active_editor, cx)
+                        .and_then(|(buffer_id, excerpt_id, outline)| {
+                            let (_, entry) =
+                                self.entry_for_selection(buffer_id, excerpt_id, outline)?;
+                            Some(entry)
+                        });
+                    self.update_fs_entries(
+                        &active_editor,
+                        HashSet::default(),
+                        new_selected_entry,
+                        None,
+                        true,
+                        cx,
+                    )
                 } else {
                     self.replace_visible_entries(active_editor, cx);
                 }
@@ -2472,85 +2495,81 @@ impl Render for OutlinePanel {
 fn subscribe_for_editor_events(
     editor: &View<Editor>,
     cx: &mut ViewContext<OutlinePanel>,
-) -> Option<Subscription> {
-    if OutlinePanelSettings::get_global(cx).auto_reveal_entries {
-        let debounce = Some(Duration::from_millis(UPDATE_DEBOUNCE_MILLIS));
-        Some(cx.subscribe(
-            editor,
-            move |outline_panel, editor, e: &EditorEvent, cx| match e {
-                EditorEvent::SelectionsChanged { local: true } => {
-                    outline_panel.reveal_entry_for_selection(&editor, cx);
-                    cx.notify();
-                }
-                EditorEvent::ExcerptsAdded { excerpts, .. } => {
-                    outline_panel.update_fs_entries(
-                        &editor,
-                        excerpts.iter().map(|&(excerpt_id, _)| excerpt_id).collect(),
-                        None,
-                        debounce,
-                        false,
-                        cx,
-                    );
-                }
-                EditorEvent::ExcerptsRemoved { ids } => {
-                    let mut ids = ids.into_iter().collect::<HashSet<_>>();
-                    for excerpts in outline_panel.excerpts.values_mut() {
-                        excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
-                        if ids.is_empty() {
-                            break;
-                        }
+) -> Subscription {
+    let debounce = Some(Duration::from_millis(UPDATE_DEBOUNCE_MILLIS));
+    cx.subscribe(
+        editor,
+        move |outline_panel, editor, e: &EditorEvent, cx| match e {
+            EditorEvent::SelectionsChanged { local: true } => {
+                outline_panel.reveal_entry_for_selection(&editor, cx);
+                cx.notify();
+            }
+            EditorEvent::ExcerptsAdded { excerpts, .. } => {
+                outline_panel.update_fs_entries(
+                    &editor,
+                    excerpts.iter().map(|&(excerpt_id, _)| excerpt_id).collect(),
+                    None,
+                    debounce,
+                    false,
+                    cx,
+                );
+            }
+            EditorEvent::ExcerptsRemoved { ids } => {
+                let mut ids = ids.into_iter().collect::<HashSet<_>>();
+                for excerpts in outline_panel.excerpts.values_mut() {
+                    excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
+                    if ids.is_empty() {
+                        break;
                     }
-                    outline_panel.update_fs_entries(
-                        &editor,
-                        HashSet::default(),
-                        None,
-                        debounce,
-                        false,
-                        cx,
-                    );
                 }
-                EditorEvent::ExcerptsExpanded { ids } => {
-                    let mut ids = ids.into_iter().collect::<HashSet<_>>();
-                    for excerpts in outline_panel.excerpts.values_mut() {
-                        ids.retain(|id| {
-                            if let Some(excerpt) = excerpts.get_mut(id) {
-                                excerpt.outlines = None;
-                                false
-                            } else {
-                                true
-                            }
-                        });
-                        if ids.is_empty() {
-                            break;
+                outline_panel.update_fs_entries(
+                    &editor,
+                    HashSet::default(),
+                    None,
+                    debounce,
+                    false,
+                    cx,
+                );
+            }
+            EditorEvent::ExcerptsExpanded { ids } => {
+                let mut ids = ids.into_iter().collect::<HashSet<_>>();
+                for excerpts in outline_panel.excerpts.values_mut() {
+                    ids.retain(|id| {
+                        if let Some(excerpt) = excerpts.get_mut(id) {
+                            excerpt.outlines = None;
+                            false
+                        } else {
+                            true
                         }
+                    });
+                    if ids.is_empty() {
+                        break;
                     }
-                    outline_panel.update_fs_entries(
-                        &editor,
-                        HashSet::default(),
-                        None,
-                        debounce,
-                        true,
-                        cx,
-                    );
                 }
-                EditorEvent::Reparsed => {
-                    outline_panel.outline_fetch_tasks.clear();
-                    outline_panel.excerpts.clear();
-                    outline_panel.update_fs_entries(
-                        &editor,
-                        HashSet::default(),
-                        None,
-                        debounce,
-                        true,
-                        cx,
-                    );
-                }
-                _ => {}
-            },
-        ))
-    } else {
-        None
-    }
+                outline_panel.update_fs_entries(
+                    &editor,
+                    HashSet::default(),
+                    None,
+                    debounce,
+                    true,
+                    cx,
+                );
+            }
+            EditorEvent::Reparsed => {
+                outline_panel.outline_fetch_tasks.clear();
+                outline_panel.excerpts.clear();
+                outline_panel.update_fs_entries(
+                    &editor,
+                    HashSet::default(),
+                    None,
+                    debounce,
+                    true,
+                    cx,
+                );
+            }
+            _ => {}
+        },
+    )
 }
 
 fn range_contains(
