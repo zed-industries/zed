@@ -2353,7 +2353,13 @@ impl Panel for OutlinePanel {
                 .as_ref()
                 .and_then(|item| item.active_editor.upgrade())
             {
-                self.replace_visible_entries(active_editor, cx);
+                if self.active_item.as_ref().map(|item| item.item_id)
+                    == Some(active_editor.item_id())
+                {
+                    self.update_fs_entries(&active_editor, HashSet::default(), None, None, true, cx)
+                } else {
+                    self.replace_visible_entries(active_editor, cx);
+                }
             }
         }
     }
