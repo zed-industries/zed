@@ -1,8 +1,9 @@
 use assistant::assistant_settings::AssistantSettings;
 use assistant::{AssistantPanel, InlineAssist};
 use editor::actions::{
-    AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, MoveLineDown, MoveLineUp, SelectAll,
-    SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode,
+    AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
+    GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,
+    SelectNext, SelectSmallerSyntaxNode,
 };
 use editor::{Editor, EditorSettings};
 
@@ -110,46 +111,6 @@ impl Render for QuickActionBar {
             )
         });
 
-        let editor_selections_dropdown =
-            IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
-                .size(ButtonSize::Compact)
-                .icon_size(IconSize::Small)
-                .style(ButtonStyle::Subtle)
-                .selected(self.toggle_selections_menu.is_some())
-                .on_click({
-                    let focus = editor.focus_handle(cx);
-                    cx.listener(move |quick_action_bar, _, cx| {
-                        let focus = focus.clone();
-                        let menu = ContextMenu::build(cx, move |menu, _| {
-                            menu.context(focus.clone())
-                                .action("Select All", Box::new(SelectAll))
-                                .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
-                                .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
-                                .separator()
-                                .action("Add Cursor Above", Box::new(AddSelectionAbove))
-                                .action("Add Cursor Below", Box::new(AddSelectionBelow))
-                                .action(
-                                    "Select Next Occurrence",
-                                    Box::new(SelectNext {
-                                        replace_newest: false,
-                                    }),
-                                )
-                                .separator()
-                                .action("Move Line Up", Box::new(MoveLineUp))
-                                .action("Move Line Down", Box::new(MoveLineDown))
-                                .action("Duplicate Selection", Box::new(DuplicateLineDown))
-                        });
-                        cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
-                            quick_action_bar.toggle_selections_menu = None;
-                        })
-                        .detach();
-                        quick_action_bar.toggle_selections_menu = Some(menu);
-                    })
-                })
-                .when(self.toggle_selections_menu.is_none(), |this| {
-                    this.tooltip(|cx| Tooltip::text("Selection Controls", cx))
-                });
-
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
             IconName::MagicWand,
@@ -167,6 +128,54 @@ impl Render for QuickActionBar {
                 }
             },
         );
+
+        let editor_selections_dropdown =
+            IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
+                .size(ButtonSize::Compact)
+                .icon_size(IconSize::Small)
+                .style(ButtonStyle::Subtle)
+                .selected(self.toggle_selections_menu.is_some())
+                .on_click({
+                    let focus = editor.focus_handle(cx);
+                    cx.listener(move |quick_action_bar, _, cx| {
+                        let focus = focus.clone();
+                        let menu = ContextMenu::build(cx, move |menu, _| {
+                            menu.context(focus.clone())
+                                .action("Select All", Box::new(SelectAll))
+                                .action(
+                                    "Select Next Occurrence",
+                                    Box::new(SelectNext {
+                                        replace_newest: false,
+                                    }),
+                                )
+                                .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
+                                .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
+                                .action("Add Cursor Above", Box::new(AddSelectionAbove))
+                                .action("Add Cursor Below", Box::new(AddSelectionBelow))
+                                .separator()
+                                .action("Go to Symbol", Box::new(SelectAll))
+                                .action("Go to Line/Column", Box::new(SelectLargerSyntaxNode))
+                                .separator()
+                                .action("Next Problem", Box::new(GoToDiagnostic))
+                                .action("Previous Problem", Box::new(GoToPrevDiagnostic))
+                                .separator()
+                                .action("Next Hunk", Box::new(GoToHunk))
+                                .action("Previous Hunk", Box::new(GoToPrevHunk))
+                                .separator()
+                                .action("Move Line Up", Box::new(MoveLineUp))
+                                .action("Move Line Down", Box::new(MoveLineDown))
+                                .action("Duplicate Selection", Box::new(DuplicateLineDown))
+                        });
+                        cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
+                            quick_action_bar.toggle_selections_menu = None;
+                        })
+                        .detach();
+                        quick_action_bar.toggle_selections_menu = Some(menu);
+                    })
+                })
+                .when(self.toggle_selections_menu.is_none(), |this| {
+                    this.tooltip(|cx| Tooltip::text("Selection Controls", cx))
+                });
 
         let editor_settings_dropdown =
             IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
