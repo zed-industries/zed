@@ -70,7 +70,8 @@ use gpui::{
     FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, ListSizingBehavior, Model,
     MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle,
     Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle,
-    View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
+    View, ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle, WeakView, WhiteSpace,
+    WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -448,6 +449,7 @@ struct BufferOffset(usize);
 /// See the [module level documentation](self) for more information.
 pub struct Editor {
     focus_handle: FocusHandle,
+    last_focused: Option<WeakFocusHandle>,
     /// The text buffer being edited
     buffer: Model<MultiBuffer>,
     /// Map of how text in the buffer should be displayed.
@@ -1735,6 +1737,8 @@ impl Editor {
         );
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
+        cx.on_descendant_focus(&focus_handle, Self::handle_descendant_focus)
+            .detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
         let show_indent_guides = if mode == EditorMode::SingleLine {
@@ -1745,6 +1749,7 @@ impl Editor {
 
         let mut this = Self {
             focus_handle,
+            last_focused: None,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
             selections,
@@ -11299,9 +11304,13 @@ impl Editor {
 
     fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(EditorEvent::Focused);
-        if let Some(rename) = self.pending_rename.as_ref() {
-            let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
-            cx.focus(&rename_editor_focus_handle);
+
+        if let Some(last_focused) = self
+            .last_focused
+            .as_ref()
+            .and_then(|last_focused| last_focused.upgrade())
+        {
+            cx.focus(&last_focused);
         } else {
             if let Some(blame) = self.blame.as_ref() {
                 blame.update(cx, GitBlame::focus)
@@ -11321,6 +11330,10 @@ impl Editor {
                 }
             });
         }
+    }
+
+    fn handle_descendant_focus(&mut self, cx: &mut ViewContext<Self>) {
+        self.last_focused = cx.focused().map(|focused| focused.downgrade());
     }
 
     pub fn handle_blur(&mut self, cx: &mut ViewContext<Self>) {
