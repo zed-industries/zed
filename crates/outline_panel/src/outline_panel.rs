@@ -1571,7 +1571,11 @@ impl OutlinePanel {
                     excerpt_id,
                     Excerpt {
                         range: excerpt_range,
-                        outlines: None,
+                        outlines: self
+                            .excerpts
+                            .get(&buffer_id)
+                            .and_then(|excerpts| excerpts.get(&excerpt_id))
+                            .and_then(|old_excerpt| old_excerpt.outlines.clone()),
                     },
                 );
                 buffer_excerpts
@@ -2494,7 +2498,14 @@ fn subscribe_for_editor_events(
                         cx,
                     );
                 }
-                EditorEvent::ExcerptsRemoved { .. } => {
+                EditorEvent::ExcerptsRemoved { ids } => {
+                    let mut ids = ids.into_iter().collect::<HashSet<_>>();
+                    for excerpts in outline_panel.excerpts.values_mut() {
+                        excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
+                        if ids.is_empty() {
+                            break;
+                        }
+                    }
                     outline_panel.update_fs_entries(
                         &editor,
                         HashSet::default(),
@@ -2504,7 +2515,21 @@ fn subscribe_for_editor_events(
                         cx,
                     );
                 }
-                EditorEvent::ExcerptsExpanded { .. } => {
+                EditorEvent::ExcerptsExpanded { ids } => {
+                    let mut ids = ids.into_iter().collect::<HashSet<_>>();
+                    for excerpts in outline_panel.excerpts.values_mut() {
+                        ids.retain(|id| {
+                            if let Some(excerpt) = excerpts.get_mut(id) {
+                                excerpt.outlines = None;
+                                false
+                            } else {
+                                true
+                            }
+                        });
+                        if ids.is_empty() {
+                            break;
+                        }
+                    }
                     outline_panel.update_fs_entries(
                         &editor,
                         HashSet::default(),
