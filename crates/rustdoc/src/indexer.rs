@@ -193,7 +193,7 @@ impl RustdocIndexer {
 
             self.database
                 .insert(
-                    format!("{crate_name}::{}", item.display()),
+                    crate_name.clone(),
                     Some(item),
                     markdown,
                 )
