@@ -1113,12 +1113,12 @@ pub mod tests {
     use super::*;
     use crate::{
         movement,
-        test::{editor_test_context::EditorTestContext, marked_display_snapshot},
+        test::{, marked_display_snapshot},
     };
     use gpui::{div, font, observe, px, AppContext, BorrowAppContext, Context, Element, Hsla};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
-        Buffer, Language, LanguageConfig, LanguageMatcher, SelectionGoal,
+        Buffer, Language, LanguageConfig, LanguageMatcher,
     };
     use project::Project;
     use rand::{prelude::*, Rng};
@@ -1402,7 +1402,7 @@ pub mod tests {
             init_test(cx, |_| {});
         });
 
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = editor_test_context::EditorTestContext::new(cx).await;
         let editor = cx.editor.clone();
         let window = cx.window;
 
@@ -1458,39 +1458,39 @@ pub mod tests {
                 movement::up(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 10),
-                    SelectionGoal::None,
+                    language::SelectionGoal::None,
                     false,
                     &text_layout_details,
                 ),
                 (
                     DisplayPoint::new(DisplayRow(0), 7),
-                    SelectionGoal::HorizontalPosition(x.0)
+                    language::SelectionGoal::HorizontalPosition(x.0)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(0), 7),
-                    SelectionGoal::HorizontalPosition(x.0),
+                    language::SelectionGoal::HorizontalPosition(x.0),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(1), 10),
-                    SelectionGoal::HorizontalPosition(x.0)
+                    language::SelectionGoal::HorizontalPosition(x.0)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 10),
-                    SelectionGoal::HorizontalPosition(x.0),
+                    language::SelectionGoal::HorizontalPosition(x.0),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(2), 4),
-                    SelectionGoal::HorizontalPosition(x.0)
+                    language::SelectionGoal::HorizontalPosition(x.0)
                 )
             );
 
