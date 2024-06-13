@@ -75,6 +75,7 @@ if [[ -n $zyp ]]; then
     openssl-devel
     libzstd-devel
     libvulkan1
+    mold
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
@@ -93,6 +94,7 @@ if [[ -n $pacman ]]; then
     openssl
     zstd
     pkgconf
+    mold
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
@@ -111,6 +113,7 @@ if [[ -n $xbps ]]; then
     openssl-devel
     wayland-devel
     vulkan-loader
+    mold
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
   exit 0
@@ -129,6 +132,7 @@ if [[ -n $emerge ]]; then
     media-libs/vulkan-loader
     x11-libs/libxcb
     x11-libs/libxkbcommon
+    sys-devel/mold
   )
   $maysudo "$emerge" -u "${deps[@]}"
   exit 0
