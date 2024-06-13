@@ -278,7 +278,7 @@ impl PickerDelegate for NewPathDelegate {
                         .root_entry()
                         .map_or(false, |entry| entry.is_ignored),
                     include_root_name,
-                    directories_only: true,
+                    allowed_candidates: project::AllowedCandidates::Directories,
                 }
             })
             .collect::<Vec<_>>();

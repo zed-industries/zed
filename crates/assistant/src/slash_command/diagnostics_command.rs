@@ -1,12 +1,13 @@
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
-use gpui::{svg, AppContext, Model, RenderOnce, Task, WeakView};
+use fuzzy::PathMatch;
+use gpui::{svg, AppContext, Model, RenderOnce, Task, View, WeakView};
 use language::{
     Anchor, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, LspAdapterDelegate,
     OffsetRangeExt, ToOffset,
 };
-use project::{DiagnosticSummary, Project};
+use project::{DiagnosticSummary, PathMatchCandidateSet, Project};
 use rope::Point;
 use std::fmt::Write;
 use std::{
@@ -17,9 +18,67 @@ use ui::{prelude::*, ButtonLike, ElevationIndex};
 use util::paths::PathMatcher;
 use util::ResultExt;
 use workspace::Workspace;
+
 pub(crate) struct DiagnosticsCommand;
 
-const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
+impl DiagnosticsCommand {
+    fn search_paths(
+        &self,
+        query: String,
+        cancellation_flag: Arc<AtomicBool>,
+        workspace: &View<Workspace>,
+        cx: &mut AppContext,
+    ) -> Task<Vec<PathMatch>> {
+        if query.is_empty() {
+            let workspace = workspace.read(cx);
+            let entries = workspace.recent_navigation_history(Some(10), cx);
+            let path_prefix: Arc<str> = "".into();
+            Task::ready(
+                entries
+                    .into_iter()
+                    .map(|(entry, _)| PathMatch {
+                        score: 0.,
+                        positions: Vec::new(),
+                        worktree_id: entry.worktree_id.to_usize(),
+                        path: entry.path.clone(),
+                        path_prefix: path_prefix.clone(),
+                        distance_to_relative_ancestor: 0,
+                    })
+                    .collect(),
+            )
+        } else {
+            let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+            let candidate_sets = worktrees
+                .into_iter()
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    PathMatchCandidateSet {
+                        snapshot: worktree.snapshot(),
+                        include_ignored: worktree
+                            .root_entry()
+                            .map_or(false, |entry| entry.is_ignored),
+                        include_root_name: false,
+                        allowed_candidates: project::AllowedCandidates::Entries,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let executor = cx.background_executor().clone();
+            cx.foreground_executor().spawn(async move {
+                fuzzy::match_path_sets(
+                    candidate_sets.as_slice(),
+                    query.as_str(),
+                    None,
+                    false,
+                    100,
+                    &cancellation_flag,
+                    executor,
+                )
+                .await
+            })
+        }
+    }
+}
 
 impl SlashCommand for DiagnosticsCommand {
     fn name(&self) -> String {
@@ -40,12 +99,30 @@ impl SlashCommand for DiagnosticsCommand {
 
     fn complete_argument(
         &self,
-        _query: String,
-        _cancellation_flag: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        query: String,
+        cancellation_flag: Arc<AtomicBool>,
+        workspace: Option<WeakView<Workspace>>,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
-        Task::ready(Ok(vec![INCLUDE_WARNINGS_ARGUMENT.to_string()]))
+        let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
+            return Task::ready(Err(anyhow!("workspace was dropped")));
+        };
+
+        // Task::ready(Ok(vec![INCLUDE_WARNINGS_ARGUMENT.to_string()]))
+        let paths = self.search_paths(query, cancellation_flag, &workspace, cx);
+        cx.background_executor().spawn(async move {
+            Ok(paths
+                .await
+                .into_iter()
+                .map(|path_match| {
+                    format!(
+                        "{}{}",
+                        path_match.path_prefix,
+                        path_match.path.to_string_lossy()
+                    )
+                })
+                .collect())
+        })
     }
 
     fn run(
@@ -85,6 +162,8 @@ impl SlashCommand for DiagnosticsCommand {
         })
     }
 }
+
+const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
 
 #[derive(Default)]
 struct Options {

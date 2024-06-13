@@ -58,7 +58,7 @@ impl FileSlashCommand {
                             .root_entry()
                             .map_or(false, |entry| entry.is_ignored),
                         include_root_name: true,
-                        directories_only: false,
+                        allowed_candidates: project::AllowedCandidates::Files,
                     }
                 })
                 .collect::<Vec<_>>();
