@@ -21,6 +21,7 @@ use gpui::{Entity, View};
 use language::Point;
 use outputs::{ExecutionStatus, ExecutionView, LineHeight as _};
 use project::Fs;
+use runtime_settings::JupyterSettings;
 use runtimelib::JupyterMessageContent;
 use settings::Settings as _;
 use std::{ops::Range, time::Instant};
@@ -30,6 +31,8 @@ use ui::prelude::*;
 use workspace::Workspace;
 
 mod outputs;
+// mod runtime_panel;
+mod runtime_settings;
 mod runtimes;
 mod stdio;
 
@@ -68,6 +71,8 @@ pub fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     set_dispatcher(zed_dispatcher(cx));
+
+    JupyterSettings::register(cx);
 
     let runtime_manager = cx.new_model(|cx| RuntimeManager::new(fs.clone(), cx));
     RuntimeManager::set_global(runtime_manager.clone(), cx);
