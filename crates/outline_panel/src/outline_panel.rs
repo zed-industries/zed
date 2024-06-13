@@ -925,23 +925,30 @@ impl OutlinePanel {
         else {
             return;
         };
-        if let Some(EntryOwned::Entry(FsEntry::Directory(worktree_id, selected_dir_entry))) =
-            &self.selected_entry
-        {
-            let expanded = self
-                .collapsed_dirs
-                .get_mut(worktree_id)
-                .map_or(false, |hidden_dirs| {
-                    hidden_dirs.remove(&selected_dir_entry.id)
-                });
-            if expanded {
-                self.project.update(cx, |project, cx| {
-                    project.expand_entry(*worktree_id, selected_dir_entry.id, cx);
-                });
-                self.update_fs_entries(&editor, HashSet::default(), None, None, false, cx);
-            } else {
-                self.select_next(&SelectNext, cx)
+
+        let selected_dir = match &self.selected_entry {
+            Some(EntryOwned::FoldedDirs(worktree_id, dir_entries)) => {
+                Some(worktree_id).zip(dir_entries.last())
             }
+            Some(EntryOwned::Entry(FsEntry::Directory(worktree_id, dir_entry))) => {
+                Some((worktree_id, dir_entry))
+            }
+            _ => None,
+        };
+        let Some((worktree_id, dir_entry)) = selected_dir else {
+            return;
+        };
+        let expanded = self
+            .collapsed_dirs
+            .get_mut(worktree_id)
+            .map_or(false, |hidden_dirs| hidden_dirs.remove(&dir_entry.id));
+        if expanded {
+            self.project.update(cx, |project, cx| {
+                project.expand_entry(*worktree_id, dir_entry.id, cx);
+            });
+            self.update_fs_entries(&editor, HashSet::default(), None, None, false, cx);
+        } else {
+            self.select_next(&SelectNext, cx)
         }
     }
 
@@ -953,22 +960,40 @@ impl OutlinePanel {
         else {
             return;
         };
-        if let Some(
-            dir_entry @ EntryOwned::Entry(FsEntry::Directory(worktree_id, selected_dir_entry)),
-        ) = &self.selected_entry
-        {
-            self.collapsed_dirs
-                .entry(*worktree_id)
-                .or_default()
-                .insert(selected_dir_entry.id);
-            self.update_fs_entries(
-                &editor,
-                HashSet::default(),
-                Some(dir_entry.clone()),
-                None,
-                false,
-                cx,
-            );
+        match &self.selected_entry {
+            Some(
+                dir_entry @ EntryOwned::Entry(FsEntry::Directory(worktree_id, selected_dir_entry)),
+            ) => {
+                self.collapsed_dirs
+                    .entry(*worktree_id)
+                    .or_default()
+                    .insert(selected_dir_entry.id);
+                self.update_fs_entries(
+                    &editor,
+                    HashSet::default(),
+                    Some(dir_entry.clone()),
+                    None,
+                    false,
+                    cx,
+                );
+            }
+            Some(dirs_entry @ EntryOwned::FoldedDirs(worktree_id, dir_entries)) => {
+                if let Some(dir_entry) = dir_entries.last() {
+                    self.collapsed_dirs
+                        .entry(*worktree_id)
+                        .or_default()
+                        .insert(dir_entry.id);
+                    self.update_fs_entries(
+                        &editor,
+                        HashSet::default(),
+                        Some(dirs_entry.clone()),
+                        None,
+                        false,
+                        cx,
+                    );
+                }
+            }
+            _ => (),
         }
     }
 
@@ -994,7 +1019,6 @@ impl OutlinePanel {
     }
 
     // TODO kb allow to toggle expanded excerpt entries
-    // TODO kb do incremental updates on excerpt added/removed/changed
     fn toggle_expanded(&mut self, entry: &EntryOwned, cx: &mut ViewContext<Self>) {
         let Some(editor) = self
             .active_item
@@ -1915,7 +1939,6 @@ impl OutlinePanel {
         self.cached_entries_with_depth = None;
     }
 
-    // TODO kb remove `container` word
     fn location_for_editor_selection(
         &self,
         editor: &View<Editor>,
