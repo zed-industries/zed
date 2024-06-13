@@ -598,14 +598,6 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
-            let window_size = {
-                let scale = get_scale_factor(native_window);
-                size(
-                    bounds.size.width.0 as f32 * scale,
-                    bounds.size.height.0 as f32 * scale,
-                )
-            };
-
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
@@ -616,7 +608,7 @@ impl MacWindow {
                     renderer_context,
                     native_window as *mut _,
                     native_view as *mut _,
-                    window_size,
+                    bounds.size.map(|pixels| pixels.0),
                     window_background != WindowBackgroundAppearance::Opaque,
                 ),
                 request_frame_callback: None,
