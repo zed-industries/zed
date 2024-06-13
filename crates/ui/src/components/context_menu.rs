@@ -152,6 +152,7 @@ impl ContextMenu {
             toggled: None,
             label: label.into(),
             action: Some(action.boxed_clone()),
+
             handler: Rc::new(move |context, cx| {
                 if let Some(context) = &context {
                     cx.focus(context);
@@ -167,6 +168,7 @@ impl ContextMenu {
         self.items.push(ContextMenuItem::Entry {
             toggled: None,
             label: label.into(),
+
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |_, cx| cx.dispatch_action(action.boxed_clone())),
             icon: Some(IconName::Link),

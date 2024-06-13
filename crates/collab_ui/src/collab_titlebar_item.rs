@@ -388,7 +388,7 @@ impl CollabTitlebarItem {
     }
 
     pub fn render_application_menu(&self, _cx: &mut ViewContext<Self>) -> AnyElement {
-        popover_menu("application-menu")
+        PopoverMenu::new("application-menu")
             .menu(|cx| {
                 ContextMenu::build(cx, |menu, _| {
                     menu.header("Workspace")

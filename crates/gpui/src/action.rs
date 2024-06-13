@@ -189,7 +189,7 @@ macro_rules! actions {
             #[serde(crate = "gpui::private::serde")]
             pub struct $name;
 
-            gpui::__impl_action!($namespace, $name,
+            gpui::__impl_action!($namespace, $name, $name,
                 fn build(_: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                     Ok(Box::new(Self))
                 }
@@ -200,12 +200,45 @@ macro_rules! actions {
     };
 }
 
+/// Defines unit structs that can be used as actions.
+/// To use more complex data types as actions, use `impl_actions!`
+#[macro_export]
+macro_rules! action_as {
+    ($namespace:path, $name:ident as $visual_name:tt) => {
+        #[doc = "The `"]
+        #[doc = stringify!($name)]
+        #[doc = "` action, see [`gpui::actions!`]"]
+        #[derive(
+            ::std::cmp::PartialEq,
+            ::std::clone::Clone,
+            ::std::default::Default,
+            ::std::fmt::Debug,
+            gpui::private::serde_derive::Deserialize,
+        )]
+        #[serde(crate = "gpui::private::serde")]
+        pub struct $name;
+
+        gpui::__impl_action!(
+            $namespace,
+            $name,
+            $visual_name,
+            fn build(
+                _: gpui::private::serde_json::Value,
+            ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                Ok(Box::new(Self))
+            }
+        );
+
+        gpui::register_action!($name);
+    };
+}
+
 /// Implements the Action trait for any struct that implements Clone, Default, PartialEq, and serde_deserialize::Deserialize
 #[macro_export]
 macro_rules! impl_actions {
     ($namespace:path, [ $($name:ident),* $(,)? ]) => {
         $(
-            gpui::__impl_action!($namespace, $name,
+            gpui::__impl_action!($namespace, $name, $name,
                 fn build(value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                     Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
                 }
@@ -216,17 +249,38 @@ macro_rules! impl_actions {
     };
 }
 
+/// Implements the Action trait for any struct that implements Clone, Default, PartialEq, and serde_deserialize::Deserialize
+#[macro_export]
+macro_rules! impl_action_as {
+    ($namespace:path, $name:ident as $visual_name:tt ) => {
+        gpui::__impl_action!(
+            $namespace,
+            $name,
+            $visual_name,
+            fn build(
+                value: gpui::private::serde_json::Value,
+            ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                Ok(std::boxed::Box::new(
+                    gpui::private::serde_json::from_value::<Self>(value)?,
+                ))
+            }
+        );
+
+        gpui::register_action!($name);
+    };
+}
+
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __impl_action {
-    ($namespace:path, $name:ident, $build:item) => {
+    ($namespace:path, $name:ident, $visual_name:tt, $build:item) => {
         impl gpui::Action for $name {
             fn name(&self) -> &'static str
             {
                 concat!(
                     stringify!($namespace),
                     "::",
-                    stringify!($name),
+                    stringify!($visual_name),
                 )
             }
 
@@ -237,7 +291,7 @@ macro_rules! __impl_action {
                 concat!(
                     stringify!($namespace),
                     "::",
-                    stringify!($name),
+                    stringify!($visual_name),
                 )
             }
 

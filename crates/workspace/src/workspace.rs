@@ -27,11 +27,11 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, impl_actions, point, relative, size, Action, AnyElement, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DragMoveEvent, Entity as _, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke, ManagedView, Model,
-    ModelContext, PathPromptOptions, Point, PromptLevel, Render, Size, Subscription, Task, View,
-    WeakView, WindowBounds, WindowHandle, WindowOptions,
+    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size, Action,
+    AnyElement, AnyView, AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds,
+    DragMoveEvent, Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
+    KeyContext, Keystroke, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel,
+    Render, Size, Subscription, Task, View, WeakView, WindowBounds, WindowHandle, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -112,30 +112,30 @@ pub struct RemoveWorktreeFromProject(pub WorktreeId);
 actions!(
     workspace,
     [
+        ActivateNextPane,
+        ActivatePreviousPane,
+        AddFolderToProject,
+        CloseAllDocks,
+        CloseWindow,
+        Feedback,
+        FollowNextCollaborator,
+        NewCenterTerminal,
+        NewFile,
+        NewSearch,
+        NewTerminal,
+        NewWindow,
         Open,
         OpenInTerminal,
-        NewFile,
-        NewWindow,
-        CloseWindow,
-        AddFolderToProject,
-        Unfollow,
+        ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
-        ReloadActiveItem,
-        ActivatePreviousPane,
-        ActivateNextPane,
-        FollowNextCollaborator,
-        NewTerminal,
-        NewCenterTerminal,
-        NewSearch,
-        Feedback,
-        Welcome,
-        ToggleZoom,
-        ToggleLeftDock,
-        ToggleRightDock,
         ToggleBottomDock,
         ToggleCenteredLayout,
-        CloseAllDocks,
+        ToggleLeftDock,
+        ToggleRightDock,
+        ToggleZoom,
+        Unfollow,
+        Welcome,
     ]
 );
 
@@ -187,6 +187,16 @@ pub struct SendKeystrokes(pub String);
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
+
+action_as!(project_symbols, ToggleProjectSymbols as Toggle);
+
+#[derive(Default, PartialEq, Eq, Clone, serde::Deserialize)]
+pub struct ToggleFileFinder {
+    #[serde(default)]
+    pub separate_history: bool,
+}
+
+impl_action_as!(file_finder, ToggleFileFinder as Toggle);
 
 impl_actions!(
     workspace,
