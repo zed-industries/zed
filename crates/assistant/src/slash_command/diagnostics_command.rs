@@ -108,7 +108,6 @@ impl SlashCommand for DiagnosticsCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        // Task::ready(Ok(vec![INCLUDE_WARNINGS_ARGUMENT.to_string()]))
         let paths = self.search_paths(query, cancellation_flag, &workspace, cx);
         cx.background_executor().spawn(async move {
             Ok(paths
@@ -281,6 +280,7 @@ fn collect_diagnostic(
     include_warnings: bool,
 ) {
     const EXCERPT_EXPANSION_SIZE: u32 = 2;
+    const MAX_MESSAGE_LENGTH: usize = 2000;
 
     let ty = match entry.diagnostic.severity {
         DiagnosticSeverity::WARNING => {
@@ -313,19 +313,17 @@ fn collect_diagnostic(
         buffer_text.push_str(chunk);
     }
 
-    let line_number_width = end_row.to_string().len();
     for (i, line) in buffer_text.lines().enumerate() {
         let line_number = start_row + i as u32 + 1;
-        writeln!(text, "{line_number:>line_number_width$} {line}").unwrap();
+        writeln!(text, "{}", line).unwrap();
 
         if line_number == diagnostic_row_number {
             text.push_str("//");
             let prev_len = text.len();
             write!(text, " {}: ", ty.as_str()).unwrap();
             let padding = text.len() - prev_len;
-            let message = entry
-                .diagnostic
-                .message
+
+            let message = util::truncate(&entry.diagnostic.message, MAX_MESSAGE_LENGTH)
                 .replace('\n', format!("\n//{:padding$}", "").as_str());
 
             writeln!(text, "{message}").unwrap();
