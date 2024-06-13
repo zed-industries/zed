@@ -2746,7 +2746,9 @@ impl Editor {
             Some(Selection { start, end, .. }) => start != end,
             None => false,
         };
-        pending_nonempty_selection || self.columnar_selection_tail.is_some()
+
+        pending_nonempty_selection
+            || (self.columnar_selection_tail.is_some() && self.selections.disjoint.len() > 1)
     }
 
     pub fn has_pending_selection(&self) -> bool {
