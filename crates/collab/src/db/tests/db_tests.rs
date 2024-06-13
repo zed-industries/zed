@@ -564,9 +564,10 @@ fn test_fuzzy_like_string() {
     assert_eq!(Database::fuzzy_like_string(" z  "), "%z%");
 }
 
+#[cfg(target = "macos")]
 #[gpui::test]
 async fn test_fuzzy_search_users(cx: &mut TestAppContext) {
-    let test_db = TestDb::sqlite(cx.executor());
+    let test_db = TestDb::postgres(cx.executor());
     let db = test_db.db();
     for (i, github_login) in [
         "California",

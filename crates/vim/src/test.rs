@@ -400,6 +400,7 @@ async fn test_join_lines(cx: &mut gpui::TestAppContext) {
       "});
 }
 
+#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;

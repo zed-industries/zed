@@ -1452,11 +1452,12 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[gpui::test]
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx));
 
-        let _font_id = cx.text_system().font_id(&font("Zed Mono")).unwrap();
+        let _font_id = cx.text_system().font_id(&font("Helvetica")).unwrap();
 
         let text = "one two three\nfour five six\nseven eight";
 

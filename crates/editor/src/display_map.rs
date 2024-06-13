@@ -1731,7 +1731,7 @@ pub mod tests {
         let map = cx.new_model(|cx| {
             DisplayMap::new(
                 buffer,
-                font("Zed Mono"),
+                font("Courier"),
                 font_size,
                 Some(px(40.0)),
                 true,
