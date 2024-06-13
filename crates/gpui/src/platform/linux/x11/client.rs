@@ -359,6 +359,9 @@ impl X11Client {
                             window.window.set_appearance(appearance);
                         }
                     }
+                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
+                        // noop, X11 manages this for us.
+                    }
                 }
             })
             .unwrap();

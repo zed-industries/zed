@@ -23,11 +23,11 @@ use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
+    Anchor, Bias, ClipboardSelection, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
-    Subscription, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
+    actions, impl_actions, Action, AppContext, ClipboardItem, EntityId, FocusableView, Global,
+    KeystrokeEvent, Subscription, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
@@ -45,6 +45,7 @@ use state::{EditorState, Mode, Operator, RecordedSelection, WorkspaceState};
 use std::{ops::Range, sync::Arc};
 use surrounds::{add_surrounds, change_surrounds, delete_surrounds};
 use ui::BorrowAppContext;
+use utils::SYSTEM_CLIPBOARD;
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
 
@@ -70,6 +71,9 @@ pub struct PushOperator(pub Operator);
 #[derive(Clone, Deserialize, PartialEq)]
 struct Number(usize);
 
+#[derive(Clone, Deserialize, PartialEq)]
+struct SelectRegister(String);
+
 actions!(
     vim,
     [
@@ -86,7 +90,7 @@ actions!(
 // in the workspace namespace so it's not filtered out when vim is disabled.
 actions!(workspace, [ToggleVimMode]);
 
-impl_actions!(vim, [SwitchMode, PushOperator, Number]);
+impl_actions!(vim, [SwitchMode, PushOperator, Number, SelectRegister]);
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut AppContext) {
@@ -129,7 +133,6 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, n: &Number, cx: _| {
         Vim::update(cx, |vim, cx| vim.push_count_digit(n.0, cx));
     });
-
     workspace.register_action(|_: &mut Workspace, _: &Tab, cx| {
         Vim::active_editor_input_ignored(" ".into(), cx)
     });
@@ -202,7 +205,8 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
             | Operator::ChangeSurrounds { .. }
             | Operator::DeleteSurrounds
             | Operator::Mark
-            | Operator::Jump { .. },
+            | Operator::Jump { .. }
+            | Operator::Register,
         ) => {}
         Some(_) => {
             vim.clear_operator(cx);
@@ -531,6 +535,138 @@ impl Vim {
         count
     }
 
+    fn select_register(&mut self, register: Arc<str>, cx: &mut WindowContext) {
+        self.update_state(|state| {
+            if register.chars().count() == 1 {
+                state
+                    .selected_register
+                    .replace(register.chars().next().unwrap());
+            }
+            state.operator_stack.clear();
+        });
+        self.sync_vim_settings(cx);
+    }
+
+    fn write_registers(
+        &mut self,
+        is_yank: bool,
+        linewise: bool,
+        text: String,
+        clipboard_selections: Vec<ClipboardSelection>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        self.workspace_state.registers.insert('"', text.clone());
+        if let Some(register) = self.update_state(|vim| vim.selected_register.take()) {
+            let lower = register.to_lowercase().next().unwrap_or(register);
+            if lower != register {
+                let current = self.workspace_state.registers.entry(lower).or_default();
+                *current += &text;
+            } else {
+                match lower {
+                    '_' | ':' | '.' | '%' | '#' | '=' | '/' => {}
+                    '+' => {
+                        cx.write_to_clipboard(
+                            ClipboardItem::new(text.clone()).with_metadata(clipboard_selections),
+                        );
+                    }
+                    '*' => {
+                        #[cfg(target_os = "linux")]
+                        cx.write_to_primary(
+                            ClipboardItem::new(text.clone()).with_metadata(clipboard_selections),
+                        );
+                        #[cfg(not(target_os = "linux"))]
+                        cx.write_to_clipboard(
+                            ClipboardItem::new(text.clone()).with_metadata(clipboard_selections),
+                        );
+                    }
+                    '"' => {
+                        self.workspace_state.registers.insert('0', text.clone());
+                        self.workspace_state.registers.insert('"', text);
+                    }
+                    _ => {
+                        self.workspace_state.registers.insert(lower, text);
+                    }
+                }
+            }
+        } else {
+            let setting = VimSettings::get_global(cx).use_system_clipboard;
+            if setting == UseSystemClipboard::Always
+                || setting == UseSystemClipboard::OnYank && is_yank
+            {
+                cx.write_to_clipboard(
+                    ClipboardItem::new(text.clone()).with_metadata(clipboard_selections.clone()),
+                );
+                self.workspace_state
+                    .registers
+                    .insert(SYSTEM_CLIPBOARD, text.clone());
+            } else {
+                self.workspace_state.registers.insert(
+                    SYSTEM_CLIPBOARD,
+                    cx.read_from_clipboard()
+                        .map(|item| item.text().clone())
+                        .unwrap_or_default(),
+                );
+            }
+
+            if is_yank {
+                self.workspace_state.registers.insert('0', text);
+            } else {
+                if !text.contains('\n') {
+                    self.workspace_state.registers.insert('-', text.clone());
+                }
+                if linewise || text.contains('\n') {
+                    let mut content = text;
+                    for i in '1'..'8' {
+                        if let Some(moved) = self.workspace_state.registers.insert(i, content) {
+                            content = moved;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn read_register(
+        &mut self,
+        register: char,
+        editor: Option<&mut Editor>,
+        cx: &mut WindowContext,
+    ) -> Option<String> {
+        let lower = register.to_lowercase().next().unwrap_or(register);
+        match lower {
+            '_' | ':' | '.' | '#' | '=' | '/' => None,
+            '+' => cx.read_from_clipboard().map(|item| item.text().clone()),
+            '*' => {
+                #[cfg(target_os = "linux")]
+                {
+                    cx.read_from_primary().map(|item| item.text().clone())
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    cx.read_from_clipboard().map(|item| item.text().clone())
+                }
+            }
+            '%' => editor.and_then(|editor| {
+                let selection = editor.selections.newest::<Point>(cx);
+                if let Some((_, buffer, _)) = editor
+                    .buffer()
+                    .read(cx)
+                    .excerpt_containing(selection.head(), cx)
+                {
+                    buffer
+                        .read(cx)
+                        .file()
+                        .map(|file| file.path().to_string_lossy().to_string())
+                } else {
+                    None
+                }
+            }),
+            _ => self.workspace_state.registers.get(&lower).cloned(),
+        }
+    }
+
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
         if matches!(
             operator,
@@ -573,7 +709,10 @@ impl Vim {
 
     fn clear_operator(&mut self, cx: &mut WindowContext) {
         self.take_count(cx);
-        self.update_state(|state| state.operator_stack.clear());
+        self.update_state(|state| {
+            state.selected_register.take();
+            state.operator_stack.clear()
+        });
         self.sync_vim_settings(cx);
     }
 
@@ -740,6 +879,9 @@ impl Vim {
             },
             Some(Operator::Mark) => Vim::update(cx, |vim, cx| {
                 normal::mark::create_mark(vim, text, false, cx)
+            }),
+            Some(Operator::Register) => Vim::update(cx, |vim, cx| {
+                vim.select_register(text, cx);
             }),
             Some(Operator::Jump { line }) => normal::mark::jump(text, line, cx),
             _ => match Vim::read(cx).state().mode {

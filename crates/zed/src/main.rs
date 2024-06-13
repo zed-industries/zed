@@ -185,6 +185,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     outline::init(cx);
     project_symbols::init(cx);
     project_panel::init(Assets, cx);
+    outline_panel::init(Assets, cx);
     tasks_ui::init(cx);
     channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
     search::init(cx);
@@ -303,9 +304,11 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     {
-        if crate::zed::listen_for_cli_connections(open_listener.clone()).is_err() {
-            println!("zed is already running");
-            return;
+        if env::var("ZED_STATELESS").is_err() {
+            if crate::zed::listen_for_cli_connections(open_listener.clone()).is_err() {
+                println!("zed is already running");
+                return;
+            }
         }
     }
     #[cfg(not(target_os = "linux"))]

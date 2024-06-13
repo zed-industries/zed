@@ -2000,7 +2000,7 @@ impl Snapshot {
         }
     }
 
-    fn traverse_from_path(
+    pub fn traverse_from_path(
         &self,
         include_files: bool,
         include_dirs: bool,
@@ -2991,7 +2991,7 @@ impl File {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Entry {
     pub id: ProjectEntryId,
     pub kind: EntryKind,
@@ -3020,7 +3020,7 @@ pub struct Entry {
     pub is_private: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EntryKind {
     UnloadedDir,
     PendingDir,
@@ -4816,6 +4816,14 @@ impl<'a> Traversal<'a> {
             }
         }
         false
+    }
+
+    pub fn back_to_parent(&mut self) -> bool {
+        let Some(parent_path) = self.cursor.item().and_then(|entry| entry.path.parent()) else {
+            return false;
+        };
+        self.cursor
+            .seek(&TraversalTarget::Path(parent_path), Bias::Left, &())
     }
 
     pub fn entry(&self) -> Option<&'a Entry> {

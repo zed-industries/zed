@@ -77,6 +77,9 @@ pub enum Event {
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
     },
+    ExcerptsExpanded {
+        ids: Vec<ExcerptId>,
+    },
     ExcerptsEdited {
         ids: Vec<ExcerptId>,
     },
@@ -1666,8 +1669,9 @@ impl MultiBuffer {
         }
         self.sync(cx);
 
+        let ids = ids.into_iter().collect::<Vec<_>>();
         let snapshot = self.snapshot(cx);
-        let locators = snapshot.excerpt_locators_for_ids(ids);
+        let locators = snapshot.excerpt_locators_for_ids(ids.iter().copied());
         let mut new_excerpts = SumTree::new();
         let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>();
         let mut edits = Vec::<Edit<usize>>::new();
@@ -1746,6 +1750,7 @@ impl MultiBuffer {
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
         });
+        cx.emit(Event::ExcerptsExpanded { ids });
         cx.notify();
     }
 

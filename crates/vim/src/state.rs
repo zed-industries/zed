@@ -63,10 +63,10 @@ pub enum Operator {
     Jump { line: bool },
     Indent,
     Outdent,
-
     Lowercase,
     Uppercase,
     OppositeCase,
+    Register,
 }
 
 #[derive(Default, Clone)]
@@ -89,6 +89,8 @@ pub struct EditorState {
     pub current_tx: Option<TransactionId>,
     pub current_anchor: Option<Selection<Anchor>>,
     pub undo_modes: HashMap<TransactionId, Mode>,
+
+    pub selected_register: Option<char>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -123,7 +125,7 @@ pub struct WorkspaceState {
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
-    pub registers: HashMap<String, String>,
+    pub registers: HashMap<char, String>,
 }
 
 #[derive(Debug)]
@@ -277,6 +279,7 @@ impl Operator {
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
             Operator::OppositeCase => "g~",
+            Operator::Register => "\"",
         }
     }
 
@@ -287,6 +290,7 @@ impl Operator {
             | Operator::Mark
             | Operator::Jump { .. }
             | Operator::FindBackward { .. }
+            | Operator::Register
             | Operator::Replace
             | Operator::AddSurrounds { target: Some(_) }
             | Operator::ChangeSurrounds { .. }
