@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use util::paths::SUPPORT_DIR;
 use util::ResultExt;
 
-use crate::crawler::{RustdocCrawler, RustdocProvider};
+use crate::indexer::{RustdocIndexer, RustdocProvider};
 use crate::{RustdocItem, RustdocItemKind};
 
 struct GlobalRustdocStore(Arc<RustdocStore>);
@@ -75,25 +75,10 @@ impl RustdocStore {
     ) -> Task<Result<()>> {
         let database_future = self.database_future.clone();
         self.executor.spawn(async move {
-            let crawler = RustdocCrawler::new(provider);
-
-            let Some(crate_docs) = crawler.crawl(crate_name.clone()).await? else {
-                return Ok(());
-            };
-
             let database = database_future.await.map_err(|err| anyhow!(err))?;
+            let indexer = RustdocIndexer::new(database, provider);
 
-            database
-                .insert(crate_name.clone(), None, crate_docs.crate_root_markdown)
-                .await?;
-
-            for (item, item_docs) in crate_docs.items {
-                database
-                    .insert(crate_name.clone(), Some(&item), item_docs)
-                    .await?;
-            }
-
-            Ok(())
+            indexer.index(crate_name.clone()).await
         })
     }
 
@@ -151,7 +136,7 @@ impl RustdocDatabaseEntry {
     }
 }
 
-struct RustdocDatabase {
+pub(crate) struct RustdocDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
     entries: Database<SerdeBincode<String>, SerdeBincode<RustdocDatabaseEntry>>,
