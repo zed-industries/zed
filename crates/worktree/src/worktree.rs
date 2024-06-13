@@ -3751,6 +3751,7 @@ impl BackgroundScanner {
                         statuses,
                     });
                 }
+                self.watcher.add(child_abs_path.as_ref()).log_err();
             } else if child_name == *GITIGNORE {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
                     Ok(ignore) => {
