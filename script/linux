@@ -63,7 +63,7 @@ if [[ -n $dnf ]]; then
   exit 0
 fi
 
-# openSUSE Tumbleweed
+# openSUSE
 # https://software.opensuse.org/
 zyp=$(command -v zypper || true)
 if [[ -n $zyp ]]; then
