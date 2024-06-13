@@ -12,6 +12,7 @@ use sqlez::{
     statement::Statement,
 };
 
+use ui::px;
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -77,10 +78,10 @@ impl Bind for SerializedWindowBounds {
                 let next_index = statement.bind(&"Windowed", start_index)?;
                 statement.bind(
                     &(
-                        SerializedDevicePixels(bounds.origin.x),
-                        SerializedDevicePixels(bounds.origin.y),
-                        SerializedDevicePixels(bounds.size.width),
-                        SerializedDevicePixels(bounds.size.height),
+                        SerializedPixels(bounds.origin.x),
+                        SerializedPixels(bounds.origin.y),
+                        SerializedPixels(bounds.size.width),
+                        SerializedPixels(bounds.size.height),
                     ),
                     next_index,
                 )
@@ -89,10 +90,10 @@ impl Bind for SerializedWindowBounds {
                 let next_index = statement.bind(&"Maximized", start_index)?;
                 statement.bind(
                     &(
-                        SerializedDevicePixels(bounds.origin.x),
-                        SerializedDevicePixels(bounds.origin.y),
-                        SerializedDevicePixels(bounds.size.width),
-                        SerializedDevicePixels(bounds.size.height),
+                        SerializedPixels(bounds.origin.x),
+                        SerializedPixels(bounds.origin.y),
+                        SerializedPixels(bounds.size.width),
+                        SerializedPixels(bounds.size.height),
                     ),
                     next_index,
                 )
@@ -101,10 +102,10 @@ impl Bind for SerializedWindowBounds {
                 let next_index = statement.bind(&"FullScreen", start_index)?;
                 statement.bind(
                     &(
-                        SerializedDevicePixels(bounds.origin.x),
-                        SerializedDevicePixels(bounds.origin.y),
-                        SerializedDevicePixels(bounds.size.width),
-                        SerializedDevicePixels(bounds.size.height),
+                        SerializedPixels(bounds.origin.x),
+                        SerializedPixels(bounds.origin.y),
+                        SerializedPixels(bounds.size.width),
+                        SerializedPixels(bounds.size.height),
                     ),
                     next_index,
                 )
@@ -116,40 +117,17 @@ impl Bind for SerializedWindowBounds {
 impl Column for SerializedWindowBounds {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (window_state, next_index) = String::column(statement, start_index)?;
+        let ((x, y, width, height), _): ((i32, i32, i32, i32), _) =
+            Column::column(statement, next_index)?;
+        let bounds = Bounds {
+            origin: point(px(x as f32), px(y as f32)),
+            size: size(px(width as f32), px(height as f32)),
+        };
+
         let status = match window_state.as_str() {
-            "Windowed" | "Fixed" => {
-                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
-                let x: i32 = x;
-                let y: i32 = y;
-                let width: i32 = width;
-                let height: i32 = height;
-                SerializedWindowBounds(WindowBounds::Windowed(Bounds {
-                    origin: point(x.into(), y.into()),
-                    size: size(width.into(), height.into()),
-                }))
-            }
-            "Maximized" => {
-                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
-                let x: i32 = x;
-                let y: i32 = y;
-                let width: i32 = width;
-                let height: i32 = height;
-                SerializedWindowBounds(WindowBounds::Maximized(Bounds {
-                    origin: point(x.into(), y.into()),
-                    size: size(width.into(), height.into()),
-                }))
-            }
-            "FullScreen" => {
-                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
-                let x: i32 = x;
-                let y: i32 = y;
-                let width: i32 = width;
-                let height: i32 = height;
-                SerializedWindowBounds(WindowBounds::Fullscreen(Bounds {
-                    origin: point(x.into(), y.into()),
-                    size: size(width.into(), height.into()),
-                }))
-            }
+            "Windowed" | "Fixed" => SerializedWindowBounds(WindowBounds::Windowed(bounds)),
+            "Maximized" => SerializedWindowBounds(WindowBounds::Maximized(bounds)),
+            "FullScreen" => SerializedWindowBounds(WindowBounds::Fullscreen(bounds)),
             _ => bail!("Window State did not have a valid string"),
         };
 
@@ -158,16 +136,16 @@ impl Column for SerializedWindowBounds {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct SerializedDevicePixels(gpui::DevicePixels);
-impl sqlez::bindable::StaticColumnCount for SerializedDevicePixels {}
+struct SerializedPixels(gpui::Pixels);
+impl sqlez::bindable::StaticColumnCount for SerializedPixels {}
 
-impl sqlez::bindable::Bind for SerializedDevicePixels {
+impl sqlez::bindable::Bind for SerializedPixels {
     fn bind(
         &self,
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        let this: i32 = self.0.into();
+        let this: i32 = self.0 .0 as i32;
         this.bind(statement, start_index)
     }
 }

@@ -8,13 +8,13 @@ use windows::{
     Win32::{Foundation::*, Graphics::Gdi::*},
 };
 
-use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay, Point, Size};
+use crate::{px, Bounds, DisplayId, Pixels, PlatformDisplay, Point, Size};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowsDisplay {
     pub handle: HMONITOR,
     pub display_id: DisplayId,
-    bounds: Bounds<DevicePixels>,
+    bounds: Bounds<Pixels>,
     uuid: Uuid,
 }
 
@@ -34,12 +34,12 @@ impl WindowsDisplay {
             display_id,
             bounds: Bounds {
                 origin: Point {
-                    x: DevicePixels(size.left),
-                    y: DevicePixels(size.top),
+                    x: px(size.left as f32),
+                    y: px(size.top as f32),
                 },
                 size: Size {
-                    width: DevicePixels(size.right - size.left),
-                    height: DevicePixels(size.bottom - size.top),
+                    width: px((size.right - size.left) as f32),
+                    height: px((size.bottom - size.top) as f32),
                 },
             },
             uuid,
@@ -60,12 +60,12 @@ impl WindowsDisplay {
             display_id: DisplayId(display_id as _),
             bounds: Bounds {
                 origin: Point {
-                    x: DevicePixels(size.left as i32),
-                    y: DevicePixels(size.top as i32),
+                    x: px(size.left as f32),
+                    y: px(size.top as f32),
                 },
                 size: Size {
-                    width: DevicePixels((size.right - size.left) as i32),
-                    height: DevicePixels((size.bottom - size.top) as i32),
+                    width: px((size.right - size.left) as f32),
+                    height: px((size.bottom - size.top) as f32),
                 },
             },
             uuid,
@@ -82,12 +82,12 @@ impl WindowsDisplay {
             display_id,
             bounds: Bounds {
                 origin: Point {
-                    x: DevicePixels(size.left as i32),
-                    y: DevicePixels(size.top as i32),
+                    x: px(size.left as f32),
+                    y: px(size.top as f32),
                 },
                 size: Size {
-                    width: DevicePixels((size.right - size.left) as i32),
-                    height: DevicePixels((size.bottom - size.top) as i32),
+                    width: px((size.right - size.left) as f32),
+                    height: px((size.bottom - size.top) as f32),
                 },
             },
             uuid,
@@ -109,11 +109,11 @@ impl WindowsDisplay {
     }
 
     /// Check if the center point of given bounds is inside this monitor
-    pub fn check_given_bounds(&self, bounds: Bounds<DevicePixels>) -> bool {
+    pub fn check_given_bounds(&self, bounds: Bounds<Pixels>) -> bool {
         let center = bounds.center();
         let center = POINT {
-            x: center.x.0,
-            y: center.y.0,
+            x: center.x.0 as i32,
+            y: center.y.0 as i32,
         };
         let monitor = unsafe { MonitorFromPoint(center, MONITOR_DEFAULTTONULL) };
         if monitor.is_invalid() {
@@ -167,7 +167,7 @@ impl PlatformDisplay for WindowsDisplay {
         Ok(self.uuid)
     }
 
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
     }
 }

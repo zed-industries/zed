@@ -908,8 +908,11 @@ impl LinuxClient for X11Client {
             .iter()
             .enumerate()
             .filter_map(|(root_id, _)| {
-                Some(Rc::new(X11Display::new(&state.xcb_connection, root_id)?)
-                    as Rc<dyn PlatformDisplay>)
+                Some(Rc::new(X11Display::new(
+                    &state.xcb_connection,
+                    state.scale_factor,
+                    root_id,
+                )?) as Rc<dyn PlatformDisplay>)
             })
             .collect()
     }
@@ -918,8 +921,12 @@ impl LinuxClient for X11Client {
         let state = self.0.borrow();
 
         Some(Rc::new(
-            X11Display::new(&state.xcb_connection, state.x_root_index)
-                .expect("There should always be a root index"),
+            X11Display::new(
+                &state.xcb_connection,
+                state.scale_factor,
+                state.x_root_index,
+            )
+            .expect("There should always be a root index"),
         ))
     }
 
@@ -928,6 +935,7 @@ impl LinuxClient for X11Client {
 
         Some(Rc::new(X11Display::new(
             &state.xcb_connection,
+            state.scale_factor,
             id.0 as usize,
         )?))
     }
