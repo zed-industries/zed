@@ -87,13 +87,15 @@ fn parse_tabstop<'a>(
 ) -> Result<&'a str> {
     let tabstop_start = text.len();
     let tabstop_index;
+    let mut choices = None;
+
     if source.starts_with('{') {
         let (index, rest) = parse_int(&source[1..])?;
         tabstop_index = index;
         source = rest;
 
         if source.starts_with("|") {
-            source = parse_choices(&source[1..], text)?;
+            (source, choices) = parse_choices(&source[1..], text)?;
         }
 
         if source.starts_with(':') {
@@ -113,7 +115,10 @@ fn parse_tabstop<'a>(
 
     tabstops
         .entry(tabstop_index)
-        .or_default()
+        .or_insert_with(|| TabStop {
+            ranges: Default::default(),
+            choices,
+        })
         .ranges
         .push(tabstop_start as isize..text.len() as isize);
     Ok(source)
@@ -130,17 +135,23 @@ fn parse_int(source: &str) -> Result<(usize, &str)> {
     Ok((prefix.parse()?, suffix))
 }
 
-fn parse_choices<'a>(mut source: &'a str, text: &mut String) -> Result<&'a str> {
+fn parse_choices<'a>(
+    mut source: &'a str,
+    text: &mut String,
+) -> Result<(&'a str, Option<Vec<String>>)> {
     let mut found_default_choice = false;
+    let mut current_choice = String::new();
+    let mut choices = Vec::new();
 
     loop {
         match source.chars().next() {
-            None => return Ok(""),
+            None => return Ok(("", Some(choices))),
             Some('\\') => {
                 source = &source[1..];
 
                 if let Some(c) = source.chars().next() {
                     if !found_default_choice {
+                        current_choice.push(c.clone());
                         text.push(c);
                     }
                     source = &source[c.len_utf8()..];
@@ -149,10 +160,13 @@ fn parse_choices<'a>(mut source: &'a str, text: &mut String) -> Result<&'a str> 
             Some(',') => {
                 found_default_choice = true;
                 source = &source[1..];
+                choices.push(current_choice);
+                current_choice = String::new();
             }
             Some('|') => {
                 source = &source[1..];
-                return Ok(source);
+                choices.push(current_choice);
+                return Ok((source, Some(choices)));
             }
             Some(_) => {
                 let chunk_end = source.find([',', '|', '\\']);
@@ -168,6 +182,8 @@ fn parse_choices<'a>(mut source: &'a str, text: &mut String) -> Result<&'a str> 
                 if !found_default_choice {
                     text.push_str(chunk);
                 }
+
+                current_choice.push_str(chunk);
                 source = rest;
             }
         }
@@ -190,11 +206,13 @@ mod tests {
         let snippet = Snippet::parse("one$1two").unwrap();
         assert_eq!(snippet.text, "onetwo");
         assert_eq!(tabstops(&snippet), &[vec![3..3], vec![6..6]]);
+        assert_eq!(tabstop_choices(&snippet), &[&None, &None]);
 
         // Multi-digit numbers
         let snippet = Snippet::parse("one$123-$99-two").unwrap();
         assert_eq!(snippet.text, "one--two");
         assert_eq!(tabstops(&snippet), &[vec![4..4], vec![3..3], vec![8..8]]);
+        assert_eq!(tabstop_choices(&snippet), &[&None, &None, &None]);
     }
 
     #[test]
@@ -205,6 +223,7 @@ mod tests {
         // an additional tabstop at the end.
         assert_eq!(snippet.text, r#"foo."#);
         assert_eq!(tabstops(&snippet), &[vec![4..4]]);
+        assert_eq!(tabstop_choices(&snippet), &[&None]);
     }
 
     #[test]
@@ -215,6 +234,7 @@ mod tests {
         // don't insert an additional tabstop at the end.
         assert_eq!(snippet.text, r#"<div class=""></div>"#);
         assert_eq!(tabstops(&snippet), &[vec![12..12], vec![14..14]]);
+        assert_eq!(tabstop_choices(&snippet), &[&None, &None]);
     }
 
     #[test]
@@ -225,6 +245,7 @@ mod tests {
             tabstops(&snippet),
             &[vec![3..6], vec![11..15], vec![15..15]]
         );
+        assert_eq!(tabstop_choices(&snippet), &[&None, &None, &None]);
     }
 
     #[test]
@@ -234,12 +255,20 @@ mod tests {
 
         assert_eq!(snippet.text, "type i32 = ");
         assert_eq!(tabstops(&snippet), &[vec![5..8], vec![11..11],]);
+        assert_eq!(
+            tabstop_choices(&snippet),
+            &[&Some(vec!["i32".to_string(), " u32".to_string()]), &None]
+        );
 
         let snippet = Snippet::parse(r"${1|\$\{1\|one\,two\,tree\|\}|}")
             .expect("Should be able to parse choice with escape characters");
 
         assert_eq!(snippet.text, "${1|one,two,tree|}");
         assert_eq!(tabstops(&snippet), &[vec![0..18], vec![18..18]]);
+        assert_eq!(
+            tabstop_choices(&snippet),
+            &[&Some(vec!["${1|one,two,tree|}".to_string(),]), &None]
+        );
     }
 
     #[test]
@@ -259,6 +288,10 @@ mod tests {
                 vec![40..40],
             ]
         );
+        assert_eq!(
+            tabstop_choices(&snippet),
+            &[&None, &None, &None, &None, &None]
+        );
     }
 
     #[test]
@@ -266,13 +299,19 @@ mod tests {
         let snippet = Snippet::parse("\"\\$schema\": $1").unwrap();
         assert_eq!(snippet.text, "\"$schema\": ");
         assert_eq!(tabstops(&snippet), &[vec![11..11]]);
+        assert_eq!(tabstop_choices(&snippet), &[&None]);
 
         let snippet = Snippet::parse("{a\\}").unwrap();
         assert_eq!(snippet.text, "{a}");
         assert_eq!(tabstops(&snippet), &[vec![3..3]]);
+        assert_eq!(tabstop_choices(&snippet), &[&None]);
     }
 
     fn tabstops(snippet: &Snippet) -> Vec<Vec<Range<isize>>> {
         snippet.tabstops.iter().map(|t| t.ranges.to_vec()).collect()
+    }
+
+    fn tabstop_choices(snippet: &Snippet) -> Vec<&Option<Vec<String>>> {
+        snippet.tabstops.iter().map(|t| &t.choices).collect()
     }
 }

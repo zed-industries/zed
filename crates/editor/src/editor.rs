@@ -896,10 +896,47 @@ struct CompletionsMenu {
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
-    selected_completion_documentation_resolve_debounce: Arc<Mutex<DebouncedDelay>>,
+    selected_completion_documentation_resolve_debounce: Option<Arc<Mutex<DebouncedDelay>>>,
 }
 
 impl CompletionsMenu {
+    fn new(
+        id: CompletionId,
+        initial_position: Anchor,
+        buffer: Model<Buffer>,
+        completions: Box<[Completion]>,
+    ) -> Self {
+        let match_candidates = completions
+            .iter()
+            .enumerate()
+            .map(|(id, completion)| {
+                StringMatchCandidate::new(
+                    id,
+                    completion.label.text[completion.label.filter_range.clone()].into(),
+                )
+            })
+            .collect();
+        Self {
+            id,
+            initial_position,
+            buffer,
+            completions: Arc::new(RwLock::new(completions)),
+            match_candidates,
+            matches: Vec::new().into(),
+            selected_item: 0,
+            scroll_handle: UniformListScrollHandle::new(),
+            selected_completion_documentation_resolve_debounce: Some(Arc::new(Mutex::new(
+                DebouncedDelay::new(),
+            ))),
+        }
+    }
+
+    fn suppress_documentation_resolution(mut self) -> Self {
+        self.selected_completion_documentation_resolve_debounce
+            .take();
+        self
+    }
+
     fn select_first(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
         self.selected_item = 0;
         self.scroll_handle.scroll_to_item(self.selected_item);
@@ -980,7 +1017,12 @@ impl CompletionsMenu {
         let Some(project) = project else {
             return;
         };
-
+        let Some(documentation_resolve) = self
+            .selected_completion_documentation_resolve_debounce
+            .as_ref()
+        else {
+            return;
+        };
         let resolve_task = project.update(cx, |project, cx| {
             project.resolve_completions(
                 self.buffer.clone(),
@@ -994,15 +1036,13 @@ impl CompletionsMenu {
             EditorSettings::get_global(cx).completion_documentation_secondary_query_debounce;
         let delay = Duration::from_millis(delay_ms);
 
-        self.selected_completion_documentation_resolve_debounce
-            .lock()
-            .fire_new(delay, cx, |_, cx| {
-                cx.spawn(move |this, mut cx| async move {
-                    if let Some(true) = resolve_task.await.log_err() {
-                        this.update(&mut cx, |_, cx| cx.notify()).ok();
-                    }
-                })
-            });
+        documentation_resolve.lock().fire_new(delay, cx, |_, cx| {
+            cx.spawn(move |this, mut cx| async move {
+                if let Some(true) = resolve_task.await.log_err() {
+                    this.update(&mut cx, |_, cx| cx.notify()).ok();
+                }
+            })
+        });
     }
 
     fn visible(&self) -> bool {
@@ -4046,29 +4086,8 @@ impl Editor {
                 })?;
                 let completions = completions.await.log_err();
                 let menu = if let Some(completions) = completions {
-                    let mut menu = CompletionsMenu {
-                        id,
-                        initial_position: position,
-                        match_candidates: completions
-                            .iter()
-                            .enumerate()
-                            .map(|(id, completion)| {
-                                StringMatchCandidate::new(
-                                    id,
-                                    completion.label.text[completion.label.filter_range.clone()]
-                                        .into(),
-                                )
-                            })
-                            .collect(),
-                        buffer: buffer.clone(),
-                        completions: Arc::new(RwLock::new(completions.into())),
-                        matches: Vec::new().into(),
-                        selected_item: 0,
-                        scroll_handle: UniformListScrollHandle::new(),
-                        selected_completion_documentation_resolve_debounce: Arc::new(Mutex::new(
-                            DebouncedDelay::new(),
-                        )),
-                    };
+                    let mut menu =
+                        CompletionsMenu::new(id, position, buffer.clone(), completions.into());
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
 
@@ -5172,8 +5191,42 @@ impl Editor {
                 s.select_ranges(tabstop.ranges.iter().cloned());
             });
 
-            if let Some(choices) = tabstop.choices {
-                self.context_menu.try_write() = Some(ContextMenu::Completions(choices))
+            if let Some(choices) = &tabstop.choices {
+                let id = post_inc(&mut self.next_completion_id);
+                let current_buffer = tabstop.ranges.first().and_then(|range| {
+                    Some((
+                        range.clone(),
+                        self.buffer().read(cx).buffer(range.start.buffer_id?)?,
+                    ))
+                });
+
+                // let completions = choices.iter().map(|choice| {
+                //     Completion {
+                //         old_range:
+                //     }
+                // })
+
+                if let Some((first_range, buffer)) = current_buffer {
+                    let completions = vec![Completion {
+                        old_range: first_range.start.text_anchor..first_range.end.text_anchor,
+                        new_text: "My cool completion".to_owned(),
+                        label: CodeLabel {
+                            text: "My cool text".to_owned(),
+                            runs: Default::default(),
+                            filter_range: Default::default(),
+                        },
+                        server_id: LanguageServerId(usize::MAX),
+                        documentation: None,
+                        lsp_completion: Default::default(),
+                        confirm: None,
+                        show_new_completions_on_confirm: false,
+                    }]
+                    .into_boxed_slice();
+                    *self.context_menu.write() = Some(ContextMenu::Completions(
+                        CompletionsMenu::new(id, first_range.start, buffer, completions)
+                            .suppress_documentation_resolution(),
+                    ))
+                }
             }
 
             // If we're already at the last tabstop and it's at the end of the snippet,
