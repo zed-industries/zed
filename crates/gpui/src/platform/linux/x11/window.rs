@@ -256,7 +256,6 @@ impl X11WindowState {
         };
 
         let win_aux = xproto::CreateWindowAux::new()
-            .background_pixel(x11rb::NONE)
             // https://stackoverflow.com/questions/43218127/x11-xlib-xcb-creating-a-window-requires-border-pixel-if-specifying-colormap-wh
             .border_pixel(visual_set.black_pixel)
             .colormap(colormap)
