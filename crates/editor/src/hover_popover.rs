@@ -352,43 +352,60 @@ fn show_hover(
     editor.hover_state.info_task = Some(task);
 }
 
-fn trim_codeblocks(input: &str) -> String {
+fn transform_codeblock(input: &str, language: &str) -> String {
     let lines: Vec<&str> = input.lines().collect();
     let mut result: Vec<&str> = Vec::new();
     let mut i = 0;
-
+    let mut open_block = false;
+    let mut language_tag = String::from("```");
+    language_tag.push_str(language);
     while i < lines.len() {
-        if lines[i].starts_with("```") {
-            // Remove preceding empty lines
-            while !result.is_empty() && result.last().unwrap().trim().is_empty() {
-                result.pop();
+        let mut line = lines[i];
+        if line.starts_with("```") {
+            if !open_block {
+                if line == "```" {
+                    //only modify the line if the lsp didn't provide a language
+                    line = language_tag.as_str();
+                }
+
+                //skip following empty lines
+                while i < lines.len() && lines[i].trim().is_empty() {
+                    i += 1;
+                }
             }
 
-            result.push(lines[i]);
-            i += 1;
-            //skip following empty lines
-            while i < lines.len() && lines[i].trim().is_empty() {
-                i += 1;
-            }
-        } else {
-            result.push(lines[i]);
-            i += 1;
+            open_block = !open_block;
         }
+        result.push(line);
+        i += 1;
     }
+
     result.join("\n")
 }
 
 async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
-    _language: Option<Arc<Language>>,
+    language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Vec<View<Markdown>> {
     let mut parsed_blocks: Vec<View<Markdown>> = Vec::new();
 
     for block in blocks {
-        let text = trim_codeblocks(block.clone().text.replace("\\n", "\n").trim());
-
+        // let text = trim_codeblocks(block.clone().text.replace("\\n", "\n").trim());
+        let language_name = if let Some(ref l) = language {
+            let l = Arc::clone(l);
+            l.lsp_id().clone()
+        } else {
+            "".to_string()
+        };
+        println!("{}", language_name);
+        let mut text = transform_codeblock(
+            block.clone().text.replace("\\n", "\n").trim(),
+            language_name.as_str(),
+        );
+        text = text.replace("```js", "```javascript");
+        println!("{}", text);
         let rendered_block = cx.new_view(|cx| {
             let markdown_style = MarkdownStyle {
                 pad_blocks: false,
