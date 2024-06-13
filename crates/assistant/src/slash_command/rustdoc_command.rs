@@ -124,10 +124,7 @@ impl SlashCommand for RustdocSlashCommand {
         let store = RustdocStore::global(cx);
         cx.background_executor().spawn(async move {
             let items = store.search(query).await;
-            Ok(items
-                .into_iter()
-                .map(|(crate_name, item)| format!("{crate_name}::{}", item.display()))
-                .collect())
+            Ok(items)
         })
     }
 
@@ -228,7 +225,7 @@ impl SlashCommand for RustdocSlashCommand {
                     .await;
 
                 if let Ok(item_docs) = item_docs {
-                    anyhow::Ok((RustdocSource::Local, item_docs))
+                    anyhow::Ok((RustdocSource::Local, item_docs.docs().to_owned()))
                 } else {
                     Self::build_message(
                         fs,
