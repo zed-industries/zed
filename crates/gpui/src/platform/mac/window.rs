@@ -1222,7 +1222,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         // Ignore events from held-down keys after some of the initially-pressed keys
         // were released.
         if event.is_held {
-            if lock.last_fresh_keydown.as_ref() != Some(&keydown) {
+            if lock.last_fresh_keydown.as_ref() != Some(&keydown) && !keydown.modifiers.modified() {
                 return YES;
             }
         } else {
