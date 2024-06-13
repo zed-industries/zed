@@ -1361,10 +1361,7 @@ impl Bounds<DevicePixels> {
                 px(self.origin.x.0 as f32 / scale_factor),
                 px(self.origin.y.0 as f32 / scale_factor),
             ),
-            size: size(
-                px(self.size.width.0 as f32 / scale_factor),
-                px(self.size.height.0 as f32 / scale_factor),
-            ),
+            size: self.size.to_pixels(scale_factor),
         }
     }
 }
