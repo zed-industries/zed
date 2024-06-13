@@ -3,12 +3,14 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use collections::HashMap;
 use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt;
 use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, Task, UpdateGlobal};
 use heed::types::SerdeBincode;
 use heed::Database;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use util::paths::SUPPORT_DIR;
 use util::ResultExt;
@@ -23,6 +25,7 @@ impl Global for GlobalRustdocStore {}
 pub struct RustdocStore {
     executor: BackgroundExecutor,
     database_future: Shared<BoxFuture<'static, Result<Arc<RustdocDatabase>, Arc<anyhow::Error>>>>,
+    indexing_tasks_by_crate: RwLock<HashMap<String, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
 }
 
 impl RustdocStore {
@@ -52,6 +55,7 @@ impl RustdocStore {
         Self {
             executor,
             database_future,
+            indexing_tasks_by_crate: RwLock::new(HashMap::default()),
         }
     }
 
@@ -69,17 +73,45 @@ impl RustdocStore {
     }
 
     pub fn index(
-        &self,
+        self: Arc<Self>,
         crate_name: String,
         provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
-    ) -> Task<Result<()>> {
-        let database_future = self.database_future.clone();
-        self.executor.spawn(async move {
-            let database = database_future.await.map_err(|err| anyhow!(err))?;
-            let indexer = RustdocIndexer::new(database, provider);
+    ) -> Shared<Task<Result<(), Arc<anyhow::Error>>>> {
+        let indexing_task = self
+            .executor
+            .spawn({
+                let this = self.clone();
+                let crate_name = crate_name.clone();
+                async move {
+                    let _finally = util::defer({
+                        let this = this.clone();
+                        let crate_name = crate_name.clone();
+                        move || {
+                            this.indexing_tasks_by_crate.write().remove(&crate_name);
+                        }
+                    });
 
-            indexer.index(crate_name.clone()).await
-        })
+                    let index_task = async {
+                        let database = this
+                            .database_future
+                            .clone()
+                            .await
+                            .map_err(|err| anyhow!(err))?;
+                        let indexer = RustdocIndexer::new(database, provider);
+
+                        indexer.index(crate_name.clone()).await
+                    };
+
+                    index_task.await.map_err(Arc::new)
+                }
+            })
+            .shared();
+
+        self.indexing_tasks_by_crate
+            .write()
+            .insert(crate_name, indexing_task.clone());
+
+        indexing_task
     }
 
     pub fn search(&self, query: String) -> Task<Vec<String>> {

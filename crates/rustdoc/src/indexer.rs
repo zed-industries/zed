@@ -56,8 +56,6 @@ impl RustdocProvider for LocalProvider {
             local_cargo_doc_path.push("index.html");
         }
 
-        println!("Fetching {}", local_cargo_doc_path.display());
-
         let Ok(contents) = self.fs.load(&local_cargo_doc_path).await else {
             return Ok(None);
         };
@@ -90,8 +88,6 @@ impl RustdocProvider for DocsDotRsProvider {
                 .map(|item| format!("/{}", item.url_path()))
                 .unwrap_or_default()
         );
-
-        println!("Fetching {}", &format!("https://docs.rs/{path}"));
 
         let mut response = self
             .http_client
@@ -164,8 +160,6 @@ impl RustdocIndexer {
 
         while let Some(item_with_history) = items_to_visit.pop_front() {
             let item = &item_with_history.item;
-
-            println!("Visiting {:?} {:?} {}", &item.kind, &item.path, &item.name);
 
             let Some(result) = self
                 .provider
