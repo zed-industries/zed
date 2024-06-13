@@ -479,7 +479,7 @@ impl CollabTitlebarItem {
                         .header("Preferences")
                         .action("Settings", Box::new(zed_actions::OpenSettings))
                         .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
-                        .action("Themes", Box::new(theme_selector::Toggle::default()))
+                        .action("Themes", Box::<theme_selector::Toggle>::default())
                         .action("Extensions", Box::new(extensions_ui::Extensions))
                         .header("Help")
                         .action("About Zed", Box::new(zed_actions::About))
