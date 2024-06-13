@@ -24,20 +24,18 @@ fn main() {
 
         for screen in cx.displays() {
             let options = {
-                let popup_margin_width = px(16.);
-                let popup_margin_height = px(-0.) - px(48.);
+                let margin_right = px(16.);
+                let margin_height = px(-48.);
 
-                let window_size = Size {
+                let size = Size {
                     width: px(400.),
                     height: px(72.),
                 };
 
-                let screen_bounds = screen.bounds();
-
                 let bounds = gpui::Bounds::<Pixels> {
-                    origin: screen_bounds.upper_right()
-                        - point(window_size.width + popup_margin_width, popup_margin_height),
-                    size: window_size.into(),
+                    origin: screen.bounds().upper_right()
+                        - point(size.width + margin_right, margin_height),
+                    size,
                 };
 
                 WindowOptions {
