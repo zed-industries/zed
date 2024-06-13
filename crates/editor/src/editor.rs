@@ -470,7 +470,7 @@ pub struct Editor {
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
-    signature_help_task: Vec<Task<()>>,
+    signature_help_task: Option<Task<()>>,
     signature_help_state: Option<SignatureHelpPopover>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
@@ -3952,17 +3952,15 @@ impl Editor {
             if let Some(signature_help_popover) = maybe_signature_help_popover {
                 let _ = this.update(&mut cx, |editor, cx| {
                     editor.signature_help_state = Some(signature_help_popover);
-                    cx.notify();
                 });
             }
             else {
                 let _ = this.update(&mut cx, |editor, cx| {
                     editor.signature_help_state = None;
-                    cx.notify();
                 });
             }
         });
-        self.signature_help_task.push(task);
+        self.signature_help_task = Some(task);
     }
 
     pub fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
