@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui::ClickEvent;
 
-use crate::{prelude::*, Color, IconButton, IconName, IconSize};
+use crate::{prelude::*, Color, IconButton, IconButtonShape, IconName, IconSize};
 
 #[derive(IntoElement)]
 pub struct Disclosure {
@@ -38,6 +38,7 @@ impl RenderOnce for Disclosure {
                 false => IconName::ChevronRight,
             },
         )
+        .shape(IconButtonShape::Square)
         .icon_color(Color::Muted)
         .icon_size(IconSize::Small)
         .when_some(self.on_toggle, move |this, on_toggle| {
