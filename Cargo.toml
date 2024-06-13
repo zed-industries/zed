@@ -416,6 +416,7 @@ features = [
     "Foundation_Numerics",
     "System",
     "System_Threading",
+    "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
     "Win32_Graphics_Direct2D",
