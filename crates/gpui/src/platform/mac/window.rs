@@ -1570,7 +1570,7 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     unsafe {
         let _: () = msg_send![
             lock.renderer.layer(),
-            setContentsScale: scale_factor
+            setContentsScale: scale_factor as f64
         ];
     }
 
@@ -1602,8 +1602,6 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let drawable_size = new_size.to_device_pixels(scale_factor);
     lock.renderer.update_drawable_size(drawable_size);
 
-    drop(lock);
-    let mut lock = window_state.lock();
     if let Some(mut callback) = lock.resize_callback.take() {
         let content_size = lock.content_size();
         let scale_factor = lock.scale_factor();
