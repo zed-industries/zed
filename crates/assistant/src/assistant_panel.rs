@@ -29,10 +29,10 @@ use futures::future::Shared;
 use futures::{FutureExt, StreamExt};
 use gpui::{
     div, point, rems, Action, AnyElement, AnyView, AppContext, AsyncAppContext, AsyncWindowContext,
-    ClipboardItem, Context as _, Empty, EventEmitter, FocusHandle, FocusableView,
+    ClipboardItem, Context as _, Empty, EventEmitter, FocusHandle, FocusOutEvent, FocusableView,
     InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Task, UpdateGlobal, View,
-    ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{
     language_settings::SoftWrap, AnchorRangeExt, AutoindentMode, Buffer, LanguageRegistry,
@@ -296,7 +296,7 @@ impl AssistantPanel {
         }
     }
 
-    fn focus_out(&mut self, _blurred: WeakFocusHandle, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _event: FocusOutEvent, cx: &mut ViewContext<Self>) {
         self.toolbar
             .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
         cx.notify();

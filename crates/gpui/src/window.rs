@@ -86,11 +86,18 @@ impl DispatchPhase {
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 
-type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
+type AnyWindowFocusListener =
+    Box<dyn FnMut(&WindowFocusEvent, &mut WindowContext) -> bool + 'static>;
 
-struct FocusEvent {
+struct WindowFocusEvent {
     previous_focus_path: SmallVec<[FocusId; 8]>,
     current_focus_path: SmallVec<[FocusId; 8]>,
+}
+
+/// This is provided when subscribing for `ViewContext::on_focus_out` events.
+pub struct FocusOutEvent {
+    /// A weak focus handle representing what was blurred.
+    pub blurred: WeakFocusHandle,
 }
 
 slotmap::new_key_type! {
@@ -1400,7 +1407,7 @@ impl<'a> WindowContext<'a> {
                     .retain(&(), |listener| listener(self));
             }
 
-            let event = FocusEvent {
+            let event = WindowFocusEvent {
                 previous_focus_path: if previous_window_active {
                     previous_focus_path
                 } else {
@@ -4128,7 +4135,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn on_focus_out(
         &mut self,
         handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, WeakFocusHandle, &mut ViewContext<V>) + 'static,
+        mut listener: impl FnMut(&mut V, FocusOutEvent, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
@@ -4139,11 +4146,13 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                         if event.previous_focus_path.contains(&focus_id)
                             && !event.current_focus_path.contains(&focus_id)
                         {
-                            let prev_focused = WeakFocusHandle {
-                                id: blurred_id,
-                                handles: Arc::downgrade(&cx.window.focus_handles),
+                            let event = FocusOutEvent {
+                                blurred: WeakFocusHandle {
+                                    id: blurred_id,
+                                    handles: Arc::downgrade(&cx.window.focus_handles),
+                                },
                             };
-                            listener(view, prev_focused, cx)
+                            listener(view, event, cx)
                         }
                     }
                 })
