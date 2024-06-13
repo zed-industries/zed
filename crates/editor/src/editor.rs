@@ -449,7 +449,7 @@ struct BufferOffset(usize);
 /// See the [module level documentation](self) for more information.
 pub struct Editor {
     focus_handle: FocusHandle,
-    last_focused_descendant: Option<WeakFocusHandle>,
+    last_focused: Option<WeakFocusHandle>,
     /// The text buffer being edited
     buffer: Model<MultiBuffer>,
     /// Map of how text in the buffer should be displayed.
@@ -1737,7 +1737,7 @@ impl Editor {
         );
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
-        cx.on_descendant_focus(&focus_handle, Self::handle_descendant_focus)
+        cx.on_focus_out(&focus_handle, Self::handle_focus_out)
             .detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
@@ -1749,7 +1749,7 @@ impl Editor {
 
         let mut this = Self {
             focus_handle,
-            last_focused_descendant: None,
+            last_focused: None,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
             selections,
@@ -11306,7 +11306,7 @@ impl Editor {
         cx.emit(EditorEvent::Focused);
 
         if let Some(last_focused) = self
-            .last_focused_descendant
+            .last_focused
             .take()
             .and_then(|last_focused| last_focused.upgrade())
         {
@@ -11332,8 +11332,8 @@ impl Editor {
         }
     }
 
-    fn handle_descendant_focus(&mut self, cx: &mut ViewContext<Self>) {
-        self.last_focused_descendant = cx.focused().map(|focused| focused.downgrade());
+    fn handle_focus_out(&mut self, blurred: WeakFocusHandle, _cx: &mut ViewContext<Self>) {
+        self.last_focused = Some(blurred);
     }
 
     pub fn handle_blur(&mut self, cx: &mut ViewContext<Self>) {

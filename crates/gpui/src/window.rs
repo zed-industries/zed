@@ -4082,32 +4082,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
-    /// Register a listener to be called when a descendant of the given focus handle gains focus.
-    /// Returns a subscription and persists until the subscription is dropped.
-    pub fn on_descendant_focus(
-        &mut self,
-        handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
-    ) -> Subscription {
-        let view = self.view.downgrade();
-        let focus_id = handle.id;
-        let (subscription, activate) =
-            self.window.new_focus_listener(Box::new(move |event, cx| {
-                view.update(cx, |view, cx| {
-                    let last_current = event.current_focus_path.last();
-                    if event.current_focus_path.contains(&focus_id)
-                        && last_current != Some(&focus_id)
-                        && last_current != event.previous_focus_path.last()
-                    {
-                        listener(view, cx)
-                    }
-                })
-                .is_ok()
-            }));
-        self.app.defer(move |_| activate());
-        subscription
-    }
-
     /// Register a listener to be called when the given focus handle loses focus.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_blur(
