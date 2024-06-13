@@ -111,10 +111,6 @@ jobs:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - uses: rui314/setup-mold@v1
-        with:
-          mold_version: 2.32.0
-
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
