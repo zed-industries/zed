@@ -14,6 +14,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use ui::{prelude::*, ButtonLike, ElevationIndex};
+use util::paths::PathMatcher;
 use util::ResultExt;
 use workspace::Workspace;
 pub(crate) struct DiagnosticsCommand;
@@ -58,11 +59,9 @@ impl SlashCommand for DiagnosticsCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let include_warnings = argument
-            .map(|argument| argument == INCLUDE_WARNINGS_ARGUMENT)
-            .unwrap_or(false);
+        let options = Options::parse(argument);
 
-        let task = collect_diagnostics(workspace.read(cx).project().clone(), include_warnings, cx);
+        let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
         cx.spawn(move |_| async move {
             let (text, sections) = task.await?;
             Ok(SlashCommandOutput {
@@ -87,9 +86,46 @@ impl SlashCommand for DiagnosticsCommand {
     }
 }
 
+#[derive(Default)]
+struct Options {
+    include_warnings: bool,
+    path_matcher: Option<PathMatcher>,
+}
+
+impl Options {
+    pub fn parse(arguments_line: Option<&str>) -> Self {
+        arguments_line
+            .map(|arguments_line| {
+                let args = arguments_line.split_whitespace().collect::<Vec<_>>();
+                let mut include_warnings = false;
+                let mut path_matcher = None;
+                for arg in args {
+                    if arg == INCLUDE_WARNINGS_ARGUMENT {
+                        include_warnings = true;
+                    } else {
+                        path_matcher = PathMatcher::new(arg).log_err();
+                    }
+                }
+                Self {
+                    include_warnings,
+                    path_matcher,
+                }
+            })
+            .unwrap_or_default()
+    }
+
+    fn header(&self) -> String {
+        if let Some(path_matcher) = &self.path_matcher {
+            format!("diagnostics: {}", path_matcher.source())
+        } else {
+            "diagnostics".to_string()
+        }
+    }
+}
+
 fn collect_diagnostics(
     project: Model<Project>,
-    include_warnings: bool,
+    options: Options,
     cx: &mut AppContext,
 ) -> Task<Result<(String, Vec<(Range<usize>, PlaceholderType)>)>> {
     let project_handle = project.downgrade();
@@ -97,13 +133,19 @@ fn collect_diagnostics(
 
     cx.spawn(|mut cx| async move {
         let mut text = String::new();
-        writeln!(text, "Diagnostics").unwrap();
+        writeln!(text, "{}", options.header()).unwrap();
         let mut sections: Vec<(Range<usize>, PlaceholderType)> = Vec::new();
 
         let mut project_summary = DiagnosticSummary::default();
         for (project_path, _, summary) in diagnostic_summaries {
+            if let Some(path_matcher) = &options.path_matcher {
+                if !path_matcher.is_match(&project_path.path) {
+                    continue;
+                }
+            }
+
             project_summary.error_count += summary.error_count;
-            if include_warnings {
+            if options.include_warnings {
                 project_summary.warning_count += summary.warning_count;
             } else if summary.error_count == 0 {
                 continue;
@@ -122,7 +164,7 @@ fn collect_diagnostics(
                     &mut text,
                     &mut sections,
                     cx.read_model(&buffer, |buffer, _| buffer.snapshot())?,
-                    include_warnings,
+                    options.include_warnings,
                 );
             }
 
@@ -131,7 +173,10 @@ fn collect_diagnostics(
                 PlaceholderType::File(file_path),
             ))
         }
-        sections.push((0..text.len(), PlaceholderType::Root(project_summary)));
+        sections.push((
+            0..text.len(),
+            PlaceholderType::Root(project_summary, options.header()),
+        ));
 
         Ok((text, sections))
     })
@@ -217,7 +262,7 @@ fn collect_diagnostic(
 
 #[derive(Clone)]
 pub enum PlaceholderType {
-    Root(DiagnosticSummary),
+    Root(DiagnosticSummary, String),
     File(String),
     Diagnostic(DiagnosticType, String),
 }
@@ -248,7 +293,7 @@ impl RenderOnce for DiagnosticsPlaceholder {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         let unfold = self.unfold;
         let (icon, content) = match self.placeholder_type {
-            PlaceholderType::Root(summary) => (
+            PlaceholderType::Root(summary, title) => (
                 h_flex()
                     .w_full()
                     .gap_0p5()
@@ -261,7 +306,7 @@ impl RenderOnce for DiagnosticsPlaceholder {
                             .child(Label::new(summary.warning_count.to_string()))
                     })
                     .into_any_element(),
-                Label::new("Diagnostics"),
+                Label::new(title),
             ),
             PlaceholderType::File(file) => (
                 Icon::new(IconName::File).into_any_element(),
