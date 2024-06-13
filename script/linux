@@ -70,6 +70,10 @@ fi
 zyp=$(command -v zypper || true)
 if [[ -n $zyp ]]; then
   deps=(
+    gcc
+    gcc-c++
+    clang
+    make
     alsa-devel
     fontconfig-devel
     wayland-devel
@@ -88,6 +92,8 @@ fi
 pacman=$(command -v pacman || true)
 if [[ -n $pacman ]]; then
   deps=(
+    gcc
+    clang
     alsa-lib
     fontconfig
     wayland
