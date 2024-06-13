@@ -58,10 +58,10 @@ use language::{
 };
 use log::error;
 use lsp::{
-    CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, Edit, FileSystemWatcher, LanguageServer, LanguageServerBinary,
-    LanguageServerId, LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities,
-    ServerHealthStatus, ServerStatus, TextEdit,
+    CompletionContext, CompletionTriggerKind, DiagnosticSeverity, DiagnosticTag,
+    DidChangeWatchedFilesRegistrationOptions, DocumentHighlightKind, Edit, FileSystemWatcher,
+    LanguageServer, LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem,
+    OneOf, ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -650,6 +650,12 @@ pub enum SearchResult {
     },
     LimitReached,
 }
+
+#[cfg(any(test, feature = "test-support"))]
+pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
+    trigger_kind: CompletionTriggerKind::INVOKED,
+    trigger_character: None,
+};
 
 impl Project {
     pub fn init_settings(cx: &mut AppContext) {
