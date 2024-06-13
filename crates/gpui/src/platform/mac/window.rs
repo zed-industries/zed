@@ -472,13 +472,6 @@ impl MacWindowState {
         get_scale_factor(self.native_window)
     }
 
-    fn update_drawable_size(&mut self, drawable_size: NSSize) {
-        self.renderer.update_drawable_size(Size {
-            width: drawable_size.width,
-            height: drawable_size.height,
-        })
-    }
-
     fn titlebar_height(&self) -> Pixels {
         unsafe {
             let frame = NSWindow::frame(self.native_window);
@@ -1571,12 +1564,9 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
 
-    let scale_factor = lock.scale_factor() as f64;
+    let scale_factor = lock.scale_factor();
     let size = lock.content_size();
-    let drawable_size: NSSize = NSSize {
-        width: f64::from(size.width) * scale_factor,
-        height: f64::from(size.height) * scale_factor,
-    };
+    let drawable_size = size.to_device_pixels(scale_factor);
     unsafe {
         let _: () = msg_send![
             lock.renderer.layer(),
@@ -1584,7 +1574,7 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
         ];
     }
 
-    lock.update_drawable_size(drawable_size);
+    lock.renderer.update_drawable_size(drawable_size);
 
     if let Some(mut callback) = lock.resize_callback.take() {
         let content_size = lock.content_size();
@@ -1599,7 +1589,8 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
 
-    if lock.content_size() == size.into() {
+    let new_size = Size::<Pixels>::from(size);
+    if lock.content_size() == new_size {
         return;
     }
 
@@ -1607,13 +1598,9 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
         let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
     }
 
-    let scale_factor = lock.scale_factor() as f64;
-    let drawable_size: NSSize = NSSize {
-        width: size.width * scale_factor,
-        height: size.height * scale_factor,
-    };
-
-    lock.update_drawable_size(drawable_size);
+    let scale_factor = lock.scale_factor();
+    let drawable_size = new_size.to_device_pixels(scale_factor);
+    lock.renderer.update_drawable_size(drawable_size);
 
     drop(lock);
     let mut lock = window_state.lock();
