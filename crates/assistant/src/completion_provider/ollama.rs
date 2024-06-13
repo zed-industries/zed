@@ -15,6 +15,7 @@ use std::time::Duration;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
+const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
 
 pub struct OllamaCompletionProvider {
     api_url: String,
@@ -128,7 +129,18 @@ impl OllamaCompletionProvider {
     }
 
     pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| DownloadOllamaMessage::new(cx)).into()
+        let fetch_models = Box::new(move |cx: &mut WindowContext| {
+            cx.update_global::<CompletionProvider, _>(|provider, cx| {
+                if let CompletionProvider::Ollama(provider) = provider {
+                    provider.fetch_models(cx)
+                } else {
+                    Task::ready(Ok(()))
+                }
+            })
+        });
+
+        cx.new_view(|cx| DownloadOllamaMessage::new(fetch_models, cx))
+            .into()
     }
 
     pub fn model(&self) -> OllamaModel {
@@ -230,11 +242,16 @@ impl From<Role> for ollama::Role {
     }
 }
 
-struct DownloadOllamaMessage {}
+struct DownloadOllamaMessage {
+    retry_connection: Box<dyn Fn(&mut WindowContext) -> Task<Result<()>>>,
+}
 
 impl DownloadOllamaMessage {
-    pub fn new(_cx: &mut ViewContext<Self>) -> Self {
-        Self {}
+    pub fn new(
+        retry_connection: Box<dyn Fn(&mut WindowContext) -> Task<Result<()>>>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self { retry_connection }
     }
 
     fn render_download_button(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -245,6 +262,44 @@ impl DownloadOllamaMessage {
             .child(Label::new("Get Ollama"))
             .on_click(move |_, cx| cx.open_url(OLLAMA_DOWNLOAD_URL))
     }
+
+    fn render_retry_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        ButtonLike::new("retry_ollama_models")
+            .style(ButtonStyle::Filled)
+            .size(ButtonSize::Large)
+            .layer(ElevationIndex::ModalSurface)
+            .child(Label::new("Retry"))
+            .on_click(cx.listener(move |this, _, cx| {
+                let connected = (this.retry_connection)(cx);
+
+                cx.spawn(|_this, _cx| async move {
+                    connected.await?;
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx)
+            }))
+    }
+
+    fn render_next_steps(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .p_4()
+            .size_full()
+            .gap_2()
+            .child(
+                Label::new("Once Ollama is on your machine, make sure to download a model or two.")
+                    .size(LabelSize::Large),
+            )
+            .child(
+                h_flex().w_full().p_4().justify_center().gap_2().child(
+                    ButtonLike::new("view-models")
+                        .style(ButtonStyle::Filled)
+                        .size(ButtonSize::Large)
+                        .layer(ElevationIndex::ModalSurface)
+                        .child(Label::new("View Available Models"))
+                        .on_click(move |_, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
+                ),
+            )
+    }
 }
 
 impl Render for DownloadOllamaMessage {
@@ -252,16 +307,22 @@ impl Render for DownloadOllamaMessage {
         v_flex()
             .p_4()
             .size_full()
-            .child(Label::new("To use Ollama models via the assistant, Ollama must be running on your machine.").size(LabelSize::Large))
+            .gap_2()
+            .child(Label::new("To use Ollama models via the assistant, Ollama must be running on your machine with at least one model downloaded.").size(LabelSize::Large))
             .child(
                 h_flex()
                     .w_full()
                     .p_4()
                     .justify_center()
+                    .gap_2()
                     .child(
                         self.render_download_button(cx)
                     )
+                    .child(
+                        self.render_retry_button(cx)
+                    )
             )
+            .child(self.render_next_steps(cx))
             .into_any()
     }
 }
