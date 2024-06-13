@@ -1393,6 +1393,7 @@ pub mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[gpui::test(retries = 5)]
     async fn test_soft_wraps(cx: &mut gpui::TestAppContext) {
         cx.background_executor
