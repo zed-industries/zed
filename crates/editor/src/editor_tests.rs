@@ -477,6 +477,42 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_movement_actions_with_pending_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
+        build_editor(buffer, cx)
+    });
+
+    _ = view.update(cx, |view, cx| {
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)]
+        );
+
+        view.move_down(&Default::default(), cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 2)]
+        );
+
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)]
+        );
+
+        view.move_up(&Default::default(), cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2)]
+        );
+    });
+}
+
+#[gpui::test]
 fn test_clone(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
