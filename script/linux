@@ -20,6 +20,7 @@ if [[ -n $apt ]]; then
     libwayland-dev
     libxkbcommon-x11-dev
     libssl-dev
+    libstdc++-12-dev
     libzstd-dev
     libvulkan1
     libgit2-dev
