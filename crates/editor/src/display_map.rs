@@ -1111,10 +1111,7 @@ impl ToDisplayPoint for Anchor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::{
-        movement,
-        test::{, marked_display_snapshot},
-    };
+    use crate::{movement, test::marked_display_snapshot};
     use gpui::{div, font, observe, px, AppContext, BorrowAppContext, Context, Element, Hsla};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
@@ -1402,7 +1399,7 @@ pub mod tests {
             init_test(cx, |_| {});
         });
 
-        let mut cx = editor_test_context::EditorTestContext::new(cx).await;
+        let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
         let editor = cx.editor.clone();
         let window = cx.window;
 
