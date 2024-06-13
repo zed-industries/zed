@@ -41,7 +41,7 @@ use workspace::{
     item::ItemHandle,
     ui::{
         h_flex, v_flex, ActiveTheme, Color, ContextMenu, FluentBuilder, Icon, IconName, IconSize,
-        Label, LabelCommon, ListItem, Selectable,
+        Label, LabelCommon, ListItem, Selectable, StyledTypography,
     },
     OpenInTerminal, Workspace,
 };
@@ -784,7 +784,6 @@ impl OutlinePanel {
 
         let context_menu = ContextMenu::build(cx, |menu, _| {
             menu.context(self.focus_handle.clone())
-                .action("Copy Relative Path", Box::new(CopyRelativePath))
                 .action("Reveal in Finder", Box::new(RevealInFinder))
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .when(is_unfoldable, |menu| {
@@ -1348,6 +1347,7 @@ impl OutlinePanel {
         let settings = OutlinePanelSettings::get_global(cx);
         let rendered_entry = rendered_entry.to_owned_entry();
         div()
+            .text_ui(cx)
             .id(item_id.clone())
             .child(
                 ListItem::new(item_id)
