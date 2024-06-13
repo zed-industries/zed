@@ -150,14 +150,19 @@ mod tests {
     fn test_wrap_line() {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
         let cx = TestAppContext::new(dispatcher, None);
+        cx.text_system()
+            .add_fonts(vec![std::fs::read(
+                "../../assets/fonts/zed-mono/zed-mono-extended.ttf",
+            )
+            .unwrap()
+            .into()])
+            .unwrap();
+        let id = cx.text_system().font_id(&font("Zed Mono")).unwrap();
 
         cx.update(|cx| {
             let text_system = cx.text_system().clone();
-            let mut wrapper = LineWrapper::new(
-                text_system.font_id(&font("Courier")).unwrap(),
-                px(16.),
-                text_system.platform_text_system.clone(),
-            );
+            let mut wrapper =
+                LineWrapper::new(id, px(16.), text_system.platform_text_system.clone());
             assert_eq!(
                 wrapper
                     .wrap_line("aa bbb cccc ddddd eeee", px(72.))
@@ -218,11 +223,19 @@ mod tests {
     #[crate::test]
     fn test_wrap_shaped_line(cx: &mut TestAppContext) {
         cx.update(|cx| {
+            cx.text_system()
+                .add_fonts(vec![std::fs::read(
+                    "../../assets/fonts/zed-mono/zed-mono-extended.ttf",
+                )
+                .unwrap()
+                .into()])
+                .unwrap();
+
             let text_system = WindowTextSystem::new(cx.text_system().clone());
 
             let normal = TextRun {
                 len: 0,
-                font: font("Helvetica"),
+                font: font("Zed Mono"),
                 color: Default::default(),
                 underline: Default::default(),
                 strikethrough: None,
@@ -230,7 +243,7 @@ mod tests {
             };
             let bold = TextRun {
                 len: 0,
-                font: font("Helvetica").bold(),
+                font: font("Zed Mono").bold(),
                 color: Default::default(),
                 underline: Default::default(),
                 strikethrough: None,
