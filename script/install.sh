@@ -47,7 +47,7 @@ main() {
 }
 
 linux() {
-    if [[ -n "${ZED_BUNDLE_PATH:-}" ]]; then
+    if [ -n "${ZED_BUNDLE_PATH:-}" ]; then
         cp "$ZED_BUNDLE_PATH" "$temp/zed-linux-$arch.tar.gz"
     else
         echo "Downloading Zed"
