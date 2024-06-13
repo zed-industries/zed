@@ -499,6 +499,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         let app_state = app_state.clone();
         cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
             .detach();
+        return;
     }
 
     if let Err(e) = init_ui(app_state.clone(), cx) {
