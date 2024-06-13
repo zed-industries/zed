@@ -14,8 +14,8 @@ use futures::{
 use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, percentage, point, size, Animation, AnimationExt, AppContext, BackgroundExecutor,
-    Bounds, DevicePixels, EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task,
-    TitlebarOptions, Transformation, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
+    Bounds, EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions,
+    Transformation, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -80,11 +80,7 @@ pub fn open_prompt_library(
         cx.spawn(|cx| async move {
             let store = store.await?;
             cx.update(|cx| {
-                let bounds = Bounds::centered(
-                    None,
-                    size(DevicePixels::from(1024), DevicePixels::from(768)),
-                    cx,
-                );
+                let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
                 cx.open_window(
                     WindowOptions {
                         titlebar: Some(TitlebarOptions {

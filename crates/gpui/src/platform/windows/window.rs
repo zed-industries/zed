@@ -27,14 +27,14 @@ use windows::{
 };
 
 use crate::platform::blade::BladeRenderer;
-use crate::*;
+use crate::{Pixels, *};
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
 
 pub struct WindowsWindowState {
-    pub origin: Point<DevicePixels>,
-    pub physical_size: Size<DevicePixels>,
-    pub fullscreen_restore_bounds: Bounds<DevicePixels>,
+    pub origin: Point<Pixels>,
+    pub physical_size: Size<Pixels>,
+    pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub scale_factor: f32,
 
     pub callbacks: Callbacks,
@@ -67,8 +67,8 @@ impl WindowsWindowState {
         current_cursor: HCURSOR,
         display: WindowsDisplay,
     ) -> Self {
-        let origin = point(cs.x.into(), cs.y.into());
-        let physical_size = size(cs.cx.into(), cs.cy.into());
+        let origin = point(px(cs.x as f32), px(cs.y as f32));
+        let physical_size = size(px(cs.cx as f32), px(cs.cy as f32));
         let fullscreen_restore_bounds = Bounds {
             origin,
             size: physical_size,
@@ -110,7 +110,7 @@ impl WindowsWindowState {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         Bounds {
             origin: self.origin,
             size: self.physical_size,
@@ -128,12 +128,12 @@ impl WindowsWindowState {
         };
         let bounds = Bounds {
             origin: point(
-                DevicePixels(placement.rcNormalPosition.left),
-                DevicePixels(placement.rcNormalPosition.top),
+                px(placement.rcNormalPosition.left as f32),
+                px(placement.rcNormalPosition.top as f32),
             ),
             size: size(
-                DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
-                DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
+                px((placement.rcNormalPosition.right - placement.rcNormalPosition.left) as f32),
+                px((placement.rcNormalPosition.bottom - placement.rcNormalPosition.top) as f32),
             ),
         };
 
@@ -151,7 +151,7 @@ impl WindowsWindowState {
     /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
-        logical_size(self.physical_size, self.scale_factor)
+        self.physical_size
     }
 
     fn title_bar_padding(&self) -> Pixels {
@@ -303,6 +303,7 @@ impl WindowsWindow {
             } else {
                 display.default_bounds()
             };
+            let bounds = bounds.to_device_pixels(wnd.0.state.borrow().scale_factor);
             placement.rcNormalPosition.left = bounds.left().0;
             placement.rcNormalPosition.right = bounds.right().0;
             placement.rcNormalPosition.top = bounds.top().0;
@@ -350,7 +351,7 @@ impl Drop for WindowsWindow {
 }
 
 impl PlatformWindow for WindowsWindow {
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.0.state.borrow().bounds()
     }
 
@@ -551,10 +552,10 @@ impl PlatformWindow for WindowsWindow {
                     unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
                     let _ = lock.fullscreen.insert(StyleAndBounds {
                         style,
-                        x: rc.left,
-                        y: rc.top,
-                        cx: rc.right - rc.left,
-                        cy: rc.bottom - rc.top,
+                        x: px(rc.left as f32),
+                        y: px(rc.top as f32),
+                        cx: px((rc.right - rc.left) as f32),
+                        cy: px((rc.bottom - rc.top) as f32),
                     });
                     let style = style
                         & !(WS_THICKFRAME
@@ -565,10 +566,10 @@ impl PlatformWindow for WindowsWindow {
                     let bounds = lock.display.bounds();
                     StyleAndBounds {
                         style,
-                        x: bounds.left().0,
-                        y: bounds.top().0,
-                        cx: bounds.size.width.0,
-                        cy: bounds.size.height.0,
+                        x: bounds.left(),
+                        y: bounds.top(),
+                        cx: bounds.size.width,
+                        cy: bounds.size.height,
                     }
                 };
                 drop(lock);
@@ -577,10 +578,10 @@ impl PlatformWindow for WindowsWindow {
                     SetWindowPos(
                         state_ptr.hwnd,
                         HWND::default(),
-                        x,
-                        y,
-                        cx,
-                        cy,
+                        x.0 as i32,
+                        y.0 as i32,
+                        cx.0 as i32,
+                        cy.0 as i32,
                         SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
                     )
                 }
@@ -833,10 +834,10 @@ impl ClickState {
 
 struct StyleAndBounds {
     style: WINDOW_STYLE,
-    x: i32,
-    y: i32,
-    cx: i32,
-    cy: i32,
+    x: Pixels,
+    y: Pixels,
+    cx: Pixels,
+    cy: Pixels,
 }
 
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {

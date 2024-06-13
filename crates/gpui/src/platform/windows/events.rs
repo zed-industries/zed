@@ -96,13 +96,13 @@ fn handle_move_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let x = lparam.signed_loword() as i32;
-    let y = lparam.signed_hiword() as i32;
+    let x = lparam.signed_loword() as f32;
+    let y = lparam.signed_hiword() as f32;
     let mut lock = state_ptr.state.borrow_mut();
-    lock.origin = point(x.into(), y.into());
+    lock.origin = point(px(x), px(y));
     let size = lock.physical_size;
-    let center_x = x + size.width.0 / 2;
-    let center_y = y + size.height.0 / 2;
+    let center_x = x + size.width.0 / 2.;
+    let center_y = y + size.height.0 / 2.;
     let monitor_bounds = lock.display.bounds();
     if center_x < monitor_bounds.left().0
         || center_x > monitor_bounds.right().0
@@ -129,18 +129,15 @@ fn handle_move_msg(
 fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
-    let new_physical_size = size(width.into(), height.into());
     let mut lock = state_ptr.state.borrow_mut();
+    let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
-    lock.physical_size = new_physical_size;
-    lock.renderer.update_drawable_size(Size {
-        width: width as f64,
-        height: height as f64,
-    });
+    lock.renderer.update_drawable_size(new_size);
+    let new_size = new_size.to_pixels(lock.scale_factor);
+    lock.physical_size = new_size;
     if let Some(mut callback) = lock.callbacks.resize.take() {
         drop(lock);
-        let logical_size = logical_size(new_physical_size, scale_factor);
-        callback(logical_size, scale_factor);
+        callback(new_size, scale_factor);
         state_ptr.state.borrow_mut().callbacks.resize = Some(callback);
     }
     Some(0)
