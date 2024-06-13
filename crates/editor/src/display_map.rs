@@ -1679,6 +1679,8 @@ pub mod tests {
         );
     }
 
+    // todo(linux) fails due to pixel differences in text rendering
+    #[cfg(target_os = "macos")]
     #[gpui::test]
     async fn test_chunks_with_soft_wrapping(cx: &mut gpui::TestAppContext) {
         use unindent::Unindent as _;
@@ -1729,7 +1731,7 @@ pub mod tests {
         let map = cx.new_model(|cx| {
             DisplayMap::new(
                 buffer,
-                font("Courier"),
+                font("Zed Mono"),
                 font_size,
                 Some(px(40.0)),
                 true,

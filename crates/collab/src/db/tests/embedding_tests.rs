@@ -6,7 +6,6 @@ use std::ops::Sub;
 use time::{Duration, OffsetDateTime, PrimitiveDateTime};
 
 // SQLite does not support array arguments, so we only test this against a real postgres instance
-#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_get_embeddings_postgres(cx: &mut gpui::TestAppContext) {
     let test_db = TestDb::postgres(cx.executor().clone());
@@ -37,7 +36,6 @@ async fn test_get_embeddings_postgres(cx: &mut gpui::TestAppContext) {
     assert_eq!(retrieved_embeddings[&digest2], vec![0.4, 0.5, 0.6]);
 }
 
-#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_purge_old_embeddings(cx: &mut gpui::TestAppContext) {
     let test_db = TestDb::postgres(cx.executor().clone());

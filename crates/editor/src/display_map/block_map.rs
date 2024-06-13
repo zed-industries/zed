@@ -1157,7 +1157,7 @@ mod tests {
     use super::*;
     use crate::display_map::inlay_map::InlayMap;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
-    use gpui::{div, font, px, Element};
+    use gpui::{div, font, px, AssetSource, Element};
     use multi_buffer::MultiBuffer;
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1456,7 +1456,7 @@ mod tests {
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx));
 
-        let _font_id = cx.text_system().font_id(&font("Helvetica")).unwrap();
+        let _font_id = cx.text_system().font_id(&font("Zed Mono")).unwrap();
 
         let text = "one two three\nfour five six\nseven eight";
 
@@ -1940,6 +1940,12 @@ mod tests {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         theme::init(theme::LoadThemes::JustBase, cx);
+        cx.text_system()
+            .add_fonts(vec![assets::Assets
+                .load("fonts/zed-mono/zed-mono-extended.ttf")
+                .unwrap()
+                .unwrap()])
+            .unwrap();
     }
 
     impl TransformBlock {
