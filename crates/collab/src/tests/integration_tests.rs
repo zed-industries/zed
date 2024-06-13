@@ -4189,7 +4189,9 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     for file_name in file_names {
         fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
             lsp::PublishDiagnosticsParams {
-                uri: lsp::Uri::from_file_path(Path::new("/test").join(file_name)).unwrap().into(),
+                uri: lsp::Uri::from_file_path(Path::new("/test").join(file_name))
+                    .unwrap()
+                    .into(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
