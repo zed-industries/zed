@@ -8,6 +8,7 @@ use language::{
 };
 use project::{DiagnosticSummary, Project};
 use rope::Point;
+use std::fmt::Write;
 use std::{
     ops::Range,
     sync::{atomic::AtomicBool, Arc},
@@ -15,7 +16,6 @@ use std::{
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use util::ResultExt;
 use workspace::Workspace;
-
 pub(crate) struct DiagnosticsCommand;
 
 const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
@@ -97,7 +97,7 @@ fn collect_diagnostics(
 
     cx.spawn(|mut cx| async move {
         let mut text = String::new();
-        text.push_str("Diagnostics:\n");
+        writeln!(text, "Diagnostics").unwrap();
         let mut sections: Vec<(Range<usize>, PlaceholderType)> = Vec::new();
 
         let mut project_summary = DiagnosticSummary::default();
@@ -111,8 +111,7 @@ fn collect_diagnostics(
 
             let last_end = text.len();
             let file_path = project_path.path.to_string_lossy().to_string();
-            text.push_str(&file_path);
-            text.push('\n');
+            writeln!(&mut text, "{file_path}").unwrap();
 
             if let Some(buffer) = project_handle
                 .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))?
@@ -193,30 +192,23 @@ fn collect_diagnostic(
     let line_number_width = end_row.to_string().len();
     for (i, line) in buffer_text.lines().enumerate() {
         let line_number = start_row + i as u32 + 1;
-        text.push_str(format!("{line_number:>line_number_width$} ",).as_str());
-        text.push_str(line);
-        text.push('\n');
+        writeln!(text, "{line_number:>line_number_width$} {line}").unwrap();
 
         if line_number == diagnostic_row_number {
+            text.push_str("//");
             let prev_len = text.len();
-            text.push_str("--> ");
-            text.push_str(ty.as_str());
-            text.push_str(": ");
-
+            write!(text, " {}: ", ty.as_str()).unwrap();
             let padding = text.len() - prev_len;
             let message = entry
                 .diagnostic
                 .message
-                .replace('\n', format!("\n{:padding$}", "").as_str());
+                .replace('\n', format!("\n//{:padding$}", "").as_str());
 
-            text.push_str(&message);
-            text.push('\n');
+            writeln!(text, "{message}").unwrap();
         }
     }
 
-    text.push_str("```");
-
-    text.push('\n');
+    writeln!(text, "```").unwrap();
     sections.push((
         prev_len..text.len().saturating_sub(1),
         PlaceholderType::Diagnostic(ty, entry.diagnostic.message.clone()),
