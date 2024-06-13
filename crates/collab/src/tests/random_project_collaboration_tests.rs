@@ -1099,7 +1099,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         files
                                             .into_iter()
                                             .map(|file| lsp::Location {
-                                                uri: lsp::Url::from_file_path(file).unwrap(),
+                                                uri: lsp::Uri::from_file_path(file).unwrap().into(),
                                                 range: Default::default(),
                                             })
                                             .collect(),
