@@ -41,7 +41,7 @@ use workspace::{
     item::ItemHandle,
     ui::{
         h_flex, v_flex, ActiveTheme, Color, ContextMenu, FluentBuilder, Icon, IconName, IconSize,
-        Label, LabelCommon, ListItem, Selectable,
+        Label, LabelCommon, ListItem, Selectable, StyledTypography,
     },
     OpenInTerminal, Workspace,
 };
@@ -487,6 +487,146 @@ impl OutlinePanel {
         self.update_fs_entries(&editor, HashSet::default(), None, None, false, cx);
     }
 
+    fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
+        if let Some(selected_entry) = self.selected_entry.clone() {
+            self.open_entry(&selected_entry, cx);
+        }
+    }
+
+    fn open_entry(&mut self, entry: &EntryOwned, cx: &mut ViewContext<OutlinePanel>) {
+        let Some(active_editor) = self
+            .active_item
+            .as_ref()
+            .and_then(|item| item.active_editor.upgrade())
+        else {
+            return;
+        };
+        let active_multi_buffer = active_editor.read(cx).buffer().clone();
+        let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
+        let offset_from_top = if active_multi_buffer.read(cx).is_singleton() {
+            Point::default()
+        } else {
+            Point::new(0.0, -(active_editor.read(cx).file_header_size() as f32))
+        };
+
+        match &entry {
+            EntryOwned::Entry(FsEntry::ExternalFile(buffer_id)) => {
+                let scroll_target = multi_buffer_snapshot.excerpts().find_map(
+                    |(excerpt_id, buffer_snapshot, excerpt_range)| {
+                        if &buffer_snapshot.remote_id() == buffer_id {
+                            multi_buffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, excerpt_range.context.start)
+                        } else {
+                            None
+                        }
+                    },
+                );
+                if let Some(anchor) = scroll_target {
+                    self.selected_entry = Some(entry.clone());
+                    active_editor.update(cx, |editor, cx| {
+                        editor.set_scroll_anchor(
+                            ScrollAnchor {
+                                offset: offset_from_top,
+                                anchor,
+                            },
+                            cx,
+                        );
+                    })
+                }
+            }
+            entry @ EntryOwned::Entry(FsEntry::Directory(..)) => {
+                self.toggle_expanded(entry, cx);
+            }
+            entry @ EntryOwned::FoldedDirs(..) => {
+                self.toggle_expanded(entry, cx);
+            }
+            EntryOwned::Entry(FsEntry::File(_, file_entry)) => {
+                let scroll_target = self
+                    .project
+                    .update(cx, |project, cx| {
+                        project
+                            .path_for_entry(file_entry.id, cx)
+                            .and_then(|path| project.get_open_buffer(&path, cx))
+                    })
+                    .map(|buffer| {
+                        active_multi_buffer
+                            .read(cx)
+                            .excerpts_for_buffer(&buffer, cx)
+                    })
+                    .and_then(|excerpts| {
+                        let (excerpt_id, excerpt_range) = excerpts.first()?;
+                        multi_buffer_snapshot
+                            .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start)
+                    });
+                if let Some(anchor) = scroll_target {
+                    self.selected_entry = Some(entry.clone());
+                    active_editor.update(cx, |editor, cx| {
+                        editor.set_scroll_anchor(
+                            ScrollAnchor {
+                                offset: offset_from_top,
+                                anchor,
+                            },
+                            cx,
+                        );
+                    })
+                }
+            }
+            EntryOwned::Outline(_, outline) => {
+                let Some(full_buffer_snapshot) =
+                    outline
+                        .range
+                        .start
+                        .buffer_id
+                        .and_then(|buffer_id| active_multi_buffer.read(cx).buffer(buffer_id))
+                        .or_else(|| {
+                            outline.range.end.buffer_id.and_then(|buffer_id| {
+                                active_multi_buffer.read(cx).buffer(buffer_id)
+                            })
+                        })
+                        .map(|buffer| buffer.read(cx).snapshot())
+                else {
+                    return;
+                };
+                let outline_offset_range = outline.range.to_offset(&full_buffer_snapshot);
+                let scroll_target = multi_buffer_snapshot
+                    .excerpts()
+                    .filter(|(_, buffer_snapshot, _)| {
+                        let buffer_id = buffer_snapshot.remote_id();
+                        Some(buffer_id) == outline.range.start.buffer_id
+                            || Some(buffer_id) == outline.range.end.buffer_id
+                    })
+                    .min_by_key(|(_, _, excerpt_range)| {
+                        let excerpt_offeset_range =
+                            excerpt_range.context.to_offset(&full_buffer_snapshot);
+                        ((outline_offset_range.start / 2 + outline_offset_range.end / 2) as isize
+                            - (excerpt_offeset_range.start / 2 + excerpt_offeset_range.end / 2)
+                                as isize)
+                            .abs()
+                    })
+                    .and_then(|(excerpt_id, excerpt_snapshot, excerpt_range)| {
+                        let location = if outline.range.start.is_valid(excerpt_snapshot) {
+                            outline.range.start
+                        } else {
+                            excerpt_range.context.start
+                        };
+                        multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, location)
+                    });
+                if let Some(anchor) = scroll_target {
+                    self.selected_entry = Some(entry.clone());
+                    active_editor.update(cx, |editor, cx| {
+                        editor.set_scroll_anchor(
+                            ScrollAnchor {
+                                offset: Point::default(),
+                                anchor,
+                            },
+                            cx,
+                        );
+                    })
+                }
+            }
+        }
+    }
+
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if let Some(selected_entry) = &self.selected_entry {
             let outline_to_select = match selected_entry {
@@ -784,7 +924,6 @@ impl OutlinePanel {
 
         let context_menu = ContextMenu::build(cx, |menu, _| {
             menu.context(self.focus_handle.clone())
-                .action("Copy Relative Path", Box::new(CopyRelativePath))
                 .action("Reveal in Finder", Box::new(RevealInFinder))
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .when(is_unfoldable, |menu| {
@@ -1348,6 +1487,7 @@ impl OutlinePanel {
         let settings = OutlinePanelSettings::get_global(cx);
         let rendered_entry = rendered_entry.to_owned_entry();
         div()
+            .text_ui(cx)
             .id(item_id.clone())
             .child(
                 ListItem::new(item_id)
@@ -1369,156 +1509,7 @@ impl OutlinePanel {
                             if event.down.button == MouseButton::Right || event.down.first_mouse {
                                 return;
                             }
-
-                            let Some(active_editor) = outline_panel
-                                .active_item
-                                .as_ref()
-                                .and_then(|item| item.active_editor.upgrade())
-                            else {
-                                return;
-                            };
-                            let active_multi_buffer = active_editor.read(cx).buffer().clone();
-                            let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
-
-                            match &clicked_entry {
-                                EntryOwned::Entry(FsEntry::ExternalFile(buffer_id)) => {
-                                    let scroll_target = multi_buffer_snapshot.excerpts().find_map(
-                                        |(excerpt_id, buffer_snapshot, excerpt_range)| {
-                                            if &buffer_snapshot.remote_id() == buffer_id {
-                                                multi_buffer_snapshot.anchor_in_excerpt(
-                                                    excerpt_id,
-                                                    excerpt_range.context.start,
-                                                )
-                                            } else {
-                                                None
-                                            }
-                                        },
-                                    );
-                                    if let Some(anchor) = scroll_target {
-                                        outline_panel.selected_entry = Some(clicked_entry.clone());
-                                        active_editor.update(cx, |editor, cx| {
-                                            editor.set_scroll_anchor(
-                                                ScrollAnchor {
-                                                    offset: Point::new(
-                                                        0.0,
-                                                        -(editor.file_header_size() as f32),
-                                                    ),
-                                                    anchor,
-                                                },
-                                                cx,
-                                            );
-                                        })
-                                    }
-                                }
-                                entry @ EntryOwned::Entry(FsEntry::Directory(..)) => {
-                                    outline_panel.toggle_expanded(entry, cx);
-                                }
-                                entry @ EntryOwned::FoldedDirs(..) => {
-                                    outline_panel.toggle_expanded(entry, cx);
-                                }
-                                EntryOwned::Entry(FsEntry::File(_, file_entry)) => {
-                                    let scroll_target = outline_panel
-                                        .project
-                                        .update(cx, |project, cx| {
-                                            project
-                                                .path_for_entry(file_entry.id, cx)
-                                                .and_then(|path| project.get_open_buffer(&path, cx))
-                                        })
-                                        .map(|buffer| {
-                                            active_multi_buffer
-                                                .read(cx)
-                                                .excerpts_for_buffer(&buffer, cx)
-                                        })
-                                        .and_then(|excerpts| {
-                                            let (excerpt_id, excerpt_range) = excerpts.first()?;
-                                            multi_buffer_snapshot.anchor_in_excerpt(
-                                                *excerpt_id,
-                                                excerpt_range.context.start,
-                                            )
-                                        });
-                                    if let Some(anchor) = scroll_target {
-                                        outline_panel.selected_entry = Some(clicked_entry.clone());
-                                        active_editor.update(cx, |editor, cx| {
-                                            editor.set_scroll_anchor(
-                                                ScrollAnchor {
-                                                    offset: Point::new(
-                                                        0.0,
-                                                        -(editor.file_header_size() as f32),
-                                                    ),
-                                                    anchor,
-                                                },
-                                                cx,
-                                            );
-                                        })
-                                    }
-                                }
-                                EntryOwned::Outline(_, outline) => {
-                                    let Some(full_buffer_snapshot) = outline
-                                        .range
-                                        .start
-                                        .buffer_id
-                                        .and_then(|buffer_id| {
-                                            active_multi_buffer.read(cx).buffer(buffer_id)
-                                        })
-                                        .or_else(|| {
-                                            outline.range.end.buffer_id.and_then(|buffer_id| {
-                                                active_multi_buffer.read(cx).buffer(buffer_id)
-                                            })
-                                        })
-                                        .map(|buffer| buffer.read(cx).snapshot())
-                                    else {
-                                        return;
-                                    };
-                                    let outline_offset_range =
-                                        outline.range.to_offset(&full_buffer_snapshot);
-                                    let scroll_target = multi_buffer_snapshot
-                                        .excerpts()
-                                        .filter(|(_, buffer_snapshot, _)| {
-                                            let buffer_id = buffer_snapshot.remote_id();
-                                            Some(buffer_id) == outline.range.start.buffer_id
-                                                || Some(buffer_id) == outline.range.end.buffer_id
-                                        })
-                                        .min_by_key(|(_, _, excerpt_range)| {
-                                            let excerpt_offeset_range = excerpt_range
-                                                .context
-                                                .to_offset(&full_buffer_snapshot);
-                                            ((outline_offset_range.start / 2
-                                                + outline_offset_range.end / 2)
-                                                as isize
-                                                - (excerpt_offeset_range.start / 2
-                                                    + excerpt_offeset_range.end / 2)
-                                                    as isize)
-                                                .abs()
-                                        })
-                                        .and_then(
-                                            |(excerpt_id, excerpt_snapshot, excerpt_range)| {
-                                                let location = if outline
-                                                    .range
-                                                    .start
-                                                    .is_valid(excerpt_snapshot)
-                                                {
-                                                    outline.range.start
-                                                } else {
-                                                    excerpt_range.context.start
-                                                };
-                                                multi_buffer_snapshot
-                                                    .anchor_in_excerpt(excerpt_id, location)
-                                            },
-                                        );
-                                    if let Some(anchor) = scroll_target {
-                                        outline_panel.selected_entry = Some(clicked_entry.clone());
-                                        active_editor.update(cx, |editor, cx| {
-                                            editor.set_scroll_anchor(
-                                                ScrollAnchor {
-                                                    offset: Point::default(),
-                                                    anchor,
-                                                },
-                                                cx,
-                                            );
-                                        })
-                                    }
-                                }
-                            }
+                            outline_panel.open_entry(&clicked_entry, cx);
                         })
                     })
                     .on_secondary_mouse_down(cx.listener(
@@ -2366,6 +2357,7 @@ impl Render for OutlinePanel {
                 .size_full()
                 .relative()
                 .key_context(self.dispatch_context(cx))
+                .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
                 .on_action(cx.listener(Self::select_first))

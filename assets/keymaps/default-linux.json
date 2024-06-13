@@ -566,11 +566,12 @@
   {
     "context": "OutlinePanel",
     "bindings": {
-      "left": "project_panel::CollapseSelectedEntry",
-      "right": "project_panel::ExpandSelectedEntry",
-      "ctrl-alt-c": "project_panel::CopyPath",
-      "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
-      "alt-ctrl-r": "project_panel::RevealInFinder",
+      "left": "outline_panel::CollapseSelectedEntry",
+      "right": "outline_panel::ExpandSelectedEntry",
+      "ctrl-alt-c": "outline_panel::CopyPath",
+      "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
+      "alt-ctrl-r": "outline_panel::RevealInFinder",
+      "space": "outline_panel::Open",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev"
     }
