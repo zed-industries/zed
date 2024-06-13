@@ -586,7 +586,7 @@ impl EditorElement {
             editor.handle_click_hovered_link(point, event.modifiers, cx);
 
             cx.stop_propagation();
-        } else if end_selection {
+        } else if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
         } else if cfg!(target_os = "linux") && event.button == MouseButton::Middle {
             if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
@@ -594,7 +594,7 @@ impl EditorElement {
             }
 
             #[cfg(target_os = "linux")]
-            if let Some(item) = cx.read_from_clipboard() {
+            if let Some(item) = cx.read_from_primary() {
                 let point_for_position =
                     position_map.point_for_position(text_hitbox.bounds, event.position);
                 let position = point_for_position.previous_valid;

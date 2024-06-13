@@ -27,6 +27,7 @@ pub(crate) struct TestPlatform {
     current_primary_item: Mutex<Option<ClipboardItem>>,
     pub(crate) prompts: RefCell<TestPrompts>,
     pub opened_url: RefCell<Option<String>>,
+    pub text_system: Arc<dyn PlatformTextSystem>,
     weak: Weak<Self>,
 }
 
@@ -44,6 +45,15 @@ impl TestPlatform {
                 .expect("unable to initialize Windows OLE");
         }
 
+        #[cfg(target_os = "macos")]
+        let text_system = Arc::new(crate::platform::mac::MacTextSystem::new());
+
+        #[cfg(target_os = "linux")]
+        let text_system = Arc::new(crate::platform::cosmic_text::CosmicTextSystem::new());
+
+        #[cfg(target_os = "windows")]
+        let text_system = Arc::new(crate::platform::windows::DirectWriteTextSystem::new().unwrap());
+
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,
             foreground_executor,
@@ -56,6 +66,7 @@ impl TestPlatform {
             current_primary_item: Mutex::new(None),
             weak: weak.clone(),
             opened_url: Default::default(),
+            text_system,
         })
     }
 
@@ -132,14 +143,7 @@ impl Platform for TestPlatform {
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        #[cfg(target_os = "macos")]
-        return Arc::new(crate::platform::mac::MacTextSystem::new());
-
-        #[cfg(target_os = "linux")]
-        return Arc::new(crate::platform::cosmic_text::CosmicTextSystem::new());
-
-        #[cfg(target_os = "windows")]
-        return Arc::new(crate::platform::windows::DirectWriteTextSystem::new().unwrap());
+        self.text_system.clone()
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {

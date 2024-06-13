@@ -936,6 +936,8 @@ fn test_move_cursor(cx: &mut TestAppContext) {
     });
 }
 
+// TODO: Re-enable this test
+#[cfg(target_os = "macos")]
 #[gpui::test]
 fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

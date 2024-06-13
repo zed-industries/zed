@@ -510,6 +510,14 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
                                     {
                                         "name": format!("gleam-{version}-aarch64-apple-darwin.tar.gz"),
                                         "browser_download_url": asset_download_uri
+                                    },
+                                    {
+                                        "name": format!("gleam-{version}-x86_64-unknown-linux-musl.tar.gz"),
+                                        "browser_download_url": asset_download_uri
+                                    },
+                                    {
+                                        "name": format!("gleam-{version}-aarch64-unknown-linux-musl.tar.gz"),
+                                        "browser_download_url": asset_download_uri
                                     }
                                 ]
                             }

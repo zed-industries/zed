@@ -296,6 +296,15 @@ impl Modifiers {
         }
     }
 
+    /// helper method for Modifiers with command + shift
+    pub fn control_shift() -> Modifiers {
+        Modifiers {
+            shift: true,
+            control: true,
+            ..Default::default()
+        }
+    }
+
     /// Checks if this Modifiers is a subset of another Modifiers
     pub fn is_subset_of(&self, other: &Modifiers) -> bool {
         (other.control || !self.control)

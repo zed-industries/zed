@@ -143,21 +143,28 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{font, TestAppContext, TestDispatcher, TextRun, WindowTextSystem, WrapBoundary};
+    use crate::{font, TestAppContext, TestDispatcher};
+    #[cfg(target_os = "macos")]
+    use crate::{TextRun, WindowTextSystem, WrapBoundary};
     use rand::prelude::*;
 
     #[test]
     fn test_wrap_line() {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
         let cx = TestAppContext::new(dispatcher, None);
+        cx.text_system()
+            .add_fonts(vec![std::fs::read(
+                "../../assets/fonts/zed-mono/zed-mono-extended.ttf",
+            )
+            .unwrap()
+            .into()])
+            .unwrap();
+        let id = cx.text_system().font_id(&font("Zed Mono")).unwrap();
 
         cx.update(|cx| {
             let text_system = cx.text_system().clone();
-            let mut wrapper = LineWrapper::new(
-                text_system.font_id(&font("Courier")).unwrap(),
-                px(16.),
-                text_system.platform_text_system.clone(),
-            );
+            let mut wrapper =
+                LineWrapper::new(id, px(16.), text_system.platform_text_system.clone());
             assert_eq!(
                 wrapper
                     .wrap_line("aa bbb cccc ddddd eeee", px(72.))
@@ -213,8 +220,11 @@ mod tests {
     }
 
     // For compatibility with the test macro
+    #[cfg(target_os = "macos")]
     use crate as gpui;
 
+    // These seem to vary wildly based on the the text system.
+    #[cfg(target_os = "macos")]
     #[crate::test]
     fn test_wrap_shaped_line(cx: &mut TestAppContext) {
         cx.update(|cx| {
