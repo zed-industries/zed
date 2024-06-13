@@ -143,7 +143,7 @@ use workspace::{
 use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
-use crate::signature_help_popover::SignatureHelpPopover;
+use crate::signature_help_popover::{create_signature_help_markdown_string, SignatureHelpPopover};
 
 pub const DEFAULT_MULTIBUFFER_CONTEXT: u32 = 2;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -3894,44 +3894,7 @@ impl Editor {
                 let (maybe_markdown, language_registry) = project.update(cx, |project, mut cx| {
                     let language_registry = project.languages().clone();
                     let maybe_markdown = project.signature_help(&buffer, buffer_position, &mut cx).map(|signature_help| {
-                        let signature_help = signature_help?;
-
-                        let (signature_information, maybe_active_signature, maybe_active_parameter) =
-                            (signature_help.signatures, signature_help.active_signature, signature_help.active_parameter);
-
-                        let function_options_count = signature_information.len();
-
-                        let signature_information = maybe_active_signature
-                            .and_then(|active_signature| signature_information.get(active_signature as usize))?;
-
-                        let parameter_information = signature_information.parameters
-                            .as_ref()?
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, parameter_information)| match parameter_information.label.clone() {
-                                lsp::ParameterLabel::Simple(string) => {
-                                    if let Some(active_parameter) = maybe_active_parameter {
-                                        if i == active_parameter as usize {
-                                            Some(format!("**{}**", string))
-                                        }
-                                        else {
-                                            Some(string)
-                                        }
-                                    }
-                                    else {
-                                        Some(string)
-                                    }
-                                },
-                                _ => None
-                            })
-                            .join(", ");
-
-                        let markdown = if function_options_count >= 2 {
-                            format!("{} (+{} overload)", parameter_information, function_options_count - 1)
-                        } else {
-                            parameter_information
-                        };
-                        Some(markdown)
+                        create_signature_help_markdown_string(signature_help?)
                     });
                     (maybe_markdown, language_registry)
                 });
@@ -3950,12 +3913,12 @@ impl Editor {
                 None
             };
             if let Some(signature_help_popover) = maybe_signature_help_popover {
-                let _ = this.update(&mut cx, |editor, cx| {
+                let _ = this.update(&mut cx, |editor, _| {
                     editor.signature_help_state = Some(signature_help_popover);
                 });
             }
             else {
-                let _ = this.update(&mut cx, |editor, cx| {
+                let _ = this.update(&mut cx, |editor, _| {
                     editor.signature_help_state = None;
                 });
             }
