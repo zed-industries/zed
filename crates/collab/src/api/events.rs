@@ -308,6 +308,14 @@ pub async fn post_panic(
         .map_err(|_| Error::Http(StatusCode::BAD_REQUEST, "invalid json".into()))?;
     let panic = report.panic;
 
+    // better OS reporting for linux (because linux is hard):
+    // - Remove os_version/app_version/os_name from the gpui platform trait
+    // - Move platform processing data into client/telemetry
+    // - Duplicate some small code in macOS platform for a version check
+    // - Add GPUI API for reporting the selected platform integration
+    //  - macos-blade, macos-metal, linux-X11, linux-headless
+    // if cfg(macos( { "Macos" } else { "Linux-{cx.compositor_name()"} ))
+
     tracing::error!(
         service = "client",
         version = %panic.app_version,

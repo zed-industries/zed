@@ -188,7 +188,7 @@ impl Status {
 }
 
 struct RegisteredBuffer {
-    uri: lsp::Url,
+    uri: lsp::RawUri,
     language_id: String,
     snapshot: BufferSnapshot,
     snapshot_version: i32,
@@ -644,7 +644,7 @@ impl Copilot {
             registered_buffers
                 .entry(buffer.entity_id())
                 .or_insert_with(|| {
-                    let uri: lsp::Url = uri_for_buffer(buffer, cx);
+                    let uri = uri_for_buffer(buffer, cx);
                     let language_id = id_for_language(buffer.read(cx).language());
                     let snapshot = buffer.read(cx).snapshot();
                     server
@@ -959,9 +959,9 @@ fn id_for_language(language: Option<&Arc<Language>>) -> String {
         .unwrap_or_else(|| "plaintext".to_string())
 }
 
-fn uri_for_buffer(buffer: &Model<Buffer>, cx: &AppContext) -> lsp::Url {
+fn uri_for_buffer(buffer: &Model<Buffer>, cx: &AppContext) -> lsp::RawUri {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
-        lsp::Url::from_file_path(file.abs_path(cx)).unwrap()
+        lsp::Uri::from_file_path(file.abs_path(cx)).unwrap().into()
     } else {
         format!("buffer://{}", buffer.entity_id()).parse().unwrap()
     }
@@ -1042,6 +1042,8 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use gpui::TestAppContext;
 
@@ -1050,9 +1052,8 @@ mod tests {
         let (copilot, mut lsp) = Copilot::fake(cx);
 
         let buffer_1 = cx.new_model(|cx| Buffer::local("Hello", cx));
-        let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())
-            .parse()
-            .unwrap();
+        let buffer_1_uri =
+            lsp::RawUri::from_str(&format!("buffer://{}", buffer_1.entity_id().as_u64())).unwrap();
         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_1, cx));
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -1068,9 +1069,8 @@ mod tests {
         );
 
         let buffer_2 = cx.new_model(|cx| Buffer::local("Goodbye", cx));
-        let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.entity_id().as_u64())
-            .parse()
-            .unwrap();
+        let buffer_2_uri =
+            lsp::RawUri::from_str(&format!("buffer://{}", buffer_2.entity_id().as_u64())).unwrap();
         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_2, cx));
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -1119,7 +1119,9 @@ mod tests {
                 text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri),
             }
         );
-        let buffer_1_uri = lsp::Url::from_file_path("/root/child/buffer-1").unwrap();
+        let buffer_1_uri: lsp::RawUri = lsp::Uri::from_file_path("/root/child/buffer-1")
+            .unwrap()
+            .into();
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,

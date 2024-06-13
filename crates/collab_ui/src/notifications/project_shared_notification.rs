@@ -8,6 +8,7 @@ use settings::Settings;
 use std::sync::{Arc, Weak};
 use theme::ThemeSettings;
 use ui::{prelude::*, Button, Label};
+use util::ResultExt;
 use workspace::AppState;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
@@ -27,16 +28,21 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
 
             for screen in cx.displays() {
                 let options = notification_window_options(screen, window_size, cx);
-                let window = cx.open_window(options, |cx| {
-                    cx.new_view(|_| {
-                        ProjectSharedNotification::new(
-                            owner.clone(),
-                            *project_id,
-                            worktree_root_names.clone(),
-                            app_state.clone(),
-                        )
+                let Some(window) = cx
+                    .open_window(options, |cx| {
+                        cx.new_view(|_| {
+                            ProjectSharedNotification::new(
+                                owner.clone(),
+                                *project_id,
+                                worktree_root_names.clone(),
+                                app_state.clone(),
+                            )
+                        })
                     })
-                });
+                    .log_err()
+                else {
+                    continue;
+                };
                 notification_windows
                     .entry(*project_id)
                     .or_insert(Vec::new())

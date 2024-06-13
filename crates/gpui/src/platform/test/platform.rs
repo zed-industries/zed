@@ -3,7 +3,7 @@ use crate::{
     Platform, PlatformDisplay, PlatformTextSystem, Task, TestDisplay, TestWindow, WindowAppearance,
     WindowParams,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use collections::VecDeque;
 use futures::channel::oneshot;
 use parking_lot::Mutex;
@@ -187,14 +187,14 @@ impl Platform for TestPlatform {
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
-    ) -> Box<dyn crate::PlatformWindow> {
+    ) -> anyhow::Result<Box<dyn crate::PlatformWindow>> {
         let window = TestWindow::new(
             handle,
             params,
             self.weak.clone(),
             self.active_display.clone(),
         );
-        Box::new(window)
+        Ok(Box::new(window))
     }
 
     fn window_appearance(&self) -> WindowAppearance {
@@ -248,18 +248,6 @@ impl Platform for TestPlatform {
     fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
-
-    fn os_name(&self) -> &'static str {
-        "test"
-    }
-
-    fn os_version(&self) -> Result<crate::SemanticVersion> {
-        Err(anyhow!("os_version called on TestPlatform"))
-    }
-
-    fn app_version(&self) -> Result<crate::SemanticVersion> {
-        Err(anyhow!("app_version called on TestPlatform"))
-    }
 
     fn app_path(&self) -> Result<std::path::PathBuf> {
         unimplemented!()

@@ -18,6 +18,7 @@ pub use open_listener::*;
 use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
+use outline_panel::OutlinePanel;
 use project::TaskSourceKind;
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -190,6 +191,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             let assistant_panel =
                 assistant::AssistantPanel::load(workspace_handle.clone(), cx.clone());
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+            let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
             let channels_panel =
                 collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
@@ -202,6 +204,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
             let (
                 project_panel,
+                outline_panel,
                 terminal_panel,
                 assistant_panel,
                 channels_panel,
@@ -209,6 +212,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 notification_panel,
             ) = futures::try_join!(
                 project_panel,
+                outline_panel,
                 terminal_panel,
                 assistant_panel,
                 channels_panel,
@@ -219,6 +223,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
+                workspace.add_panel(outline_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
@@ -375,6 +380,13 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                  _: &project_panel::ToggleFocus,
                  cx: &mut ViewContext<Workspace>| {
                     workspace.toggle_panel_focus::<ProjectPanel>(cx);
+                },
+            )
+            .register_action(
+                |workspace: &mut Workspace,
+                 _: &outline_panel::ToggleFocus,
+                 cx: &mut ViewContext<Workspace>| {
+                    workspace.toggle_panel_focus::<OutlinePanel>(cx);
                 },
             )
             .register_action(
@@ -894,7 +906,7 @@ mod tests {
     use editor::{display_map::DisplayRow, scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
         actions, Action, AnyWindowHandle, AppContext, AssetSource, BorrowAppContext, Entity,
-        TestAppContext, VisualTestContext, WindowHandle,
+        SemanticVersion, TestAppContext, VisualTestContext, WindowHandle,
     };
     use language::{LanguageMatcher, LanguageRegistry};
     use project::{Project, ProjectPath, WorktreeSettings};
@@ -1314,7 +1326,8 @@ mod tests {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
         })
-        .await;
+        .await
+        .unwrap();
         cx.run_until_parked();
 
         let workspace = cx
@@ -3088,13 +3101,13 @@ mod tests {
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
             language::init(cx);
             editor::init(cx);
-            project_panel::init_settings(cx);
             collab_ui::init(&app_state, cx);
             project_panel::init((), cx);
+            outline_panel::init((), cx);
             terminal_view::init(cx);
             assistant::init(app_state.client.clone(), cx);
             tasks_ui::init(cx);

@@ -10,7 +10,8 @@ use crate::{
 };
 use futures::StreamExt;
 use gpui::{
-    div, AssetSource, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds, WindowOptions,
+    div, AssetSource, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
+    WindowBounds, WindowOptions,
 };
 use indoc::indoc;
 use language::{
@@ -56,10 +57,10 @@ fn test_edit_events(cx: &mut TestAppContext) {
         let events = events.clone();
         |cx| {
             let view = cx.view().clone();
-            cx.subscribe(&view, move |_, _, event: &EditorEvent, _| {
-                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
-                    events.borrow_mut().push(("editor1", event.clone()));
-                }
+            cx.subscribe(&view, move |_, _, event: &EditorEvent, _| match event {
+                EditorEvent::Edited { .. } => events.borrow_mut().push(("editor1", "edited")),
+                EditorEvent::BufferEdited => events.borrow_mut().push(("editor1", "buffer edited")),
+                _ => {}
             })
             .detach();
             Editor::for_buffer(buffer.clone(), None, cx)
@@ -69,11 +70,16 @@ fn test_edit_events(cx: &mut TestAppContext) {
     let editor2 = cx.add_window({
         let events = events.clone();
         |cx| {
-            cx.subscribe(&cx.view().clone(), move |_, _, event: &EditorEvent, _| {
-                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
-                    events.borrow_mut().push(("editor2", event.clone()));
-                }
-            })
+            cx.subscribe(
+                &cx.view().clone(),
+                move |_, _, event: &EditorEvent, _| match event {
+                    EditorEvent::Edited { .. } => events.borrow_mut().push(("editor2", "edited")),
+                    EditorEvent::BufferEdited => {
+                        events.borrow_mut().push(("editor2", "buffer edited"))
+                    }
+                    _ => {}
+                },
+            )
             .detach();
             Editor::for_buffer(buffer.clone(), None, cx)
         }
@@ -86,9 +92,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -97,9 +103,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -108,9 +114,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -119,9 +125,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -130,9 +136,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -141,9 +147,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -511,6 +517,7 @@ fn test_clone(cx: &mut TestAppContext) {
         .update(cx, |editor, cx| {
             cx.open_window(Default::default(), |cx| cx.new_view(|cx| editor.clone(cx)))
         })
+        .unwrap()
         .unwrap();
 
     let snapshot = editor.update(cx, |e, cx| e.snapshot(cx)).unwrap();
@@ -5816,7 +5823,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -5842,7 +5849,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Url::from_file_path("/file.rs").unwrap()
+            lsp::Uri::from_file_path("/file.rs").unwrap().into()
         );
         futures::future::pending::<()>().await;
         unreachable!()
@@ -5891,7 +5898,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
@@ -6094,7 +6101,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         .on_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             Ok(Some(vec![lsp::TextEdit::new(
                 lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
-                format!("[{} formatted]", params.text_document.uri),
+                format!("[{} formatted]", params.text_document.uri.as_str()),
             )]))
         })
         .detach();
@@ -6168,7 +6175,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -6194,7 +6201,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -6244,7 +6251,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
@@ -6318,7 +6325,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -6340,7 +6347,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Url::from_file_path("/file.rs").unwrap()
+            lsp::Uri::from_file_path("/file.rs").unwrap().into()
         );
         futures::future::pending::<()>().await;
         unreachable!()
@@ -7659,6 +7666,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             },
             |cx| cx.new_view(|cx| build_editor(buffer.clone(), cx)),
         )
+        .unwrap()
     });
 
     let is_still_following = Rc::new(RefCell::new(true));
@@ -7982,7 +7990,7 @@ async fn go_to_prev_overlapping_diagnostic(
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path("/root/file").unwrap(),
+                        uri: lsp::Uri::from_file_path("/root/file").unwrap().into(),
                         version: None,
                         diagnostics: vec![
                             lsp::Diagnostic {
@@ -8354,7 +8362,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
         assert_eq!(
             params.text_document_position.text_document.uri,
-            lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
         );
         assert_eq!(
             params.text_document_position.position,
@@ -12105,7 +12113,10 @@ pub fn handle_completion_request(
         let completions = completions.clone();
         counter.fetch_add(1, atomic::Ordering::Release);
         async move {
-            assert_eq!(params.text_document_position.text_document.uri, url.clone());
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                url.clone().into()
+            );
             assert_eq!(
                 params.text_document_position.position,
                 complete_from_position
@@ -12195,7 +12206,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
-        release_channel::init("0.0.0", cx);
+        release_channel::init(SemanticVersion::default(), cx);
         client::init_settings(cx);
         language::init(cx);
         Project::init_settings(cx);

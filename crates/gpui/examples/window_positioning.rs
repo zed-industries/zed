@@ -61,7 +61,8 @@ fn main() {
                 cx.new_view(|_| WindowContent {
                     text: format!("{:?}", screen.id()).into(),
                 })
-            });
+            })
+            .unwrap();
         }
     });
 }

@@ -16,17 +16,14 @@ use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
-use semantic_version::SemanticVersion;
 use smallvec::SmallVec;
 use time::UtcOffset;
 use windows::{
     core::*,
-    Wdk::System::SystemServices::*,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
         Security::Credentials::*,
-        Storage::FileSystem::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
@@ -287,7 +284,7 @@ impl Platform for WindowsPlatform {
         &self,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> Result<Box<dyn PlatformWindow>> {
         let lock = self.state.borrow();
         let window = WindowsWindow::new(
             handle,
@@ -300,7 +297,7 @@ impl Platform for WindowsPlatform {
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
 
-        Box::new(window)
+        Ok(Box::new(window))
     }
 
     // todo(windows)
@@ -462,121 +459,6 @@ impl Platform for WindowsPlatform {
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
         self.state.borrow_mut().callbacks.validate_app_menu_command = Some(callback);
-    }
-
-    fn os_name(&self) -> &'static str {
-        "Windows"
-    }
-
-    fn os_version(&self) -> Result<SemanticVersion> {
-        let mut info = unsafe { std::mem::zeroed() };
-        let status = unsafe { RtlGetVersion(&mut info) };
-        if status.is_ok() {
-            Ok(SemanticVersion::new(
-                info.dwMajorVersion as _,
-                info.dwMinorVersion as _,
-                info.dwBuildNumber as _,
-            ))
-        } else {
-            Err(anyhow::anyhow!(
-                "unable to get Windows version: {}",
-                std::io::Error::last_os_error()
-            ))
-        }
-    }
-
-    fn app_version(&self) -> Result<SemanticVersion> {
-        let mut file_name_buffer = vec![0u16; MAX_PATH as usize];
-        let file_name = {
-            let mut file_name_buffer_capacity = MAX_PATH as usize;
-            let mut file_name_length;
-            loop {
-                file_name_length =
-                    unsafe { GetModuleFileNameW(None, &mut file_name_buffer) } as usize;
-                if file_name_length < file_name_buffer_capacity {
-                    break;
-                }
-                // buffer too small
-                file_name_buffer_capacity *= 2;
-                file_name_buffer = vec![0u16; file_name_buffer_capacity];
-            }
-            PCWSTR::from_raw(file_name_buffer[0..(file_name_length + 1)].as_ptr())
-        };
-
-        let version_info_block = {
-            let mut version_handle = 0;
-            let version_info_size =
-                unsafe { GetFileVersionInfoSizeW(file_name, Some(&mut version_handle)) } as usize;
-            if version_info_size == 0 {
-                log::error!(
-                    "unable to get version info size: {}",
-                    std::io::Error::last_os_error()
-                );
-                return Err(anyhow!("unable to get version info size"));
-            }
-            let mut version_data = vec![0u8; version_info_size + 2];
-            unsafe {
-                GetFileVersionInfoW(
-                    file_name,
-                    version_handle,
-                    version_info_size as u32,
-                    version_data.as_mut_ptr() as _,
-                )
-            }
-            .inspect_err(|_| {
-                log::error!(
-                    "unable to retrieve version info: {}",
-                    std::io::Error::last_os_error()
-                )
-            })?;
-            version_data
-        };
-
-        let version_info_raw = {
-            let mut buffer = unsafe { std::mem::zeroed() };
-            let mut size = 0;
-            let entry = "\\".encode_utf16().chain(Some(0)).collect_vec();
-            if !unsafe {
-                VerQueryValueW(
-                    version_info_block.as_ptr() as _,
-                    PCWSTR::from_raw(entry.as_ptr()),
-                    &mut buffer,
-                    &mut size,
-                )
-            }
-            .as_bool()
-            {
-                log::error!(
-                    "unable to query version info data: {}",
-                    std::io::Error::last_os_error()
-                );
-                return Err(anyhow!("the specified resource is not valid"));
-            }
-            if size == 0 {
-                log::error!(
-                    "unable to query version info data: {}",
-                    std::io::Error::last_os_error()
-                );
-                return Err(anyhow!("no value is available for the specified name"));
-            }
-            buffer
-        };
-
-        let version_info = unsafe { &*(version_info_raw as *mut VS_FIXEDFILEINFO) };
-        // https://learn.microsoft.com/en-us/windows/win32/api/verrsrc/ns-verrsrc-vs_fixedfileinfo
-        if version_info.dwSignature == 0xFEEF04BD {
-            return Ok(SemanticVersion::new(
-                ((version_info.dwProductVersionMS >> 16) & 0xFFFF) as usize,
-                (version_info.dwProductVersionMS & 0xFFFF) as usize,
-                ((version_info.dwProductVersionLS >> 16) & 0xFFFF) as usize,
-            ));
-        } else {
-            log::error!(
-                "no version info present: {}",
-                std::io::Error::last_os_error()
-            );
-            return Err(anyhow!("no version info present"));
-        }
     }
 
     fn app_path(&self) -> Result<PathBuf> {

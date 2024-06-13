@@ -1268,7 +1268,7 @@ pub mod tests {
         ExcerptRange,
     };
     use futures::StreamExt;
-    use gpui::{Context, TestAppContext, WindowHandle};
+    use gpui::{Context, SemanticVersion, TestAppContext, WindowHandle};
     use itertools::Itertools;
     use language::{
         language_settings::AllLanguageSettingsContent, Capability, FakeLspAdapter, Language,
@@ -1307,7 +1307,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Url::from_file_path(file_with_hints).unwrap(),
+                        lsp::Uri::from_file_path(file_with_hints).unwrap().into(),
                     );
                     let current_call_id =
                         Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
@@ -1439,7 +1439,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Url::from_file_path(file_with_hints).unwrap(),
+                        lsp::Uri::from_file_path(file_with_hints).unwrap().into(),
                     );
                     let current_call_id =
                         Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
@@ -1613,7 +1613,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                        lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
                     );
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
                     Ok(Some(vec![lsp::InlayHint {
@@ -1666,7 +1666,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Url::from_file_path("/a/other.md").unwrap(),
+                        lsp::Uri::from_file_path("/a/other.md").unwrap().into(),
                     );
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
                     Ok(Some(vec![lsp::InlayHint {
@@ -1790,7 +1790,7 @@ pub mod tests {
                     Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Url::from_file_path(file_with_hints).unwrap(),
+                        lsp::Uri::from_file_path(file_with_hints).unwrap().into(),
                     );
                     Ok(Some(vec![
                         lsp::InlayHint {
@@ -2136,7 +2136,7 @@ pub mod tests {
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst) + 1;
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Url::from_file_path(file_with_hints).unwrap(),
+                        lsp::Uri::from_file_path(file_with_hints).unwrap().into(),
                     );
                     Ok(Some(vec![lsp::InlayHint {
                         position: lsp::Position::new(0, i),
@@ -2305,7 +2305,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                        lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
                     );
 
                     task_lsp_request_ranges.lock().push(params.range);
@@ -2673,11 +2673,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Url::from_file_path("/a/main.rs").unwrap()
+                        == lsp::Uri::from_file_path("/a/main.rs").unwrap().into()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Url::from_file_path("/a/other.rs").unwrap()
+                        == lsp::Uri::from_file_path("/a/other.rs").unwrap().into()
                     {
                         "other hint"
                     } else {
@@ -2981,11 +2981,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Url::from_file_path("/a/main.rs").unwrap()
+                        == lsp::Uri::from_file_path("/a/main.rs").unwrap().into()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Url::from_file_path("/a/other.rs").unwrap()
+                        == lsp::Uri::from_file_path("/a/other.rs").unwrap().into()
                     {
                         "other hint"
                     } else {
@@ -3177,7 +3177,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                        lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
                     );
                     let query_start = params.range.start;
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::Release) + 1;
@@ -3244,7 +3244,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Url::from_file_path(file_with_hints).unwrap(),
+                        lsp::Uri::from_file_path(file_with_hints).unwrap().into(),
                     );
 
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst) + 1;
@@ -3361,7 +3361,7 @@ pub mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
             client::init_settings(cx);
             language::init(cx);
             Project::init_settings(cx);
