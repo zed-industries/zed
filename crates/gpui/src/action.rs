@@ -200,8 +200,11 @@ macro_rules! actions {
     };
 }
 
-/// Defines unit structs that can be used as actions.
-/// To use more complex data types as actions, use `impl_actions!`
+/// Defines a unit struct that can be used as an actions, with a name
+/// that differs from it's type name.
+///
+/// To use more complex data types as actions, and rename them use
+/// `impl_action_as!`
 #[macro_export]
 macro_rules! action_as {
     ($namespace:path, $name:ident as $visual_name:tt) => {
@@ -249,7 +252,8 @@ macro_rules! impl_actions {
     };
 }
 
-/// Implements the Action trait for any struct that implements Clone, Default, PartialEq, and serde_deserialize::Deserialize
+/// Implements the Action trait for a struct that implements Clone, Default, PartialEq, and serde_deserialize::Deserialize
+/// Allows you to rename the action visually, without changing the struct's name
 #[macro_export]
 macro_rules! impl_action_as {
     ($namespace:path, $name:ident as $visual_name:tt ) => {
