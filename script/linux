@@ -26,6 +26,8 @@ if [[ -n $apt ]]; then
     make
     clang
     mold
+    jq
+    gettext-base
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
