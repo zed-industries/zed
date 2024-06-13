@@ -154,7 +154,7 @@ impl RustdocDatabaseEntry {
 struct RustdocDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
-    items: Database<SerdeBincode<String>, SerdeBincode<RustdocDatabaseEntry>>,
+    entries: Database<SerdeBincode<String>, SerdeBincode<RustdocDatabaseEntry>>,
 }
 
 impl RustdocDatabase {
@@ -170,23 +170,23 @@ impl RustdocDatabase {
         };
 
         let mut txn = env.write_txn()?;
-        let items = env.create_database(&mut txn, Some("rustdoc_items"))?;
+        let entries = env.create_database(&mut txn, Some("rustdoc_entries"))?;
         txn.commit()?;
 
         Ok(Self {
             executor,
             env,
-            items,
+            entries,
         })
     }
 
     pub fn keys(&self) -> Task<Result<Vec<String>>> {
         let env = self.env.clone();
-        let items = self.items;
+        let entries = self.entries;
 
         self.executor.spawn(async move {
             let txn = env.read_txn()?;
-            let mut iter = items.iter(&txn)?;
+            let mut iter = entries.iter(&txn)?;
             let mut keys = Vec::new();
             while let Some((key, _value)) = iter.next().transpose()? {
                 keys.push(key);
@@ -202,7 +202,7 @@ impl RustdocDatabase {
         item_path: Option<String>,
     ) -> Task<Result<RustdocDatabaseEntry>> {
         let env = self.env.clone();
-        let items = self.items;
+        let entries = self.entries;
         let item_path = if let Some(item_path) = item_path {
             format!("{crate_name}::{item_path}")
         } else {
@@ -211,7 +211,7 @@ impl RustdocDatabase {
 
         self.executor.spawn(async move {
             let txn = env.read_txn()?;
-            items
+            entries
                 .get(&txn, &item_path)?
                 .ok_or_else(|| anyhow!("no docs found for {item_path}"))
         })
@@ -224,7 +224,7 @@ impl RustdocDatabase {
         docs: String,
     ) -> Task<Result<()>> {
         let env = self.env.clone();
-        let items = self.items;
+        let entries = self.entries;
         let (item_path, entry) = if let Some(item) = item {
             (
                 format!("{crate_name}::{}", item.display()),
@@ -239,7 +239,7 @@ impl RustdocDatabase {
 
         self.executor.spawn(async move {
             let mut txn = env.write_txn()?;
-            items.put(&mut txn, &item_path, &entry)?;
+            entries.put(&mut txn, &item_path, &entry)?;
             txn.commit()?;
             Ok(())
         })
