@@ -10,7 +10,7 @@ use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
-use rustdoc::crawler::LocalProvider;
+use rustdoc::LocalProvider;
 use rustdoc::{convert_rustdoc_to_markdown, RustdocStore};
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
