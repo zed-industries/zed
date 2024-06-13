@@ -334,7 +334,6 @@ impl X11WindowState {
             )
             .unwrap();
 
-        xcb_connection.map_window(x_window).unwrap();
         xcb_connection.flush().unwrap();
 
         let raw = RawWindow {
@@ -365,6 +364,7 @@ impl X11WindowState {
             size: query_render_extent(xcb_connection, x_window),
             transparent: params.window_background != WindowBackgroundAppearance::Opaque,
         };
+        xcb_connection.map_window(x_window).unwrap();
 
         Ok(Self {
             client,
