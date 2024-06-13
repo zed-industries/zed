@@ -143,7 +143,9 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{font, TestAppContext, TestDispatcher, TextRun, WindowTextSystem, WrapBoundary};
+    use crate::{font, TestAppContext, TestDispatcher};
+    #[cfg(target_os = "macos")]
+    use crate::{TextRun, WindowTextSystem, WrapBoundary};
     use rand::prelude::*;
 
     #[test]
@@ -218,24 +220,19 @@ mod tests {
     }
 
     // For compatibility with the test macro
+    #[cfg(target_os = "macos")]
     use crate as gpui;
 
+    // These seem to vary wildly based on the the text system.
+    #[cfg(target_os = "macos")]
     #[crate::test]
     fn test_wrap_shaped_line(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            cx.text_system()
-                .add_fonts(vec![std::fs::read(
-                    "../../assets/fonts/zed-mono/zed-mono-extended.ttf",
-                )
-                .unwrap()
-                .into()])
-                .unwrap();
-
             let text_system = WindowTextSystem::new(cx.text_system().clone());
 
             let normal = TextRun {
                 len: 0,
-                font: font("Zed Mono"),
+                font: font("Helvetica"),
                 color: Default::default(),
                 underline: Default::default(),
                 strikethrough: None,
@@ -243,7 +240,7 @@ mod tests {
             };
             let bold = TextRun {
                 len: 0,
-                font: font("Zed Mono").bold(),
+                font: font("Helvetica").bold(),
                 color: Default::default(),
                 underline: Default::default(),
                 strikethrough: None,

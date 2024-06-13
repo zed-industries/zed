@@ -96,6 +96,7 @@ impl PlatformTextSystem for CosmicTextSystem {
                 .insert(font.family.clone(), font_ids);
             state.font_ids_by_family_cache[&font.family].as_ref()
         };
+        dbg!(&candidates);
 
         // todo(linux) ideally we would make fontdb's `find_best_match` pub instead of using font-kit here
         let candidate_properties = candidates
@@ -214,7 +215,7 @@ impl CosmicTextSystemState {
             .font_system
             .db()
             .faces()
-            .filter(|face| face.families.iter().any(|family| *name == family.0))
+            .filter(|face| dbg!(&face.families).iter().any(|family| *name == family.0))
             .map(|face| (face.id, face.post_script_name.clone()))
             .collect::<SmallVec<[_; 4]>>();
 
