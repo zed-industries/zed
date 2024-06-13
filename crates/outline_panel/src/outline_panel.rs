@@ -568,45 +568,11 @@ impl OutlinePanel {
                     })
                 }
             }
-            EntryOwned::Outline(_, _, outline) => {
-                let Some(full_buffer_snapshot) =
-                    outline
-                        .range
-                        .start
-                        .buffer_id
-                        .and_then(|buffer_id| active_multi_buffer.read(cx).buffer(buffer_id))
-                        .or_else(|| {
-                            outline.range.end.buffer_id.and_then(|buffer_id| {
-                                active_multi_buffer.read(cx).buffer(buffer_id)
-                            })
-                        })
-                        .map(|buffer| buffer.read(cx).snapshot())
-                else {
-                    return;
-                };
-                let outline_offset_range = outline.range.to_offset(&full_buffer_snapshot);
+            EntryOwned::Outline(_, excerpt_id, outline) => {
                 let scroll_target = multi_buffer_snapshot
-                    .excerpts()
-                    .filter(|(_, buffer_snapshot, _)| {
-                        let buffer_id = buffer_snapshot.remote_id();
-                        Some(buffer_id) == outline.range.start.buffer_id
-                            || Some(buffer_id) == outline.range.end.buffer_id
-                    })
-                    .min_by_key(|(_, _, excerpt_range)| {
-                        let excerpt_offeset_range =
-                            excerpt_range.context.to_offset(&full_buffer_snapshot);
-                        ((outline_offset_range.start / 2 + outline_offset_range.end / 2) as isize
-                            - (excerpt_offeset_range.start / 2 + excerpt_offeset_range.end / 2)
-                                as isize)
-                            .abs()
-                    })
-                    .and_then(|(excerpt_id, excerpt_snapshot, excerpt_range)| {
-                        let location = if outline.range.start.is_valid(excerpt_snapshot) {
-                            outline.range.start
-                        } else {
-                            excerpt_range.context.start
-                        };
-                        multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, location)
+                    .anchor_in_excerpt(*excerpt_id, outline.range.start)
+                    .or_else(|| {
+                        multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, outline.range.end)
                     });
                 if let Some(anchor) = scroll_target {
                     self.selected_entry = Some(entry.clone());
@@ -1018,7 +984,6 @@ impl OutlinePanel {
         self.update_fs_entries(&editor, HashSet::default(), None, None, false, cx);
     }
 
-    // TODO kb allow to toggle expanded excerpt entries
     fn toggle_expanded(&mut self, entry: &EntryOwned, cx: &mut ViewContext<Self>) {
         let Some(editor) = self
             .active_item
