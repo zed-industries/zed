@@ -127,13 +127,14 @@ fn handle_move_msg(
 }
 
 fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let width = lparam.loword().max(1) as f32;
-    let height = lparam.hiword().max(1) as f32;
-    let new_size = size(px(width), px(height));
+    let width = lparam.loword().max(1) as i32;
+    let height = lparam.hiword().max(1) as i32;
     let mut lock = state_ptr.state.borrow_mut();
+    let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
-    lock.physical_size = new_size;
     lock.renderer.update_drawable_size(new_size);
+    let new_size = new_size.to_pixels(lock.scale_factor);
+    lock.physical_size = new_size;
     if let Some(mut callback) = lock.callbacks.resize.take() {
         drop(lock);
         callback(new_size, scale_factor);

@@ -1290,6 +1290,16 @@ impl<T: PartialOrd + Default + Debug + Clone> Bounds<T> {
     }
 }
 
+impl Size<DevicePixels> {
+    /// Converts the size from physical to logical pixels.
+    pub(crate) fn to_pixels(self, scale_factor: f32) -> Size<Pixels> {
+        size(
+            px(self.width.0 as f32 / scale_factor),
+            px(self.height.0 as f32 / scale_factor),
+        )
+    }
+}
+
 impl Bounds<Pixels> {
     /// Scales the bounds by a given factor, typically used to adjust for display scaling.
     ///

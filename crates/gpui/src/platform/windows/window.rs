@@ -303,10 +303,11 @@ impl WindowsWindow {
             } else {
                 display.default_bounds()
             };
-            placement.rcNormalPosition.left = bounds.left().0 as i32;
-            placement.rcNormalPosition.right = bounds.right().0 as i32;
-            placement.rcNormalPosition.top = bounds.top().0 as i32;
-            placement.rcNormalPosition.bottom = bounds.bottom().0 as i32;
+            let bounds = bounds.to_device_pixels(wnd.0.state.borrow().scale_factor);
+            placement.rcNormalPosition.left = bounds.left().0;
+            placement.rcNormalPosition.right = bounds.right().0;
+            placement.rcNormalPosition.top = bounds.top().0;
+            placement.rcNormalPosition.bottom = bounds.bottom().0;
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
         unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
