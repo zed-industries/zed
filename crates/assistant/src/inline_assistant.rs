@@ -345,10 +345,8 @@ impl InlineAssistant {
 
         match event {
             EditorEvent::SelectionsChanged { local } if *local => {
-                if let Some(decorations) = assist.editor_decorations.as_ref() {
-                    if let CodegenStatus::Idle = &assist.codegen.read(cx).status {
-                        self.finish_inline_assist(assist_id, true, cx);
-                    }
+                if let CodegenStatus::Idle = &assist.codegen.read(cx).status {
+                    self.finish_inline_assist(assist_id, true, cx);
                 }
             }
             EditorEvent::Saved => {
