@@ -225,7 +225,7 @@ impl SlashCommand for RustdocSlashCommand {
                     .await;
 
                 if let Ok(item_docs) = item_docs {
-                    anyhow::Ok((RustdocSource::Local, item_docs))
+                    anyhow::Ok((RustdocSource::Local, item_docs.docs().to_owned()))
                 } else {
                     Self::build_message(
                         fs,

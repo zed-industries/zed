@@ -9,10 +9,12 @@ use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, Task, UpdateGlobal};
 use heed::types::SerdeBincode;
 use heed::Database;
+use serde::{Deserialize, Serialize};
 use util::paths::SUPPORT_DIR;
 use util::ResultExt;
 
 use crate::crawler::{RustdocCrawler, RustdocProvider};
+use crate::{RustdocItem, RustdocItemKind};
 
 struct GlobalRustdocStore(Arc<RustdocStore>);
 
@@ -53,7 +55,11 @@ impl RustdocStore {
         }
     }
 
-    pub async fn load(&self, crate_name: String, item_path: Option<String>) -> Result<String> {
+    pub async fn load(
+        &self,
+        crate_name: String,
+        item_path: Option<String>,
+    ) -> Result<RustdocDatabaseEntry> {
         self.database_future
             .clone()
             .await
@@ -77,9 +83,13 @@ impl RustdocStore {
 
             let database = database_future.await.map_err(|err| anyhow!(err))?;
 
+            database
+                .insert(crate_name.clone(), None, crate_docs.crate_root_markdown)
+                .await?;
+
             for (item, item_docs) in crate_docs.items {
                 database
-                    .insert(crate_name.clone(), Some(item.display()), item_docs)
+                    .insert(crate_name.clone(), Some(&item), item_docs)
                     .await?;
             }
 
@@ -127,10 +137,24 @@ impl RustdocStore {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub enum RustdocDatabaseEntry {
+    Crate { docs: String },
+    Item { kind: RustdocItemKind, docs: String },
+}
+
+impl RustdocDatabaseEntry {
+    pub fn docs(&self) -> &str {
+        match self {
+            Self::Crate { docs } | Self::Item { docs, .. } => &docs,
+        }
+    }
+}
+
 struct RustdocDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
-    items: Database<SerdeBincode<String>, SerdeBincode<String>>,
+    items: Database<SerdeBincode<String>, SerdeBincode<RustdocDatabaseEntry>>,
 }
 
 impl RustdocDatabase {
@@ -172,7 +196,11 @@ impl RustdocDatabase {
         })
     }
 
-    pub fn load(&self, crate_name: String, item_path: Option<String>) -> Task<Result<String>> {
+    pub fn load(
+        &self,
+        crate_name: String,
+        item_path: Option<String>,
+    ) -> Task<Result<RustdocDatabaseEntry>> {
         let env = self.env.clone();
         let items = self.items;
         let item_path = if let Some(item_path) = item_path {
@@ -192,20 +220,26 @@ impl RustdocDatabase {
     pub fn insert(
         &self,
         crate_name: String,
-        item_path: Option<String>,
+        item: Option<&RustdocItem>,
         docs: String,
     ) -> Task<Result<()>> {
         let env = self.env.clone();
         let items = self.items;
-        let item_path = if let Some(item_path) = item_path {
-            format!("{crate_name}::{item_path}")
+        let (item_path, entry) = if let Some(item) = item {
+            (
+                format!("{crate_name}::{}", item.display()),
+                RustdocDatabaseEntry::Item {
+                    kind: item.kind,
+                    docs,
+                },
+            )
         } else {
-            crate_name
+            (crate_name, RustdocDatabaseEntry::Crate { docs })
         };
 
         self.executor.spawn(async move {
             let mut txn = env.write_txn()?;
-            items.put(&mut txn, &item_path, &docs)?;
+            items.put(&mut txn, &item_path, &entry)?;
             txn.commit()?;
             Ok(())
         })

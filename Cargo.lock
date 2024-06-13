@@ -8725,6 +8725,7 @@ dependencies = [
  "indoc",
  "parking_lot",
  "pretty_assertions",
+ "serde",
  "strum",
  "util",
 ]
