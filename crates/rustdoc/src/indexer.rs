@@ -192,11 +192,7 @@ impl RustdocIndexer {
             let (markdown, referenced_items) = convert_rustdoc_to_markdown(result.as_bytes())?;
 
             self.database
-                .insert(
-                    crate_name.clone(),
-                    Some(item),
-                    markdown,
-                )
+                .insert(crate_name.clone(), Some(item), markdown)
                 .await?;
 
             let parent_item = item;
