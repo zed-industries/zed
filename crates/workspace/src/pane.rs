@@ -517,7 +517,7 @@ impl Pane {
             .map_or(false, |menu| menu.focus_handle(cx).is_focused(cx))
     }
 
-    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _blurred: WeakFocusHandle, cx: &mut ViewContext<Self>) {
         self.was_focused = false;
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.focus_changed(false, cx);

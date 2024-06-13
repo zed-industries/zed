@@ -4154,17 +4154,23 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn on_focus_out(
         &mut self,
         handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut listener: impl FnMut(&mut V, WeakFocusHandle, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
         let (subscription, activate) =
             self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if event.previous_focus_path.contains(&focus_id)
-                        && !event.current_focus_path.contains(&focus_id)
-                    {
-                        listener(view, cx)
+                    if let Some(blurred_id) = event.previous_focus_path.last().copied() {
+                        if event.previous_focus_path.contains(&focus_id)
+                            && !event.current_focus_path.contains(&focus_id)
+                        {
+                            let prev_focused = WeakFocusHandle {
+                                id: blurred_id,
+                                handles: Arc::downgrade(&cx.window.focus_handles),
+                            };
+                            listener(view, prev_focused, cx)
+                        }
                     }
                 })
                 .is_ok()

@@ -32,7 +32,7 @@ use gpui::{
     ClipboardItem, Context as _, Empty, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Task, UpdateGlobal, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use language::{
     language_settings::SoftWrap, AnchorRangeExt, AutoindentMode, Buffer, LanguageRegistry,
@@ -296,7 +296,7 @@ impl AssistantPanel {
         }
     }
 
-    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _blurred: WeakFocusHandle, cx: &mut ViewContext<Self>) {
         self.toolbar
             .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
         cx.notify();
