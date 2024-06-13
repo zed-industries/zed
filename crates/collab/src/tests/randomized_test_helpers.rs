@@ -69,7 +69,6 @@ struct TestPlan<T: RandomizedTest> {
 pub struct UserTestPlan {
     pub user_id: UserId,
     pub username: String,
-    pub allow_client_reconnection: bool,
     pub allow_client_disconnection: bool,
     next_root_id: usize,
     operation_ix: usize,
@@ -237,7 +236,6 @@ impl<T: RandomizedTest> TestPlan<T> {
                 next_root_id: 0,
                 operation_ix: 0,
                 allow_client_disconnection,
-                allow_client_reconnection,
             });
         }
 

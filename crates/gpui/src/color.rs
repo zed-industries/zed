@@ -1,6 +1,9 @@
 use anyhow::{bail, Context};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
-use std::fmt;
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 /// Convert an RGB hex color code number to a color type
 pub fn rgb(hex: u32) -> Rgba {
@@ -266,6 +269,15 @@ impl Ord for Hsla {
 }
 
 impl Eq for Hsla {}
+
+impl Hash for Hsla {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u32(u32::from_be_bytes(self.h.to_be_bytes()));
+        state.write_u32(u32::from_be_bytes(self.s.to_be_bytes()));
+        state.write_u32(u32::from_be_bytes(self.l.to_be_bytes()));
+        state.write_u32(u32::from_be_bytes(self.a.to_be_bytes()));
+    }
+}
 
 /// Construct an [`Hsla`] object from plain values
 pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {

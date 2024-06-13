@@ -491,6 +491,22 @@ impl PickerDelegate for TasksModalDelegate {
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
         let is_recent_selected = self.divider_index >= Some(self.selected_index);
         let current_modifiers = cx.modifiers();
+        let left_button = if is_recent_selected {
+            Some(("Edit task", picker::UseSelectedQuery.boxed_clone()))
+        } else if !self.matches.is_empty() {
+            Some(("Edit template", picker::UseSelectedQuery.boxed_clone()))
+        } else if self
+            .project
+            .read(cx)
+            .task_inventory()
+            .read(cx)
+            .last_scheduled_task(None)
+            .is_some()
+        {
+            Some(("Rerun last task", Rerun::default().boxed_clone()))
+        } else {
+            None
+        };
         Some(
             h_flex()
                 .w_full()
@@ -499,23 +515,20 @@ impl PickerDelegate for TasksModalDelegate {
                 .justify_between()
                 .rounded_b_md()
                 .bg(cx.theme().colors().ghost_element_selected)
-                .children(
-                    KeyBinding::for_action(&picker::UseSelectedQuery, cx).map(|keybind| {
-                        let edit_entry_label = if is_recent_selected {
-                            "Edit task"
-                        } else if !self.matches.is_empty() {
-                            "Edit template"
-                        } else {
-                            "Rerun last task"
-                        };
+                .child(
+                    left_button
+                        .map(|(label, action)| {
+                            let keybind = KeyBinding::for_action(&*action, cx);
 
-                        Button::new("edit-current-task", edit_entry_label)
-                            .label_size(LabelSize::Small)
-                            .key_binding(keybind)
-                            .on_click(|_, cx| {
-                                cx.dispatch_action(picker::UseSelectedQuery.boxed_clone())
-                            })
-                    }),
+                            Button::new("edit-current-task", label)
+                                .label_size(LabelSize::Small)
+                                .when_some(keybind, |this, keybind| this.key_binding(keybind))
+                                .on_click(move |_, cx| {
+                                    cx.dispatch_action(action.boxed_clone());
+                                })
+                                .into_any_element()
+                        })
+                        .unwrap_or_else(|| h_flex().into_any_element()),
                 )
                 .map(|this| {
                     if (current_modifiers.alt || self.matches.is_empty()) && !self.prompt.is_empty()

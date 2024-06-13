@@ -553,7 +553,6 @@ impl Element for TerminalElement {
         global_id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.interactivity.occlude_mouse();
         let layout_id = self
             .interactivity
             .request_layout(global_id, cx, |mut style, cx| {

@@ -20,12 +20,12 @@ pub trait SlashCommand: 'static + Send + Sync {
         CodeLabel::plain(self.name(), None)
     }
     fn description(&self) -> String;
-    fn tooltip_text(&self) -> String;
+    fn menu_text(&self) -> String;
     fn complete_argument(
         &self,
         query: String,
         cancel: Arc<AtomicBool>,
-        workspace: WeakView<Workspace>,
+        workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>>;
     fn requires_argument(&self) -> bool;
@@ -52,6 +52,7 @@ pub type RenderFoldPlaceholder = Arc<
 pub struct SlashCommandOutput {
     pub text: String,
     pub sections: Vec<SlashCommandOutputSection<usize>>,
+    pub run_commands_in_text: bool,
 }
 
 #[derive(Clone)]

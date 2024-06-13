@@ -41,7 +41,7 @@ pub struct MovePageDown {
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct MoveToEndOfLine {
     #[serde(default = "default_true")]
-    pub(super) stop_at_soft_wraps: bool,
+    pub stop_at_soft_wraps: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -125,6 +125,11 @@ pub struct ExpandExcerptsDown {
     #[serde(default)]
     pub(super) lines: u32,
 }
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ShowCompletions {
+    #[serde(default)]
+    pub(super) trigger: Option<char>,
+}
 
 impl_actions!(
     editor,
@@ -147,6 +152,7 @@ impl_actions!(
         SelectToBeginningOfLine,
         SelectToEndOfLine,
         SelectUpByLines,
+        ShowCompletions,
         ToggleCodeActions,
         ToggleComments,
         UnfoldAt,
@@ -274,7 +280,6 @@ gpui::actions!(
         SelectToStartOfParagraph,
         SelectUp,
         ShowCharacterPalette,
-        ShowCompletions,
         ShowInlineCompletion,
         ShuffleLines,
         SortLinesCaseInsensitive,
@@ -289,6 +294,7 @@ gpui::actions!(
         ToggleLineNumbers,
         ToggleIndentGuides,
         ToggleSoftWrap,
+        ToggleTabBar,
         Transpose,
         Undo,
         UndoSelection,

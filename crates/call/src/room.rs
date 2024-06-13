@@ -267,7 +267,7 @@ impl Room {
                 .await
             {
                 Ok(()) => Ok(room),
-                Err(error) => Err(anyhow!("room creation failed: {:?}", error)),
+                Err(error) => Err(error.context("room creation failed")),
             }
         })
     }

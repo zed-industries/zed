@@ -9,7 +9,10 @@ use crate::{
     JoinLines,
 };
 use futures::StreamExt;
-use gpui::{div, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds, WindowOptions};
+use gpui::{
+    div, AssetSource, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
+    WindowBounds, WindowOptions,
+};
 use indoc::indoc;
 use language::{
     language_settings::{
@@ -20,6 +23,7 @@ use language::{
     FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
     Point,
 };
+use language_settings::IndentGuideSettings;
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -53,10 +57,10 @@ fn test_edit_events(cx: &mut TestAppContext) {
         let events = events.clone();
         |cx| {
             let view = cx.view().clone();
-            cx.subscribe(&view, move |_, _, event: &EditorEvent, _| {
-                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
-                    events.borrow_mut().push(("editor1", event.clone()));
-                }
+            cx.subscribe(&view, move |_, _, event: &EditorEvent, _| match event {
+                EditorEvent::Edited { .. } => events.borrow_mut().push(("editor1", "edited")),
+                EditorEvent::BufferEdited => events.borrow_mut().push(("editor1", "buffer edited")),
+                _ => {}
             })
             .detach();
             Editor::for_buffer(buffer.clone(), None, cx)
@@ -66,11 +70,16 @@ fn test_edit_events(cx: &mut TestAppContext) {
     let editor2 = cx.add_window({
         let events = events.clone();
         |cx| {
-            cx.subscribe(&cx.view().clone(), move |_, _, event: &EditorEvent, _| {
-                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
-                    events.borrow_mut().push(("editor2", event.clone()));
-                }
-            })
+            cx.subscribe(
+                &cx.view().clone(),
+                move |_, _, event: &EditorEvent, _| match event {
+                    EditorEvent::Edited { .. } => events.borrow_mut().push(("editor2", "edited")),
+                    EditorEvent::BufferEdited => {
+                        events.borrow_mut().push(("editor2", "buffer edited"))
+                    }
+                    _ => {}
+                },
+            )
             .detach();
             Editor::for_buffer(buffer.clone(), None, cx)
         }
@@ -83,9 +92,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -94,9 +103,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -105,9 +114,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -116,9 +125,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -127,9 +136,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -138,9 +147,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -508,6 +517,7 @@ fn test_clone(cx: &mut TestAppContext) {
         .update(cx, |editor, cx| {
             cx.open_window(Default::default(), |cx| cx.new_view(|cx| editor.clone(cx)))
         })
+        .unwrap()
         .unwrap();
 
     let snapshot = editor.update(cx, |e, cx| e.snapshot(cx)).unwrap();
@@ -5813,7 +5823,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -5839,7 +5849,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Url::from_file_path("/file.rs").unwrap()
+            lsp::Uri::from_file_path("/file.rs").unwrap().into()
         );
         futures::future::pending::<()>().await;
         unreachable!()
@@ -5888,7 +5898,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
@@ -6091,7 +6101,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         .on_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             Ok(Some(vec![lsp::TextEdit::new(
                 lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
-                format!("[{} formatted]", params.text_document.uri),
+                format!("[{} formatted]", params.text_document.uri.as_str()),
             )]))
         })
         .detach();
@@ -6165,7 +6175,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -6191,7 +6201,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -6241,7 +6251,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
@@ -6315,7 +6325,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Uri::from_file_path("/file.rs").unwrap().into()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -6337,7 +6347,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Url::from_file_path("/file.rs").unwrap()
+            lsp::Uri::from_file_path("/file.rs").unwrap().into()
         );
         futures::future::pending::<()>().await;
         unreachable!()
@@ -6695,7 +6705,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("editor.cloˇ");
     assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
     cx.update_editor(|editor, cx| {
-        editor.show_completions(&ShowCompletions, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, cx);
     });
     handle_completion_request(
         &mut cx,
@@ -7656,6 +7666,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             },
             |cx| cx.new_view(|cx| build_editor(buffer.clone(), cx)),
         )
+        .unwrap()
     });
 
     let is_still_following = Rc::new(RefCell::new(true));
@@ -7979,7 +7990,7 @@ async fn go_to_prev_overlapping_diagnostic(
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path("/root/file").unwrap(),
+                        uri: lsp::Uri::from_file_path("/root/file").unwrap().into(),
                         version: None,
                         diagnostics: vec![
                             lsp::Diagnostic {
@@ -8351,7 +8362,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
         assert_eq!(
             params.text_document_position.text_document.uri,
-            lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
         );
         assert_eq!(
             params.text_document_position.position,
@@ -11505,6 +11516,7 @@ fn assert_indent_guides(
         let snapshot = editor.snapshot(cx).display_snapshot;
         let mut indent_guides: Vec<_> = crate::indent_guides::indent_guides_in_range(
             MultiBufferRow(range.start)..MultiBufferRow(range.end),
+            true,
             &snapshot,
             cx,
         );
@@ -11543,6 +11555,21 @@ fn assert_indent_guides(
     assert_eq!(indent_guides, expected, "Indent guides do not match");
 }
 
+fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -> IndentGuide {
+    IndentGuide {
+        buffer_id,
+        start_row,
+        end_row,
+        depth,
+        tab_size: 4,
+        settings: IndentGuideSettings {
+            enabled: true,
+            line_width: 1,
+            ..Default::default()
+        },
+    }
+}
+
 #[gpui::test]
 async fn test_indent_guide_single_line(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
@@ -11555,12 +11582,7 @@ async fn test_indent_guide_single_line(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    assert_indent_guides(
-        0..3,
-        vec![IndentGuide::new(buffer_id, 1, 1, 0, 4)],
-        None,
-        &mut cx,
-    );
+    assert_indent_guides(0..3, vec![indent_guide(buffer_id, 1, 1, 0)], None, &mut cx);
 }
 
 #[gpui::test]
@@ -11576,12 +11598,7 @@ async fn test_indent_guide_simple_block(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    assert_indent_guides(
-        0..4,
-        vec![IndentGuide::new(buffer_id, 1, 2, 0, 4)],
-        None,
-        &mut cx,
-    );
+    assert_indent_guides(0..4, vec![indent_guide(buffer_id, 1, 2, 0)], None, &mut cx);
 }
 
 #[gpui::test]
@@ -11604,9 +11621,9 @@ async fn test_indent_guide_nested(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         0..8,
         vec![
-            IndentGuide::new(buffer_id, 1, 6, 0, 4),
-            IndentGuide::new(buffer_id, 3, 3, 1, 4),
-            IndentGuide::new(buffer_id, 5, 5, 1, 4),
+            indent_guide(buffer_id, 1, 6, 0),
+            indent_guide(buffer_id, 3, 3, 1),
+            indent_guide(buffer_id, 5, 5, 1),
         ],
         None,
         &mut cx,
@@ -11630,8 +11647,8 @@ async fn test_indent_guide_tab(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         0..5,
         vec![
-            IndentGuide::new(buffer_id, 1, 3, 0, 4),
-            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+            indent_guide(buffer_id, 1, 3, 0),
+            indent_guide(buffer_id, 2, 2, 1),
         ],
         None,
         &mut cx,
@@ -11652,12 +11669,7 @@ async fn test_indent_guide_continues_on_empty_line(cx: &mut gpui::TestAppContext
     )
     .await;
 
-    assert_indent_guides(
-        0..5,
-        vec![IndentGuide::new(buffer_id, 1, 3, 0, 4)],
-        None,
-        &mut cx,
-    );
+    assert_indent_guides(0..5, vec![indent_guide(buffer_id, 1, 3, 0)], None, &mut cx);
 }
 
 #[gpui::test]
@@ -11683,9 +11695,9 @@ async fn test_indent_guide_complex(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         0..11,
         vec![
-            IndentGuide::new(buffer_id, 1, 9, 0, 4),
-            IndentGuide::new(buffer_id, 6, 6, 1, 4),
-            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+            indent_guide(buffer_id, 1, 9, 0),
+            indent_guide(buffer_id, 6, 6, 1),
+            indent_guide(buffer_id, 8, 8, 1),
         ],
         None,
         &mut cx,
@@ -11715,9 +11727,9 @@ async fn test_indent_guide_starts_off_screen(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         1..11,
         vec![
-            IndentGuide::new(buffer_id, 1, 9, 0, 4),
-            IndentGuide::new(buffer_id, 6, 6, 1, 4),
-            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+            indent_guide(buffer_id, 1, 9, 0),
+            indent_guide(buffer_id, 6, 6, 1),
+            indent_guide(buffer_id, 8, 8, 1),
         ],
         None,
         &mut cx,
@@ -11747,9 +11759,9 @@ async fn test_indent_guide_ends_off_screen(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         1..10,
         vec![
-            IndentGuide::new(buffer_id, 1, 9, 0, 4),
-            IndentGuide::new(buffer_id, 6, 6, 1, 4),
-            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+            indent_guide(buffer_id, 1, 9, 0),
+            indent_guide(buffer_id, 6, 6, 1),
+            indent_guide(buffer_id, 8, 8, 1),
         ],
         None,
         &mut cx,
@@ -11775,9 +11787,9 @@ async fn test_indent_guide_without_brackets(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         1..10,
         vec![
-            IndentGuide::new(buffer_id, 1, 4, 0, 4),
-            IndentGuide::new(buffer_id, 2, 3, 1, 4),
-            IndentGuide::new(buffer_id, 3, 3, 2, 4),
+            indent_guide(buffer_id, 1, 4, 0),
+            indent_guide(buffer_id, 2, 3, 1),
+            indent_guide(buffer_id, 3, 3, 2),
         ],
         None,
         &mut cx,
@@ -11802,8 +11814,8 @@ async fn test_indent_guide_ends_before_empty_line(cx: &mut gpui::TestAppContext)
     assert_indent_guides(
         0..6,
         vec![
-            IndentGuide::new(buffer_id, 1, 2, 0, 4),
-            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+            indent_guide(buffer_id, 1, 2, 0),
+            indent_guide(buffer_id, 2, 2, 1),
         ],
         None,
         &mut cx,
@@ -11825,12 +11837,7 @@ async fn test_indent_guide_continuing_off_screen(cx: &mut gpui::TestAppContext) 
     )
     .await;
 
-    assert_indent_guides(
-        0..1,
-        vec![IndentGuide::new(buffer_id, 1, 1, 0, 4)],
-        None,
-        &mut cx,
-    );
+    assert_indent_guides(0..1, vec![indent_guide(buffer_id, 1, 1, 0)], None, &mut cx);
 }
 
 #[gpui::test]
@@ -11852,8 +11859,8 @@ async fn test_indent_guide_tabs(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         0..6,
         vec![
-            IndentGuide::new(buffer_id, 1, 6, 0, 4),
-            IndentGuide::new(buffer_id, 3, 4, 1, 4),
+            indent_guide(buffer_id, 1, 6, 0),
+            indent_guide(buffer_id, 3, 4, 1),
         ],
         None,
         &mut cx,
@@ -11880,7 +11887,7 @@ async fn test_active_indent_guide_single_line(cx: &mut gpui::TestAppContext) {
 
     assert_indent_guides(
         0..3,
-        vec![IndentGuide::new(buffer_id, 1, 1, 0, 4)],
+        vec![indent_guide(buffer_id, 1, 1, 0)],
         Some(vec![0]),
         &mut cx,
     );
@@ -11909,8 +11916,8 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut gpui::TestAppC
     assert_indent_guides(
         0..4,
         vec![
-            IndentGuide::new(buffer_id, 1, 3, 0, 4),
-            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+            indent_guide(buffer_id, 1, 3, 0),
+            indent_guide(buffer_id, 2, 2, 1),
         ],
         Some(vec![1]),
         &mut cx,
@@ -11925,8 +11932,8 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut gpui::TestAppC
     assert_indent_guides(
         0..4,
         vec![
-            IndentGuide::new(buffer_id, 1, 3, 0, 4),
-            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+            indent_guide(buffer_id, 1, 3, 0),
+            indent_guide(buffer_id, 2, 2, 1),
         ],
         Some(vec![1]),
         &mut cx,
@@ -11941,8 +11948,8 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut gpui::TestAppC
     assert_indent_guides(
         0..4,
         vec![
-            IndentGuide::new(buffer_id, 1, 3, 0, 4),
-            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+            indent_guide(buffer_id, 1, 3, 0),
+            indent_guide(buffer_id, 2, 2, 1),
         ],
         Some(vec![0]),
         &mut cx,
@@ -11971,7 +11978,7 @@ async fn test_active_indent_guide_empty_line(cx: &mut gpui::TestAppContext) {
 
     assert_indent_guides(
         0..5,
-        vec![IndentGuide::new(buffer_id, 1, 3, 0, 4)],
+        vec![indent_guide(buffer_id, 1, 3, 0)],
         Some(vec![0]),
         &mut cx,
     );
@@ -11997,7 +12004,7 @@ async fn test_active_indent_guide_non_matching_indent(cx: &mut gpui::TestAppCont
 
     assert_indent_guides(
         0..3,
-        vec![IndentGuide::new(buffer_id, 1, 2, 0, 4)],
+        vec![indent_guide(buffer_id, 1, 2, 0)],
         Some(vec![0]),
         &mut cx,
     );
@@ -12106,7 +12113,10 @@ pub fn handle_completion_request(
         let completions = completions.clone();
         counter.fetch_add(1, atomic::Ordering::Release);
         async move {
-            assert_eq!(params.text_document_position.text_document.uri, url.clone());
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                url.clone().into()
+            );
             assert_eq!(
                 params.text_document_position.position,
                 complete_from_position
@@ -12187,10 +12197,16 @@ pub(crate) fn update_test_project_settings(
 
 pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
     _ = cx.update(|cx| {
+        cx.text_system()
+            .add_fonts(vec![assets::Assets
+                .load("fonts/zed-mono/zed-mono-extended.ttf")
+                .unwrap()
+                .unwrap()])
+            .unwrap();
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
-        release_channel::init("0.0.0", cx);
+        release_channel::init(SemanticVersion::default(), cx);
         client::init_settings(cx);
         language::init(cx);
         Project::init_settings(cx);

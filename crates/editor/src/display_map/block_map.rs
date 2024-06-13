@@ -467,8 +467,8 @@ impl BlockMap {
         *transforms = new_transforms;
     }
 
-    pub fn replace(&mut self, mut renderers: HashMap<BlockId, RenderBlock>) {
-        for block in &self.blocks {
+    pub fn replace_renderers(&mut self, mut renderers: HashMap<BlockId, RenderBlock>) {
+        for block in &mut self.blocks {
             if let Some(render) = renderers.remove(&block.id) {
                 *block.render.lock() = render;
             }
@@ -657,6 +657,48 @@ impl<'a> BlockMapWriter<'a> {
 
         self.0.sync(wrap_snapshot, edits);
         ids
+    }
+
+    pub fn replace(&mut self, mut heights_and_renderers: HashMap<BlockId, (u8, RenderBlock)>) {
+        let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
+        let buffer = wrap_snapshot.buffer_snapshot();
+        let mut edits = Patch::default();
+        let mut last_block_buffer_row = None;
+
+        for block in &mut self.0.blocks {
+            if let Some((new_height, render)) = heights_and_renderers.remove(&block.id) {
+                if block.height != new_height {
+                    let new_block = Block {
+                        id: block.id,
+                        position: block.position,
+                        height: new_height,
+                        style: block.style,
+                        render: Mutex::new(render),
+                        disposition: block.disposition,
+                    };
+                    *block = Arc::new(new_block);
+
+                    let buffer_row = block.position.to_point(buffer).row;
+                    if last_block_buffer_row != Some(buffer_row) {
+                        last_block_buffer_row = Some(buffer_row);
+                        let wrap_row = wrap_snapshot
+                            .make_wrap_point(Point::new(buffer_row, 0), Bias::Left)
+                            .row();
+                        let start_row =
+                            wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
+                        let end_row = wrap_snapshot
+                            .next_row_boundary(WrapPoint::new(wrap_row, 0))
+                            .unwrap_or(wrap_snapshot.max_point().row() + 1);
+                        edits.push(Edit {
+                            old: start_row..end_row,
+                            new: start_row..end_row,
+                        })
+                    }
+                }
+            }
+        }
+
+        self.0.sync(wrap_snapshot, edits);
     }
 
     pub fn remove(&mut self, block_ids: HashSet<BlockId>) {
@@ -1303,6 +1345,111 @@ mod tests {
         });
         let snapshot = block_map.read(wraps_snapshot, wrap_edits);
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
+    }
+
+    #[gpui::test]
+    fn test_replace_with_heights(cx: &mut gpui::TestAppContext) {
+        let _update = cx.update(|cx| init_test(cx));
+
+        let text = "aaa\nbbb\nccc\nddd";
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let _subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
+        let (_wrap_map, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), false, 1, 1, 0);
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let block_ids = writer.insert(vec![
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                position: buffer_snapshot.anchor_after(Point::new(1, 0)),
+                height: 1,
+                disposition: BlockDisposition::Above,
+                render: Box::new(|_| div().into_any()),
+            },
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                position: buffer_snapshot.anchor_after(Point::new(1, 2)),
+                height: 2,
+                disposition: BlockDisposition::Above,
+                render: Box::new(|_| div().into_any()),
+            },
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                position: buffer_snapshot.anchor_after(Point::new(3, 3)),
+                height: 3,
+                disposition: BlockDisposition::Below,
+                render: Box::new(|_| div().into_any()),
+            },
+        ]);
+
+        {
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
+
+            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+
+            let mut hash_map = HashMap::default();
+            let render: RenderBlock = Box::new(|_| div().into_any());
+            hash_map.insert(block_ids[0], (2_u8, render));
+            block_map_writer.replace(hash_map);
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            assert_eq!(snapshot.text(), "aaa\n\n\n\n\nbbb\nccc\nddd\n\n\n");
+        }
+
+        {
+            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+
+            let mut hash_map = HashMap::default();
+            let render: RenderBlock = Box::new(|_| div().into_any());
+            hash_map.insert(block_ids[0], (1_u8, render));
+            block_map_writer.replace(hash_map);
+
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
+        }
+
+        {
+            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+
+            let mut hash_map = HashMap::default();
+            let render: RenderBlock = Box::new(|_| div().into_any());
+            hash_map.insert(block_ids[0], (0_u8, render));
+            block_map_writer.replace(hash_map);
+
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            assert_eq!(snapshot.text(), "aaa\n\n\nbbb\nccc\nddd\n\n\n");
+        }
+
+        {
+            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+
+            let mut hash_map = HashMap::default();
+            let render: RenderBlock = Box::new(|_| div().into_any());
+            hash_map.insert(block_ids[0], (3_u8, render));
+            block_map_writer.replace(hash_map);
+
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            assert_eq!(snapshot.text(), "aaa\n\n\n\n\n\nbbb\nccc\nddd\n\n\n");
+        }
+
+        {
+            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+
+            let mut hash_map = HashMap::default();
+            let render: RenderBlock = Box::new(|_| div().into_any());
+            hash_map.insert(block_ids[0], (3_u8, render));
+            block_map_writer.replace(hash_map);
+
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            // Same height as before, should remain the same
+            assert_eq!(snapshot.text(), "aaa\n\n\n\n\n\nbbb\nccc\nddd\n\n\n");
+        }
     }
 
     #[gpui::test]

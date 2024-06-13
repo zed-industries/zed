@@ -27,6 +27,7 @@ use futures::{
         oneshot,
     },
     future::{join_all, try_join_all, Shared},
+    prelude::future::BoxFuture,
     select,
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
@@ -38,13 +39,16 @@ use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
     EventEmitter, Model, ModelContext, PromptLevel, SharedString, Task, WeakModel, WindowContext,
 };
+use http::{HttpClient, Url};
 use itertools::Itertools;
 use language::{
-    language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
+    language_settings::{
+        language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
+    },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
-        serialize_version, split_operations,
+        serialize_line_ending, serialize_version, split_operations,
     },
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
@@ -54,10 +58,10 @@ use language::{
 };
 use log::error;
 use lsp::{
-    DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
+    CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, Edit, FileSystemWatcher, LanguageServer, LanguageServerBinary,
     LanguageServerId, LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities,
-    ServerHealthStatus, ServerStatus, TextEdit,
+    ServerHealthStatus, ServerStatus, TextEdit, Uri,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -66,19 +70,16 @@ use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
-use search_history::SearchHistory;
-use snippet::Snippet;
-use worktree::LocalSnapshot;
-
-use http::{HttpClient, Url};
 use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
+use search_history::SearchHistory;
 use serde::Serialize;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
+use snippet::Snippet;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -111,7 +112,7 @@ use util::{
     },
     post_inc, ResultExt, TryFutureExt as _,
 };
-use worktree::{Snapshot, Traversal};
+use worktree::{CreatedEntry, RemoteWorktreeClient, Snapshot, Traversal};
 
 pub use fs::*;
 pub use language::Location;
@@ -121,9 +122,9 @@ pub use task_inventory::{
     BasicContextProvider, ContextProviderWithTasks, Inventory, TaskSourceKind,
 };
 pub use worktree::{
-    DiagnosticSummary, Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId,
-    RepositoryEntry, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
-    WorktreeSettings, FS_WATCH_LATENCY,
+    Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId, RepositoryEntry,
+    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
+    FS_WATCH_LATENCY,
 };
 
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
@@ -180,6 +181,18 @@ pub struct Project {
     next_entry_id: Arc<AtomicUsize>,
     join_project_response_message_id: u32,
     next_diagnostic_group_id: usize,
+    diagnostic_summaries:
+        HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
+    diagnostics: HashMap<
+        WorktreeId,
+        HashMap<
+            Arc<Path>,
+            Vec<(
+                LanguageServerId,
+                Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+            )>,
+        >,
+    >,
     user_store: Model<UserStore>,
     fs: Arc<dyn Fs>,
     client_state: ProjectClientState,
@@ -217,6 +230,7 @@ pub struct Project {
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
+    yarn_worktree_ids_reported: Vec<WorktreeId>,
 }
 
 pub enum LanguageServerToQuery {
@@ -637,6 +651,12 @@ pub enum SearchResult {
     LimitReached,
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
+    trigger_kind: lsp::CompletionTriggerKind::INVOKED,
+    trigger_character: None,
+};
+
 impl Project {
     pub fn init_settings(cx: &mut AppContext) {
         WorktreeSettings::register(cx);
@@ -697,8 +717,10 @@ impl Project {
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_model_request_handler(Self::handle_blame_buffer);
         client.add_model_request_handler(Self::handle_multi_lsp_query);
+        client.add_model_request_handler(Self::handle_restart_language_servers);
         client.add_model_request_handler(Self::handle_task_context_for_location);
         client.add_model_request_handler(Self::handle_task_templates);
+        client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
     }
 
     pub fn local(
@@ -748,6 +770,8 @@ impl Project {
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
+                diagnostics: Default::default(),
+                diagnostic_summaries: Default::default(),
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
                 language_server_ids: HashMap::default(),
@@ -772,6 +796,7 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
+                yarn_worktree_ids_reported: Vec::new(),
             }
         })
     }
@@ -841,8 +866,13 @@ impl Project {
             // That's because Worktree's identifier is entity id, which should probably be changed.
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
-                let worktree =
-                    Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx);
+                let worktree = Worktree::remote(
+                    remote_id,
+                    replica_id,
+                    worktree,
+                    Box::new(CollabRemoteWorktreeClient(client.clone())),
+                    cx,
+                );
                 worktrees.push(worktree);
             }
 
@@ -872,6 +902,8 @@ impl Project {
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
+                diagnostic_summaries: Default::default(),
+                diagnostics: Default::default(),
                 client_subscriptions: Default::default(),
                 _subscriptions: vec![
                     cx.on_release(Self::release),
@@ -929,6 +961,7 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
+                yarn_worktree_ids_reported: Vec::new(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -1280,6 +1313,19 @@ impl Project {
         self.dev_server_project_id
     }
 
+    pub fn supports_remote_terminal(&self, cx: &AppContext) -> bool {
+        let Some(id) = self.dev_server_project_id else {
+            return false;
+        };
+        let Some(server) = dev_server_projects::Store::global(cx)
+            .read(cx)
+            .dev_server_for_project(id)
+        else {
+            return false;
+        };
+        server.ssh_connection_string.is_some()
+    }
+
     pub fn ssh_connection_string(&self, cx: &ModelContext<Self>) -> Option<SharedString> {
         if self.is_local() {
             return None;
@@ -1414,45 +1460,16 @@ impl Project {
         project_path: impl Into<ProjectPath>,
         is_directory: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Entry>>> {
+    ) -> Task<Result<CreatedEntry>> {
         let project_path = project_path.into();
         let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) else {
-            return Task::ready(Ok(None));
+            return Task::ready(Err(anyhow!(format!(
+                "No worktree for path {project_path:?}"
+            ))));
         };
-        if self.is_local() {
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .create_entry(project_path.path, is_directory, cx)
-            })
-        } else {
-            let client = self.client.clone();
-            let project_id = self.remote_id().unwrap();
-            cx.spawn(move |_, mut cx| async move {
-                let response = client
-                    .request(proto::CreateProjectEntry {
-                        worktree_id: project_path.worktree_id.to_proto(),
-                        project_id,
-                        path: project_path.path.to_string_lossy().into(),
-                        is_directory,
-                    })
-                    .await?;
-                match response.entry {
-                    Some(entry) => worktree
-                        .update(&mut cx, |worktree, cx| {
-                            worktree.as_remote_mut().unwrap().insert_entry(
-                                entry,
-                                response.worktree_scan_id as usize,
-                                cx,
-                            )
-                        })?
-                        .await
-                        .map(Some),
-                    None => Ok(None),
-                }
-            })
-        }
+        worktree.update(cx, |worktree, cx| {
+            worktree.create_entry(project_path.path, is_directory, cx)
+        })
     }
 
     pub fn copy_entry(
@@ -1464,41 +1481,9 @@ impl Project {
         let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
             return Task::ready(Ok(None));
         };
-        let new_path = new_path.into();
-        if self.is_local() {
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .copy_entry(entry_id, new_path, cx)
-            })
-        } else {
-            let client = self.client.clone();
-            let project_id = self.remote_id().unwrap();
-
-            cx.spawn(move |_, mut cx| async move {
-                let response = client
-                    .request(proto::CopyProjectEntry {
-                        project_id,
-                        entry_id: entry_id.to_proto(),
-                        new_path: new_path.to_string_lossy().into(),
-                    })
-                    .await?;
-                match response.entry {
-                    Some(entry) => worktree
-                        .update(&mut cx, |worktree, cx| {
-                            worktree.as_remote_mut().unwrap().insert_entry(
-                                entry,
-                                response.worktree_scan_id as usize,
-                                cx,
-                            )
-                        })?
-                        .await
-                        .map(Some),
-                    None => Ok(None),
-                }
-            })
-        }
+        worktree.update(cx, |worktree, cx| {
+            worktree.copy_entry(entry_id, new_path, cx)
+        })
     }
 
     pub fn rename_entry(
@@ -1506,45 +1491,13 @@ impl Project {
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Entry>>> {
+    ) -> Task<Result<CreatedEntry>> {
         let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
-            return Task::ready(Ok(None));
+            return Task::ready(Err(anyhow!(format!("No worktree for entry {entry_id:?}"))));
         };
-        let new_path = new_path.into();
-        if self.is_local() {
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .rename_entry(entry_id, new_path, cx)
-            })
-        } else {
-            let client = self.client.clone();
-            let project_id = self.remote_id().unwrap();
-
-            cx.spawn(move |_, mut cx| async move {
-                let response = client
-                    .request(proto::RenameProjectEntry {
-                        project_id,
-                        entry_id: entry_id.to_proto(),
-                        new_path: new_path.to_string_lossy().into(),
-                    })
-                    .await?;
-                match response.entry {
-                    Some(entry) => worktree
-                        .update(&mut cx, |worktree, cx| {
-                            worktree.as_remote_mut().unwrap().insert_entry(
-                                entry,
-                                response.worktree_scan_id as usize,
-                                cx,
-                            )
-                        })?
-                        .await
-                        .map(Some),
-                    None => Ok(None),
-                }
-            })
-        }
+        worktree.update(cx, |worktree, cx| {
+            worktree.rename_entry(entry_id, new_path, cx)
+        })
     }
 
     pub fn delete_entry(
@@ -1554,38 +1507,10 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
-
         cx.emit(Event::DeletedEntry(entry_id));
-
-        if self.is_local() {
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .delete_entry(entry_id, trash, cx)
-            })
-        } else {
-            let client = self.client.clone();
-            let project_id = self.remote_id().unwrap();
-            Some(cx.spawn(move |_, mut cx| async move {
-                let response = client
-                    .request(proto::DeleteProjectEntry {
-                        project_id,
-                        entry_id: entry_id.to_proto(),
-                        use_trash: trash,
-                    })
-                    .await?;
-                worktree
-                    .update(&mut cx, move |worktree, cx| {
-                        worktree.as_remote_mut().unwrap().delete_entry(
-                            entry_id,
-                            response.worktree_scan_id as usize,
-                            cx,
-                        )
-                    })?
-                    .await
-            }))
-        }
+        worktree.update(cx, |worktree, cx| {
+            worktree.delete_entry(entry_id, trash, cx)
+        })
     }
 
     pub fn expand_entry(
@@ -1595,31 +1520,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_id(worktree_id, cx)?;
-        if self.is_local() {
-            worktree.update(cx, |worktree, cx| {
-                worktree.as_local_mut().unwrap().expand_entry(entry_id, cx)
-            })
-        } else {
-            let worktree = worktree.downgrade();
-            let request = self.client.request(proto::ExpandProjectEntry {
-                project_id: self.remote_id().unwrap(),
-                entry_id: entry_id.to_proto(),
-            });
-            Some(cx.spawn(move |_, mut cx| async move {
-                let response = request.await?;
-                if let Some(worktree) = worktree.upgrade() {
-                    worktree
-                        .update(&mut cx, |worktree, _| {
-                            worktree
-                                .as_remote_mut()
-                                .unwrap()
-                                .wait_for_snapshot(response.worktree_scan_id as usize)
-                        })?
-                        .await?;
-                }
-                Ok(())
-            }))
-        }
+        worktree.update(cx, |worktree, cx| worktree.expand_entry(entry_id, cx))
     }
 
     pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Result<()> {
@@ -1703,6 +1604,7 @@ impl Project {
                             let worktrees = this.update(&mut cx, |this, _cx| {
                                 this.worktrees().collect::<Vec<_>>()
                             })?;
+
                             let update_project = this
                                 .update(&mut cx, |this, cx| {
                                     this.client.request(proto::UpdateProject {
@@ -1711,14 +1613,43 @@ impl Project {
                                     })
                                 })?
                                 .await;
-                            if update_project.log_err().is_some() {
+                            if update_project.log_err().is_none() {
+                                continue;
+                            }
+
+                            this.update(&mut cx, |this, cx| {
                                 for worktree in worktrees {
-                                    worktree.update(&mut cx, |worktree, cx| {
-                                        let worktree = worktree.as_local_mut().unwrap();
-                                        worktree.share(project_id, cx).detach_and_log_err(cx)
+                                    worktree.update(cx, |worktree, cx| {
+                                        if let Some(summaries) =
+                                            this.diagnostic_summaries.get(&worktree.id())
+                                        {
+                                            for (path, summaries) in summaries {
+                                                for (&server_id, summary) in summaries {
+                                                    this.client.send(
+                                                        proto::UpdateDiagnosticSummary {
+                                                            project_id,
+                                                            worktree_id: cx.entity_id().as_u64(),
+                                                            summary: Some(
+                                                                summary.to_proto(server_id, path),
+                                                            ),
+                                                        },
+                                                    )?;
+                                                }
+                                            }
+                                        }
+
+                                        worktree.observe_updates(project_id, cx, {
+                                            let client = client.clone();
+                                            move |update| {
+                                                client.request(update).map(|result| result.is_ok())
+                                            }
+                                        });
+
+                                        anyhow::Ok(())
                                     })?;
                                 }
-                            }
+                                anyhow::Ok(())
+                            })??;
                         }
                         LocalProjectUpdate::CreateBufferForPeer { peer_id, buffer_id } => {
                             let buffer = this.update(&mut cx, |this, _| {
@@ -1863,7 +1794,7 @@ impl Project {
             for worktree_handle in self.worktrees.iter_mut() {
                 if let WorktreeHandle::Strong(worktree) = worktree_handle {
                     let is_visible = worktree.update(cx, |worktree, _| {
-                        worktree.as_local_mut().unwrap().unshare();
+                        worktree.stop_observing_updates();
                         worktree.is_visible()
                     });
                     if !is_visible {
@@ -1894,6 +1825,9 @@ impl Project {
     }
 
     pub fn disconnected_from_host(&mut self, cx: &mut ModelContext<Self>) {
+        if self.is_disconnected() {
+            return;
+        }
         self.disconnected_from_host_internal(cx);
         cx.emit(Event::DisconnectedFromHost);
         cx.notify();
@@ -1941,7 +1875,10 @@ impl Project {
             for open_buffer in self.opened_buffers.values_mut() {
                 // Wake up any tasks waiting for peers' edits to this buffer.
                 if let Some(buffer) = open_buffer.upgrade() {
-                    buffer.update(cx, |buffer, _| buffer.give_up_waiting());
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.give_up_waiting();
+                        buffer.set_capability(Capability::ReadOnly, cx)
+                    });
                 }
 
                 if let OpenBuffer::Strong(buffer) = open_buffer {
@@ -2146,24 +2083,47 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
         let load_buffer = worktree.update(cx, |worktree, cx| {
-            let worktree = worktree.as_local_mut().unwrap();
-            worktree.load_buffer(&path, cx)
+            let load_file = worktree.load_file(path.as_ref(), cx);
+            let reservation = cx.reserve_model();
+            let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
+            cx.spawn(move |_, mut cx| async move {
+                let loaded = load_file.await?;
+                let text_buffer = cx
+                    .background_executor()
+                    .spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
+                    .await;
+                cx.insert_model(reservation, |_| {
+                    Buffer::build(
+                        text_buffer,
+                        loaded.diff_base,
+                        Some(loaded.file),
+                        Capability::ReadWrite,
+                    )
+                })
+            })
         });
-        fn is_not_found_error(error: &anyhow::Error) -> bool {
-            error
-                .root_cause()
-                .downcast_ref::<io::Error>()
-                .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
-        }
+
         cx.spawn(move |this, mut cx| async move {
             let buffer = match load_buffer.await {
                 Ok(buffer) => Ok(buffer),
-                Err(error) if is_not_found_error(&error) => {
-                    worktree.update(&mut cx, |worktree, cx| {
-                        let worktree = worktree.as_local_mut().unwrap();
-                        worktree.new_buffer(path, cx)
-                    })
-                }
+                Err(error) if is_not_found_error(&error) => cx.new_model(|cx| {
+                    let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
+                    let text_buffer = text::Buffer::new(0, buffer_id, "".into());
+                    Buffer::build(
+                        text_buffer,
+                        None,
+                        Some(Arc::new(File {
+                            worktree,
+                            path,
+                            mtime: None,
+                            entry_id: None,
+                            is_local: true,
+                            is_deleted: false,
+                            is_private: false,
+                        })),
+                        Capability::ReadWrite,
+                    )
+                }),
                 Err(e) => Err(e),
             }?;
             this.update(&mut cx, |this, cx| this.register_buffer(&buffer, cx))??;
@@ -2182,6 +2142,9 @@ impl Project {
         let remote_worktree_id = worktree.read(cx).id();
         let path = path.clone();
         let path_string = path.to_string_lossy().to_string();
+        if self.is_disconnected() {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
         cx.spawn(move |this, mut cx| async move {
             let response = rpc
                 .request(proto::OpenBufferByPath {
@@ -2201,7 +2164,7 @@ impl Project {
     /// LanguageServerName is owned, because it is inserted into a map
     pub fn open_local_buffer_via_lsp(
         &mut self,
-        abs_path: lsp::Url,
+        abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
         language_server_name: LanguageServerName,
         cx: &mut ModelContext<Self>,
@@ -2290,10 +2253,11 @@ impl Project {
         };
         let worktree = file.worktree.clone();
         let path = file.path.clone();
-        worktree.update(cx, |worktree, cx| match worktree {
-            Worktree::Local(worktree) => worktree.save_buffer(buffer, path, false, cx),
-            Worktree::Remote(worktree) => worktree.save_buffer(buffer, None, cx),
-        })
+        if self.is_local() {
+            self.save_local_buffer(worktree, buffer, path, false, cx)
+        } else {
+            self.save_remote_buffer(buffer, None, cx)
+        }
     }
 
     pub fn save_buffer_as(
@@ -2302,34 +2266,120 @@ impl Project {
         path: ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let old_file = File::from_dyn(buffer.read(cx).file())
-            .filter(|f| f.is_local())
-            .cloned();
+        let old_file = File::from_dyn(buffer.read(cx).file()).cloned();
         let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) else {
             return Task::ready(Err(anyhow!("worktree does not exist")));
         };
 
         cx.spawn(move |this, mut cx| async move {
-            if let Some(old_file) = &old_file {
-                this.update(&mut cx, |this, cx| {
-                    this.unregister_buffer_from_language_servers(&buffer, old_file, cx);
-                })?;
-            }
-            worktree
-                .update(&mut cx, |worktree, cx| match worktree {
-                    Worktree::Local(worktree) => {
-                        worktree.save_buffer(buffer.clone(), path.path, true, cx)
+            this.update(&mut cx, |this, cx| {
+                if this.is_local() {
+                    if let Some(old_file) = &old_file {
+                        this.unregister_buffer_from_language_servers(&buffer, old_file, cx);
                     }
-                    Worktree::Remote(worktree) => {
-                        worktree.save_buffer(buffer.clone(), Some(path.to_proto()), cx)
-                    }
-                })?
-                .await?;
+                    this.save_local_buffer(worktree, buffer.clone(), path.path, true, cx)
+                } else {
+                    this.save_remote_buffer(buffer.clone(), Some(path.to_proto()), cx)
+                }
+            })?
+            .await?;
 
             this.update(&mut cx, |this, cx| {
                 this.detect_language_for_buffer(&buffer, cx);
                 this.register_buffer_with_language_servers(&buffer, cx);
             })?;
+            Ok(())
+        })
+    }
+
+    pub fn save_local_buffer(
+        &self,
+        worktree: Model<Worktree>,
+        buffer_handle: Model<Buffer>,
+        path: Arc<Path>,
+        mut has_changed_file: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let buffer = buffer_handle.read(cx);
+        let buffer_id = buffer.remote_id();
+        let text = buffer.as_rope().clone();
+        let line_ending = buffer.line_ending();
+        let version = buffer.version();
+        if buffer.file().is_some_and(|file| !file.is_created()) {
+            has_changed_file = true;
+        }
+
+        let save = worktree.update(cx, |worktree, cx| {
+            worktree.write_file(path.as_ref(), text, line_ending, cx)
+        });
+
+        let client = self.client.clone();
+        let project_id = self.remote_id();
+        cx.spawn(move |_, mut cx| async move {
+            let new_file = save.await?;
+            let mtime = new_file.mtime;
+            if has_changed_file {
+                if let Some(project_id) = project_id {
+                    client
+                        .send(proto::UpdateBufferFile {
+                            project_id,
+                            buffer_id: buffer_id.into(),
+                            file: Some(new_file.to_proto()),
+                        })
+                        .log_err();
+                }
+
+                buffer_handle.update(&mut cx, |buffer, cx| {
+                    if has_changed_file {
+                        buffer.file_updated(new_file, cx);
+                    }
+                })?;
+            }
+
+            if let Some(project_id) = project_id {
+                client.send(proto::BufferSaved {
+                    project_id,
+                    buffer_id: buffer_id.into(),
+                    version: serialize_version(&version),
+                    mtime: mtime.map(|time| time.into()),
+                })?;
+            }
+
+            buffer_handle.update(&mut cx, |buffer, cx| {
+                buffer.did_save(version.clone(), mtime, cx);
+            })?;
+
+            Ok(())
+        })
+    }
+
+    pub fn save_remote_buffer(
+        &self,
+        buffer_handle: Model<Buffer>,
+        new_path: Option<proto::ProjectPath>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let buffer = buffer_handle.read(cx);
+        let buffer_id = buffer.remote_id().into();
+        let version = buffer.version();
+        let rpc = self.client.clone();
+        let project_id = self.remote_id();
+        cx.spawn(move |_, mut cx| async move {
+            let response = rpc
+                .request(proto::SaveBuffer {
+                    project_id: project_id.ok_or_else(|| anyhow!("project_id is not set"))?,
+                    buffer_id,
+                    new_path,
+                    version: serialize_version(&version),
+                })
+                .await?;
+            let version = deserialize_version(&response.version);
+            let mtime = response.mtime.map(|mtime| mtime.into());
+
+            buffer_handle.update(&mut cx, |buffer, cx| {
+                buffer.did_save(version.clone(), mtime, cx);
+            })?;
+
             Ok(())
         })
     }
@@ -2411,17 +2461,18 @@ impl Project {
 
         self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_servers(buffer, cx);
-        // self.register_buffer_with_copilot(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
-                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                    let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
                     for server in this.language_servers_for_buffer(buffer, cx) {
                         server
                             .1
                             .notify::<lsp::notification::DidCloseTextDocument>(
                                 lsp::DidCloseTextDocumentParams {
-                                    text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
+                                    text_document: lsp::TextDocumentIdentifier::new(
+                                        uri.clone().into(),
+                                    ),
                                 },
                             )
                             .log_err();
@@ -2453,14 +2504,16 @@ impl Project {
             }
 
             let abs_path = file.abs_path(cx);
-            let uri = lsp::Url::from_file_path(&abs_path)
-                .unwrap_or_else(|()| panic!("Failed to register file {abs_path:?}"));
+            let uri = lsp::Uri::from_file_path(&abs_path)
+                .unwrap_or_else(|_| panic!("Failed to register file {abs_path:?}"));
             let initial_snapshot = buffer.text_snapshot();
             let language = buffer.language().cloned();
             let worktree_id = file.worktree_id(cx);
 
-            if let Some(local_worktree) = file.worktree.read(cx).as_local() {
-                for (server_id, diagnostics) in local_worktree.diagnostics_for_path(file.path()) {
+            if let Some(diagnostics) = self.diagnostics.get(&worktree_id) {
+                for (server_id, diagnostics) in
+                    diagnostics.get(file.path()).cloned().unwrap_or_default()
+                {
                     self.update_buffer_diagnostics(buffer_handle, server_id, None, diagnostics, cx)
                         .log_err();
                 }
@@ -2488,7 +2541,7 @@ impl Project {
                         .notify::<lsp::notification::DidOpenTextDocument>(
                             lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
-                                    uri.clone(),
+                                    uri.clone().into(),
                                     adapter.language_id(&language),
                                     0,
                                     initial_snapshot.text(),
@@ -2546,28 +2599,20 @@ impl Project {
             }
 
             self.buffer_snapshots.remove(&buffer.remote_id());
-            let file_url = lsp::Url::from_file_path(old_path).unwrap();
+            let file_url = lsp::Uri::from_file_path(old_path).unwrap();
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
                 language_server
                     .notify::<lsp::notification::DidCloseTextDocument>(
                         lsp::DidCloseTextDocumentParams {
-                            text_document: lsp::TextDocumentIdentifier::new(file_url.clone()),
+                            text_document: lsp::TextDocumentIdentifier::new(
+                                file_url.clone().into(),
+                            ),
                         },
                     )
                     .log_err();
             }
         });
     }
-
-    // fn register_buffer_with_copilot(
-    //     &self,
-    //     buffer_handle: &Model<Buffer>,
-    //     cx: &mut ModelContext<Self>,
-    // ) {
-    //     if let Some(copilot) = Copilot::global(cx) {
-    //         copilot.update(cx, |copilot, cx| copilot.register_buffer(buffer_handle, cx));
-    //     }
-    // }
 
     async fn send_buffer_ordered_messages(
         this: WeakModel<Self>,
@@ -2699,11 +2744,28 @@ impl Project {
                 .ok();
             }
 
+            BufferEvent::Reloaded => {
+                if self.is_local() {
+                    if let Some(project_id) = self.remote_id() {
+                        let buffer = buffer.read(cx);
+                        self.client
+                            .send(proto::BufferReloaded {
+                                project_id,
+                                buffer_id: buffer.remote_id().to_proto(),
+                                version: serialize_version(&buffer.version()),
+                                mtime: buffer.saved_mtime().map(|t| t.into()),
+                                line_ending: serialize_line_ending(buffer.line_ending()) as i32,
+                            })
+                            .log_err();
+                    }
+                }
+            }
+
             BufferEvent::Edited { .. } => {
                 let buffer = buffer.read(cx);
                 let file = File::from_dyn(buffer.file())?;
                 let abs_path = file.as_local()?.abs_path(cx);
-                let uri = lsp::Url::from_file_path(abs_path).unwrap();
+                let uri = lsp::Uri::from_file_path(abs_path).unwrap();
                 let next_snapshot = buffer.text_snapshot();
 
                 let language_servers: Vec<_> = self
@@ -2784,7 +2846,7 @@ impl Project {
                         .notify::<lsp::notification::DidChangeTextDocument>(
                             lsp::DidChangeTextDocumentParams {
                                 text_document: lsp::VersionedTextDocumentIdentifier::new(
-                                    uri.clone(),
+                                    uri.clone().into(),
                                     next_version,
                                 ),
                                 content_changes,
@@ -2799,7 +2861,7 @@ impl Project {
                 let worktree_id = file.worktree_id(cx);
                 let abs_path = file.as_local()?.abs_path(cx);
                 let text_document = lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(abs_path).unwrap(),
+                    uri: lsp::Uri::from_file_path(abs_path).unwrap().into(),
                 };
 
                 for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
@@ -3839,11 +3901,11 @@ impl Project {
                 let snapshot = versions.last().unwrap();
                 let version = snapshot.version;
                 let initial_snapshot = &snapshot.snapshot;
-                let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
                 language_server.notify::<lsp::notification::DidOpenTextDocument>(
                     lsp::DidOpenTextDocumentParams {
                         text_document: lsp::TextDocumentItem::new(
-                            uri,
+                            uri.into(),
                             adapter.language_id(&language),
                             version,
                             initial_snapshot.text(),
@@ -3899,14 +3961,43 @@ impl Project {
                     });
                 }
             }
-            for worktree in &self.worktrees {
-                if let Some(worktree) = worktree.upgrade() {
-                    worktree.update(cx, |worktree, cx| {
-                        if let Some(worktree) = worktree.as_local_mut() {
-                            worktree.clear_diagnostics_for_language_server(server_id, cx);
+
+            let project_id = self.remote_id();
+            for (worktree_id, summaries) in self.diagnostic_summaries.iter_mut() {
+                summaries.retain(|path, summaries_by_server_id| {
+                    if summaries_by_server_id.remove(&server_id).is_some() {
+                        if let Some(project_id) = project_id {
+                            self.client
+                                .send(proto::UpdateDiagnosticSummary {
+                                    project_id,
+                                    worktree_id: worktree_id.to_proto(),
+                                    summary: Some(proto::DiagnosticSummary {
+                                        path: path.to_string_lossy().to_string(),
+                                        language_server_id: server_id.0 as u64,
+                                        error_count: 0,
+                                        warning_count: 0,
+                                    }),
+                                })
+                                .log_err();
                         }
-                    });
-                }
+                        !summaries_by_server_id.is_empty()
+                    } else {
+                        true
+                    }
+                });
+            }
+
+            for diagnostics in self.diagnostics.values_mut() {
+                diagnostics.retain(|_, diagnostics_by_server_id| {
+                    if let Ok(ix) =
+                        diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0)
+                    {
+                        diagnostics_by_server_id.remove(ix);
+                        !diagnostics_by_server_id.is_empty()
+                    } else {
+                        true
+                    }
+                });
             }
 
             self.language_server_watched_paths.remove(&server_id);
@@ -3960,11 +4051,44 @@ impl Project {
         }
     }
 
+    async fn handle_restart_language_servers(
+        project: Model<Self>,
+        envelope: TypedEnvelope<proto::RestartLanguageServers>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        project.update(&mut cx, |project, cx| {
+            let buffers: Vec<_> = envelope
+                .payload
+                .buffer_ids
+                .into_iter()
+                .flat_map(|buffer_id| project.buffer_for_id(BufferId::new(buffer_id).log_err()?))
+                .collect();
+            project.restart_language_servers_for_buffers(buffers, cx)
+        })?;
+
+        Ok(proto::Ack {})
+    }
+
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: impl IntoIterator<Item = Model<Buffer>>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
+    ) {
+        if self.is_remote() {
+            let request = self.client.request(proto::RestartLanguageServers {
+                project_id: self.remote_id().unwrap(),
+                buffer_ids: buffers
+                    .into_iter()
+                    .map(|b| b.read(cx).remote_id().to_proto())
+                    .collect(),
+            });
+            cx.background_executor()
+                .spawn(request)
+                .detach_and_log_err(cx);
+            return;
+        }
+
         let language_server_lookup_info: HashSet<(Model<Worktree>, Arc<Language>)> = buffers
             .into_iter()
             .filter_map(|buffer| {
@@ -3982,8 +4106,6 @@ impl Project {
         for (worktree, language) in language_server_lookup_info {
             self.restart_language_servers(worktree, language, cx);
         }
-
-        None
     }
 
     fn restart_language_servers(
@@ -4385,10 +4507,13 @@ impl Project {
                                         lsp::OneOf::Left(workspace_folder) => &workspace_folder.uri,
                                         lsp::OneOf::Right(base_uri) => base_uri,
                                     };
-                                    base_uri.to_file_path().ok().and_then(|file_path| {
-                                        (file_path.to_str() == Some(abs_path))
-                                            .then_some(rp.pattern.as_str())
-                                    })
+                                    lsp::Uri::from(base_uri.clone())
+                                        .to_file_path()
+                                        .ok()
+                                        .and_then(|file_path| {
+                                            (file_path.to_str() == Some(abs_path))
+                                                .then_some(rp.pattern.as_str())
+                                        })
                                 }
                             };
                             if let Some(relative_glob_pattern) = relative_glob_pattern {
@@ -4477,10 +4602,9 @@ impl Project {
         disk_based_sources: &[String],
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let abs_path = params
-            .uri
+        let abs_path = Uri::from(params.uri.clone())
             .to_file_path()
-            .map_err(|_| anyhow!("URI is not a file"))?;
+            .map_err(|_| anyhow!("URI `{}` is not a file", params.uri.as_str()))?;
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
@@ -4612,10 +4736,13 @@ impl Project {
         }
 
         let updated = worktree.update(cx, |worktree, cx| {
-            worktree
-                .as_local_mut()
-                .ok_or_else(|| anyhow!("not a local worktree"))?
-                .update_diagnostics(server_id, project_path.path.clone(), diagnostics, cx)
+            self.update_worktree_diagnostics(
+                worktree.id(),
+                server_id,
+                project_path.path.clone(),
+                diagnostics,
+                cx,
+            )
         })?;
         if updated {
             cx.emit(Event::DiagnosticsUpdated {
@@ -4624,6 +4751,67 @@ impl Project {
             });
         }
         Ok(())
+    }
+
+    pub fn update_worktree_diagnostics(
+        &mut self,
+        worktree_id: WorktreeId,
+        server_id: LanguageServerId,
+        worktree_path: Arc<Path>,
+        diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+        _: &mut ModelContext<Worktree>,
+    ) -> Result<bool> {
+        let summaries_for_tree = self.diagnostic_summaries.entry(worktree_id).or_default();
+        let diagnostics_for_tree = self.diagnostics.entry(worktree_id).or_default();
+        let summaries_by_server_id = summaries_for_tree.entry(worktree_path.clone()).or_default();
+
+        let old_summary = summaries_by_server_id
+            .remove(&server_id)
+            .unwrap_or_default();
+
+        let new_summary = DiagnosticSummary::new(&diagnostics);
+        if new_summary.is_empty() {
+            if let Some(diagnostics_by_server_id) = diagnostics_for_tree.get_mut(&worktree_path) {
+                if let Ok(ix) = diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                    diagnostics_by_server_id.remove(ix);
+                }
+                if diagnostics_by_server_id.is_empty() {
+                    diagnostics_for_tree.remove(&worktree_path);
+                }
+            }
+        } else {
+            summaries_by_server_id.insert(server_id, new_summary);
+            let diagnostics_by_server_id = diagnostics_for_tree
+                .entry(worktree_path.clone())
+                .or_default();
+            match diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                Ok(ix) => {
+                    diagnostics_by_server_id[ix] = (server_id, diagnostics);
+                }
+                Err(ix) => {
+                    diagnostics_by_server_id.insert(ix, (server_id, diagnostics));
+                }
+            }
+        }
+
+        if !old_summary.is_empty() || !new_summary.is_empty() {
+            if let Some(project_id) = self.remote_id() {
+                self.client
+                    .send(proto::UpdateDiagnosticSummary {
+                        project_id,
+                        worktree_id: worktree_id.to_proto(),
+                        summary: Some(proto::DiagnosticSummary {
+                            path: worktree_path.to_string_lossy().to_string(),
+                            language_server_id: server_id.0 as u64,
+                            error_count: new_summary.error_count as u32,
+                            warning_count: new_summary.warning_count as u32,
+                        }),
+                    })
+                    .log_err();
+            }
+        }
+
+        Ok(!old_summary.is_empty() || !new_summary.is_empty())
     }
 
     fn update_buffer_diagnostics(
@@ -4989,21 +5177,20 @@ impl Project {
                     FormatOnSave::On | FormatOnSave::Off,
                 )
                 | (_, FormatOnSave::External { command, arguments }) => {
-                    if let Some(buffer_abs_path) = buffer_abs_path {
-                        format_operation = Self::format_via_external_command(
-                            buffer,
-                            buffer_abs_path,
-                            command,
-                            arguments,
-                            &mut cx,
-                        )
-                        .await
-                        .context(format!(
-                            "failed to format via external command {:?}",
-                            command
-                        ))?
-                        .map(FormatOperation::External);
-                    }
+                    let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
+                    format_operation = Self::format_via_external_command(
+                        buffer,
+                        buffer_abs_path,
+                        command,
+                        arguments,
+                        &mut cx,
+                    )
+                    .await
+                    .context(format!(
+                        "failed to format via external command {:?}",
+                        command
+                    ))?
+                    .map(FormatOperation::External);
                 }
                 (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
                     let prettier = if prettier_settings.allowed {
@@ -5098,9 +5285,9 @@ impl Project {
         tab_size: NonZeroU32,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
-        let uri = lsp::Url::from_file_path(abs_path)
+        let uri = lsp::Uri::from_file_path(abs_path)
             .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
-        let text_document = lsp::TextDocumentIdentifier::new(uri);
+        let text_document = lsp::TextDocumentIdentifier::new(uri.into());
         let capabilities = &language_server.capabilities();
 
         let formatting_provider = capabilities.document_formatting_provider.as_ref();
@@ -5142,14 +5329,14 @@ impl Project {
 
     async fn format_via_external_command(
         buffer: &Model<Buffer>,
-        buffer_abs_path: &Path,
+        buffer_abs_path: Option<&Path>,
         command: &str,
         arguments: &[String],
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Diff>> {
         let working_dir_path = buffer.update(cx, |buffer, cx| {
             let file = File::from_dyn(buffer.file())?;
-            let worktree = file.worktree.read(cx).as_local()?;
+            let worktree = file.worktree.read(cx);
             let mut worktree_path = worktree.abs_path().to_path_buf();
             if worktree.root_entry()?.is_file() {
                 worktree_path.pop();
@@ -5157,46 +5344,51 @@ impl Project {
             Some(worktree_path)
         })?;
 
+        let mut child = smol::process::Command::new(command);
+
         if let Some(working_dir_path) = working_dir_path {
-            let mut child =
-                smol::process::Command::new(command)
-                    .args(arguments.iter().map(|arg| {
-                        arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
-                    }))
-                    .current_dir(&working_dir_path)
-                    .stdin(smol::process::Stdio::piped())
-                    .stdout(smol::process::Stdio::piped())
-                    .stderr(smol::process::Stdio::piped())
-                    .spawn()?;
-            let stdin = child
-                .stdin
-                .as_mut()
-                .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
-            let text = buffer.update(cx, |buffer, _| buffer.as_rope().clone())?;
-            for chunk in text.chunks() {
-                stdin.write_all(chunk.as_bytes()).await?;
-            }
-            stdin.flush().await?;
-
-            let output = child.output().await?;
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
-                    output.status.code(),
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr),
-                ));
-            }
-
-            let stdout = String::from_utf8(output.stdout)?;
-            Ok(Some(
-                buffer
-                    .update(cx, |buffer, cx| buffer.diff(stdout, cx))?
-                    .await,
-            ))
-        } else {
-            Ok(None)
+            child.current_dir(working_dir_path);
         }
+
+        let mut child = child
+            .args(arguments.iter().map(|arg| {
+                if let Some(buffer_abs_path) = buffer_abs_path {
+                    arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
+                } else {
+                    arg.replace("{buffer_path}", "Untitled")
+                }
+            }))
+            .stdin(smol::process::Stdio::piped())
+            .stdout(smol::process::Stdio::piped())
+            .stderr(smol::process::Stdio::piped())
+            .spawn()?;
+
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
+        let text = buffer.update(cx, |buffer, _| buffer.as_rope().clone())?;
+        for chunk in text.chunks() {
+            stdin.write_all(chunk.as_bytes()).await?;
+        }
+        stdin.flush().await?;
+
+        let output = child.output().await?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            ));
+        }
+
+        let stdout = String::from_utf8(output.stdout)?;
+        Ok(Some(
+            buffer
+                .update(cx, |buffer, cx| buffer.diff(stdout, cx))?
+                .await,
+        ))
     }
 
     #[inline(never)]
@@ -5331,9 +5523,6 @@ impl Project {
                 if !worktree.is_visible() {
                     continue;
                 }
-                let Some(worktree) = worktree.as_local() else {
-                    continue;
-                };
                 let worktree_abs_path = worktree.abs_path().clone();
 
                 let (adapter, language, server) = match self.language_servers.get(server_id) {
@@ -5403,7 +5592,8 @@ impl Project {
                         lsp_symbols
                             .into_iter()
                             .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
-                                let abs_path = symbol_location.uri.to_file_path().ok()?;
+                                let abs_path: lsp::Uri = symbol_location.uri.into();
+                                let abs_path = abs_path.to_file_path().ok()?;
                                 let source_worktree = source_worktree.upgrade()?;
                                 let source_worktree_id = source_worktree.read(cx).id();
 
@@ -5497,16 +5687,15 @@ impl Project {
 
             let worktree_abs_path = if let Some(worktree_abs_path) = self
                 .worktree_for_id(symbol.path.worktree_id, cx)
-                .and_then(|worktree| worktree.read(cx).as_local())
-                .map(|local_worktree| local_worktree.abs_path())
+                .map(|worktree| worktree.read(cx).abs_path())
             {
                 worktree_abs_path
             } else {
                 return Task::ready(Err(anyhow!("worktree not found for symbol")));
             };
 
-            let symbol_abs_path = resolve_path(worktree_abs_path, &symbol.path.path);
-            let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
+            let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
+            let symbol_uri = if let Ok(uri) = lsp::Uri::from_file_path(symbol_abs_path) {
                 uri
             } else {
                 return Task::ready(Err(anyhow!("invalid symbol path")));
@@ -5631,11 +5820,68 @@ impl Project {
         self.hover_impl(buffer, position, cx)
     }
 
+    fn linked_edit_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: Anchor,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Range<Anchor>>>> {
+        let snapshot = buffer.read(cx).snapshot();
+        let scope = snapshot.language_scope_at(position);
+        let Some(server_id) = self
+            .language_servers_for_buffer(buffer.read(cx), cx)
+            .filter(|(_, server)| {
+                server
+                    .capabilities()
+                    .linked_editing_range_provider
+                    .is_some()
+            })
+            .filter(|(adapter, _)| {
+                scope
+                    .as_ref()
+                    .map(|scope| scope.language_allowed(&adapter.name))
+                    .unwrap_or(true)
+            })
+            .map(|(_, server)| LanguageServerToQuery::Other(server.server_id()))
+            .next()
+            .or_else(|| self.is_remote().then_some(LanguageServerToQuery::Primary))
+            .filter(|_| {
+                maybe!({
+                    let language_name = buffer.read(cx).language_at(position)?.name();
+                    Some(
+                        AllLanguageSettings::get_global(cx)
+                            .language(Some(&language_name))
+                            .linked_edits,
+                    )
+                }) == Some(true)
+            })
+        else {
+            return Task::ready(Ok(vec![]));
+        };
+
+        self.request_lsp(
+            buffer.clone(),
+            server_id,
+            LinkedEditingRange { position },
+            cx,
+        )
+    }
+
+    pub fn linked_edit(
+        &self,
+        buffer: &Model<Buffer>,
+        position: Anchor,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Range<Anchor>>>> {
+        self.linked_edit_impl(buffer, position, cx)
+    }
+
     #[inline(never)]
     fn completions_impl(
         &self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
+        context: CompletionContext,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
         let language_registry = self.languages.clone();
@@ -5669,7 +5915,10 @@ impl Project {
                             this.request_lsp(
                                 buffer.clone(),
                                 LanguageServerToQuery::Other(server_id),
-                                GetCompletions { position },
+                                GetCompletions {
+                                    position,
+                                    context: context.clone(),
+                                },
                                 cx,
                             ),
                         ));
@@ -5696,7 +5945,7 @@ impl Project {
             let task = self.send_lsp_proto_request(
                 buffer.clone(),
                 project_id,
-                GetCompletions { position },
+                GetCompletions { position, context },
                 cx,
             );
             let language = buffer.read(cx).language().cloned();
@@ -5730,10 +5979,11 @@ impl Project {
         &self,
         buffer: &Model<Buffer>,
         position: T,
+        context: CompletionContext,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.completions_impl(buffer, position, cx)
+        self.completions_impl(buffer, position, context, cx)
     }
 
     pub fn resolve_completions(
@@ -6370,8 +6620,7 @@ impl Project {
         for operation in operations {
             match operation {
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Create(op)) => {
-                    let abs_path = op
-                        .uri
+                    let abs_path = Uri::from(op.uri)
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
 
@@ -6395,12 +6644,10 @@ impl Project {
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(op)) => {
-                    let source_abs_path = op
-                        .old_uri
+                    let source_abs_path = Uri::from(op.old_uri)
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
-                    let target_abs_path = op
-                        .new_uri
+                    let target_abs_path = Uri::from(op.new_uri)
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
                     fs.rename(
@@ -6417,8 +6664,7 @@ impl Project {
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
-                    let abs_path = op
-                        .uri
+                    let abs_path: PathBuf = Uri::from(op.uri)
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
                     let options = op
@@ -6439,7 +6685,7 @@ impl Project {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
                             this.open_local_buffer_via_lsp(
-                                op.text_document.uri.clone(),
+                                op.text_document.uri.clone().into(),
                                 language_server.server_id(),
                                 lsp_adapter.name.clone(),
                                 cx,
@@ -6857,8 +7103,8 @@ impl Project {
         let snapshots = self
             .visible_worktrees(cx)
             .filter_map(|tree| {
-                let tree = tree.read(cx).as_local()?;
-                Some(tree.snapshot())
+                let tree = tree.read(cx);
+                Some((tree.snapshot(), tree.as_local()?.settings()))
             })
             .collect::<Vec<_>>();
         let include_root = snapshots.len() > 1;
@@ -6866,11 +7112,11 @@ impl Project {
         let background = cx.background_executor().clone();
         let path_count: usize = snapshots
             .iter()
-            .map(|s| {
+            .map(|(snapshot, _)| {
                 if query.include_ignored() {
-                    s.file_count()
+                    snapshot.file_count()
                 } else {
-                    s.visible_file_count()
+                    snapshot.visible_file_count()
                 }
             })
             .sum();
@@ -7026,7 +7272,7 @@ impl Project {
         query: SearchQuery,
         include_root: bool,
         path_count: usize,
-        snapshots: Vec<LocalSnapshot>,
+        snapshots: Vec<(Snapshot, WorktreeSettings)>,
         matching_paths_tx: Sender<SearchMatchCandidate>,
     ) {
         let fs = &fs;
@@ -7082,13 +7328,14 @@ impl Project {
                 }
 
                 if query.include_ignored() {
-                    for snapshot in snapshots {
+                    for (snapshot, settings) in snapshots {
                         for ignored_entry in snapshot.entries(true).filter(|e| e.is_ignored) {
                             let limiter = Arc::clone(&max_concurrent_workers);
                             scope.spawn(async move {
                                 let _guard = limiter.acquire().await;
                                 search_ignored_entry(
                                     snapshot,
+                                    settings,
                                     ignored_entry,
                                     fs,
                                     query,
@@ -7388,7 +7635,6 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>>> {
         let fs = self.fs.clone();
-        let client = self.client.clone();
         let next_entry_id = self.next_entry_id.clone();
         let path: Arc<Path> = abs_path.as_ref().into();
         let task = self
@@ -7397,15 +7643,9 @@ impl Project {
             .or_insert_with(|| {
                 cx.spawn(move |project, mut cx| {
                     async move {
-                        let worktree = Worktree::local(
-                            client.clone(),
-                            path.clone(),
-                            visible,
-                            fs,
-                            next_entry_id,
-                            &mut cx,
-                        )
-                        .await;
+                        let worktree =
+                            Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx)
+                                .await;
 
                         project.update(&mut cx, |project, _| {
                             project.loading_local_worktrees.remove(&path);
@@ -7438,6 +7678,9 @@ impl Project {
     }
 
     pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+        self.diagnostics.remove(&id_to_remove);
+        self.diagnostic_summaries.remove(&id_to_remove);
+
         let mut servers_to_remove = HashMap::default();
         let mut servers_to_preserve = HashSet::default();
         for ((worktree_id, server_name), &server_id) in &self.language_server_ids {
@@ -7527,6 +7770,8 @@ impl Project {
                         worktree.read(cx).id(),
                         changes.clone(),
                     ));
+
+                    this.report_yarn_project(&worktree, changes, cx);
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
                     if is_local {
@@ -7577,6 +7822,32 @@ impl Project {
 
         cx.emit(Event::WorktreeAdded);
         self.metadata_changed(cx);
+    }
+
+    fn report_yarn_project(
+        &mut self,
+        worktree: &Model<Worktree>,
+        updated_entries_set: &UpdatedEntriesSet,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+        if !self.yarn_worktree_ids_reported.contains(&worktree_id) {
+            let is_yarn_project = updated_entries_set.iter().any(|(path, _, _)| {
+                path.as_ref()
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name_str| name_str == "yarn.lock")
+                    .unwrap_or(false)
+            });
+
+            if is_yarn_project {
+                self.client()
+                    .telemetry()
+                    .report_app_event("open yarn project".to_string());
+                self.yarn_worktree_ids_reported.push(worktree_id);
+            }
+        }
     }
 
     fn update_local_worktree_buffers(
@@ -7747,7 +8018,9 @@ impl Project {
                                     PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                                 };
                                 Some(lsp::FileEvent {
-                                    uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
+                                    uri: lsp::Uri::from_file_path(abs_path.join(path))
+                                        .unwrap()
+                                        .into(),
                                     typ,
                                 })
                             })
@@ -7856,10 +8129,7 @@ impl Project {
                                     None
                                 } else {
                                     let relative_path = repo.relativize(&snapshot, &path).ok()?;
-                                    local_repo_entry
-                                        .repo()
-                                        .lock()
-                                        .load_index_text(&relative_path)
+                                    local_repo_entry.repo().load_index_text(&relative_path)
                                 };
                                 Some((buffer, base_text))
                             }
@@ -7904,7 +8174,7 @@ impl Project {
         changes: &UpdatedEntriesSet,
         cx: &mut ModelContext<Self>,
     ) {
-        if worktree.read(cx).as_local().is_none() {
+        if worktree.read(cx).is_remote() {
             return;
         }
         let project_id = self.remote_id();
@@ -8066,23 +8336,34 @@ impl Project {
         include_ignored: bool,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (ProjectPath, LanguageServerId, DiagnosticSummary)> + 'a {
-        self.visible_worktrees(cx).flat_map(move |worktree| {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id();
-            worktree
-                .diagnostic_summaries()
-                .filter_map(move |(path, server_id, summary)| {
-                    if include_ignored
-                        || worktree
-                            .entry_for_path(path.as_ref())
-                            .map_or(false, |entry| !entry.is_ignored)
-                    {
-                        Some((ProjectPath { worktree_id, path }, server_id, summary))
-                    } else {
-                        None
-                    }
-                })
-        })
+        self.visible_worktrees(cx)
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                Some((worktree, self.diagnostic_summaries.get(&worktree.id())?))
+            })
+            .flat_map(move |(worktree, summaries)| {
+                let worktree_id = worktree.id();
+                summaries
+                    .iter()
+                    .filter(move |(path, _)| {
+                        include_ignored
+                            || worktree
+                                .entry_for_path(path.as_ref())
+                                .map_or(false, |entry| !entry.is_ignored)
+                    })
+                    .flat_map(move |(path, summaries)| {
+                        summaries.iter().map(move |(server_id, summary)| {
+                            (
+                                ProjectPath {
+                                    worktree_id,
+                                    path: path.clone(),
+                                },
+                                *server_id,
+                                *summary,
+                            )
+                        })
+                    })
+            })
     }
 
     pub fn disk_based_diagnostics_started(
@@ -8194,21 +8475,16 @@ impl Project {
         &self,
         project_path: &ProjectPath,
         cx: &AppContext,
-    ) -> Option<Arc<Mutex<dyn GitRepository>>> {
+    ) -> Option<Arc<dyn GitRepository>> {
         self.worktree_for_id(project_path.worktree_id, cx)?
             .read(cx)
             .as_local()?
-            .snapshot()
             .local_git_repo(&project_path.path)
     }
 
-    pub fn get_first_worktree_root_repo(
-        &self,
-        cx: &AppContext,
-    ) -> Option<Arc<Mutex<dyn GitRepository>>> {
+    pub fn get_first_worktree_root_repo(&self, cx: &AppContext) -> Option<Arc<dyn GitRepository>> {
         let worktree = self.visible_worktrees(cx).next()?.read(cx).as_local()?;
         let root_entry = worktree.root_git_entry()?;
-
         worktree.get_local_repo(&root_entry)?.repo().clone().into()
     }
 
@@ -8255,8 +8531,7 @@ impl Project {
 
             cx.background_executor().spawn(async move {
                 let (repo, relative_path, content) = blame_params?;
-                let lock = repo.lock();
-                lock.blame(&relative_path, content)
+                repo.blame(&relative_path, content)
                     .with_context(|| format!("Failed to blame {:?}", relative_path.0))
             })
         } else {
@@ -8611,18 +8886,7 @@ impl Project {
             this.worktree_for_id(worktree_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
-        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())?;
-        let entry = worktree
-            .update(&mut cx, |worktree, cx| {
-                let worktree = worktree.as_local_mut().unwrap();
-                let path = PathBuf::from(envelope.payload.path);
-                worktree.create_entry(path, envelope.payload.is_directory, cx)
-            })?
-            .await?;
-        Ok(proto::ProjectEntryResponse {
-            entry: entry.as_ref().map(|e| e.into()),
-            worktree_scan_id: worktree_scan_id as u64,
-        })
+        Worktree::handle_create_entry(worktree, envelope.payload, cx).await
     }
 
     async fn handle_rename_project_entry(
@@ -8636,20 +8900,7 @@ impl Project {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
-        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())?;
-        let entry = worktree
-            .update(&mut cx, |worktree, cx| {
-                let new_path = PathBuf::from(envelope.payload.new_path);
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .rename_entry(entry_id, new_path, cx)
-            })?
-            .await?;
-        Ok(proto::ProjectEntryResponse {
-            entry: entry.as_ref().map(|e| e.into()),
-            worktree_scan_id: worktree_scan_id as u64,
-        })
+        Worktree::handle_rename_entry(worktree, envelope.payload, cx).await
     }
 
     async fn handle_copy_project_entry(
@@ -8663,20 +8914,7 @@ impl Project {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
-        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())?;
-        let entry = worktree
-            .update(&mut cx, |worktree, cx| {
-                let new_path = PathBuf::from(envelope.payload.new_path);
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .copy_entry(entry_id, new_path, cx)
-            })?
-            .await?;
-        Ok(proto::ProjectEntryResponse {
-            entry: entry.as_ref().map(|e| e.into()),
-            worktree_scan_id: worktree_scan_id as u64,
-        })
+        Worktree::handle_copy_entry(worktree, envelope.payload, cx).await
     }
 
     async fn handle_delete_project_entry(
@@ -8686,28 +8924,12 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let trash = envelope.payload.use_trash;
-
-        this.update(&mut cx, |_, cx| cx.emit(Event::DeletedEntry(entry_id)))?;
-
         let worktree = this.update(&mut cx, |this, cx| {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
-        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())?;
-        worktree
-            .update(&mut cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .delete_entry(entry_id, trash, cx)
-                    .ok_or_else(|| anyhow!("invalid entry"))
-            })??
-            .await?;
-        Ok(proto::ProjectEntryResponse {
-            entry: None,
-            worktree_scan_id: worktree_scan_id as u64,
-        })
+        this.update(&mut cx, |_, cx| cx.emit(Event::DeletedEntry(entry_id)))?;
+        Worktree::handle_delete_entry(worktree, envelope.payload, cx).await
     }
 
     async fn handle_expand_project_entry(
@@ -8720,17 +8942,7 @@ impl Project {
         let worktree = this
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
             .ok_or_else(|| anyhow!("invalid request"))?;
-        worktree
-            .update(&mut cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .expand_entry(entry_id, cx)
-                    .ok_or_else(|| anyhow!("invalid entry"))
-            })??
-            .await?;
-        let worktree_scan_id = worktree.update(&mut cx, |worktree, _| worktree.scan_id())? as u64;
-        Ok(proto::ExpandProjectEntryResponse { worktree_scan_id })
+        Worktree::handle_expand_entry(worktree, envelope.payload, cx).await
     }
 
     async fn handle_update_diagnostic_summary(
@@ -8741,23 +8953,41 @@ impl Project {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
-                if let Some(summary) = envelope.payload.summary {
-                    let project_path = ProjectPath {
-                        worktree_id,
-                        path: Path::new(&summary.path).into(),
-                    };
-                    worktree.update(cx, |worktree, _| {
-                        worktree
-                            .as_remote_mut()
-                            .unwrap()
-                            .update_diagnostic_summary(project_path.path.clone(), &summary);
-                    });
-                    cx.emit(Event::DiagnosticsUpdated {
-                        language_server_id: LanguageServerId(summary.language_server_id as usize),
-                        path: project_path,
-                    });
+            if let Some(message) = envelope.payload.summary {
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: Path::new(&message.path).into(),
+                };
+                let path = project_path.path.clone();
+                let server_id = LanguageServerId(message.language_server_id as usize);
+                let summary = DiagnosticSummary {
+                    error_count: message.error_count as usize,
+                    warning_count: message.warning_count as usize,
+                };
+
+                if summary.is_empty() {
+                    if let Some(worktree_summaries) =
+                        this.diagnostic_summaries.get_mut(&worktree_id)
+                    {
+                        if let Some(summaries) = worktree_summaries.get_mut(&path) {
+                            summaries.remove(&server_id);
+                            if summaries.is_empty() {
+                                worktree_summaries.remove(&path);
+                            }
+                        }
+                    }
+                } else {
+                    this.diagnostic_summaries
+                        .entry(worktree_id)
+                        .or_default()
+                        .entry(path)
+                        .or_default()
+                        .insert(server_id, summary);
                 }
+                cx.emit(Event::DiagnosticsUpdated {
+                    language_server_id: LanguageServerId(message.language_server_id as usize),
+                    path: project_path,
+                });
             }
             Ok(())
         })?
@@ -10182,9 +10412,16 @@ impl Project {
             {
                 self.worktrees.push(WorktreeHandle::Strong(old_worktree));
             } else {
-                let worktree =
-                    Worktree::remote(remote_id, replica_id, worktree, self.client.clone(), cx);
-                let _ = self.add_worktree(&worktree, cx);
+                self.add_worktree(
+                    &Worktree::remote(
+                        remote_id,
+                        replica_id,
+                        worktree,
+                        Box::new(CollabRemoteWorktreeClient(self.client.clone())),
+                        cx,
+                    ),
+                    cx,
+                );
             }
         }
 
@@ -10218,7 +10455,7 @@ impl Project {
     fn deserialize_symbol(serialized_symbol: proto::Symbol) -> Result<CoreSymbol> {
         let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
         let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
-        let kind = unsafe { mem::transmute(serialized_symbol.kind) };
+        let kind = unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
         let path = ProjectPath {
             worktree_id,
             path: PathBuf::from(serialized_symbol.path).into(),
@@ -10947,7 +11184,7 @@ fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::Co
 
 #[allow(clippy::too_many_arguments)]
 async fn search_snapshots(
-    snapshots: &Vec<LocalSnapshot>,
+    snapshots: &Vec<(Snapshot, WorktreeSettings)>,
     worker_start_ix: usize,
     worker_end_ix: usize,
     query: &SearchQuery,
@@ -10959,7 +11196,7 @@ async fn search_snapshots(
     let mut snapshot_start_ix = 0;
     let mut abs_path = PathBuf::new();
 
-    for snapshot in snapshots {
+    for (snapshot, _) in snapshots {
         let snapshot_end_ix = snapshot_start_ix
             + if query.include_ignored() {
                 snapshot.file_count()
@@ -11025,7 +11262,8 @@ async fn search_snapshots(
 }
 
 async fn search_ignored_entry(
-    snapshot: &LocalSnapshot,
+    snapshot: &Snapshot,
+    settings: &WorktreeSettings,
     ignored_entry: &Entry,
     fs: &Arc<dyn Fs>,
     query: &SearchQuery,
@@ -11059,7 +11297,7 @@ async fn search_ignored_entry(
                 }
             } else if !fs_metadata.is_symlink {
                 if !query.file_matches(Some(&ignored_abs_path))
-                    || snapshot.is_path_excluded(&ignored_entry.path)
+                    || settings.is_path_excluded(&ignored_entry.path)
                 {
                     continue;
                 }
@@ -11132,6 +11370,18 @@ impl OpenBuffer {
             OpenBuffer::Weak(handle) => handle.upgrade(),
             OpenBuffer::Operations(_) => None,
         }
+    }
+}
+
+pub struct CollabRemoteWorktreeClient(Arc<Client>);
+
+impl RemoteWorktreeClient for CollabRemoteWorktreeClient {
+    fn request(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<proto::Envelope>> {
+        self.0.request_dynamic(envelope, request_type).boxed()
     }
 }
 
@@ -11329,7 +11579,7 @@ fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
         worktree_id: symbol.path.worktree_id.to_proto(),
         path: symbol.path.path.to_string_lossy().to_string(),
         name: symbol.name.clone(),
-        kind: unsafe { mem::transmute(symbol.kind) },
+        kind: unsafe { mem::transmute::<lsp::SymbolKind, i32>(symbol.kind) },
         start: Some(proto::PointUtf16 {
             row: symbol.range.start.0.row,
             column: symbol.range.start.0.column,
@@ -11436,6 +11686,13 @@ async fn wait_for_loading_buffer(
         }
         receiver.next().await;
     }
+}
+
+fn is_not_found_error(error: &anyhow::Error) -> bool {
+    error
+        .root_cause()
+        .downcast_ref::<io::Error>()
+        .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
 }
 
 fn include_text(server: &lsp::LanguageServer) -> bool {
@@ -11675,4 +11932,48 @@ fn deserialize_location(
             range: start..end,
         })
     })
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize)]
+pub struct DiagnosticSummary {
+    pub error_count: usize,
+    pub warning_count: usize,
+}
+
+impl DiagnosticSummary {
+    pub fn new<'a, T: 'a>(diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<T>>) -> Self {
+        let mut this = Self {
+            error_count: 0,
+            warning_count: 0,
+        };
+
+        for entry in diagnostics {
+            if entry.diagnostic.is_primary {
+                match entry.diagnostic.severity {
+                    DiagnosticSeverity::ERROR => this.error_count += 1,
+                    DiagnosticSeverity::WARNING => this.warning_count += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        this
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.error_count == 0 && self.warning_count == 0
+    }
+
+    pub fn to_proto(
+        &self,
+        language_server_id: LanguageServerId,
+        path: &Path,
+    ) -> proto::DiagnosticSummary {
+        proto::DiagnosticSummary {
+            path: path.to_string_lossy().to_string(),
+            language_server_id: language_server_id.0 as u64,
+            error_count: self.error_count as u32,
+            warning_count: self.warning_count as u32,
+        }
+    }
 }

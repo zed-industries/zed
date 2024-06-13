@@ -15,6 +15,7 @@ env:
 
 jobs:
   style:
+    timeout-minutes: 60
     name: Check formatting and Clippy lints
     if: github.repository_owner == 'zed-industries'
     runs-on:
@@ -33,6 +34,7 @@ jobs:
       - name: Run clippy
         run: cargo xtask clippy
   tests:
+    timeout-minutes: 60
     name: Run tests
     if: github.repository_owner == 'zed-industries'
     runs-on:
@@ -49,6 +51,7 @@ jobs:
         uses: ./.github/actions/run_tests
 
   bundle-mac:
+    timeout-minutes: 60
     name: Create a macOS bundle
     if: github.repository_owner == 'zed-industries'
     runs-on:
@@ -91,6 +94,7 @@ jobs:
         run: script/upload-nightly macos
 
   bundle-deb:
+    timeout-minutes: 60
     name: Create a Linux *.tar.gz bundle
     if: github.repository_owner == 'zed-industries'
     runs-on:

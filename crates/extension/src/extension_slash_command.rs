@@ -27,7 +27,7 @@ impl SlashCommand for ExtensionSlashCommand {
         self.command.description.clone()
     }
 
-    fn tooltip_text(&self) -> String {
+    fn menu_text(&self) -> String {
         self.command.tooltip_text.clone()
     }
 
@@ -39,7 +39,7 @@ impl SlashCommand for ExtensionSlashCommand {
         &self,
         _query: String,
         _cancel: Arc<AtomicBool>,
-        _workspace: WeakView<Workspace>,
+        _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Ok(Vec::new()))
@@ -100,6 +100,7 @@ impl SlashCommand for ExtensionSlashCommand {
                         }
                     }),
                 }],
+                run_commands_in_text: false,
             })
         })
     }
