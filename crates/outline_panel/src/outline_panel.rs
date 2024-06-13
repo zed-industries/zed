@@ -503,6 +503,11 @@ impl OutlinePanel {
         };
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
         let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
+        let offset_from_top = if active_multi_buffer.read(cx).is_singleton() {
+            Point::default()
+        } else {
+            Point::new(0.0, -(active_editor.read(cx).file_header_size() as f32))
+        };
 
         match &entry {
             EntryOwned::Entry(FsEntry::ExternalFile(buffer_id)) => {
@@ -521,7 +526,7 @@ impl OutlinePanel {
                     active_editor.update(cx, |editor, cx| {
                         editor.set_scroll_anchor(
                             ScrollAnchor {
-                                offset: Point::new(0.0, -(editor.file_header_size() as f32)),
+                                offset: offset_from_top,
                                 anchor,
                             },
                             cx,
@@ -558,7 +563,7 @@ impl OutlinePanel {
                     active_editor.update(cx, |editor, cx| {
                         editor.set_scroll_anchor(
                             ScrollAnchor {
-                                offset: Point::new(0.0, -(editor.file_header_size() as f32)),
+                                offset: offset_from_top,
                                 anchor,
                             },
                             cx,
