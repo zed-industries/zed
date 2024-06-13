@@ -17,6 +17,7 @@ echo -e "# ###### CODE LICENSES ######\n" >> $OUTPUT_FILE
 [[ "$(cargo about --version)" == "cargo-about 0.6.1" ]] || cargo install cargo-about@0.6.1
 
 echo "Generating cargo licenses"
+cargo install cargo-about
 cargo about generate --fail -c script/licenses/zed-licenses.toml script/licenses/template.hbs.md >> $OUTPUT_FILE
 
 

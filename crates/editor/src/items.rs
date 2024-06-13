@@ -234,7 +234,7 @@ impl FollowableItem for Editor {
 
     fn to_follow_event(event: &EditorEvent) -> Option<workspace::item::FollowEvent> {
         match event {
-            EditorEvent::Edited => Some(FollowEvent::Unfollow),
+            EditorEvent::Edited { .. } => Some(FollowEvent::Unfollow),
             EditorEvent::SelectionsChanged { local }
             | EditorEvent::ScrollPositionChanged { local, .. } => {
                 if *local {

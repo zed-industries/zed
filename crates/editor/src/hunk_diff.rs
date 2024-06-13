@@ -615,32 +615,36 @@ fn editor_with_deleted_text(
         ]);
         let original_multi_buffer_range = hunk.multi_buffer_range.clone();
         let diff_base_range = hunk.diff_base_byte_range.clone();
-        editor.register_action::<RevertSelectedHunks>(move |_, cx| {
-            parent_editor
-                .update(cx, |editor, cx| {
-                    let Some((buffer, original_text)) = editor.buffer().update(cx, |buffer, cx| {
-                        let (_, buffer, _) =
-                            buffer.excerpt_containing(original_multi_buffer_range.start, cx)?;
-                        let original_text =
-                            buffer.read(cx).diff_base()?.slice(diff_base_range.clone());
-                        Some((buffer, Arc::from(original_text.to_string())))
-                    }) else {
-                        return;
-                    };
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.edit(
-                            Some((
-                                original_multi_buffer_range.start.text_anchor
-                                    ..original_multi_buffer_range.end.text_anchor,
-                                original_text,
-                            )),
-                            None,
-                            cx,
-                        )
-                    });
-                })
-                .ok();
-        });
+        editor
+            .register_action::<RevertSelectedHunks>(move |_, cx| {
+                parent_editor
+                    .update(cx, |editor, cx| {
+                        let Some((buffer, original_text)) =
+                            editor.buffer().update(cx, |buffer, cx| {
+                                let (_, buffer, _) = buffer
+                                    .excerpt_containing(original_multi_buffer_range.start, cx)?;
+                                let original_text =
+                                    buffer.read(cx).diff_base()?.slice(diff_base_range.clone());
+                                Some((buffer, Arc::from(original_text.to_string())))
+                            })
+                        else {
+                            return;
+                        };
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.edit(
+                                Some((
+                                    original_multi_buffer_range.start.text_anchor
+                                        ..original_multi_buffer_range.end.text_anchor,
+                                    original_text,
+                                )),
+                                None,
+                                cx,
+                            )
+                        });
+                    })
+                    .ok();
+            })
+            .detach();
         editor
     });
 

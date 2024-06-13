@@ -217,6 +217,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         &self,
         buffer: &Model<Buffer>,
         buffer_position: Anchor,
+        _: editor::CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<project::Completion>>> {
         let Some((name, argument, command_range, argument_range)) =

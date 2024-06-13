@@ -14,7 +14,7 @@ impl HandleTag for WikipediaChromeRemover {
         tag: &HtmlElement,
         _writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
-        match tag.tag.as_str() {
+        match tag.tag() {
             "head" | "script" | "style" | "nav" => return StartTagOutcome::Skip,
             "sup" => {
                 if tag.has_class("reference") {
@@ -54,7 +54,7 @@ impl HandleTag for WikipediaInfoboxHandler {
         tag: &HtmlElement,
         _writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
-        match tag.tag.as_str() {
+        match tag.tag() {
             "table" => {
                 if tag.has_class("infobox") {
                     return StartTagOutcome::Skip;
@@ -90,7 +90,7 @@ impl HandleTag for WikipediaCodeHandler {
         tag: &HtmlElement,
         writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
-        match tag.tag.as_str() {
+        match tag.tag() {
             "code" => {
                 if !writer.is_inside("pre") {
                     writer.push_str("`");
@@ -121,7 +121,7 @@ impl HandleTag for WikipediaCodeHandler {
     }
 
     fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
-        match tag.tag.as_str() {
+        match tag.tag() {
             "code" => {
                 if !writer.is_inside("pre") {
                     writer.push_str("`");

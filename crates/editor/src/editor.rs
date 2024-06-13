@@ -87,7 +87,8 @@ use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
-use lsp::{DiagnosticSeverity, LanguageServerId};
+pub use lsp::CompletionContext;
+use lsp::{CompletionTriggerKind, DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
@@ -110,15 +111,16 @@ use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
-use std::ops::Not as _;
 use std::{
     any::TypeId,
     borrow::Cow,
+    cell::RefCell,
     cmp::{self, Ordering, Reverse},
     mem,
     num::NonZeroU32,
-    ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
+    ops::{ControlFlow, Deref, DerefMut, Not as _, Range, RangeInclusive},
     path::Path,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -145,6 +147,9 @@ use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 use crate::hover_links::find_url;
 use crate::signature_help_popover::{create_signature_help_markdown_string, SignatureHelpPopover};
 
+pub const FILE_HEADER_HEIGHT: u8 = 1;
+pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u8 = 1;
+pub const MULTI_BUFFER_EXCERPT_FOOTER_HEIGHT: u8 = 1;
 pub const DEFAULT_MULTIBUFFER_CONTEXT: u32 = 2;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -370,6 +375,19 @@ impl Default for EditorStyle {
 
 type CompletionId = usize;
 
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
+struct EditorActionId(usize);
+
+impl EditorActionId {
+    pub fn post_inc(&mut self) -> Self {
+        let answer = self.0;
+
+        *self = Self(answer + 1);
+
+        Self(answer)
+    }
+}
+
 // type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
@@ -507,7 +525,8 @@ pub struct Editor {
     gutter_dimensions: GutterDimensions,
     pub vim_replace_map: HashMap<Range<usize>, String>,
     style: Option<EditorStyle>,
-    editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
+    next_editor_action_id: EditorActionId,
+    editor_actions: Rc<RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&mut ViewContext<Self>)>>>>,
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
     show_git_blame_gutter: bool,
@@ -527,6 +546,7 @@ pub struct Editor {
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
+    file_header_size: u8,
 }
 
 #[derive(Clone)]
@@ -1500,7 +1520,7 @@ struct ActiveDiagnosticGroup {
     is_valid: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ClipboardSelection {
     pub len: usize,
     pub is_entire_line: bool,
@@ -1649,9 +1669,8 @@ impl Editor {
             }),
             merge_adjacent: true,
         };
+        let file_header_size = if show_excerpt_controls { 3 } else { 2 };
         let display_map = cx.new_model(|cx| {
-            let file_header_size = if show_excerpt_controls { 3 } else { 2 };
-
             DisplayMap::new(
                 buffer.clone(),
                 style.font(),
@@ -1659,8 +1678,8 @@ impl Editor {
                 None,
                 show_excerpt_controls,
                 file_header_size,
-                1,
-                1,
+                MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+                MULTI_BUFFER_EXCERPT_FOOTER_HEIGHT,
                 fold_placeholder,
                 cx,
             )
@@ -1802,7 +1821,8 @@ impl Editor {
             style: None,
             show_cursor_names: false,
             hovered_cursors: Default::default(),
-            editor_actions: Default::default(),
+            next_editor_action_id: EditorActionId::default(),
+            editor_actions: Rc::default(),
             vim_replace_map: Default::default(),
             show_inline_completions: mode == EditorMode::Full,
             custom_context_menu: None,
@@ -1812,6 +1832,7 @@ impl Editor {
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             blame: None,
             blame_subscription: None,
+            file_header_size,
             tasks: Default::default(),
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2280,7 +2301,7 @@ impl Editor {
                     .detach();
 
                     if show_completions {
-                        self.show_completions(&ShowCompletions, cx);
+                        self.show_completions(&ShowCompletions { trigger: None }, cx);
                     }
                 } else {
                     drop(context_menu);
@@ -3479,7 +3500,12 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if self.is_completion_trigger(text, trigger_in_words, cx) {
-            self.show_completions(&ShowCompletions, cx);
+            self.show_completions(
+                &ShowCompletions {
+                    trigger: text.chars().last(),
+                },
+                cx,
+            );
         } else {
             self.hide_context_menu(cx);
         }
@@ -3926,7 +3952,7 @@ impl Editor {
         self.signature_help_task = Some(task);
     }
 
-    pub fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
+    pub fn show_completions(&mut self, options: &ShowCompletions, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
         }
@@ -3944,7 +3970,29 @@ impl Editor {
             };
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
-        let completions = provider.completions(&buffer, buffer_position, cx);
+        let is_followup_invoke = {
+            let context_menu_state = self.context_menu.read();
+            matches!(
+                context_menu_state.deref(),
+                Some(ContextMenu::Completions(_))
+            )
+        };
+        let trigger_kind = match (options.trigger, is_followup_invoke) {
+            (_, true) => CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS,
+            (Some(_), _) => CompletionTriggerKind::TRIGGER_CHARACTER,
+            _ => CompletionTriggerKind::INVOKED,
+        };
+        let completion_context = CompletionContext {
+            trigger_character: options.trigger.and_then(|c| {
+                if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
+                    Some(String::from(c))
+                } else {
+                    None
+                }
+            }),
+            trigger_kind,
+        };
+        let completions = provider.completions(&buffer, buffer_position, completion_context, cx);
 
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
@@ -4202,7 +4250,7 @@ impl Editor {
         }
 
         if completion.show_new_completions_on_confirm {
-            self.show_completions(&ShowCompletions, cx);
+            self.show_completions(&ShowCompletions { trigger: None }, cx);
         }
 
         let provider = self.completion_provider.as_ref()?;
@@ -6500,29 +6548,9 @@ impl Editor {
             return;
         }
 
-        if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
-            if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
-                self.change_selections(None, cx, |s| {
-                    s.select_anchors(selections.to_vec());
-                });
-            }
-            self.request_autoscroll(Autoscroll::fit(), cx);
-            self.unmark_text(cx);
-            self.refresh_inline_completion(true, cx);
-            cx.emit(EditorEvent::Edited);
-            cx.emit(EditorEvent::TransactionUndone {
-                transaction_id: tx_id,
-            });
-        }
-    }
-
-    pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
-        if self.read_only(cx) {
-            return;
-        }
-
-        if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
-            if let Some((_, Some(selections))) = self.selection_history.transaction(tx_id).cloned()
+        if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
+            if let Some((selections, _)) =
+                self.selection_history.transaction(transaction_id).cloned()
             {
                 self.change_selections(None, cx, |s| {
                     s.select_anchors(selections.to_vec());
@@ -6531,7 +6559,28 @@ impl Editor {
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
             self.refresh_inline_completion(true, cx);
-            cx.emit(EditorEvent::Edited);
+            cx.emit(EditorEvent::Edited { transaction_id });
+            cx.emit(EditorEvent::TransactionUndone { transaction_id });
+        }
+    }
+
+    pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
+        if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
+            if let Some((_, Some(selections))) =
+                self.selection_history.transaction(transaction_id).cloned()
+            {
+                self.change_selections(None, cx, |s| {
+                    s.select_anchors(selections.to_vec());
+                });
+            }
+            self.request_autoscroll(Autoscroll::fit(), cx);
+            self.unmark_text(cx);
+            self.refresh_inline_completion(true, cx);
+            cx.emit(EditorEvent::Edited { transaction_id });
         }
     }
 
@@ -8955,7 +9004,7 @@ impl Editor {
                         });
                     language_server_name.map(|language_server_name| {
                         project.open_local_buffer_via_lsp(
-                            lsp_location.uri.clone(),
+                            lsp::Uri::from(lsp_location.uri.clone()),
                             server_id,
                             language_server_name,
                             cx,
@@ -9642,18 +9691,20 @@ impl Editor {
         now: Instant,
         cx: &mut ViewContext<Self>,
     ) -> Option<TransactionId> {
-        if let Some(tx_id) = self
+        if let Some(transaction_id) = self
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
-            if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
+            if let Some((_, end_selections)) =
+                self.selection_history.transaction_mut(transaction_id)
+            {
                 *end_selections = Some(self.selections.disjoint_anchors());
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
 
-            cx.emit(EditorEvent::Edited);
-            Some(tx_id)
+            cx.emit(EditorEvent::Edited { transaction_id });
+            Some(transaction_id)
         } else {
             None
         }
@@ -10885,6 +10936,12 @@ impl Editor {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
+            multi_buffer::Event::ExcerptsEdited { ids } => {
+                cx.emit(EditorEvent::ExcerptsEdited { ids: ids.clone() })
+            }
+            multi_buffer::Event::ExcerptsExpanded { ids } => {
+                cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
+            }
             multi_buffer::Event::Reparsed => {
                 self.tasks_update_task = Some(self.refresh_runnables(cx));
 
@@ -11339,21 +11396,32 @@ impl Editor {
     pub fn register_action<A: Action>(
         &mut self,
         listener: impl Fn(&A, &mut WindowContext) + 'static,
-    ) -> &mut Self {
+    ) -> Subscription {
+        let id = self.next_editor_action_id.post_inc();
         let listener = Arc::new(listener);
+        self.editor_actions.borrow_mut().insert(
+            id,
+            Box::new(move |cx| {
+                let _view = cx.view().clone();
+                let cx = cx.window_context();
+                let listener = listener.clone();
+                cx.on_action(TypeId::of::<A>(), move |action, phase, cx| {
+                    let action = action.downcast_ref().unwrap();
+                    if phase == DispatchPhase::Bubble {
+                        listener(action, cx)
+                    }
+                })
+            }),
+        );
 
-        self.editor_actions.push(Box::new(move |cx| {
-            let _view = cx.view().clone();
-            let cx = cx.window_context();
-            let listener = listener.clone();
-            cx.on_action(TypeId::of::<A>(), move |action, phase, cx| {
-                let action = action.downcast_ref().unwrap();
-                if phase == DispatchPhase::Bubble {
-                    listener(action, cx)
-                }
-            })
-        }));
-        self
+        let editor_actions = self.editor_actions.clone();
+        Subscription::new(move || {
+            editor_actions.borrow_mut().remove(&id);
+        })
+    }
+
+    pub fn file_header_size(&self) -> u8 {
+        self.file_header_size
     }
 }
 
@@ -11444,6 +11512,7 @@ pub trait CompletionProvider {
         &self,
         buffer: &Model<Buffer>,
         buffer_position: text::Anchor,
+        trigger: CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<Completion>>>;
 
@@ -11478,10 +11547,11 @@ impl CompletionProvider for Model<Project> {
         &self,
         buffer: &Model<Buffer>,
         buffer_position: text::Anchor,
+        options: CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<Completion>>> {
         self.update(cx, |project, cx| {
-            project.completions(&buffer, buffer_position, cx)
+            project.completions(&buffer, buffer_position, options, cx)
         })
     }
 
@@ -11799,8 +11869,16 @@ pub enum EditorEvent {
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
     },
+    ExcerptsEdited {
+        ids: Vec<ExcerptId>,
+    },
+    ExcerptsExpanded {
+        ids: Vec<ExcerptId>,
+    },
     BufferEdited,
-    Edited,
+    Edited {
+        transaction_id: clock::Lamport,
+    },
     Reparsed,
     Focused,
     Blurred,
