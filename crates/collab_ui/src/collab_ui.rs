@@ -97,21 +97,19 @@ pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
 
 fn notification_window_options(
     screen: Rc<dyn PlatformDisplay>,
-    window_size: Size<Pixels>,
+    size: Size<Pixels>,
     cx: &AppContext,
 ) -> WindowOptions {
     let notification_margin_width = px(16.);
     let notification_margin_height = px(-48.);
 
-    let screen_bounds = screen.bounds();
-
     let bounds = gpui::Bounds::<Pixels> {
-        origin: screen_bounds.upper_right()
+        origin: screen.bounds().upper_right()
             - point(
-                window_size.width + notification_margin_width,
+                size.width + notification_margin_width,
                 notification_margin_height,
             ),
-        size: window_size.into(),
+        size,
     };
 
     let app_id = ReleaseChannel::global(cx).app_id();
