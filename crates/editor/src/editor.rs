@@ -11305,19 +11305,6 @@ impl Editor {
     fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(EditorEvent::Focused);
 
-        let path = self
-            .buffer
-            .read(cx)
-            .read(cx)
-            .file_at(0)
-            .map_or("untitled".to_string(), |file| {
-                file.path().to_string_lossy().to_string()
-            });
-        println!(
-            "{:?}: handle_focus, last_focused = {:?}",
-            path,
-            self.last_focused.as_ref()
-        );
         if let Some(last_focused) = self
             .last_focused
             .as_ref()
@@ -11347,19 +11334,6 @@ impl Editor {
 
     fn handle_descendant_focus(&mut self, cx: &mut ViewContext<Self>) {
         self.last_focused = cx.focused().map(|focused| focused.downgrade());
-        let path = self
-            .buffer
-            .read(cx)
-            .read(cx)
-            .file_at(0)
-            .map_or("untitled".to_string(), |file| {
-                file.path().to_string_lossy().to_string()
-            });
-        println!(
-            "{:?}: handle_descendant_focus, setting last_focused to {:?}",
-            path,
-            self.last_focused.as_ref()
-        );
     }
 
     pub fn handle_blur(&mut self, cx: &mut ViewContext<Self>) {
