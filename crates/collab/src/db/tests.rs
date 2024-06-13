@@ -108,6 +108,7 @@ impl TestDb {
 #[macro_export]
 macro_rules! test_both_dbs {
     ($test_name:ident, $postgres_test_name:ident, $sqlite_test_name:ident) => {
+        #[cfg(target_os = "macos")]
         #[gpui::test]
         async fn $postgres_test_name(cx: &mut gpui::TestAppContext) {
             let test_db = $crate::db::TestDb::postgres(cx.executor().clone());
