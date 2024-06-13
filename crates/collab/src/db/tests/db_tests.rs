@@ -1,9 +1,7 @@
 use super::*;
 use crate::test_both_dbs;
-use gpui::TestAppContext;
 use pretty_assertions::{assert_eq, assert_ne};
 use std::sync::Arc;
-use tests::TestDb;
 
 test_both_dbs!(
     test_get_users,
@@ -566,8 +564,8 @@ fn test_fuzzy_like_string() {
 
 #[cfg(target = "macos")]
 #[gpui::test]
-async fn test_fuzzy_search_users(cx: &mut TestAppContext) {
-    let test_db = TestDb::postgres(cx.executor());
+async fn test_fuzzy_search_users(cx: &mut gpui::TestAppContext) {
+    let test_db = tests::TestDb::postgres(cx.executor());
     let db = test_db.db();
     for (i, github_login) in [
         "California",
