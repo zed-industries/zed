@@ -72,6 +72,7 @@ actions!(
         ShowAll,
         ToggleFullScreen,
         Zoom,
+        TestPanic,
     ]
 );
 
@@ -83,6 +84,10 @@ pub fn init(cx: &mut AppContext) {
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(quit);
+
+    if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
+        cx.on_action(test_panic);
+    }
 }
 
 pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> WindowOptions {
@@ -470,6 +475,10 @@ fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
             prompt.await.ok();
         })
         .detach();
+}
+
+fn test_panic(_: &TestPanic, _: &mut AppContext) {
+    panic!("Ran the TestPanic action")
 }
 
 fn quit(_: &Quit, cx: &mut AppContext) {
