@@ -6705,7 +6705,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("editor.cloˇ");
     assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
     cx.update_editor(|editor, cx| {
-        editor.show_completions(&ShowCompletions, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, cx);
     });
     handle_completion_request(
         &mut cx,

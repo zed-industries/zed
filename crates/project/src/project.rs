@@ -58,7 +58,7 @@ use language::{
 };
 use log::error;
 use lsp::{
-    DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
+    CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, Edit, FileSystemWatcher, LanguageServer, LanguageServerBinary,
     LanguageServerId, LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities,
     ServerHealthStatus, ServerStatus, TextEdit, Uri,
@@ -650,6 +650,12 @@ pub enum SearchResult {
     },
     LimitReached,
 }
+
+#[cfg(any(test, feature = "test-support"))]
+pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
+    trigger_kind: lsp::CompletionTriggerKind::INVOKED,
+    trigger_character: None,
+};
 
 impl Project {
     pub fn init_settings(cx: &mut AppContext) {
@@ -5875,6 +5881,7 @@ impl Project {
         &self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
+        context: CompletionContext,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
         let language_registry = self.languages.clone();
@@ -5908,7 +5915,10 @@ impl Project {
                             this.request_lsp(
                                 buffer.clone(),
                                 LanguageServerToQuery::Other(server_id),
-                                GetCompletions { position },
+                                GetCompletions {
+                                    position,
+                                    context: context.clone(),
+                                },
                                 cx,
                             ),
                         ));
@@ -5935,7 +5945,7 @@ impl Project {
             let task = self.send_lsp_proto_request(
                 buffer.clone(),
                 project_id,
-                GetCompletions { position },
+                GetCompletions { position, context },
                 cx,
             );
             let language = buffer.read(cx).language().cloned();
@@ -5969,10 +5979,11 @@ impl Project {
         &self,
         buffer: &Model<Buffer>,
         position: T,
+        context: CompletionContext,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.completions_impl(buffer, position, cx)
+        self.completions_impl(buffer, position, context, cx)
     }
 
     pub fn resolve_completions(

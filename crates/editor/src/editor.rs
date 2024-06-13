@@ -93,7 +93,8 @@ use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
-use lsp::{DiagnosticSeverity, LanguageServerId};
+pub use lsp::CompletionContext;
+use lsp::{CompletionTriggerKind, DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
@@ -2300,7 +2301,7 @@ impl Editor {
                     .detach();
 
                     if show_completions {
-                        self.show_completions(&ShowCompletions, cx);
+                        self.show_completions(&ShowCompletions { trigger: None }, cx);
                     }
                 } else {
                     drop(context_menu);
@@ -3494,7 +3495,12 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if self.is_completion_trigger(text, trigger_in_words, cx) {
-            self.show_completions(&ShowCompletions, cx);
+            self.show_completions(
+                &ShowCompletions {
+                    trigger: text.chars().last(),
+                },
+                cx,
+            );
         } else {
             self.hide_context_menu(cx);
         }
@@ -3890,7 +3896,7 @@ impl Editor {
         }))
     }
 
-    pub fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
+    pub fn show_completions(&mut self, options: &ShowCompletions, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
         }
@@ -3908,7 +3914,29 @@ impl Editor {
             };
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
-        let completions = provider.completions(&buffer, buffer_position, cx);
+        let is_followup_invoke = {
+            let context_menu_state = self.context_menu.read();
+            matches!(
+                context_menu_state.deref(),
+                Some(ContextMenu::Completions(_))
+            )
+        };
+        let trigger_kind = match (options.trigger, is_followup_invoke) {
+            (_, true) => CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS,
+            (Some(_), _) => CompletionTriggerKind::TRIGGER_CHARACTER,
+            _ => CompletionTriggerKind::INVOKED,
+        };
+        let completion_context = CompletionContext {
+            trigger_character: options.trigger.and_then(|c| {
+                if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
+                    Some(String::from(c))
+                } else {
+                    None
+                }
+            }),
+            trigger_kind,
+        };
+        let completions = provider.completions(&buffer, buffer_position, completion_context, cx);
 
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
@@ -4166,7 +4194,7 @@ impl Editor {
         }
 
         if completion.show_new_completions_on_confirm {
-            self.show_completions(&ShowCompletions, cx);
+            self.show_completions(&ShowCompletions { trigger: None }, cx);
         }
 
         let provider = self.completion_provider.as_ref()?;
@@ -11428,6 +11456,7 @@ pub trait CompletionProvider {
         &self,
         buffer: &Model<Buffer>,
         buffer_position: text::Anchor,
+        trigger: CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<Completion>>>;
 
@@ -11462,10 +11491,11 @@ impl CompletionProvider for Model<Project> {
         &self,
         buffer: &Model<Buffer>,
         buffer_position: text::Anchor,
+        options: CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<Completion>>> {
         self.update(cx, |project, cx| {
-            project.completions(&buffer, buffer_position, cx)
+            project.completions(&buffer, buffer_position, options, cx)
         })
     }
 

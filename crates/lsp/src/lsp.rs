@@ -1061,7 +1061,7 @@ impl LanguageServer {
             select! {
                 response = rx.fuse() => {
                     let elapsed = started.elapsed();
-                    log::trace!("Took {elapsed:?} to receive response to {method:?} id {id}");
+                    log::info!("Took {elapsed:?} to receive response to {method:?} id {id}");
                     cancel_on_drop.abort();
                     response?
                 }

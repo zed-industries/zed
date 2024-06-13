@@ -2499,7 +2499,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     let text = "let a = b.fqn";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len(), cx)
+        project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server
@@ -2526,7 +2526,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     let text = "let a = \"atoms/cmp\"";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len() - 1, cx)
+        project.completions(&buffer, text.len() - 1, DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server
@@ -2591,7 +2591,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
     let text = "let a = b.fqn";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len(), cx)
+        project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server

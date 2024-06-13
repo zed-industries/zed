@@ -2350,7 +2350,7 @@ impl ContextEditor {
                     editor.insert(&format!("/{name}"), cx);
                     if command.requires_argument() {
                         editor.insert(" ", cx);
-                        editor.show_completions(&ShowCompletions, cx);
+                        editor.show_completions(&ShowCompletions::default(), cx);
                     }
                 });
             });

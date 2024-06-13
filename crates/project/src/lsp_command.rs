@@ -16,8 +16,9 @@ use language::{
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
-    CompletionListItemDefaultsEditRange, DocumentHighlightKind, LanguageServer, LanguageServerId,
-    LinkedEditingRangeServerCapabilities, OneOf, ServerCapabilities,
+    CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
+    DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
+    OneOf, ServerCapabilities,
 };
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
@@ -127,6 +128,7 @@ pub(crate) struct GetHover {
 
 pub(crate) struct GetCompletions {
     pub position: PointUtf16,
+    pub context: CompletionContext,
 }
 
 #[derive(Clone)]
@@ -1464,7 +1466,7 @@ impl LspCommand for GetCompletions {
                 lsp::TextDocumentIdentifier::new(lsp::Uri::from_file_path(path).unwrap().into()),
                 point_to_lsp(self.position),
             ),
-            context: Default::default(),
+            context: Some(self.context.clone()),
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         }
@@ -1649,7 +1651,13 @@ impl LspCommand for GetCompletions {
                 })
             })
             .ok_or_else(|| anyhow!("invalid position"))??;
-        Ok(Self { position })
+        Ok(Self {
+            position,
+            context: CompletionContext {
+                trigger_kind: CompletionTriggerKind::INVOKED,
+                trigger_character: None,
+            },
+        })
     }
 
     fn response_to_proto(
