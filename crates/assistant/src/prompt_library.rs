@@ -733,12 +733,26 @@ impl PromptLibrary {
                                 .justify_between()
                                 .child(
                                     h_flex()
-                                        .gap_4()
+                                        .gap_2()
                                         .child(
-                                            Label::new(
-                                                prompt_metadata.title.unwrap_or("Untitled".into()),
-                                            )
-                                            .size(LabelSize::Large),
+                                            div()
+                                                .cursor_text()
+                                                .hover(|style| {
+                                                    style
+                                                        .border_1()
+                                                        .border_color(
+                                                            cx.theme().colors().border_selected,
+                                                        )
+                                                        .rounded_sm()
+                                                })
+                                                .child(
+                                                    Label::new(
+                                                        prompt_metadata
+                                                            .title
+                                                            .unwrap_or("Untitled".into()),
+                                                    )
+                                                    .size(LabelSize::Large),
+                                                ),
                                         )
                                         .children(prompt_editor.token_count.map(|token_count| {
                                             let token_count = token_count.to_string();
