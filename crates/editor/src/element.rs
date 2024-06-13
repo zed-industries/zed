@@ -153,7 +153,7 @@ impl EditorElement {
     fn register_actions(&self, cx: &mut WindowContext) {
         let view = &self.editor;
         view.update(cx, |editor, cx| {
-            for action in editor.editor_actions.iter() {
+            for action in editor.editor_actions.borrow().values() {
                 (action)(cx)
             }
         });

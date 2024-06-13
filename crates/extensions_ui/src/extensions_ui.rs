@@ -773,7 +773,7 @@ impl ExtensionsPage {
         event: &editor::EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let editor::EditorEvent::Edited = event {
+        if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
             self.fetch_extensions_debounced(cx);
         }

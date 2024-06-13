@@ -68,11 +68,13 @@ impl OutlineView {
     fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         if editor.mode() == EditorMode::Full {
             let handle = cx.view().downgrade();
-            editor.register_action(move |action, cx| {
-                if let Some(editor) = handle.upgrade() {
-                    toggle(editor, action, cx);
-                }
-            });
+            editor
+                .register_action(move |action, cx| {
+                    if let Some(editor) = handle.upgrade() {
+                        toggle(editor, action, cx);
+                    }
+                })
+                .detach();
         }
     }
 

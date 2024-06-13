@@ -271,7 +271,9 @@ impl Vim {
             EditorEvent::TransactionUndone { transaction_id } => Vim::update(cx, |vim, cx| {
                 vim.transaction_undone(transaction_id, cx);
             }),
-            EditorEvent::Edited => Vim::update(cx, |vim, cx| vim.transaction_ended(editor, cx)),
+            EditorEvent::Edited { .. } => {
+                Vim::update(cx, |vim, cx| vim.transaction_ended(editor, cx))
+            }
             _ => {}
         }));
 

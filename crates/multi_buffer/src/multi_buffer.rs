@@ -789,6 +789,68 @@ impl MultiBuffer {
         }
     }
 
+    pub fn edited_ranges_for_transaction<D>(
+        &self,
+        transaction_id: TransactionId,
+        cx: &AppContext,
+    ) -> Vec<Range<D>>
+    where
+        D: TextDimension + Ord + Sub<D, Output = D>,
+    {
+        if let Some(buffer) = self.as_singleton() {
+            return buffer
+                .read(cx)
+                .edited_ranges_for_transaction_id(transaction_id)
+                .collect::<Vec<_>>();
+        }
+
+        let Some(transaction) = self.history.transaction(transaction_id) else {
+            return Vec::new();
+        };
+
+        let mut ranges = Vec::new();
+        let snapshot = self.read(cx);
+        let buffers = self.buffers.borrow();
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
+
+        for (buffer_id, buffer_transaction) in &transaction.buffer_transactions {
+            let Some(buffer_state) = buffers.get(&buffer_id) else {
+                continue;
+            };
+
+            let buffer = buffer_state.buffer.read(cx);
+            for range in buffer.edited_ranges_for_transaction_id::<D>(*buffer_transaction) {
+                for excerpt_id in &buffer_state.excerpts {
+                    cursor.seek(excerpt_id, Bias::Left, &());
+                    if let Some(excerpt) = cursor.item() {
+                        if excerpt.locator == *excerpt_id {
+                            let excerpt_buffer_start =
+                                excerpt.range.context.start.summary::<D>(buffer);
+                            let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(buffer);
+                            let excerpt_range = excerpt_buffer_start.clone()..excerpt_buffer_end;
+                            if excerpt_range.contains(&range.start)
+                                && excerpt_range.contains(&range.end)
+                            {
+                                let excerpt_start = D::from_text_summary(&cursor.start().text);
+
+                                let mut start = excerpt_start.clone();
+                                start.add_assign(&(range.start - excerpt_buffer_start.clone()));
+                                let mut end = excerpt_start;
+                                end.add_assign(&(range.end - excerpt_buffer_start));
+
+                                ranges.push(start..end);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ranges.sort_by_key(|range| range.start.clone());
+        ranges
+    }
+
     pub fn merge_transactions(
         &mut self,
         transaction: TransactionId,
@@ -3968,6 +4030,17 @@ impl History {
         }
     }
 
+    fn transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        self.undo_stack
+            .iter()
+            .find(|transaction| transaction.id == transaction_id)
+            .or_else(|| {
+                self.redo_stack
+                    .iter()
+                    .find(|transaction| transaction.id == transaction_id)
+            })
+    }
+
     fn transaction_mut(&mut self, transaction_id: TransactionId) -> Option<&mut Transaction> {
         self.undo_stack
             .iter_mut()
@@ -6059,6 +6132,15 @@ mod tests {
             );
             multibuffer.end_transaction_at(now, cx);
             assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
+
+            // Verify edited ranges for transaction 1
+            assert_eq!(
+                multibuffer.edited_ranges_for_transaction(transaction_1, cx),
+                &[
+                    Point::new(0, 0)..Point::new(0, 2),
+                    Point::new(1, 0)..Point::new(1, 2)
+                ]
+            );
 
             // Edit buffer 1 through the multibuffer
             now += 2 * group_interval;
