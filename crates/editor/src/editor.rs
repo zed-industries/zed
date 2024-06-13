@@ -138,8 +138,8 @@ use theme::{
     ThemeColors, ThemeSettings,
 };
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
-    Tooltip,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
+    ListItem, Popover, Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
@@ -11752,23 +11752,16 @@ impl EditorSnapshot {
             || (self.starts_indent(buffer_row) && (row_contains_cursor || self.gutter_hovered))
         {
             Some(
-                IconButton::new(
-                    ("indent-fold-indicator", buffer_row.0),
-                    ui::IconName::ChevronDown,
-                )
-                .on_click(cx.listener_for(&editor, move |this, _e, cx| {
-                    if folded {
-                        this.unfold_at(&UnfoldAt { buffer_row }, cx);
-                    } else {
-                        this.fold_at(&FoldAt { buffer_row }, cx);
-                    }
-                }))
-                .icon_color(ui::Color::Muted)
-                .icon_size(ui::IconSize::Small)
-                .selected(folded)
-                .selected_icon(ui::IconName::ChevronRight)
-                .size(ui::ButtonSize::None)
-                .into_any_element(),
+                Disclosure::new(("indent-fold-indicator", buffer_row.0), !folded)
+                    .selected(folded)
+                    .on_click(cx.listener_for(&editor, move |this, _e, cx| {
+                        if folded {
+                            this.unfold_at(&UnfoldAt { buffer_row }, cx);
+                        } else {
+                            this.fold_at(&FoldAt { buffer_row }, cx);
+                        }
+                    }))
+                    .into_any_element(),
             )
         } else {
             None
