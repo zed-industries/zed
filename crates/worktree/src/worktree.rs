@@ -1611,7 +1611,13 @@ impl LocalWorktree {
                 let file_name = source.file_name()?;
                 let mut target = target_directory.clone();
                 target.push(file_name);
-                Some((source, target))
+
+                // Do not allow copying the same file to itself.
+                if source.as_ref() != target.as_path() {
+                    Some((source, target))
+                } else {
+                    None
+                }
             })
             .collect::<Vec<_>>();
 
