@@ -2,7 +2,10 @@ use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
 use gpui::{svg, AppContext, Model, RenderOnce, Task, WeakView};
-use language::{BufferSnapshot, DiagnosticSeverity, LspAdapterDelegate, OffsetRangeExt, ToOffset};
+use language::{
+    Anchor, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, LspAdapterDelegate,
+    OffsetRangeExt, ToOffset,
+};
 use project::{DiagnosticSummary, Project};
 use rope::Point;
 use std::{
@@ -14,6 +17,8 @@ use util::ResultExt;
 use workspace::Workspace;
 
 pub(crate) struct DiagnosticsCommand;
+
+const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
 
 impl SlashCommand for DiagnosticsCommand {
     fn name(&self) -> String {
@@ -39,7 +44,7 @@ impl SlashCommand for DiagnosticsCommand {
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
-        Task::ready(Ok(vec!["--exclude-warnings".to_string()]))
+        Task::ready(Ok(vec![INCLUDE_WARNINGS_ARGUMENT.to_string()]))
     }
 
     fn run(
@@ -54,7 +59,7 @@ impl SlashCommand for DiagnosticsCommand {
         };
 
         let include_warnings = argument
-            .map(|argument| argument == "--include-warnings")
+            .map(|argument| argument == INCLUDE_WARNINGS_ARGUMENT)
             .unwrap_or(false);
 
         let task = collect_diagnostics(workspace.read(cx).project().clone(), include_warnings, cx);
@@ -139,71 +144,83 @@ fn collect_buffer_diagnostics(
     snapshot: BufferSnapshot,
     include_warnings: bool,
 ) {
-    const EXCERPT_EXPANSION: u32 = 2;
-
     for (_, group) in snapshot.diagnostic_groups(None) {
-        //TODO Find a way to link related diagnostics together (primary diagnostic)
-        for entry in group.entries {
-            let ty = match entry.diagnostic.severity {
-                DiagnosticSeverity::WARNING => {
-                    if !include_warnings {
-                        continue;
-                    }
-                    DiagnosticType::Warning
-                }
-                DiagnosticSeverity::ERROR => DiagnosticType::Error,
-                _ => continue,
-            };
+        let entry = &group.entries[group.primary_ix];
+        collect_diagnostic(text, sections, entry, &snapshot, include_warnings)
+    }
+}
+
+fn collect_diagnostic(
+    text: &mut String,
+    sections: &mut Vec<(Range<usize>, PlaceholderType)>,
+    entry: &DiagnosticEntry<Anchor>,
+    snapshot: &BufferSnapshot,
+    include_warnings: bool,
+) {
+    const EXCERPT_EXPANSION_SIZE: u32 = 2;
+
+    let ty = match entry.diagnostic.severity {
+        DiagnosticSeverity::WARNING => {
+            if !include_warnings {
+                return;
+            }
+            DiagnosticType::Warning
+        }
+        DiagnosticSeverity::ERROR => DiagnosticType::Error,
+        _ => return,
+    };
+    let prev_len = text.len();
+
+    let range = entry.range.to_point(snapshot);
+    let diagnostic_row_number = range.start.row + 1;
+
+    let start_row = range.start.row.saturating_sub(EXCERPT_EXPANSION_SIZE);
+    let end_row = (range.end.row + EXCERPT_EXPANSION_SIZE).min(snapshot.max_point().row) + 1;
+    let excerpt_range =
+        Point::new(start_row, 0).to_offset(&snapshot)..Point::new(end_row, 0).to_offset(&snapshot);
+
+    text.push_str("```");
+    if let Some(language_name) = snapshot.language().map(|l| l.code_fence_block_name()) {
+        text.push_str(&language_name);
+    }
+    text.push('\n');
+
+    let mut buffer_text = String::new();
+    for chunk in snapshot.text_for_range(excerpt_range) {
+        buffer_text.push_str(chunk);
+    }
+
+    let line_number_width = end_row.to_string().len();
+    for (i, line) in buffer_text.lines().enumerate() {
+        let line_number = start_row + i as u32 + 1;
+        text.push_str(format!("{line_number:>line_number_width$} ",).as_str());
+        text.push_str(line);
+        text.push('\n');
+
+        if line_number == diagnostic_row_number {
             let prev_len = text.len();
+            text.push_str("--> ");
+            text.push_str(ty.as_str());
+            text.push_str(": ");
 
-            let range = entry.range.to_point(&snapshot);
-            let diagnostic_row_number = range.start.row + 1;
+            let padding = text.len() - prev_len;
+            let message = entry
+                .diagnostic
+                .message
+                .replace('\n', format!("\n{:padding$}", "").as_str());
 
-            let start_row = range.start.row.saturating_sub(EXCERPT_EXPANSION);
-            let end_row = (range.end.row + EXCERPT_EXPANSION).min(snapshot.max_point().row) + 1;
-            let excerpt_range = Point::new(start_row, 0).to_offset(&snapshot)
-                ..Point::new(end_row, 0).to_offset(&snapshot);
-
-            text.push_str(match ty {
-                DiagnosticType::Warning => "Warning",
-                DiagnosticType::Error => "Error",
-            });
-            text.push_str(&format!(" in line {diagnostic_row_number}: \""));
-            text.push_str(&entry.diagnostic.message);
-            text.push('\"');
+            text.push_str(&message);
             text.push('\n');
-
-            text.push_str("```");
-            if let Some(language_name) = snapshot.language().map(|l| l.code_fence_block_name()) {
-                text.push_str(&language_name);
-            }
-            text.push('\n');
-
-            let mut buffer_text = String::new();
-            for chunk in snapshot.text_for_range(excerpt_range) {
-                buffer_text.push_str(chunk);
-            }
-
-            let line_number_width = end_row.to_string().len();
-            for (i, line) in buffer_text.lines().enumerate() {
-                let line_number = start_row + i as u32 + 1;
-                text.push_str(format!("{line_number:>line_number_width$} ",).as_str());
-                text.push_str(line);
-                text.push('\n');
-            }
-
-            text.push_str("```");
-
-            text.push('\n');
-            sections.push((
-                prev_len..text.len().saturating_sub(1),
-                PlaceholderType::Diagnostic(
-                    ty,
-                    util::truncate_and_trailoff(&entry.diagnostic.message, 50).replace('\n', " "),
-                ),
-            ))
         }
     }
+
+    text.push_str("```");
+
+    text.push('\n');
+    sections.push((
+        prev_len..text.len().saturating_sub(1),
+        PlaceholderType::Diagnostic(ty, entry.diagnostic.message.clone()),
+    ))
 }
 
 #[derive(Clone)]
@@ -219,6 +236,15 @@ pub enum DiagnosticType {
     Error,
 }
 
+impl DiagnosticType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DiagnosticType::Warning => "warning",
+            DiagnosticType::Error => "error",
+        }
+    }
+}
+
 #[derive(IntoElement)]
 pub struct DiagnosticsPlaceholder {
     pub id: ElementId,
@@ -232,6 +258,7 @@ impl RenderOnce for DiagnosticsPlaceholder {
         let (icon, content) = match self.placeholder_type {
             PlaceholderType::Root(summary) => (
                 h_flex()
+                    .w_full()
                     .gap_0p5()
                     .when(summary.error_count > 0, |this| {
                         this.child(DiagnosticType::Error)
@@ -248,9 +275,10 @@ impl RenderOnce for DiagnosticsPlaceholder {
                 Icon::new(IconName::File).into_any_element(),
                 Label::new(file),
             ),
-            PlaceholderType::Diagnostic(diagnostic_type, message) => {
-                (diagnostic_type.into_any_element(), Label::new(message))
-            }
+            PlaceholderType::Diagnostic(diagnostic_type, message) => (
+                diagnostic_type.into_any_element(),
+                Label::new(message).single_line(),
+            ),
         };
 
         ButtonLike::new(self.id)
