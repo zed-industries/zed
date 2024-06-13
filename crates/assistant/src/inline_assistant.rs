@@ -346,12 +346,8 @@ impl InlineAssistant {
         match event {
             EditorEvent::SelectionsChanged { local } if *local => {
                 if let Some(decorations) = assist.editor_decorations.as_ref() {
-                    if decorations
-                        .prompt_editor
-                        .focus_handle(cx)
-                        .contains_focused(cx)
-                    {
-                        cx.focus_view(&editor);
+                    if let CodegenStatus::Idle = &assist.codegen.read(cx).status {
+                        self.finish_inline_assist(assist_id, true, cx);
                     }
                 }
             }
@@ -1099,23 +1095,6 @@ impl InlineAssistEditor {
 
                 self.edited_since_done = true;
                 cx.notify();
-            }
-            EditorEvent::Blurred => {
-                if let CodegenStatus::Idle = &self.codegen.read(cx).status {
-                    let assistant_panel_is_focused = self
-                        .workspace
-                        .as_ref()
-                        .and_then(|workspace| {
-                            let panel =
-                                workspace.upgrade()?.read(cx).panel::<AssistantPanel>(cx)?;
-                            Some(panel.focus_handle(cx).contains_focused(cx))
-                        })
-                        .unwrap_or(false);
-
-                    if !assistant_panel_is_focused {
-                        cx.emit(InlineAssistEditorEvent::Canceled);
-                    }
-                }
             }
             _ => {}
         }

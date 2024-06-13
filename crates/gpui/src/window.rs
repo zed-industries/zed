@@ -4196,7 +4196,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             });
     }
 
-    /// Emit an event to be handled any other views that have subscribed via [ViewContext::subscribe].
+    /// Emit an event to be handled by any other views that have subscribed via [ViewContext::subscribe].
     pub fn emit<Evt>(&mut self, event: Evt)
     where
         Evt: 'static,
