@@ -1389,6 +1389,9 @@ impl<'a> WindowContext<'a> {
         self.window.next_frame.clear();
         let current_focus_path = self.window.rendered_frame.focus_path();
         let current_window_active = self.window.rendered_frame.window_active;
+        if current_focus_path != previous_focus_path {
+            dbg!(&current_focus_path);
+        }
 
         if previous_focus_path != current_focus_path
             || previous_window_active != current_window_active
