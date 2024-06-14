@@ -587,9 +587,9 @@ impl Element for MarkdownElement {
                                 if self.style.pad_blocks {
                                     div().p_4().mb_2()
                                 } else if !opening_line {
-                                    div().pb_4().pt_4()
+                                    div().mb_4().mt_4()
                                 } else {
-                                    div().pb_4()
+                                    div().mb_4()
                                 }
                                 .rounded_lg()
                                 .w_full()

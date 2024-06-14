@@ -351,6 +351,45 @@ fn show_hover(
     editor.hover_state.info_task = Some(task);
 }
 
+fn transform_codeblock(input: &str, language: &str) -> String {
+    let lines: Vec<&str> = input.lines().collect();
+    let mut result: Vec<String> = Vec::new();
+    let mut i = 0;
+    let mut open_block = false;
+    let mut language_tag = String::from("```");
+    language_tag.push_str(language);
+    while i < lines.len() {
+        let mut line = lines[i].to_string();
+        if line.starts_with("```") {
+            if !open_block && line == "```" {
+                //modify the line if the lsp didn't provide a language
+                line = language_tag.clone();
+            }
+
+            open_block = !open_block;
+            i += 1;
+        } else {
+            i += 1;
+
+            //remove mid-sentance single linebreaks
+            while i < lines.len()
+                && !lines[i].trim().is_empty()
+                && !open_block
+                && !lines[i].contains("```")
+            {
+                if line.contains("\n") {
+                    break;
+                }
+                line.push_str(" ");
+                line.push_str(lines[i]);
+                i += 1;
+            }
+        }
+        result.push(line);
+    }
+    result.join("\n")
+}
+
 async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
@@ -366,12 +405,12 @@ async fn parse_blocks(
             "".to_string()
         };
         println!("{}", language_name);
-        // let mut text = transform_codeblock(
-        //     block.clone().text.replace("\\n", "\n").trim(),
-        //     language_name.as_str(),
-        // );
+        let mut text = transform_codeblock(
+            block.clone().text.replace("\\n", "\n").trim(),
+            language_name.as_str(),
+        );
 
-        let mut text = block.clone().text;
+        // let mut text = block.clone().text;
 
         text = text.replace("```js", "```javascript");
         // println!("{}", text);
