@@ -1397,6 +1397,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.languages().add(markdown_language())
+        });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -1758,6 +1761,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.languages().add(markdown_language())
+        });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -1853,6 +1859,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.languages().add(markdown_language())
+        });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -1914,7 +1923,10 @@ mod tests {
         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        project.update(cx, |project, _| project.languages().add(rust_lang()));
+        project.update(cx, |project, _| {
+            project.languages().add(markdown_language());
+            project.languages().add(rust_lang());
+        });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let worktree = cx.update(|cx| window.read(cx).unwrap().worktrees(cx).next().unwrap());
 
@@ -2048,7 +2060,10 @@ mod tests {
         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        project.update(cx, |project, _| project.languages().add(rust_lang()));
+        project.update(cx, |project, _| {
+            project.languages().add(rust_lang());
+            project.languages().add(markdown_language());
+        });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         // Create a new untitled buffer
@@ -2123,6 +2138,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.languages().add(markdown_language())
+        });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -2212,6 +2230,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.languages().add(markdown_language())
+        });
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace
             .read_with(cx, |workspace, _| workspace.active_pane().clone())
@@ -2558,6 +2579,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.languages().add(markdown_language())
+        });
         let workspace = cx.add_window(|cx| Workspace::test_new(project, cx));
         let pane = workspace
             .read_with(cx, |workspace, _| workspace.active_pane().clone())
@@ -3097,12 +3121,15 @@ mod tests {
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
+            env_logger::try_init().ok();
+
             let mut app_state = AppState::test(cx);
 
             let state = Arc::get_mut(&mut app_state).unwrap();
-            env_logger::try_init().ok();
-
             state.build_window_options = build_window_options;
+
+            app_state.languages.add(markdown_language());
+
             theme::init(theme::LoadThemes::JustBase, cx);
             audio::init((), cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
@@ -3138,6 +3165,21 @@ mod tests {
             Some(tree_sitter_rust::language()),
         ))
     }
+
+    fn markdown_language() -> Arc<language::Language> {
+        Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "Markdown".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["md".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_markdown::language()),
+        ))
+    }
+
     #[track_caller]
     fn assert_key_bindings_for(
         window: AnyWindowHandle,
