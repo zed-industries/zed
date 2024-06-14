@@ -76,7 +76,7 @@ pub struct OutlinePanel {
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
     pending_serialization: Task<Option<()>>,
-    fs_entries_depth: HashMap<(WorktreeId, ProjectEntryId), (bool, usize)>,
+    fs_entries_depth: HashMap<(WorktreeId, ProjectEntryId), usize>,
     fs_entries: Vec<FsEntry>,
     collapsed_entries: HashSet<CollapsedEntry>,
     unfolded_dirs: HashMap<WorktreeId, BTreeSet<ProjectEntryId>>,
@@ -1008,12 +1008,23 @@ impl OutlinePanel {
             return;
         };
 
-        self.collapsed_entries.extend(
-            self.fs_entries_depth
-                .iter()
-                .filter(|(_, &(is_dir, depth))| is_dir && depth == 0)
-                .map(|(&(worktree_id, entry_id), _)| CollapsedEntry::Dir(worktree_id, entry_id)),
-        );
+        let new_entries = self
+            .entries_with_depths(cx)
+            .iter()
+            .flat_map(|(_, entry)| match entry {
+                EntryOwned::Entry(FsEntry::Directory(worktree_id, entry)) => {
+                    Some(CollapsedEntry::Dir(*worktree_id, entry.id))
+                }
+                EntryOwned::FoldedDirs(worktree_id, entries) => {
+                    Some(CollapsedEntry::Dir(*worktree_id, entries.last()?.id))
+                }
+                EntryOwned::Excerpt(buffer_id, excerpt_id, _) => {
+                    Some(CollapsedEntry::Excerpt(*buffer_id, *excerpt_id))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        self.collapsed_entries.extend(new_entries);
         self.update_fs_entries(&editor, HashSet::default(), None, None, false, cx);
     }
 
@@ -1827,7 +1838,7 @@ impl OutlinePanel {
                                                     ),
                                                     new_depth_map
                                                         .get(&(worktree_id, id))
-                                                        .map(|&(_, depth)| depth)
+                                                        .copied()
                                                         .unwrap_or(0),
                                                 ),
 
@@ -1874,15 +1885,12 @@ impl OutlinePanel {
                                         } else {
                                             parent_id
                                                 .and_then(|(worktree_id, id)| {
-                                                    new_depth_map
-                                                        .get(&(worktree_id, id))
-                                                        .map(|&(_, depth)| depth)
+                                                    new_depth_map.get(&(worktree_id, id)).copied()
                                                 })
                                                 .unwrap_or(0)
                                                 + 1
                                         };
-                                        new_depth_map
-                                            .insert((*worktree_id, dir_entry.id), (true, depth));
+                                        new_depth_map.insert((*worktree_id, dir_entry.id), depth);
                                     }
                                     FsEntry::File(worktree_id, file_entry, ..) => {
                                         let parent_id = back_to_common_visited_parent(
@@ -1895,15 +1903,12 @@ impl OutlinePanel {
                                         } else {
                                             parent_id
                                                 .and_then(|(worktree_id, id)| {
-                                                    new_depth_map
-                                                        .get(&(worktree_id, id))
-                                                        .map(|&(_, depth)| depth)
+                                                    new_depth_map.get(&(worktree_id, id)).copied()
                                                 })
                                                 .unwrap_or(0)
                                                 + 1
                                         };
-                                        new_depth_map
-                                            .insert((*worktree_id, file_entry.id), (false, depth));
+                                        new_depth_map.insert((*worktree_id, file_entry.id), depth);
                                     }
                                     FsEntry::ExternalFile(..) => {
                                         visited_dirs.clear();
@@ -2102,7 +2107,7 @@ impl OutlinePanel {
                         let depth = self
                             .fs_entries_depth
                             .get(&(*worktree_id, dir_entry.id))
-                            .map(|&(_, depth)| depth)
+                            .copied()
                             .unwrap_or(0);
                         if auto_fold_dirs {
                             let folded = self
@@ -2144,7 +2149,7 @@ impl OutlinePanel {
                     FsEntry::File(worktree_id, file_entry, ..) => self
                         .fs_entries_depth
                         .get(&(*worktree_id, file_entry.id))
-                        .map(|&(_, depth)| depth)
+                        .copied()
                         .unwrap_or(0),
                 };
                 if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take() {
