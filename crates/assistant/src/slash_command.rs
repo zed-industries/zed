@@ -18,8 +18,10 @@ use workspace::Workspace;
 
 pub mod active_command;
 pub mod default_command;
+pub mod diagnostics_command;
 pub mod fetch_command;
 pub mod file_command;
+pub mod now_command;
 pub mod project_command;
 pub mod prompt_command;
 pub mod rustdoc_command;
@@ -216,6 +218,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         &self,
         buffer: &Model<Buffer>,
         buffer_position: Anchor,
+        _: editor::CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<project::Completion>>> {
         let Some((name, argument, command_range, argument_range)) =

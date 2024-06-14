@@ -363,15 +363,6 @@ pub struct Size<T: Clone + Default + Debug> {
     pub height: T,
 }
 
-impl From<Size<DevicePixels>> for Size<Pixels> {
-    fn from(size: Size<DevicePixels>) -> Self {
-        Size {
-            width: Pixels(size.width.0 as f32),
-            height: Pixels(size.height.0 as f32),
-        }
-    }
-}
-
 /// Constructs a new `Size<T>` with the provided width and height.
 ///
 /// # Arguments
@@ -633,15 +624,6 @@ impl<T: Clone + Default + Debug> From<Point<T>> for Size<T> {
     }
 }
 
-impl From<Size<Pixels>> for Size<DevicePixels> {
-    fn from(size: Size<Pixels>) -> Self {
-        Size {
-            width: DevicePixels(size.width.0 as i32),
-            height: DevicePixels(size.height.0 as i32),
-        }
-    }
-}
-
 impl From<Size<Pixels>> for Size<DefiniteLength> {
     fn from(size: Size<Pixels>) -> Self {
         Size {
@@ -722,28 +704,27 @@ pub struct Bounds<T: Clone + Default + Debug> {
     pub size: Size<T>,
 }
 
-impl Bounds<DevicePixels> {
+impl Bounds<Pixels> {
     /// Generate a centered bounds for the given display or primary display if none is provided
     pub fn centered(
         display_id: Option<DisplayId>,
-        size: impl Into<Size<DevicePixels>>,
+        size: Size<Pixels>,
         cx: &mut AppContext,
     ) -> Self {
         let display = display_id
             .and_then(|id| cx.find_display(id))
             .or_else(|| cx.primary_display());
 
-        let size = size.into();
         display
             .map(|display| {
                 let center = display.bounds().center();
                 Bounds {
-                    origin: point(center.x - size.width / 2, center.y - size.height / 2),
+                    origin: point(center.x - size.width / 2., center.y - size.height / 2.),
                     size,
                 }
             })
             .unwrap_or_else(|| Bounds {
-                origin: point(DevicePixels(0), DevicePixels(0)),
+                origin: point(px(0.), px(0.)),
                 size,
             })
     }
@@ -757,8 +738,8 @@ impl Bounds<DevicePixels> {
         display
             .map(|display| display.bounds())
             .unwrap_or_else(|| Bounds {
-                origin: point(DevicePixels(0), DevicePixels(0)),
-                size: size(DevicePixels(1024), DevicePixels(768)),
+                origin: point(px(0.), px(0.)),
+                size: size(px(1024.), px(768.)),
             })
     }
 }
@@ -1309,6 +1290,26 @@ impl<T: PartialOrd + Default + Debug + Clone> Bounds<T> {
     }
 }
 
+impl Size<DevicePixels> {
+    /// Converts the size from physical to logical pixels.
+    pub(crate) fn to_pixels(self, scale_factor: f32) -> Size<Pixels> {
+        size(
+            px(self.width.0 as f32 / scale_factor),
+            px(self.height.0 as f32 / scale_factor),
+        )
+    }
+}
+
+impl Size<Pixels> {
+    /// Converts the size from physical to logical pixels.
+    pub(crate) fn to_device_pixels(self, scale_factor: f32) -> Size<DevicePixels> {
+        size(
+            DevicePixels((self.width.0 * scale_factor) as i32),
+            DevicePixels((self.height.0 * scale_factor) as i32),
+        )
+    }
+}
+
 impl Bounds<Pixels> {
     /// Scales the bounds by a given factor, typically used to adjust for display scaling.
     ///
@@ -1344,6 +1345,30 @@ impl Bounds<Pixels> {
         Bounds {
             origin: self.origin.scale(factor),
             size: self.size.scale(factor),
+        }
+    }
+
+    /// Convert the bounds from logical pixels to physical pixels
+    pub fn to_device_pixels(&self, factor: f32) -> Bounds<DevicePixels> {
+        Bounds {
+            origin: point(
+                DevicePixels((self.origin.x.0 * factor) as i32),
+                DevicePixels((self.origin.y.0 * factor) as i32),
+            ),
+            size: self.size.to_device_pixels(factor),
+        }
+    }
+}
+
+impl Bounds<DevicePixels> {
+    /// Convert the bounds from physical pixels to logical pixels
+    pub fn to_pixels(self, scale_factor: f32) -> Bounds<Pixels> {
+        Bounds {
+            origin: point(
+                px(self.origin.x.0 as f32 / scale_factor),
+                px(self.origin.y.0 as f32 / scale_factor),
+            ),
+            size: self.size.to_pixels(scale_factor),
         }
     }
 }

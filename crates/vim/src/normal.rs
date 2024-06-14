@@ -9,7 +9,7 @@ pub(crate) mod repeat;
 mod scroll;
 pub(crate) mod search;
 pub mod substitute;
-mod yank;
+pub(crate) mod yank;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,6 +21,7 @@ use crate::{
     surrounds::{check_and_move_to_valid_bracket_pair, SurroundsType},
     Vim,
 };
+use case::{change_case_motion, change_case_object, CaseTarget};
 use collections::BTreeSet;
 use editor::display_map::ToDisplayPoint;
 use editor::scroll::Autoscroll;
@@ -50,6 +51,7 @@ actions!(
         InsertEndOfLine,
         InsertLineAbove,
         InsertLineBelow,
+        InsertAtPrevious,
         DeleteLeft,
         DeleteRight,
         ChangeToEndOfLine,
@@ -72,6 +74,7 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(insert_end_of_line);
     workspace.register_action(insert_line_above);
     workspace.register_action(insert_line_below);
+    workspace.register_action(insert_at_previous);
     workspace.register_action(change_case);
     workspace.register_action(convert_to_upper_case);
     workspace.register_action(convert_to_lower_case);
@@ -198,6 +201,15 @@ pub fn normal_motion(
             Some(Operator::AddSurrounds { target: None }) => {}
             Some(Operator::Indent) => indent_motion(vim, motion, times, IndentDirection::In, cx),
             Some(Operator::Outdent) => indent_motion(vim, motion, times, IndentDirection::Out, cx),
+            Some(Operator::Lowercase) => {
+                change_case_motion(vim, motion, times, CaseTarget::Lowercase, cx)
+            }
+            Some(Operator::Uppercase) => {
+                change_case_motion(vim, motion, times, CaseTarget::Uppercase, cx)
+            }
+            Some(Operator::OppositeCase) => {
+                change_case_motion(vim, motion, times, CaseTarget::OppositeCase, cx)
+            }
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -219,6 +231,15 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                 }
                 Some(Operator::Outdent) => {
                     indent_object(vim, object, around, IndentDirection::Out, cx)
+                }
+                Some(Operator::Lowercase) => {
+                    change_case_object(vim, object, around, CaseTarget::Lowercase, cx)
+                }
+                Some(Operator::Uppercase) => {
+                    change_case_object(vim, object, around, CaseTarget::Uppercase, cx)
+                }
+                Some(Operator::OppositeCase) => {
+                    change_case_object(vim, object, around, CaseTarget::OppositeCase, cx)
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {
@@ -318,6 +339,20 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
                     (next_line_end(map, cursor, 1), SelectionGoal::None)
                 });
             });
+        });
+    });
+}
+
+fn insert_at_previous(_: &mut Workspace, _: &InsertAtPrevious, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.start_recording(cx);
+        vim.switch_mode(Mode::Insert, false, cx);
+        vim.update_active_editor(cx, |vim, editor, cx| {
+            if let Some(marks) = vim.state().marks.get("^") {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
+                });
+            }
         });
     });
 }

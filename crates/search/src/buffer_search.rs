@@ -811,7 +811,7 @@ impl BufferSearchBar {
         match event {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
-            editor::EditorEvent::Edited => {
+            editor::EditorEvent::Edited { .. } => {
                 self.clear_matches(cx);
                 let search = self.update_matches(cx);
 

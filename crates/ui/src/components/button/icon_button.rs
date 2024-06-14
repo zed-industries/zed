@@ -145,7 +145,7 @@ impl RenderOnce for IconButton {
                     let icon_size = self.icon_size.rems() * cx.rem_size();
                     let padding = match self.icon_size {
                         IconSize::Indicator => Spacing::None.px(cx),
-                        IconSize::XSmall => Spacing::None.px(cx),
+                        IconSize::XSmall => Spacing::XSmall.px(cx),
                         IconSize::Small => Spacing::XSmall.px(cx),
                         IconSize::Medium => Spacing::XSmall.px(cx),
                     };

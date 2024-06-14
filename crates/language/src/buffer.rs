@@ -797,6 +797,10 @@ impl Buffer {
             .set_language_registry(language_registry);
     }
 
+    pub fn language_registry(&self) -> Option<Arc<LanguageRegistry>> {
+        self.syntax_map.lock().language_registry()
+    }
+
     /// Assign the buffer a new [Capability].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
         self.capability = capability;
@@ -2734,12 +2738,13 @@ impl BufferSnapshot {
         Some(items)
     }
 
-    fn outline_items_containing(
+    pub fn outline_items_containing<T: ToOffset>(
         &self,
-        range: Range<usize>,
+        range: Range<T>,
         include_extra_context: bool,
         theme: Option<&SyntaxTheme>,
     ) -> Option<Vec<OutlineItem<Anchor>>> {
+        let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
         });

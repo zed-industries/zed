@@ -43,8 +43,8 @@ cargo build --release --target "${target_triple}" --package zed --package cli
 
 # Strip the binary of all debug symbols
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
-strip "target/${target_triple}/release/zed"
-strip "target/${target_triple}/release/cli"
+strip --strip-debug "target/${target_triple}/release/zed"
+strip --strip-debug "target/${target_triple}/release/cli"
 
 suffix=""
 if [ "$channel" != "stable" ]; then
@@ -80,6 +80,7 @@ cp "crates/zed/resources/app-icon$suffix@2x.png" "${zed_dir}/share/icons/hicolor
 
 # .desktop
 export DO_STARTUP_NOTIFY="true"
+export APP_CLI="zed"
 export APP_ICON="zed"
 if [[ "$channel" == "preview" ]]; then
   export APP_NAME="Zed Preview"
@@ -95,14 +96,12 @@ mkdir -p "${zed_dir}/share/applications"
 envsubst < "crates/zed/resources/zed.desktop.in" > "${zed_dir}/share/applications/zed$suffix.desktop"
 
 # Licenses
+script/generate-licenses
 cp "assets/licenses.md" "${zed_dir}/licenses.md"
 
 # Create archive out of everything that's in the temp directory
 target="linux-$(uname -m)"
-
-if [[ "$channel" == "nightly" ]]; then
-  archive="zed-${target}.tar.gz"
-elif  [[ "$channel" == "dev" ]]; then
+if  [[ "$channel" == "dev" ]]; then
   archive="zed-${commit}-${target}.tar.gz"
 else
   archive="zed-${target}.tar.gz"

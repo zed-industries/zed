@@ -110,7 +110,7 @@ impl SyntaxTreeView {
 
         let subscription = cx.subscribe(&editor, |this, _, event, cx| {
             let did_reparse = match event {
-                editor::EditorEvent::Reparsed => true,
+                editor::EditorEvent::Reparsed(_) => true,
                 editor::EditorEvent::SelectionsChanged { .. } => false,
                 _ => return,
             };

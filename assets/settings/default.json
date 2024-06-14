@@ -119,10 +119,10 @@
   // The debounce delay before re-querying the language server for completion
   // documentation when not included in original completion list.
   "completion_documentation_secondary_query_debounce": 300,
-  // Whether to show wrap guides in the editor. Setting this to true will
-  // show a guide at the 'preferred_line_length' value if 'soft_wrap' is set to
-  // 'preferred_line_length', and will show any additional guides as specified
-  // by the 'wrap_guides' setting.
+  // Whether to show wrap guides (vertical rulers) in the editor.
+  // Setting this to true will show a guide at the 'preferred_line_length' value
+  // if softwrap is set to 'preferred_line_length', and will show any
+  // additional guides as specified by the 'wrap_guides' setting.
   "show_wrap_guides": true,
   // Character counts at which to show wrap guides in the editor.
   "wrap_guides": [],
@@ -295,6 +295,29 @@
     /// when a directory has only one directory inside.
     "auto_fold_dirs": false
   },
+  "outline_panel": {
+    // Whether to show the outline panel button in the status bar
+    "button": true,
+    // Default width of the outline panel.
+    "default_width": 300,
+    // Where to dock the outline panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Whether to show file icons in the outline panel.
+    "file_icons": true,
+    // Whether to show folder icons or chevrons for directories in the outline panel.
+    "folder_icons": true,
+    // Whether to show the git status in the outline panel.
+    "git_status": true,
+    // Amount of indentation for nested items.
+    "indent_size": 20,
+    // Whether to reveal it in the outline panel automatically,
+    // when a corresponding outline entry becomes active.
+    // Gitignored entries are never auto revealed.
+    "auto_reveal_entries": true,
+    /// Whether to fold directories automatically
+    /// when a directory has only one directory inside.
+    "auto_fold_dirs": true
+  },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
     "button": true,
@@ -354,6 +377,9 @@
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
+  // Whether to perform linked edits of associated ranges, if the language server supports it.
+  // For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
+  "linked_edits": true,
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
