@@ -29,7 +29,7 @@ use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
 use gpui::{actions, ViewContext, WindowContext};
-use language::{Point, Selection, SelectionGoal};
+use language::{Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
 use workspace::Workspace;
@@ -348,9 +348,9 @@ fn insert_at_previous(_: &mut Workspace, _: &InsertAtPrevious, cx: &mut ViewCont
         vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |vim, editor, cx| {
-            if let Some(marks) = dbg!(vim.state().marks.get("^")) {
+            if let Some(marks) = vim.state().marks.get("^") {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.select_anchor_ranges(marks.iter().map(|mark| mark.clone()..mark.clone()))
+                    s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
                 });
             }
         });

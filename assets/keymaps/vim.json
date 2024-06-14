@@ -246,6 +246,7 @@
           "displayLines": true
         }
       ],
+      "g v": "vim::RestoreVisualSelection",
       "g ]": "editor::GoToDiagnostic",
       "g [": "editor::GoToPrevDiagnostic",
       "g i": "vim::InsertAtPrevious",

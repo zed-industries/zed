@@ -1127,6 +1127,26 @@ async fn test_lt_gt_marks(cx: &mut TestAppContext) {
         Line five
     "
     });
+
+    cx.simulate_shared_keystrokes("v i w o escape").await;
+    cx.simulate_shared_keystrokes("` >").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+        Line one
+        Line two
+        Line three
+        Line fouˇr
+        Line five
+    "
+    });
+    cx.simulate_shared_keystrokes("` <").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+        Line one
+        Line two
+        Line three
+        Line ˇfour
+        Line five
+    "
+    });
 }
 
 #[gpui::test]
