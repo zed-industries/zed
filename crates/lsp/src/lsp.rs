@@ -660,6 +660,7 @@ impl LanguageServer {
                                 ],
                             }),
                             insert_replace_support: Some(true),
+                            label_details_support: Some(true),
                             ..Default::default()
                         }),
                         completion_list: Some(CompletionListCapability {
@@ -670,6 +671,7 @@ impl LanguageServer {
                                 "data".to_owned(),
                             ]),
                         }),
+                        context_support: Some(true),
                         ..Default::default()
                     }),
                     rename: Some(RenameClientCapabilities {
