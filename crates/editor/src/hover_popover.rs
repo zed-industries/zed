@@ -353,18 +353,18 @@ fn show_hover(
 
 fn transform_codeblock(input: &str, language: &str) -> String {
     let lines: Vec<&str> = input.lines().collect();
-    let mut result: Vec<&str> = Vec::new();
+    let mut result: Vec<String> = Vec::new();
     let mut i = 0;
     let mut open_block = false;
     let mut language_tag = String::from("```");
     language_tag.push_str(language);
     while i < lines.len() {
-        let mut line = lines[i];
+        let mut line = lines[i].to_string();
         if line.starts_with("```") {
             if !open_block {
                 if line == "```" {
                     //only modify the line if the lsp didn't provide a language
-                    line = language_tag.as_str();
+                    line = language_tag.clone();
                 }
 
                 //skip empty lines following the opening of a codeblock
@@ -378,11 +378,27 @@ fn transform_codeblock(input: &str, language: &str) -> String {
             }
 
             open_block = !open_block;
-        }
-        result.push(line);
-        i += 1;
-    }
+            i += 1;
+        } else {
+            i += 1;
 
+            while i < lines.len()
+                && !lines[i].trim().is_empty()
+                && !open_block
+                && !lines[i].contains("```")
+            {
+                if line.contains("\n") {
+                    break;
+                }
+                line.push_str(" ");
+                line.push_str(lines[i]);
+                i += 1;
+            }
+        }
+        println!("{:?}", line.clone());
+
+        result.push(line);
+    }
     result.join("\n")
 }
 
@@ -394,6 +410,7 @@ async fn parse_blocks(
 ) -> Vec<View<Markdown>> {
     let mut parsed_blocks: Vec<View<Markdown>> = Vec::new();
 
+    // let compined_text = String::new();
     for block in blocks {
         let language_name = if let Some(ref l) = language {
             let l = Arc::clone(l);
@@ -402,19 +419,19 @@ async fn parse_blocks(
             "".to_string()
         };
         println!("{}", language_name);
-        // let mut text = transform_codeblock(
-        //     block.clone().text.replace("\\n", "\n").trim(),
-        //     language_name.as_str(),
-        // );
+        let mut text = transform_codeblock(
+            block.clone().text.replace("\\n", "\n").trim(),
+            language_name.as_str(),
+        );
 
-        let mut text = block.clone().text;
+        // let mut text = block.clone().text;
         // .replace("\n", "||");
         // .replace("\\n", "\n")
         // .trim()
         // .to_string();
 
         text = text.replace("```js", "```javascript");
-        println!("{}", text);
+        // println!("{}", text);
         let rendered_block = cx.new_view(|cx| {
             let markdown_style = MarkdownStyle {
                 pad_blocks: false,
