@@ -19,12 +19,12 @@ use editor::{
 use file_icons::FileIcons;
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    actions, anchored, deferred, div, px, uniform_list, Action, AppContext, AssetSource,
-    AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId, EventEmitter,
-    FocusHandle, FocusableView, InteractiveElement, IntoElement, KeyContext, Model, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful, Styled,
-    Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    actions, anchored, deferred, div, px, uniform_list, Action, AnyElement, AppContext,
+    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId,
+    EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, KeyContext, Model,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful,
+    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -97,6 +97,7 @@ enum CollapsedEntry {
     Excerpt(BufferId, ExcerptId),
 }
 
+#[derive(Debug)]
 struct Excerpt {
     range: ExcerptRange<language::Anchor>,
     outlines: ExcerptOutlines,
@@ -126,6 +127,7 @@ impl Excerpt {
     }
 }
 
+#[derive(Debug)]
 enum ExcerptOutlines {
     Outlines(Vec<Outline>),
     Invalidated(Vec<Outline>),
@@ -1247,12 +1249,11 @@ impl OutlinePanel {
         let color = entry_git_aware_label_color(None, false, is_active);
         let icon = if has_outlines {
             FileIcons::get_chevron_icon(is_expanded, cx)
+                .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
         } else {
             None
         }
-        .map(Icon::from_path)
-        .map(|icon| icon.color(color));
-        let depth = if icon.is_some() { depth + 1 } else { depth };
+        .unwrap_or_else(empty_icon);
 
         let buffer_snapshot = self
             .project
@@ -1274,7 +1275,7 @@ impl OutlinePanel {
             EntryRef::Excerpt(buffer_id, excerpt_id, range),
             item_id,
             depth,
-            icon,
+            Some(icon),
             is_active,
             label_element,
             cx,
@@ -1304,12 +1305,16 @@ impl OutlinePanel {
             }
             _ => false,
         };
-
+        let icon = if self.is_singleton_active(cx) {
+            None
+        } else {
+            Some(empty_icon())
+        };
         self.entry_element(
             EntryRef::Outline(buffer_id, excerpt_id, rendered_outline),
             item_id,
             depth,
-            None,
+            icon,
             is_active,
             label_element,
             cx,
@@ -1334,18 +1339,17 @@ impl OutlinePanel {
                     entry_git_aware_label_color(entry.git_status, entry.is_ignored, is_active);
                 let icon = if settings.file_icons {
                     FileIcons::get_icon(&entry.path, cx)
+                        .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
                 } else {
                     None
-                }
-                .map(Icon::from_path)
-                .map(|icon| icon.color(color));
+                };
                 (
                     ElementId::from(entry.id.to_proto() as usize),
                     Label::new(name)
                         .single_line()
                         .color(color)
                         .into_any_element(),
-                    icon,
+                    icon.unwrap_or_else(empty_icon),
                 )
             }
             FsEntry::Directory(worktree_id, entry) => {
@@ -1362,14 +1366,14 @@ impl OutlinePanel {
                     FileIcons::get_chevron_icon(is_expanded, cx)
                 }
                 .map(Icon::from_path)
-                .map(|icon| icon.color(color));
+                .map(|icon| icon.color(color).into_any_element());
                 (
                     ElementId::from(entry.id.to_proto() as usize),
                     Label::new(name)
                         .single_line()
                         .color(color)
                         .into_any_element(),
-                    icon,
+                    icon.unwrap_or_else(empty_icon),
                 )
             }
             FsEntry::ExternalFile(buffer_id, ..) => {
@@ -1384,7 +1388,7 @@ impl OutlinePanel {
                                 None
                             }
                             .map(Icon::from_path)
-                            .map(|icon| icon.color(color));
+                            .map(|icon| icon.color(color).into_any_element());
                             (icon, file_name(path.as_ref()))
                         }
                         None => (None, "Untitled".to_string()),
@@ -1397,7 +1401,7 @@ impl OutlinePanel {
                         .single_line()
                         .color(color)
                         .into_any_element(),
-                    icon,
+                    icon.unwrap_or_else(empty_icon),
                 )
             }
         };
@@ -1406,7 +1410,7 @@ impl OutlinePanel {
             EntryRef::Entry(rendered_entry),
             item_id,
             depth,
-            icon,
+            Some(icon),
             is_active,
             label_element,
             cx,
@@ -1450,7 +1454,7 @@ impl OutlinePanel {
                 FileIcons::get_chevron_icon(is_expanded, cx)
             }
             .map(Icon::from_path)
-            .map(|icon| icon.color(color));
+            .map(|icon| icon.color(color).into_any_element());
             (
                 ElementId::from(
                     dir_entries
@@ -1462,7 +1466,7 @@ impl OutlinePanel {
                     .single_line()
                     .color(color)
                     .into_any_element(),
-                icon,
+                icon.unwrap_or_else(empty_icon),
             )
         };
 
@@ -1470,7 +1474,7 @@ impl OutlinePanel {
             EntryRef::FoldedDirs(worktree_id, dir_entries),
             item_id,
             depth,
-            icon,
+            Some(icon),
             is_active,
             label_element,
             cx,
@@ -1483,7 +1487,7 @@ impl OutlinePanel {
         rendered_entry: EntryRef<'_>,
         item_id: ElementId,
         depth: usize,
-        icon: Option<Icon>,
+        icon_element: Option<AnyElement>,
         is_active: bool,
         label_element: gpui::AnyElement,
         cx: &mut ViewContext<OutlinePanel>,
@@ -1498,13 +1502,8 @@ impl OutlinePanel {
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_active)
-                    .child(if let Some(icon) = icon {
-                        h_flex().child(icon)
-                    } else {
-                        h_flex()
-                            .size(IconSize::default().rems())
-                            .invisible()
-                            .flex_none()
+                    .when_some(icon_element, |list_item, icon_element| {
+                        list_item.child(h_flex().child(icon_element))
                     })
                     .child(h_flex().h_6().child(label_element).ml_1())
                     .on_click({
@@ -2172,32 +2171,15 @@ impl OutlinePanel {
     }
 
     fn entries_with_depths(&mut self, cx: &AppContext) -> &[(usize, EntryOwned)] {
+        let is_singleton = self.is_singleton_active(cx);
         self.cached_entries_with_depth.get_or_insert_with(|| {
             let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
             let mut folded_dirs_entry = None::<(usize, WorktreeId, Vec<Entry>)>;
             let mut entries = Vec::new();
-            let is_singleton = self
-                .active_item
-                .as_ref()
-                .and_then(|active_item| {
-                    Some(
-                        active_item
-                            .active_editor
-                            .upgrade()?
-                            .read(cx)
-                            .buffer()
-                            .read(cx)
-                            .is_singleton(),
-                    )
-                })
-                .unwrap_or(false);
 
             for entry in &self.fs_entries {
                 let depth = match entry {
                     FsEntry::Directory(worktree_id, dir_entry) => {
-                        if is_singleton {
-                            continue;
-                        }
                         let depth = self
                             .fs_entries_depth
                             .get(&(*worktree_id, dir_entry.id))
@@ -2240,16 +2222,11 @@ impl OutlinePanel {
                         depth
                     }
                     FsEntry::ExternalFile(..) => 0,
-                    FsEntry::File(worktree_id, file_entry, ..) => {
-                        if is_singleton {
-                            0
-                        } else {
-                            self.fs_entries_depth
-                                .get(&(*worktree_id, file_entry.id))
-                                .map(|&(_, depth)| depth)
-                                .unwrap_or(0)
-                        }
-                    }
+                    FsEntry::File(worktree_id, file_entry, ..) => self
+                        .fs_entries_depth
+                        .get(&(*worktree_id, file_entry.id))
+                        .map(|&(_, depth)| depth)
+                        .unwrap_or(0),
                 };
                 if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take() {
                     entries.push((
@@ -2267,7 +2244,7 @@ impl OutlinePanel {
                             let Some(excerpt) = excerpts.get(&entry_excerpt) else {
                                 continue;
                             };
-                            let excerpt_depth = depth;
+                            let excerpt_depth = depth + 1;
                             entries.push((
                                 excerpt_depth,
                                 EntryOwned::Excerpt(
@@ -2277,30 +2254,25 @@ impl OutlinePanel {
                                 ),
                             ));
 
-                            if !self
+                            let mut outline_base_depth = excerpt_depth + 1;
+                            if is_singleton {
+                                outline_base_depth = 0;
+                                entries.clear();
+                            } else if self
                                 .collapsed_entries
                                 .contains(&CollapsedEntry::Excerpt(*buffer_id, entry_excerpt))
                             {
-                                let mut outline_data_depth = None::<usize>;
-                                let mut outline_depth = excerpt_depth + 1;
-                                for outline in excerpt.iter_outlines() {
-                                    if let Some(outline_data_depth) = outline_data_depth {
-                                        match outline_data_depth.cmp(&outline.depth) {
-                                            cmp::Ordering::Less => outline_depth += 1,
-                                            cmp::Ordering::Equal => {}
-                                            cmp::Ordering::Greater => outline_depth -= 1,
-                                        };
-                                    }
-                                    outline_data_depth = Some(outline.depth);
-                                    entries.push((
-                                        outline_depth,
-                                        EntryOwned::Outline(
-                                            *buffer_id,
-                                            entry_excerpt,
-                                            outline.clone(),
-                                        ),
-                                    ));
-                                }
+                                continue;
+                            }
+
+                            for outline in excerpt.iter_outlines() {
+                                entries.push((
+                                    outline_base_depth + outline.depth,
+                                    EntryOwned::Outline(*buffer_id, entry_excerpt, outline.clone()),
+                                ));
+                            }
+                            if is_singleton && entries.is_empty() {
+                                entries.push((0, EntryOwned::Entry(entry.clone())));
                             }
                         }
                     }
@@ -2314,6 +2286,23 @@ impl OutlinePanel {
             }
             entries
         })
+    }
+
+    fn is_singleton_active(&self, cx: &AppContext) -> bool {
+        self.active_item
+            .as_ref()
+            .and_then(|active_item| {
+                Some(
+                    active_item
+                        .active_editor
+                        .upgrade()?
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .is_singleton(),
+                )
+            })
+            .unwrap_or(false)
     }
 
     fn invalidate_outlines(&mut self, ids: &[ExcerptId]) {
@@ -2667,4 +2656,12 @@ fn range_contains(
 ) -> bool {
     range.start.cmp(&anchor, buffer_snapshot).is_le()
         && range.end.cmp(&anchor, buffer_snapshot).is_ge()
+}
+
+fn empty_icon() -> AnyElement {
+    h_flex()
+        .size(IconSize::default().rems())
+        .invisible()
+        .flex_none()
+        .into_any_element()
 }
