@@ -256,7 +256,7 @@ impl Telemetry {
         state.installation_id = installation_id.map(|id| id.into());
         state.session_id = Some(session_id);
         state.app_version = release_channel::AppVersion::global(cx).to_string();
-        state.os_name = os_version();
+        state.os_name = os_name();
 
         drop(state);
 
