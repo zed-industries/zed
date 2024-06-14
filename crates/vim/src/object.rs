@@ -1,6 +1,12 @@
 use std::ops::Range;
 
-use crate::{motion::right, normal::normal_object, state::Mode, visual::visual_object, Vim};
+use crate::{
+    motion::{coerce_punctuation, right},
+    normal::normal_object,
+    state::Mode,
+    visual::visual_object,
+    Vim,
+};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
@@ -10,7 +16,7 @@ use editor::{
 use itertools::Itertools;
 
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
-use language::{char_kind, coerce_punctuation, BufferSnapshot, CharKind, Point, Selection};
+use language::{char_kind, BufferSnapshot, CharKind, Point, Selection};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 use workspace::Workspace;

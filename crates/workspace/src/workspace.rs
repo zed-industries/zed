@@ -2615,14 +2615,6 @@ impl Workspace {
         self.serialize_workspace(cx);
     }
 
-    pub fn is_split(&self) -> bool {
-        matches!(self.center.root, Member::Axis(_))
-    }
-
-    pub fn center(&self) -> &PaneGroup {
-        &self.center
-    }
-
     pub fn split_pane(
         &mut self,
         pane_to_split: View<Pane>,

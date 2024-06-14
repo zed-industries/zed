@@ -2,7 +2,7 @@ use std::{cmp::Ordering, ops::Range};
 
 use editor::{
     display_map::{DisplayRow, DisplaySnapshot},
-    movement::{find_boundary_range_fold, window_bottom, window_top, TextLayoutDetails},
+    movement::{find_boundary_range_fold, TextLayoutDetails},
     DisplayPoint, Editor, RowExt, RowRangeExt,
 };
 use language::{char_kind, CharKind, LanguageScope};
@@ -10,7 +10,10 @@ use multi_buffer::MultiBufferPoint;
 use text::{Bias, Selection};
 use ui::ViewContext;
 
-use crate::easy_motion::{Direction, WordType};
+use crate::{
+    easy_motion::{Direction, WordType},
+    motion::{window_bottom, window_top},
+};
 
 pub fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bias: f32) -> f32 {
     x_bias * (point_1.row().as_f32() - point_2.row().as_f32()).abs()

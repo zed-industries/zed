@@ -3955,14 +3955,6 @@ pub(crate) fn contiguous_ranges(
     })
 }
 
-pub fn coerce_punctuation(kind: CharKind, treat_punctuation_as_word: bool) -> CharKind {
-    if treat_punctuation_as_word && kind == CharKind::Punctuation {
-        CharKind::Word
-    } else {
-        kind
-    }
-}
-
 /// Returns the [CharKind] for the given character. When a scope is provided,
 /// the function checks if the character is considered a word character
 /// based on the language scope's word character settings.

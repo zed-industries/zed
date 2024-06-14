@@ -109,25 +109,25 @@ pub fn init(cx: &mut AppContext) {
 
 fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
     let view = cx.view().clone();
-    editor.register_action(move |action: &Word, cx| {
+    let _ = editor.register_action(move |action: &Word, cx| {
         EasyMotion::word(view.clone(), action, cx);
     });
     let view = cx.view().clone();
-    editor.register_action(move |action: &SubWord, cx| {
+    let _ = editor.register_action(move |action: &SubWord, cx| {
         EasyMotion::sub_word(view.clone(), action, cx);
     });
     let view = cx.view().clone();
-    editor.register_action(move |action: &FullWord, cx| {
+    let _ = editor.register_action(move |action: &FullWord, cx| {
         EasyMotion::full_word(view.clone(), action, cx);
     });
 
     let view = cx.view().clone();
-    editor.register_action(move |action: &Row, cx| {
+    let _ = editor.register_action(move |action: &Row, cx| {
         EasyMotion::row(view.clone(), action, cx);
     });
 
     let view = cx.view().clone();
-    editor.register_action(move |_: &Cancel, cx| {
+    let _ = editor.register_action(move |_: &Cancel, cx| {
         EasyMotion::cancel(view.clone(), cx);
     });
 
