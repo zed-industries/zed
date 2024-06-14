@@ -3121,7 +3121,7 @@ mod tests {
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
-            env_logger::try_init().ok();
+            env_logger::builder().is_test(true).try_init().ok();
 
             let mut app_state = AppState::test(cx);
 
