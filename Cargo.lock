@@ -13336,6 +13336,7 @@ dependencies = [
  "terminal_view",
  "theme",
  "theme_selector",
+ "tree-sitter-markdown",
  "tree-sitter-rust",
  "urlencoding",
  "util",
