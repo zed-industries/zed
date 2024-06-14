@@ -9,7 +9,7 @@ pub(crate) mod repeat;
 mod scroll;
 pub(crate) mod search;
 pub mod substitute;
-mod yank;
+pub(crate) mod yank;
 
 use std::collections::HashMap;
 use std::sync::Arc;
