@@ -2,6 +2,7 @@ pub mod parser;
 
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
+use gpui::rgb;
 use gpui::{
     actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
@@ -536,13 +537,18 @@ impl Element for MarkdownElement {
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let mut builder = MarkdownElementBuilder::new(cx.text_style(), self.style.syntax.clone());
+        let mut opening_line = true;
         let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
         for (range, event) in parsed_markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
                         MarkdownTag::Paragraph => {
-                            builder.push_div(div().mb_2().line_height(rems(1.3)));
+                            if self.style.pad_blocks {
+                                builder.push_div(div().mb_2().line_height(rems(1.3)));
+                            } else {
+                                builder.push_div(div().line_height(rems(1.3)));
+                            }
                         }
                         MarkdownTag::Heading { level, .. } => {
                             let mut heading = div().mb_2();
@@ -558,12 +564,15 @@ impl Element for MarkdownElement {
                         MarkdownTag::BlockQuote => {
                             builder.push_text_style(self.style.block_quote.clone());
                             builder.push_div(
-                                if self.style.pad_blocks {
-                                    div().pl_4().mb_2().border_l_4()
-                                } else {
-                                    div()
-                                }
-                                .border_color(self.style.block_quote_border_color),
+                                // if self.style.pad_blocks {
+                                div()
+                                    .pl_4()
+                                    .mb_2()
+                                    .border_l_4()
+                                    // } else {
+                                    //     div()pl_4().mb_2().border_l_4()
+                                    // }
+                                    .border_color(self.style.block_quote_border_color),
                             );
                         }
                         MarkdownTag::CodeBlock(kind) => {
@@ -578,8 +587,10 @@ impl Element for MarkdownElement {
                             builder.push_div(
                                 if self.style.pad_blocks {
                                     div().p_4().mb_2()
+                                } else if !opening_line {
+                                    div().pb_4().pt_4()
                                 } else {
-                                    div()
+                                    div().pb_4()
                                 }
                                 .rounded_lg()
                                 .w_full()
@@ -698,6 +709,7 @@ impl Element for MarkdownElement {
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.start),
                 _ => log::error!("unsupported markdown event {:?}", event),
             }
+            opening_line = false;
         }
         let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(cx);

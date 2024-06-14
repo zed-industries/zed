@@ -312,7 +312,6 @@ fn show_hover(
                 let language = hover_result.language;
                 let parsed_content =
                     parse_blocks(&blocks, &language_registry, language, &mut cx).await;
-
                 info_popover_tasks.push((
                     range.clone(),
                     InfoPopover {
@@ -368,10 +367,14 @@ fn transform_codeblock(input: &str, language: &str) -> String {
                     line = language_tag.as_str();
                 }
 
-                //skip following empty lines
+                //skip empty lines following the opening of a codeblock
                 while i < lines.len() && lines[i].trim().is_empty() {
                     i += 1;
                 }
+            }
+            //remove empty lines preceeding the end of a codeblock
+            while !result.is_empty() && result.last().unwrap().trim().is_empty() {
+                result.pop();
             }
 
             open_block = !open_block;
@@ -392,7 +395,6 @@ async fn parse_blocks(
     let mut parsed_blocks: Vec<View<Markdown>> = Vec::new();
 
     for block in blocks {
-        // let text = trim_codeblocks(block.clone().text.replace("\\n", "\n").trim());
         let language_name = if let Some(ref l) = language {
             let l = Arc::clone(l);
             l.lsp_id().clone()
@@ -400,10 +402,17 @@ async fn parse_blocks(
             "".to_string()
         };
         println!("{}", language_name);
-        let mut text = transform_codeblock(
-            block.clone().text.replace("\\n", "\n").trim(),
-            language_name.as_str(),
-        );
+        // let mut text = transform_codeblock(
+        //     block.clone().text.replace("\\n", "\n").trim(),
+        //     language_name.as_str(),
+        // );
+
+        let mut text = block.clone().text;
+        // .replace("\n", "||");
+        // .replace("\\n", "\n")
+        // .trim()
+        // .to_string();
+
         text = text.replace("```js", "```javascript");
         println!("{}", text);
         let rendered_block = cx.new_view(|cx| {
@@ -1069,8 +1078,8 @@ mod tests {
             «fn» test() { println!(); }
         "});
 
-        let code_str = "let hovered_point: Vector2F \n// size = 8, align = 0x4\n";
-        let markdown_string = format!("\n\n\n\n```rust\n\n\n{code_str}\n\n\n\n\n```\n\n");
+        let code_str = "\nlet hovered_point: Vector2F // size = 8, align = 0x4\n";
+        let markdown_string = format!("\n```rust\n{code_str}```");
 
         let closure_markdown_string = markdown_string.clone();
         cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
