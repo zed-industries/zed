@@ -59,9 +59,9 @@ use language::{
 use log::error;
 use lsp::{
     CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, Edit, FileSystemWatcher, LanguageServer, LanguageServerBinary,
-    LanguageServerId, LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities,
-    ServerHealthStatus, ServerStatus, TextEdit, Uri,
+    DocumentHighlightKind, Edit, FileSystemWatcher, InsertTextFormat, LanguageServer,
+    LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, OneOf,
+    ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit, Uri,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -6132,6 +6132,14 @@ impl Project {
 
                 completion.new_text = new_text;
                 completion.old_range = old_range;
+            }
+        }
+        if completion_item.insert_text_format == Some(InsertTextFormat::SNIPPET) {
+            // vtsls might change the type of completion after resolution.
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            if completion_item.insert_text_format != completion.lsp_completion.insert_text_format {
+                completion.lsp_completion.insert_text_format = completion_item.insert_text_format;
             }
         }
     }
