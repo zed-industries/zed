@@ -112,12 +112,17 @@ impl OpenListener {
 #[cfg(target_os = "linux")]
 pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
-    use std::os::{linux::net::SocketAddrExt, unix::net::SocketAddr, unix::net::UnixDatagram};
+    use std::os::unix::net::UnixDatagram;
+    use util::paths;
 
-    let uid: u32 = unsafe { libc::getuid() };
-    let sock_addr =
-        SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL_NAME, uid))?;
-    let listener = UnixDatagram::bind_addr(&sock_addr)?;
+    let sock_path = paths::SUPPORT_DIR.join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
+    // remove the socket if the process listening on it has died
+    if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path) {
+        if e.kind() == std::io::ErrorKind::ConnectionRefused {
+            std::fs::remove_file(&sock_path)?;
+        }
+    }
+    let listener = UnixDatagram::bind(&sock_path)?;
     thread::spawn(move || {
         let mut buf = [0u8; 1024];
         while let Ok(len) = listener.recv(&mut buf) {

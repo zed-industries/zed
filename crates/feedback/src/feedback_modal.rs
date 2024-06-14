@@ -193,7 +193,7 @@ impl FeedbackModal {
         });
 
         cx.subscribe(&feedback_editor, |this, editor, event: &EditorEvent, cx| {
-            if *event == EditorEvent::Edited {
+            if matches!(event, EditorEvent::Edited { .. }) {
                 this.character_count = editor
                     .read(cx)
                     .buffer()

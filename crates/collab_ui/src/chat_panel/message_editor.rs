@@ -46,6 +46,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         &self,
         buffer: &Model<Buffer>,
         buffer_position: language::Anchor,
+        _: editor::CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<Vec<Completion>>> {
         let Some(handle) = self.0.upgrade() else {

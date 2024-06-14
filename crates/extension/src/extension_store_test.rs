@@ -15,7 +15,7 @@ use http::{FakeHttpClient, Response};
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
-use project::Project;
+use project::{Project, DEFAULT_COMPLETION_CONTEXT};
 use serde_json::json;
 use settings::{Settings as _, SettingsStore};
 use std::{
@@ -510,6 +510,14 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
                                     {
                                         "name": format!("gleam-{version}-aarch64-apple-darwin.tar.gz"),
                                         "browser_download_url": asset_download_uri
+                                    },
+                                    {
+                                        "name": format!("gleam-{version}-x86_64-unknown-linux-musl.tar.gz"),
+                                        "browser_download_url": asset_download_uri
+                                    },
+                                    {
+                                        "name": format!("gleam-{version}-aarch64-unknown-linux-musl.tar.gz"),
+                                        "browser_download_url": asset_download_uri
                                     }
                                 ]
                             }
@@ -657,7 +665,9 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     });
 
     let completion_labels = project
-        .update(cx, |project, cx| project.completions(&buffer, 0, cx))
+        .update(cx, |project, cx| {
+            project.completions(&buffer, 0, DEFAULT_COMPLETION_CONTEXT, cx)
+        })
         .await
         .unwrap()
         .into_iter()

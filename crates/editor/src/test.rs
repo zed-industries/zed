@@ -25,7 +25,7 @@ pub fn marked_display_snapshot(
     let (unmarked_text, markers) = marked_text_offsets(text);
 
     let font = Font {
-        family: "Courier".into(),
+        family: "Zed Mono".into(),
         features: FontFeatures::default(),
         weight: FontWeight::default(),
         style: FontStyle::default(),

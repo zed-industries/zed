@@ -533,7 +533,7 @@ mod tests {
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
         let mut params = lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a").unwrap(),
+            uri: lsp::Uri::from_file_path("/a").unwrap().into(),
             version: None,
             diagnostics: vec![
                 // no newlines

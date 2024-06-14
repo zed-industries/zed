@@ -18,6 +18,7 @@ pub use open_listener::*;
 use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
+use outline_panel::OutlinePanel;
 use project::TaskSourceKind;
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -72,6 +73,7 @@ actions!(
         ShowAll,
         ToggleFullScreen,
         Zoom,
+        TestPanic,
     ]
 );
 
@@ -83,6 +85,10 @@ pub fn init(cx: &mut AppContext) {
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(quit);
+
+    if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
+        cx.on_action(test_panic);
+    }
 }
 
 pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> WindowOptions {
@@ -190,6 +196,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             let assistant_panel =
                 assistant::AssistantPanel::load(workspace_handle.clone(), cx.clone());
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+            let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
             let channels_panel =
                 collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
@@ -202,6 +209,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
             let (
                 project_panel,
+                outline_panel,
                 terminal_panel,
                 assistant_panel,
                 channels_panel,
@@ -209,6 +217,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 notification_panel,
             ) = futures::try_join!(
                 project_panel,
+                outline_panel,
                 terminal_panel,
                 assistant_panel,
                 channels_panel,
@@ -219,6 +228,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
+                workspace.add_panel(outline_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
@@ -379,6 +389,13 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )
             .register_action(
                 |workspace: &mut Workspace,
+                 _: &outline_panel::ToggleFocus,
+                 cx: &mut ViewContext<Workspace>| {
+                    workspace.toggle_panel_focus::<OutlinePanel>(cx);
+                },
+            )
+            .register_action(
+                |workspace: &mut Workspace,
                  _: &collab_ui::collab_panel::ToggleFocus,
                  cx: &mut ViewContext<Workspace>| {
                     workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(cx);
@@ -470,6 +487,10 @@ fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
             prompt.await.ok();
         })
         .detach();
+}
+
+fn test_panic(_: &TestPanic, _: &mut AppContext) {
+    panic!("Ran the TestPanic action")
 }
 
 fn quit(_: &Quit, cx: &mut AppContext) {
@@ -3093,9 +3114,9 @@ mod tests {
             command_palette::init(cx);
             language::init(cx);
             editor::init(cx);
-            project_panel::init_settings(cx);
             collab_ui::init(&app_state, cx);
             project_panel::init((), cx);
+            outline_panel::init((), cx);
             terminal_view::init(cx);
             assistant::init(app_state.client.clone(), cx);
             tasks_ui::init(cx);

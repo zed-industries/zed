@@ -54,8 +54,8 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use ui::{
-    popover_menu, prelude::*, ButtonLike, ContextMenu, ElevationIndex, KeyBinding, ListItem,
-    ListItemSpacing, PopoverMenuHandle, Tab, TabBar, Tooltip,
+    popover_menu, prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding,
+    ListItem, ListItemSpacing, PopoverMenuHandle, Tab, TabBar, Tooltip,
 };
 use util::{paths::CONTEXTS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -79,7 +79,6 @@ pub fn init(cx: &mut AppContext) {
                     workspace.toggle_panel_focus::<AssistantPanel>(cx);
                 })
                 .register_action(AssistantPanel::inline_assist)
-                .register_action(AssistantPanel::cancel_last_inline_assist)
                 .register_action(ContextEditor::quote_selection);
         },
     )
@@ -418,19 +417,6 @@ impl AssistantPanel {
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx)
-        }
-    }
-
-    fn cancel_last_inline_assist(
-        _workspace: &mut Workspace,
-        _: &editor::actions::Cancel,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        let canceled = InlineAssistant::update_global(cx, |assistant, cx| {
-            assistant.cancel_last_inline_assist(cx)
-        });
-        if !canceled {
-            cx.propagate();
         }
     }
 
@@ -2364,7 +2350,7 @@ impl ContextEditor {
                     editor.insert(&format!("/{name}"), cx);
                     if command.requires_argument() {
                         editor.insert(" ", cx);
-                        editor.show_completions(&ShowCompletions, cx);
+                        editor.show_completions(&ShowCompletions::default(), cx);
                     }
                 });
             });
@@ -3146,17 +3132,10 @@ fn render_slash_command_output_toggle(
     fold: ToggleFold,
     _cx: &mut WindowContext,
 ) -> AnyElement {
-    IconButton::new(
-        ("slash-command-output-fold-indicator", row.0),
-        ui::IconName::ChevronDown,
-    )
-    .on_click(move |_e, cx| fold(!is_folded, cx))
-    .icon_color(ui::Color::Muted)
-    .icon_size(ui::IconSize::Small)
-    .selected(is_folded)
-    .selected_icon(ui::IconName::ChevronRight)
-    .size(ui::ButtonSize::None)
-    .into_any_element()
+    Disclosure::new(("slash-command-output-fold-indicator", row.0), !is_folded)
+        .selected(is_folded)
+        .on_click(move |_e, cx| fold(!is_folded, cx))
+        .into_any_element()
 }
 
 fn render_pending_slash_command_gutter_decoration(

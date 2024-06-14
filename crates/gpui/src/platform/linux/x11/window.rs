@@ -1,9 +1,9 @@
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
+    px, size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowParams, X11ClientStatePtr,
+    WindowKind, WindowParams, X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
@@ -47,6 +47,8 @@ x11rb::atom_manager! {
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
         _NET_WM_MOVERESIZE,
+        _NET_WM_WINDOW_TYPE,
+        _NET_WM_WINDOW_TYPE_NOTIFICATION,
         _GTK_SHOW_WINDOW_MENU,
     }
 }
@@ -160,7 +162,7 @@ pub struct X11WindowState {
     atoms: XcbAtoms,
     x_root_window: xproto::Window,
     _raw: RawWindow,
-    bounds: Bounds<i32>,
+    bounds: Bounds<Pixels>,
     scale_factor: f32,
     renderer: BladeRenderer,
     display: Rc<dyn PlatformDisplay>,
@@ -254,7 +256,6 @@ impl X11WindowState {
         };
 
         let win_aux = xproto::CreateWindowAux::new()
-            .background_pixel(x11rb::NONE)
             // https://stackoverflow.com/questions/43218127/x11-xlib-xcb-creating-a-window-requires-border-pixel-if-specifying-colormap-wh
             .border_pixel(visual_set.black_pixel)
             .colormap(colormap)
@@ -271,10 +272,10 @@ impl X11WindowState {
                 visual.depth,
                 x_window,
                 visual_set.root,
-                params.bounds.origin.x.0 as i16,
-                params.bounds.origin.y.0 as i16,
-                params.bounds.size.width.0 as u16,
-                params.bounds.size.height.0 as u16,
+                (params.bounds.origin.x.0 * scale_factor) as i16,
+                (params.bounds.origin.y.0 * scale_factor) as i16,
+                (params.bounds.size.width.0 * scale_factor) as u16,
+                (params.bounds.size.height.0 * scale_factor) as u16,
                 0,
                 xproto::WindowClass::INPUT_OUTPUT,
                 visual.id,
@@ -295,6 +296,17 @@ impl X11WindowState {
                     )
                     .unwrap();
             }
+        }
+        if params.kind == WindowKind::PopUp {
+            xcb_connection
+                .change_property32(
+                    xproto::PropMode::REPLACE,
+                    x_window,
+                    atoms._NET_WM_WINDOW_TYPE,
+                    xproto::AtomEnum::ATOM,
+                    &[atoms._NET_WM_WINDOW_TYPE_NOTIFICATION],
+                )
+                .unwrap();
         }
 
         xcb_connection
@@ -322,7 +334,6 @@ impl X11WindowState {
             )
             .unwrap();
 
-        xcb_connection.map_window(x_window).unwrap();
         xcb_connection.flush().unwrap();
 
         let raw = RawWindow {
@@ -353,14 +364,17 @@ impl X11WindowState {
             size: query_render_extent(xcb_connection, x_window),
             transparent: params.window_background != WindowBackgroundAppearance::Opaque,
         };
+        xcb_connection.map_window(x_window).unwrap();
 
         Ok(Self {
             client,
             executor,
-            display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
+            display: Rc::new(
+                X11Display::new(xcb_connection, scale_factor, x_screen_index).unwrap(),
+            ),
             _raw: raw,
             x_root_window: visual_set.root,
-            bounds: params.bounds.map(|v| v.0),
+            bounds: params.bounds,
             scale_factor,
             renderer: BladeRenderer::new(gpu, config),
             atoms: *atoms,
@@ -614,6 +628,7 @@ impl X11WindowStatePtr {
         let is_resize;
         {
             let mut state = self.state.borrow_mut();
+            let bounds = bounds.map(|f| px(f as f32 / state.scale_factor));
 
             is_resize = bounds.size.width != state.bounds.size.width
                 || bounds.size.height != state.bounds.size.height;
@@ -628,9 +643,10 @@ impl X11WindowStatePtr {
 
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
             if state.renderer.viewport_size() != gpu_size {
-                state
-                    .renderer
-                    .update_drawable_size(size(gpu_size.width as f64, gpu_size.height as f64));
+                state.renderer.update_drawable_size(size(
+                    DevicePixels(gpu_size.width as i32),
+                    DevicePixels(gpu_size.height as i32),
+                ));
                 resize_args = Some((state.content_size(), state.scale_factor));
             }
         }
@@ -665,8 +681,8 @@ impl X11WindowStatePtr {
 }
 
 impl PlatformWindow for X11Window {
-    fn bounds(&self) -> Bounds<DevicePixels> {
-        self.0.state.borrow().bounds.map(|v| v.into())
+    fn bounds(&self) -> Bounds<Pixels> {
+        self.0.state.borrow().bounds
     }
 
     fn is_maximized(&self) -> bool {
@@ -680,7 +696,11 @@ impl PlatformWindow for X11Window {
 
     fn window_bounds(&self) -> WindowBounds {
         let state = self.0.state.borrow();
-        WindowBounds::Windowed(state.bounds.map(|p| DevicePixels(p)))
+        if self.is_maximized() {
+            WindowBounds::Maximized(state.bounds)
+        } else {
+            WindowBounds::Windowed(state.bounds)
+        }
     }
 
     fn content_size(&self) -> Size<Pixels> {

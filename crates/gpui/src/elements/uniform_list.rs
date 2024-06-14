@@ -98,6 +98,13 @@ impl UniformListScrollHandle {
     pub fn scroll_to_item(&mut self, ix: usize) {
         self.deferred_scroll_to_item.replace(Some(ix));
     }
+
+    /// Get the index of the topmost visible child.
+    pub fn logical_scroll_top_index(&self) -> usize {
+        self.deferred_scroll_to_item
+            .borrow()
+            .unwrap_or_else(|| self.base_handle.logical_scroll_top().0)
+    }
 }
 
 impl Styled for UniformList {

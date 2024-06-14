@@ -400,6 +400,7 @@ async fn test_join_lines(cx: &mut gpui::TestAppContext) {
       "});
 }
 
+#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -706,6 +707,7 @@ async fn test_selection_goal(cx: &mut gpui::TestAppContext) {
         Lorem Ipsum"});
 }
 
+#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_wrapped_motions(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -891,7 +893,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
             Ok(Some(lsp::WorkspaceEdit {
                 changes: Some(
                     [(
-                        url.clone(),
+                        url.clone().into(),
                         vec![
                             lsp::TextEdit::new(def_range, params.new_name.clone()),
                             lsp::TextEdit::new(tgt_range, params.new_name),
@@ -1125,6 +1127,26 @@ async fn test_lt_gt_marks(cx: &mut TestAppContext) {
         Line five
     "
     });
+
+    cx.simulate_shared_keystrokes("v i w o escape").await;
+    cx.simulate_shared_keystrokes("` >").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+        Line one
+        Line two
+        Line three
+        Line fouˇr
+        Line five
+    "
+    });
+    cx.simulate_shared_keystrokes("` <").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+        Line one
+        Line two
+        Line three
+        Line ˇfour
+        Line five
+    "
+    });
 }
 
 #[gpui::test]
@@ -1161,6 +1183,16 @@ async fn test_caret_mark(cx: &mut TestAppContext) {
         Line two
         Line three
         Straight thingˇ four
+        Line five
+    "
+    });
+
+    cx.simulate_shared_keystrokes("k a ! escape k g i ?").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+        Line one
+        Line two
+        Line three!?ˇ
+        Straight thing four
         Line five
     "
     });

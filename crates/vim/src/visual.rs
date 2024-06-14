@@ -5,7 +5,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    Bias, DisplayPoint, Editor,
+    Bias, DisplayPoint, Editor, ToOffset,
 };
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
@@ -16,10 +16,10 @@ use workspace::{searchable::Direction, Workspace};
 
 use crate::{
     motion::{start_of_line, Motion},
-    normal::substitute::substitute,
+    normal::yank::{copy_selections_content, yank_selections_content},
+    normal::{mark::create_visual_marks, substitute::substitute},
     object::Object,
     state::{Mode, Operator},
-    utils::{copy_selections_content, yank_selections_content},
     Vim,
 };
 
@@ -37,6 +37,7 @@ actions!(
         SelectPrevious,
         SelectNextMatch,
         SelectPreviousMatch,
+        RestoreVisualSelection,
     ]
 );
 
@@ -81,6 +82,52 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|workspace, _: &SelectPreviousMatch, cx| {
         Vim::update(cx, |vim, cx| {
             select_match(workspace, vim, Direction::Prev, cx);
+        });
+    });
+
+    workspace.register_action(|_, _: &RestoreVisualSelection, cx| {
+        Vim::update(cx, |vim, cx| {
+            let Some((stored_mode, reversed)) =
+                vim.update_state(|state| state.stored_visual_mode.take())
+            else {
+                return;
+            };
+            let Some((start, end)) = vim.state().marks.get("<").zip(vim.state().marks.get(">"))
+            else {
+                return;
+            };
+            let ranges = start
+                .into_iter()
+                .zip(end)
+                .zip(reversed)
+                .map(|((start, end), reversed)| (*start, *end, reversed))
+                .collect::<Vec<_>>();
+
+            if vim.state().mode.is_visual() {
+                create_visual_marks(vim, vim.state().mode, cx);
+            }
+
+            vim.update_active_editor(cx, |_, editor, cx| {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    let map = s.display_map();
+                    let ranges = ranges
+                        .into_iter()
+                        .map(|(start, end, reversed)| {
+                            let new_end =
+                                movement::saturating_right(&map, end.to_display_point(&map));
+                            Selection {
+                                id: s.new_selection_id(),
+                                start: start.to_offset(&map.buffer_snapshot),
+                                end: new_end.to_offset(&map, Bias::Left),
+                                reversed,
+                                goal: SelectionGoal::None,
+                            }
+                        })
+                        .collect();
+                    s.select(ranges);
+                })
+            });
+            vim.switch_mode(stored_mode, true, cx)
         });
     });
 }
@@ -483,6 +530,7 @@ pub fn select_next(_: &mut Workspace, _: &SelectNext, cx: &mut ViewContext<Works
             vim.take_count(cx)
                 .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
         vim.update_active_editor(cx, |_, editor, cx| {
+            editor.set_clip_at_line_ends(false, cx);
             for _ in 0..count {
                 if editor
                     .select_next(&Default::default(), cx)
@@ -1167,6 +1215,17 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_gl(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("aaˇ aa\naa", Mode::Normal);
+        cx.simulate_keystrokes("g l");
+        cx.assert_state("«aaˇ» «aaˇ»\naa", Mode::Visual);
+        cx.simulate_keystrokes("g >");
+        cx.assert_state("«aaˇ» aa\n«aaˇ»", Mode::Visual);
+    }
+
+    #[gpui::test]
     async fn test_dgn_repeat(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -1246,5 +1305,57 @@ mod test {
             the lazy dog
             "
         });
+    }
+
+    #[gpui::test]
+    async fn test_gv(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick brown"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("v i w escape g v").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "The «quickˇ» brown"
+        });
+
+        cx.simulate_shared_keystrokes("o escape g v").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "The «ˇquick» brown"
+        });
+
+        cx.simulate_shared_keystrokes("escape ^ ctrl-v l").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "«Thˇ»e quick brown"
+        });
+        cx.simulate_shared_keystrokes("g v").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "The «ˇquick» brown"
+        });
+        cx.simulate_shared_keystrokes("g v").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "«Thˇ»e quick brown"
+        });
+
+        cx.set_state(
+            indoc! {"
+            fiˇsh one
+            fish two
+            fish red
+            fish blue
+        "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("4 g l escape escape g v");
+        cx.assert_state(
+            indoc! {"
+                «fishˇ» one
+                «fishˇ» two
+                «fishˇ» red
+                «fishˇ» blue
+            "},
+            Mode::Visual,
+        );
     }
 }
