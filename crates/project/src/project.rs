@@ -254,14 +254,14 @@ impl Default for TelemetryWorktreeIdMap {
 
 #[derive(Debug)]
 struct ProjectTypeTelemetry {
-    project_type_name: String,
+    name: String,
     worktree_ids_reported: HashSet<WorktreeId>,
 }
 
 impl ProjectTypeTelemetry {
     fn new(project_type_name: String) -> Self {
         Self {
-            project_type_name,
+            name: project_type_name,
             worktree_ids_reported: HashSet::default(),
         }
     }
@@ -7885,7 +7885,7 @@ impl Project {
 
             client
                 .telemetry()
-                .report_app_event(format!("open {} project", x.project_type_name));
+                .report_app_event(format!("open {} project", project_type_telemetry.name));
 
             project_type_telemetry
                 .worktree_ids_reported
