@@ -97,6 +97,7 @@ enum CollapsedEntry {
     Excerpt(BufferId, ExcerptId),
 }
 
+#[derive(Debug)]
 struct Excerpt {
     range: ExcerptRange<language::Anchor>,
     outlines: ExcerptOutlines,
@@ -126,6 +127,7 @@ impl Excerpt {
     }
 }
 
+#[derive(Debug)]
 enum ExcerptOutlines {
     Outlines(Vec<Outline>),
     Invalidated(Vec<Outline>),
@@ -2195,9 +2197,6 @@ impl OutlinePanel {
             for entry in &self.fs_entries {
                 let depth = match entry {
                     FsEntry::Directory(worktree_id, dir_entry) => {
-                        if is_singleton {
-                            continue;
-                        }
                         let depth = self
                             .fs_entries_depth
                             .get(&(*worktree_id, dir_entry.id))
@@ -2240,16 +2239,11 @@ impl OutlinePanel {
                         depth
                     }
                     FsEntry::ExternalFile(..) => 0,
-                    FsEntry::File(worktree_id, file_entry, ..) => {
-                        if is_singleton {
-                            0
-                        } else {
-                            self.fs_entries_depth
-                                .get(&(*worktree_id, file_entry.id))
-                                .map(|&(_, depth)| depth)
-                                .unwrap_or(0)
-                        }
-                    }
+                    FsEntry::File(worktree_id, file_entry, ..) => self
+                        .fs_entries_depth
+                        .get(&(*worktree_id, file_entry.id))
+                        .map(|&(_, depth)| depth)
+                        .unwrap_or(0),
                 };
                 if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take() {
                     entries.push((
@@ -2277,30 +2271,35 @@ impl OutlinePanel {
                                 ),
                             ));
 
-                            if !self
+                            let mut outline_depth = excerpt_depth + 1;
+                            if is_singleton {
+                                outline_depth = 0;
+                                entries.clear();
+                            } else if self
                                 .collapsed_entries
                                 .contains(&CollapsedEntry::Excerpt(*buffer_id, entry_excerpt))
                             {
-                                let mut outline_data_depth = None::<usize>;
-                                let mut outline_depth = excerpt_depth + 1;
-                                for outline in excerpt.iter_outlines() {
-                                    if let Some(outline_data_depth) = outline_data_depth {
-                                        match outline_data_depth.cmp(&outline.depth) {
-                                            cmp::Ordering::Less => outline_depth += 1,
-                                            cmp::Ordering::Equal => {}
-                                            cmp::Ordering::Greater => outline_depth -= 1,
-                                        };
-                                    }
-                                    outline_data_depth = Some(outline.depth);
-                                    entries.push((
-                                        outline_depth,
-                                        EntryOwned::Outline(
-                                            *buffer_id,
-                                            entry_excerpt,
-                                            outline.clone(),
-                                        ),
-                                    ));
+                                continue;
+                            }
+
+                            let mut outline_data_depth = None::<usize>;
+                            for outline in excerpt.iter_outlines() {
+                                if let Some(outline_data_depth) = outline_data_depth {
+                                    match outline_data_depth.cmp(&outline.depth) {
+                                        cmp::Ordering::Less => outline_depth += 1,
+                                        cmp::Ordering::Equal => {}
+                                        cmp::Ordering::Greater => outline_depth -= 1,
+                                    };
                                 }
+                                outline_data_depth = Some(outline.depth);
+                                entries.push((
+                                    outline_depth,
+                                    EntryOwned::Outline(*buffer_id, entry_excerpt, outline.clone()),
+                                ));
+                            }
+
+                            if is_singleton && entries.is_empty() {
+                                entries.push((0, EntryOwned::Entry(entry.clone())));
                             }
                         }
                     }
@@ -2312,7 +2311,7 @@ impl OutlinePanel {
                     EntryOwned::FoldedDirs(worktree_id, folded_dirs),
                 ));
             }
-            entries
+            dbg!(entries)
         })
     }
 
