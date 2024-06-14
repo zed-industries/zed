@@ -11,6 +11,9 @@ importers:
       danger:
         specifier: 11.3.1
         version: 11.3.1
+      danger-plugin-pr-hygiene:
+        specifier: 0.5.0
+        version: 0.5.0
 
 packages:
 
@@ -158,6 +161,9 @@ packages:
   core-js@3.35.1:
     resolution: {integrity: sha512-IgdsbxNyMskrTFxa9lWHyMwAJU5gXOPP+1yO+K59d50VLVAIDAbs7gIv705KzALModfK3ZrSZTPNpC0PQgIZuw==}
 
+  danger-plugin-pr-hygiene@0.5.0:
+    resolution: {integrity: sha512-5z8vImexNVLG0V3LpGMp4RbMoU5Unjn9Na0Dv79gozYqgKJgIlaVRfxGTWxdJP0/TXO8NwDAQYdlwy+vqvfTsg==}
+
   danger@11.3.1:
     resolution: {integrity: sha512-+slkGnbf0czY7g4LSuYpYkKJgFrb9YIXFJvV5JAuLLF39CXLlUw0iebgeL3ASK1t6RDb8xe+Rk2F5ilh2Hdv2w==}
     engines: {node: '>=14.13.1'}
@@ -231,6 +237,9 @@ packages:
   form-data@4.0.0:
     resolution: {integrity: sha512-ETEklSGi5t0QMZuiXoA/Q6vcnxcLQP5vdugSpuAyi6SVGi2clPPp+xgEhuMaHC+zGgn31Kd235W35f7Hykkaww==}
     engines: {node: '>= 6'}
+
+  fp-ts@2.12.2:
+    resolution: {integrity: sha512-v8J7ud+nTkP5Zz17GhpCsY19wiRbB9miuj61nBcCJyDpu52zs9Z4O7OLDfYoKFQMJ9EsSZA7W1vRgC1d3jy5qw==}
 
   fs-exists-sync@0.1.0:
     resolution: {integrity: sha512-cR/vflFyPZtrN6b38ZyWxpWdhlXrzZEBawlpBQMq7033xVY7/kg0GDMBK5jg8lDYQckdJ5x/YC88lM3C7VMsLg==}
@@ -309,6 +318,11 @@ packages:
 
   ini@1.3.8:
     resolution: {integrity: sha512-JV/yugV2uzW5iMRSiZAyDtQd+nxtUnjeLt0acNdw98kKLrvuRVyB80tsREOE7yvGVgalhZ6RNXCmEHkUKBKxew==}
+
+  io-ts@2.2.17:
+    resolution: {integrity: sha512-RkQY06h6rRyADVEI46OCAUYTP2p18Vdtz9Movi19Mmj7SJ1NhN/yGyW7CxlcBVxh95WKg2YSbTmcUPqqeLuhXw==}
+    peerDependencies:
+      fp-ts: ^2.5.0
 
   is-extendable@0.1.1:
     resolution: {integrity: sha512-5BMULNob1vgFX6EjQw5izWDxrecWK9AM72rugNr0TFldMOi0fj6Jk+zeKIt0xGj4cEfQIJth4w3OKWOJ4f+AFw==}
@@ -796,6 +810,11 @@ snapshots:
 
   core-js@3.35.1: {}
 
+  danger-plugin-pr-hygiene@0.5.0:
+    dependencies:
+      fp-ts: 2.12.2
+      io-ts: 2.2.17(fp-ts@2.12.2)
+
   danger@11.3.1:
     dependencies:
       '@gitbeaker/core': 35.8.1
@@ -896,6 +915,8 @@ snapshots:
       combined-stream: 1.0.8
       mime-types: 2.1.35
 
+  fp-ts@2.12.2: {}
+
   fs-exists-sync@0.1.0: {}
 
   function-bind@1.1.2: {}
@@ -982,6 +1003,10 @@ snapshots:
   hyperlinker@1.0.0: {}
 
   ini@1.3.8: {}
+
+  io-ts@2.2.17(fp-ts@2.12.2):
+    dependencies:
+      fp-ts: 2.12.2
 
   is-extendable@0.1.1: {}
 
