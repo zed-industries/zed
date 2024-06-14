@@ -2256,6 +2256,24 @@ impl OutlinePanel {
             entries
         })
     }
+
+    fn invalidate_outlines(&mut self, ids: &[ExcerptId]) {
+        self.outline_fetch_tasks.clear();
+        let mut ids = ids.into_iter().collect::<HashSet<_>>();
+        for excerpts in self.excerpts.values_mut() {
+            ids.retain(|id| {
+                if let Some(excerpt) = excerpts.get_mut(id) {
+                    excerpt.outlines = None;
+                    false
+                } else {
+                    true
+                }
+            });
+            if ids.is_empty() {
+                break;
+            }
+        }
+    }
 }
 
 fn back_to_common_visited_parent(
@@ -2584,20 +2602,7 @@ fn subscribe_for_editor_events(
                 );
             }
             EditorEvent::ExcerptsExpanded { ids } => {
-                let mut ids = ids.into_iter().collect::<HashSet<_>>();
-                for excerpts in outline_panel.excerpts.values_mut() {
-                    ids.retain(|id| {
-                        if let Some(excerpt) = excerpts.get_mut(id) {
-                            excerpt.outlines = None;
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                    if ids.is_empty() {
-                        break;
-                    }
-                }
+                outline_panel.invalidate_outlines(ids);
                 outline_panel.update_fs_entries(
                     &editor,
                     HashSet::default(),
@@ -2607,9 +2612,23 @@ fn subscribe_for_editor_events(
                     cx,
                 );
             }
-            EditorEvent::Reparsed => {
-                outline_panel.outline_fetch_tasks.clear();
-                outline_panel.excerpts.clear();
+            EditorEvent::ExcerptsEdited { ids } => {
+                outline_panel.invalidate_outlines(ids);
+                outline_panel.update_fs_entries(
+                    &editor,
+                    HashSet::default(),
+                    None,
+                    debounce,
+                    true,
+                    cx,
+                );
+            }
+            EditorEvent::Reparsed(buffer_id) => {
+                if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
+                    for (_, excerpt) in excerpts {
+                        excerpt.outlines = None;
+                    }
+                }
                 outline_panel.update_fs_entries(
                     &editor,
                     HashSet::default(),

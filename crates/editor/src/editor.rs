@@ -10888,14 +10888,14 @@ impl Editor {
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
-            multi_buffer::Event::Reparsed => {
+            multi_buffer::Event::Reparsed(buffer_id) => {
                 self.tasks_update_task = Some(self.refresh_runnables(cx));
 
-                cx.emit(EditorEvent::Reparsed);
+                cx.emit(EditorEvent::Reparsed(*buffer_id));
             }
-            multi_buffer::Event::LanguageChanged => {
+            multi_buffer::Event::LanguageChanged(buffer_id) => {
                 linked_editing_ranges::refresh_linked_ranges(self, cx);
-                cx.emit(EditorEvent::Reparsed);
+                cx.emit(EditorEvent::Reparsed(*buffer_id));
                 cx.notify();
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
@@ -11818,7 +11818,7 @@ pub enum EditorEvent {
     Edited {
         transaction_id: clock::Lamport,
     },
-    Reparsed,
+    Reparsed(BufferId),
     Focused,
     Blurred,
     DirtyChanged,
