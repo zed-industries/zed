@@ -22,7 +22,6 @@ use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktr
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::Ordering,
     collections::HashSet,
     ffi::OsStr,
     ops::Range,
@@ -31,8 +30,7 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
-use unicase::UniCase;
-use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
@@ -1623,52 +1621,7 @@ impl ProjectPanel {
             }
 
             snapshot.propagate_git_statuses(&mut visible_worktree_entries);
-
-            visible_worktree_entries.sort_by(|entry_a, entry_b| {
-                let mut components_a = entry_a.path.components().peekable();
-                let mut components_b = entry_b.path.components().peekable();
-                loop {
-                    match (components_a.next(), components_b.next()) {
-                        (Some(component_a), Some(component_b)) => {
-                            let a_is_file = components_a.peek().is_none() && entry_a.is_file();
-                            let b_is_file = components_b.peek().is_none() && entry_b.is_file();
-                            let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                                let maybe_numeric_ordering = maybe!({
-                                    let num_and_remainder_a = Path::new(component_a.as_os_str())
-                                        .file_stem()
-                                        .and_then(|s| s.to_str())
-                                        .and_then(
-                                            NumericPrefixWithSuffix::from_numeric_prefixed_str,
-                                        )?;
-                                    let num_and_remainder_b = Path::new(component_b.as_os_str())
-                                        .file_stem()
-                                        .and_then(|s| s.to_str())
-                                        .and_then(
-                                            NumericPrefixWithSuffix::from_numeric_prefixed_str,
-                                        )?;
-
-                                    num_and_remainder_a.partial_cmp(&num_and_remainder_b)
-                                });
-
-                                maybe_numeric_ordering.unwrap_or_else(|| {
-                                    let name_a =
-                                        UniCase::new(component_a.as_os_str().to_string_lossy());
-                                    let name_b =
-                                        UniCase::new(component_b.as_os_str().to_string_lossy());
-
-                                    name_a.cmp(&name_b)
-                                })
-                            });
-                            if !ordering.is_eq() {
-                                return ordering;
-                            }
-                        }
-                        (Some(_), None) => break Ordering::Greater,
-                        (None, Some(_)) => break Ordering::Less,
-                        (None, None) => break Ordering::Equal,
-                    }
-                }
-            });
+            project::sort_worktree_entries(&mut visible_worktree_entries);
             self.visible_entries
                 .push((worktree_id, visible_worktree_entries));
         }
