@@ -29,6 +29,7 @@ if [[ -n $apt ]]; then
     mold
     jq
     gettext-base
+    elfutils
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
