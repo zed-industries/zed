@@ -1197,3 +1197,17 @@ async fn test_caret_mark(cx: &mut TestAppContext) {
     "
     });
 }
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+async fn test_dw_eol(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_wrap(12).await;
+    cx.set_shared_state("twelve ˇchar twelve char\ntwelve char")
+        .await;
+    cx.simulate_shared_keystrokes("d w").await;
+    cx.shared_state()
+        .await
+        .assert_eq("twelve ˇtwelve char\ntwelve char");
+}
