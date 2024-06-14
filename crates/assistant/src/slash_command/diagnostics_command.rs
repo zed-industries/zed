@@ -107,6 +107,7 @@ impl SlashCommand for DiagnosticsCommand {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
+        let query = query.split_whitespace().last().unwrap_or("").to_string();
 
         let paths = self.search_paths(query.clone(), cancellation_flag.clone(), &workspace, cx);
         let executor = cx.background_executor().clone();
@@ -215,14 +216,6 @@ impl Options {
             INCLUDE_WARNINGS_ARGUMENT.to_string(),
         )]
     }
-
-    fn header(&self) -> String {
-        if let Some(path_matcher) = &self.path_matcher {
-            format!("diagnostics: {}", path_matcher.source())
-        } else {
-            "diagnostics".to_string()
-        }
-    }
 }
 
 fn collect_diagnostics(
@@ -230,12 +223,18 @@ fn collect_diagnostics(
     options: Options,
     cx: &mut AppContext,
 ) -> Task<Result<(String, Vec<(Range<usize>, PlaceholderType)>)>> {
+    let header = if let Some(path_matcher) = &options.path_matcher {
+        format!("diagnostics: {}", path_matcher.source())
+    } else {
+        "diagnostics".to_string()
+    };
+
     let project_handle = project.downgrade();
     let diagnostic_summaries: Vec<_> = project.read(cx).diagnostic_summaries(false, cx).collect();
 
     cx.spawn(|mut cx| async move {
         let mut text = String::new();
-        writeln!(text, "{}", options.header()).unwrap();
+        writeln!(text, "{}", &header).unwrap();
         let mut sections: Vec<(Range<usize>, PlaceholderType)> = Vec::new();
 
         let mut project_summary = DiagnosticSummary::default();
@@ -277,7 +276,7 @@ fn collect_diagnostics(
         }
         sections.push((
             0..text.len(),
-            PlaceholderType::Root(project_summary, options.header()),
+            PlaceholderType::Root(project_summary, header),
         ));
 
         Ok((text, sections))
