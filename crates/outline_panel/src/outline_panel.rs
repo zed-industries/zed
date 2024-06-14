@@ -34,8 +34,7 @@ use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
 use project::{File, Fs, Project};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use unicase::UniCase;
-use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
@@ -1755,7 +1754,7 @@ impl OutlinePanel {
                             .into_iter()
                             .map(|(worktree_id, (worktree_snapshot, entries))| {
                                 let mut entries = entries.into_iter().collect::<Vec<_>>();
-                                sort_worktree_entries(&mut entries);
+                                project::sort_worktree_entries(&mut entries);
                                 worktree_snapshot.propagate_git_statuses(&mut entries);
                                 (worktree_id, entries)
                             })
@@ -2355,48 +2354,6 @@ fn back_to_common_visited_parent(
         visited_dirs.pop();
     }
     None
-}
-
-fn sort_worktree_entries(entries: &mut Vec<Entry>) {
-    entries.sort_by(|entry_a, entry_b| {
-        let mut components_a = entry_a.path.components().peekable();
-        let mut components_b = entry_b.path.components().peekable();
-        loop {
-            match (components_a.next(), components_b.next()) {
-                (Some(component_a), Some(component_b)) => {
-                    let a_is_file = components_a.peek().is_none() && entry_a.is_file();
-                    let b_is_file = components_b.peek().is_none() && entry_b.is_file();
-                    let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                        let maybe_numeric_ordering = maybe!({
-                            let num_and_remainder_a = Path::new(component_a.as_os_str())
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
-                            let num_and_remainder_b = Path::new(component_b.as_os_str())
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
-
-                            num_and_remainder_a.partial_cmp(&num_and_remainder_b)
-                        });
-
-                        maybe_numeric_ordering.unwrap_or_else(|| {
-                            let name_a = UniCase::new(component_a.as_os_str().to_string_lossy());
-                            let name_b = UniCase::new(component_b.as_os_str().to_string_lossy());
-
-                            name_a.cmp(&name_b)
-                        })
-                    });
-                    if !ordering.is_eq() {
-                        return ordering;
-                    }
-                }
-                (Some(_), None) => break cmp::Ordering::Greater,
-                (None, Some(_)) => break cmp::Ordering::Less,
-                (None, None) => break cmp::Ordering::Equal,
-            }
-        }
-    });
 }
 
 fn file_name(path: &Path) -> String {

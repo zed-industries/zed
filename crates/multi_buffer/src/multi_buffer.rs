@@ -1122,12 +1122,12 @@ impl MultiBuffer {
                     for range in ranges.by_ref().take(range_count) {
                         let start = Anchor {
                             buffer_id: Some(buffer_id),
-                            excerpt_id: excerpt_id,
+                            excerpt_id,
                             text_anchor: range.start,
                         };
                         let end = Anchor {
                             buffer_id: Some(buffer_id),
-                            excerpt_id: excerpt_id,
+                            excerpt_id,
                             text_anchor: range.end,
                         };
                         if tx.send(start..end).await.is_err() {

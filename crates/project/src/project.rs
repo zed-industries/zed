@@ -105,12 +105,13 @@ use task::{
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
+use unicase::UniCase;
 use util::{
     debug_panic, defer, maybe, merge_json_value_into, parse_env_output,
     paths::{
         LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
     },
-    post_inc, ResultExt, TryFutureExt as _,
+    post_inc, NumericPrefixWithSuffix, ResultExt, TryFutureExt as _,
 };
 use worktree::{CreatedEntry, RemoteWorktreeClient, Snapshot, Traversal};
 
@@ -620,27 +621,9 @@ enum SearchMatchCandidate {
     Path {
         worktree_id: WorktreeId,
         is_ignored: bool,
+        is_file: bool,
         path: Arc<Path>,
     },
-}
-
-impl SearchMatchCandidate {
-    fn path(&self) -> Option<Arc<Path>> {
-        match self {
-            SearchMatchCandidate::OpenBuffer { path, .. } => path.clone(),
-            SearchMatchCandidate::Path { path, .. } => Some(path.clone()),
-        }
-    }
-
-    fn is_ignored(&self) -> bool {
-        matches!(
-            self,
-            SearchMatchCandidate::Path {
-                is_ignored: true,
-                ..
-            }
-        )
-    }
 }
 
 pub enum SearchResult {
@@ -7198,7 +7181,9 @@ impl Project {
             } else {
                 false
             };
-            matching_paths.sort_by_key(|candidate| (candidate.is_ignored(), candidate.path()));
+            cx.update(|cx| {
+                sort_search_matches(&mut matching_paths, cx);
+            })?;
 
             let mut range_count = 0;
             let query = Arc::new(query);
@@ -11257,6 +11242,7 @@ async fn search_snapshots(
                         worktree_id: snapshot.id(),
                         path: entry.path.clone(),
                         is_ignored: entry.is_ignored,
+                        is_file: entry.is_file(),
                     };
                     if results_tx.send(project_path).await.is_err() {
                         return;
@@ -11329,6 +11315,7 @@ async fn search_ignored_entry(
                                 .expect("scanning worktree-related files"),
                         ),
                         is_ignored: true,
+                        is_file: ignored_entry.is_file(),
                     };
                     if counter_tx.send(project_path).await.is_err() {
                         return;
@@ -11991,6 +11978,130 @@ impl DiagnosticSummary {
             language_server_id: language_server_id.0 as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,
+        }
+    }
+}
+
+pub fn sort_worktree_entries(entries: &mut Vec<Entry>) {
+    entries.sort_by(|entry_a, entry_b| {
+        compare_paths(
+            (&entry_a.path, entry_a.is_file()),
+            (&entry_b.path, entry_b.is_file()),
+        )
+    });
+}
+
+fn sort_search_matches(search_matches: &mut Vec<SearchMatchCandidate>, cx: &AppContext) {
+    search_matches.sort_by(|entry_a, entry_b| match (entry_a, entry_b) {
+        (
+            SearchMatchCandidate::OpenBuffer {
+                buffer: buffer_a,
+                path: None,
+            },
+            SearchMatchCandidate::OpenBuffer {
+                buffer: buffer_b,
+                path: None,
+            },
+        ) => buffer_a
+            .read(cx)
+            .remote_id()
+            .cmp(&buffer_b.read(cx).remote_id()),
+        (
+            SearchMatchCandidate::OpenBuffer { path: None, .. },
+            SearchMatchCandidate::Path { .. }
+            | SearchMatchCandidate::OpenBuffer { path: Some(_), .. },
+        ) => Ordering::Less,
+        (
+            SearchMatchCandidate::OpenBuffer { path: Some(_), .. }
+            | SearchMatchCandidate::Path { .. },
+            SearchMatchCandidate::OpenBuffer { path: None, .. },
+        ) => Ordering::Greater,
+        (
+            SearchMatchCandidate::OpenBuffer {
+                path: Some(path_a), ..
+            },
+            SearchMatchCandidate::Path {
+                is_file: is_file_b,
+                path: path_b,
+                ..
+            },
+        ) => compare_paths((path_a.as_ref(), true), (path_b.as_ref(), *is_file_b)),
+        (
+            SearchMatchCandidate::Path {
+                is_file: is_file_a,
+                path: path_a,
+                ..
+            },
+            SearchMatchCandidate::OpenBuffer {
+                path: Some(path_b), ..
+            },
+        ) => compare_paths((path_a.as_ref(), *is_file_a), (path_b.as_ref(), true)),
+        (
+            SearchMatchCandidate::OpenBuffer {
+                path: Some(path_a), ..
+            },
+            SearchMatchCandidate::OpenBuffer {
+                path: Some(path_b), ..
+            },
+        ) => compare_paths((path_a.as_ref(), true), (path_b.as_ref(), true)),
+        (
+            SearchMatchCandidate::Path {
+                worktree_id: worktree_id_a,
+                is_file: is_file_a,
+                path: path_a,
+                ..
+            },
+            SearchMatchCandidate::Path {
+                worktree_id: worktree_id_b,
+                is_file: is_file_b,
+                path: path_b,
+                ..
+            },
+        ) => worktree_id_a.cmp(&worktree_id_b).then_with(|| {
+            compare_paths((path_a.as_ref(), *is_file_a), (path_b.as_ref(), *is_file_b))
+        }),
+    });
+}
+
+fn compare_paths(
+    (path_a, a_is_file): (&Path, bool),
+    (path_b, b_is_file): (&Path, bool),
+) -> cmp::Ordering {
+    let mut components_a = path_a.components().peekable();
+    let mut components_b = path_b.components().peekable();
+    loop {
+        match (components_a.next(), components_b.next()) {
+            (Some(component_a), Some(component_b)) => {
+                let a_is_file = components_a.peek().is_none() && a_is_file;
+                let b_is_file = components_b.peek().is_none() && b_is_file;
+                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
+                    let maybe_numeric_ordering = maybe!({
+                        let num_and_remainder_a = Path::new(component_a.as_os_str())
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
+                        let num_and_remainder_b = Path::new(component_b.as_os_str())
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
+
+                        num_and_remainder_a.partial_cmp(&num_and_remainder_b)
+                    });
+
+                    maybe_numeric_ordering.unwrap_or_else(|| {
+                        let name_a = UniCase::new(component_a.as_os_str().to_string_lossy());
+                        let name_b = UniCase::new(component_b.as_os_str().to_string_lossy());
+
+                        name_a.cmp(&name_b)
+                    })
+                });
+                if !ordering.is_eq() {
+                    return ordering;
+                }
+            }
+            (Some(_), None) => break cmp::Ordering::Greater,
+            (None, Some(_)) => break cmp::Ordering::Less,
+            (None, None) => break cmp::Ordering::Equal,
         }
     }
 }
