@@ -162,16 +162,11 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let vsync_event = create_event().unwrap();
-        begin_vsync(vsync_event.to_raw());
+        let vsync_event = unsafe { Owned::new(CreateEventW(None, false, false, None).unwrap()) };
+        begin_vsync(*vsync_event);
         'a: loop {
             let wait_result = unsafe {
-                MsgWaitForMultipleObjects(
-                    Some(&[vsync_event.to_raw()]),
-                    false,
-                    INFINITE,
-                    QS_ALLINPUT,
-                )
+                MsgWaitForMultipleObjects(Some(&[*vsync_event]), false, INFINITE, QS_ALLINPUT)
             };
 
             match wait_result {

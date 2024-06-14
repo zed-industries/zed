@@ -139,7 +139,7 @@ xim = { git = "https://github.com/npmania/xim-rs", rev = "27132caffc5b9bc9c432ca
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
-windows-core = "0.56"
+windows-core = "0.57"
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "2.4"
