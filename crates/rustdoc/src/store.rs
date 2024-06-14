@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use collections::HashMap;
+use derive_more::{Deref, Display};
 use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt;
 use fuzzy::StringMatchCandidate;
@@ -18,6 +19,16 @@ use util::ResultExt;
 use crate::indexer::{RustdocIndexer, RustdocProvider};
 use crate::{RustdocItem, RustdocItemKind};
 
+/// The name of a crate.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
+pub struct CrateName(Arc<str>);
+
+impl From<&str> for CrateName {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+
 struct GlobalRustdocStore(Arc<RustdocStore>);
 
 impl Global for GlobalRustdocStore {}
@@ -25,7 +36,8 @@ impl Global for GlobalRustdocStore {}
 pub struct RustdocStore {
     executor: BackgroundExecutor,
     database_future: Shared<BoxFuture<'static, Result<Arc<RustdocDatabase>, Arc<anyhow::Error>>>>,
-    indexing_tasks_by_crate: RwLock<HashMap<String, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
+    indexing_tasks_by_crate:
+        RwLock<HashMap<CrateName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
 }
 
 impl RustdocStore {
@@ -61,7 +73,7 @@ impl RustdocStore {
 
     pub async fn load(
         &self,
-        crate_name: String,
+        crate_name: CrateName,
         item_path: Option<String>,
     ) -> Result<RustdocDatabaseEntry> {
         self.database_future
@@ -74,7 +86,7 @@ impl RustdocStore {
 
     pub fn index(
         self: Arc<Self>,
-        crate_name: String,
+        crate_name: CrateName,
         provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
     ) -> Shared<Task<Result<(), Arc<anyhow::Error>>>> {
         let indexing_task = self
@@ -215,7 +227,7 @@ impl RustdocDatabase {
 
     pub fn load(
         &self,
-        crate_name: String,
+        crate_name: CrateName,
         item_path: Option<String>,
     ) -> Task<Result<RustdocDatabaseEntry>> {
         let env = self.env.clone();
@@ -223,7 +235,7 @@ impl RustdocDatabase {
         let item_path = if let Some(item_path) = item_path {
             format!("{crate_name}::{item_path}")
         } else {
-            crate_name
+            crate_name.to_string()
         };
 
         self.executor.spawn(async move {
@@ -236,7 +248,7 @@ impl RustdocDatabase {
 
     pub fn insert(
         &self,
-        crate_name: String,
+        crate_name: CrateName,
         item: Option<&RustdocItem>,
         docs: String,
     ) -> Task<Result<()>> {
@@ -251,7 +263,7 @@ impl RustdocDatabase {
                 },
             )
         } else {
-            (crate_name, RustdocDatabaseEntry::Crate { docs })
+            (crate_name.to_string(), RustdocDatabaseEntry::Crate { docs })
         };
 
         self.executor.spawn(async move {
