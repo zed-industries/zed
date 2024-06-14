@@ -457,6 +457,8 @@ impl Fs for RealFs {
         Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
         Arc<dyn Watcher>,
     ) {
+        use parking_lot::Mutex;
+
         let (tx, rx) = smol::channel::unbounded();
 
         let file_watcher = notify::recommended_watcher({
