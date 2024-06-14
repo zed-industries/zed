@@ -10,12 +10,12 @@ use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
-use gpui::{Context, TestAppContext};
+use gpui::{Context, SemanticVersion, TestAppContext};
 use http::{FakeHttpClient, Response};
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
-use project::Project;
+use project::{Project, DEFAULT_COMPLETION_CONTEXT};
 use serde_json::json;
 use settings::{Settings as _, SettingsStore};
 use std::{
@@ -510,6 +510,14 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
                                     {
                                         "name": format!("gleam-{version}-aarch64-apple-darwin.tar.gz"),
                                         "browser_download_url": asset_download_uri
+                                    },
+                                    {
+                                        "name": format!("gleam-{version}-x86_64-unknown-linux-musl.tar.gz"),
+                                        "browser_download_url": asset_download_uri
+                                    },
+                                    {
+                                        "name": format!("gleam-{version}-aarch64-unknown-linux-musl.tar.gz"),
+                                        "browser_download_url": asset_download_uri
                                     }
                                 ]
                             }
@@ -657,7 +665,9 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     });
 
     let completion_labels = project
-        .update(cx, |project, cx| project.completions(&buffer, 0, cx))
+        .update(cx, |project, cx| {
+            project.completions(&buffer, 0, DEFAULT_COMPLETION_CONTEXT, cx)
+        })
         .await
         .unwrap()
         .into_iter()
@@ -723,7 +733,7 @@ fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        release_channel::init("0.0.0", cx);
+        release_channel::init(SemanticVersion::default(), cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         Project::init_settings(cx);
         ExtensionSettings::register(cx);

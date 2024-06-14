@@ -359,6 +359,7 @@ dependencies = [
  "log",
  "menu",
  "multi_buffer",
+ "ollama",
  "open_ai",
  "ordered-float 2.10.0",
  "parking_lot",
@@ -367,6 +368,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rope",
+ "rustdoc",
  "schemars",
  "search",
  "semantic_index",
@@ -1512,7 +1514,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/kvark/blade?rev=bdaf8c534fbbc9fbca71d1cf272f45640b3a068d#bdaf8c534fbbc9fbca71d1cf272f45640b3a068d"
+source = "git+https://github.com/zed-industries/blade?rev=33fd51359d113c03b785e28f4a6cf75bacb0b26d#33fd51359d113c03b785e28f4a6cf75bacb0b26d"
 dependencies = [
  "ash",
  "ash-window",
@@ -1542,7 +1544,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=bdaf8c534fbbc9fbca71d1cf272f45640b3a068d#bdaf8c534fbbc9fbca71d1cf272f45640b3a068d"
+source = "git+https://github.com/zed-industries/blade?rev=33fd51359d113c03b785e28f4a6cf75bacb0b26d#33fd51359d113c03b785e28f4a6cf75bacb0b26d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1552,7 +1554,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/kvark/blade?rev=bdaf8c534fbbc9fbca71d1cf272f45640b3a068d#bdaf8c534fbbc9fbca71d1cf272f45640b3a068d"
+source = "git+https://github.com/zed-industries/blade?rev=33fd51359d113c03b785e28f4a6cf75bacb0b26d#33fd51359d113c03b785e28f4a6cf75bacb0b26d"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2149,7 +2151,6 @@ dependencies = [
  "exec",
  "fork",
  "ipc-channel",
- "libc",
  "once_cell",
  "plist",
  "release_channel",
@@ -2210,8 +2211,10 @@ dependencies = [
  "async-tungstenite",
  "chrono",
  "clock",
+ "cocoa",
  "collections",
  "feature_flags",
+ "fs",
  "futures 0.3.28",
  "gpui",
  "http 0.1.0",
@@ -2238,6 +2241,7 @@ dependencies = [
  "tiny_http",
  "url",
  "util",
+ "windows 0.56.0",
 ]
 
 [[package]]
@@ -4044,6 +4048,15 @@ name = "float-ord"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bad48618fdb549078c333a7a8528acb57af271d0433bdecd523eb620628364e"
+
+[[package]]
+name = "fluent-uri"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17c704e9dbe1ddd863da1e6ff3567795087b1eb201ce80d8fa81162e1516500d"
+dependencies = [
+ "bitflags 1.3.2",
+]
 
 [[package]]
 name = "flume"
@@ -6076,6 +6089,7 @@ dependencies = [
  "log",
  "lsp-types",
  "parking_lot",
+ "pct-str",
  "postage",
  "release_channel",
  "serde",
@@ -6087,14 +6101,14 @@ dependencies = [
 
 [[package]]
 name = "lsp-types"
-version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?branch=apply-snippet-edit#853c7881d200777e20799026651ca36727144646"
+version = "0.97.0"
+source = "git+https://github.com/zed-industries/lsp-types?branch=zed-main#258db672ceab9e66c6da3883d37c4dcf1094c6ac"
 dependencies = [
  "bitflags 1.3.2",
+ "fluent-uri",
  "serde",
  "serde_json",
  "serde_repr",
- "url",
 ]
 
 [[package]]
@@ -6917,6 +6931,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ollama"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "http 0.1.0",
+ "isahc",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7115,7 +7142,6 @@ dependencies = [
  "project",
  "rope",
  "serde_json",
- "settings",
  "smol",
  "theme",
  "tree-sitter-rust",
@@ -7123,6 +7149,32 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "outline_panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "db",
+ "editor",
+ "file_icons",
+ "futures 0.3.28",
+ "gpui",
+ "itertools 0.11.0",
+ "language",
+ "log",
+ "menu",
+ "project",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "unicase",
+ "util",
+ "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -7281,6 +7333,16 @@ checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
 dependencies = [
  "digest 0.10.7",
  "hmac 0.12.1",
+]
+
+[[package]]
+name = "pct-str"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf1bdcc492c285a50bed60860dfa00b50baf1f60c73c7d6b435b01a2a11fd6ff"
+dependencies = [
+ "thiserror",
+ "utf8-decode",
 ]
 
 [[package]]
@@ -8644,6 +8706,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa0f585226d2e68097d4f95d113b15b83a82e819ab25717ec0590d9584ef366"
 dependencies = [
  "semver",
+]
+
+[[package]]
+name = "rustdoc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "fuzzy",
+ "gpui",
+ "heed",
+ "html_to_markdown",
+ "http 0.1.0",
+ "indexmap 1.9.3",
+ "indoc",
+ "parking_lot",
+ "pretty_assertions",
+ "serde",
+ "strum",
+ "util",
 ]
 
 [[package]]
@@ -11440,6 +11525,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
+name = "utf8-decode"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca61eb27fa339aa08826a29f03e87b99b4d8f0fc2255306fd266bb1b6a9de498"
+
+[[package]]
 name = "utf8parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13164,10 +13255,11 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.140.0"
+version = "0.141.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
+ "ashpd",
  "assets",
  "assistant",
  "audio",
@@ -13220,6 +13312,7 @@ dependencies = [
  "node_runtime",
  "notifications",
  "outline",
+ "outline_panel",
  "parking_lot",
  "profiling",
  "project",

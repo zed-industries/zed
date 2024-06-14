@@ -1103,6 +1103,7 @@ These values take in the same options as the root-level settings with the same n
 1. `all`
 2. `selection`
 3. `none`
+4. `boundaries`
 
 ## Soft Wrap
 

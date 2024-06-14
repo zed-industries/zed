@@ -14,7 +14,7 @@ impl HandleTag for WikipediaChromeRemover {
         tag: &HtmlElement,
         _writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
-        match tag.tag.as_str() {
+        match tag.tag() {
             "head" | "script" | "style" | "nav" => return StartTagOutcome::Skip,
             "sup" => {
                 if tag.has_class("reference") {
@@ -54,7 +54,7 @@ impl HandleTag for WikipediaInfoboxHandler {
         tag: &HtmlElement,
         _writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
-        match tag.tag.as_str() {
+        match tag.tag() {
             "table" => {
                 if tag.has_class("infobox") {
                     return StartTagOutcome::Skip;
@@ -90,7 +90,7 @@ impl HandleTag for WikipediaCodeHandler {
         tag: &HtmlElement,
         writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
-        match tag.tag.as_str() {
+        match tag.tag() {
             "code" => {
                 if !writer.is_inside("pre") {
                     writer.push_str("`");
@@ -121,7 +121,7 @@ impl HandleTag for WikipediaCodeHandler {
     }
 
     fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
-        match tag.tag.as_str() {
+        match tag.tag() {
             "code" => {
                 if !writer.is_inside("pre") {
                     writer.push_str("`");
@@ -144,20 +144,23 @@ impl HandleTag for WikipediaCodeHandler {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use indoc::indoc;
     use pretty_assertions::assert_eq;
 
-    use crate::{convert_html_to_markdown, markdown};
+    use crate::{convert_html_to_markdown, markdown, TagHandler};
 
     use super::*;
 
-    fn wikipedia_handlers() -> Vec<Box<dyn HandleTag>> {
+    fn wikipedia_handlers() -> Vec<TagHandler> {
         vec![
-            Box::new(markdown::ParagraphHandler),
-            Box::new(markdown::HeadingHandler),
-            Box::new(markdown::ListHandler),
-            Box::new(markdown::StyledTextHandler),
-            Box::new(WikipediaChromeRemover),
+            Rc::new(RefCell::new(markdown::ParagraphHandler)),
+            Rc::new(RefCell::new(markdown::HeadingHandler)),
+            Rc::new(RefCell::new(markdown::ListHandler)),
+            Rc::new(RefCell::new(markdown::StyledTextHandler)),
+            Rc::new(RefCell::new(WikipediaChromeRemover)),
         ]
     }
 
@@ -173,7 +176,7 @@ mod tests {
         .trim();
 
         assert_eq!(
-            convert_html_to_markdown(html.as_bytes(), wikipedia_handlers()).unwrap(),
+            convert_html_to_markdown(html.as_bytes(), &mut wikipedia_handlers()).unwrap(),
             expected
         )
     }

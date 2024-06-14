@@ -3,10 +3,11 @@ use std::{fmt::Display, ops::Range, sync::Arc};
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
 use collections::HashMap;
-use editor::Anchor;
-use gpui::{Action, KeyContext};
+use editor::{Anchor, ClipboardSelection};
+use gpui::{Action, ClipboardItem, KeyContext};
 use language::{CursorShape, Selection, TransactionId};
 use serde::{Deserialize, Serialize};
+use ui::SharedString;
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -63,10 +64,10 @@ pub enum Operator {
     Jump { line: bool },
     Indent,
     Outdent,
-
     Lowercase,
     Uppercase,
     OppositeCase,
+    Register,
 }
 
 #[derive(Default, Clone)]
@@ -89,6 +90,8 @@ pub struct EditorState {
     pub current_tx: Option<TransactionId>,
     pub current_anchor: Option<Selection<Anchor>>,
     pub undo_modes: HashMap<TransactionId, Mode>,
+
+    pub selected_register: Option<char>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -111,6 +114,41 @@ pub enum RecordedSelection {
     },
 }
 
+#[derive(Default, Clone, Debug)]
+pub struct Register {
+    pub(crate) text: SharedString,
+    pub(crate) clipboard_selections: Option<Vec<ClipboardSelection>>,
+}
+
+impl From<Register> for ClipboardItem {
+    fn from(register: Register) -> Self {
+        let item = ClipboardItem::new(register.text.into());
+        if let Some(clipboard_selections) = register.clipboard_selections {
+            item.with_metadata(clipboard_selections)
+        } else {
+            item
+        }
+    }
+}
+
+impl From<ClipboardItem> for Register {
+    fn from(value: ClipboardItem) -> Self {
+        Register {
+            text: value.text().to_owned().into(),
+            clipboard_selections: value.metadata::<Vec<ClipboardSelection>>(),
+        }
+    }
+}
+
+impl From<String> for Register {
+    fn from(text: String) -> Self {
+        Register {
+            text: text.into(),
+            clipboard_selections: None,
+        }
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct WorkspaceState {
     pub search: SearchState,
@@ -123,7 +161,8 @@ pub struct WorkspaceState {
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
-    pub registers: HashMap<String, String>,
+    pub last_yank: Option<SharedString>,
+    pub registers: HashMap<char, Register>,
 }
 
 #[derive(Debug)]
@@ -277,6 +316,7 @@ impl Operator {
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
             Operator::OppositeCase => "g~",
+            Operator::Register => "\"",
         }
     }
 
@@ -287,6 +327,7 @@ impl Operator {
             | Operator::Mark
             | Operator::Jump { .. }
             | Operator::FindBackward { .. }
+            | Operator::Register
             | Operator::Replace
             | Operator::AddSurrounds { target: Some(_) }
             | Operator::ChangeSurrounds { .. }

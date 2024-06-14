@@ -28,10 +28,10 @@ use futures::{
 };
 use gpui::{
     actions, canvas, impl_actions, point, relative, size, Action, AnyElement, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DevicePixels, DragMoveEvent,
-    Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke,
-    ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render, Size,
-    Subscription, Task, View, WeakView, WindowBounds, WindowHandle, WindowOptions,
+    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DragMoveEvent, Entity as _, EntityId,
+    EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke, ManagedView, Model,
+    ModelContext, PathPromptOptions, Point, PromptLevel, Render, Size, Subscription, Task, View,
+    WeakView, WindowBounds, WindowHandle, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -79,7 +79,7 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{
-    div, h_flex, Context as _, Div, FluentBuilder, InteractiveElement as _, IntoElement,
+    div, h_flex, px, Context as _, Div, FluentBuilder, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
     WindowContext,
 };
@@ -96,11 +96,11 @@ use crate::persistence::{
 use crate::{notifications::NotificationId, persistence::model::LocalPathsOrder};
 
 lazy_static! {
-    static ref ZED_WINDOW_SIZE: Option<Size<DevicePixels>> = env::var("ZED_WINDOW_SIZE")
+    static ref ZED_WINDOW_SIZE: Option<Size<Pixels>> = env::var("ZED_WINDOW_SIZE")
         .ok()
         .as_deref()
         .and_then(parse_pixel_size_env_var);
-    static ref ZED_WINDOW_POSITION: Option<Point<DevicePixels>> = env::var("ZED_WINDOW_POSITION")
+    static ref ZED_WINDOW_POSITION: Option<Point<Pixels>> = env::var("ZED_WINDOW_POSITION")
         .ok()
         .as_deref()
         .and_then(parse_pixel_position_env_var);
@@ -3981,7 +3981,7 @@ impl Workspace {
     }
 }
 
-fn window_bounds_env_override() -> Option<Bounds<DevicePixels>> {
+fn window_bounds_env_override() -> Option<Bounds<Pixels>> {
     ZED_WINDOW_POSITION
         .zip(*ZED_WINDOW_SIZE)
         .map(|(position, size)| Bounds {
@@ -4853,18 +4853,16 @@ pub fn open_new(
     app_state: Arc<AppState>,
     cx: &mut AppContext,
     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static + Send,
-) -> Task<()> {
+) -> Task<anyhow::Result<()>> {
     let task = Workspace::new_local(Vec::new(), app_state, None, cx);
     cx.spawn(|mut cx| async move {
-        if let Some((workspace, opened_paths)) = task.await.log_err() {
-            workspace
-                .update(&mut cx, |workspace, cx| {
-                    if opened_paths.is_empty() {
-                        init(workspace, cx)
-                    }
-                })
-                .log_err();
-        }
+        let (workspace, opened_paths) = task.await?;
+        workspace.update(&mut cx, |workspace, cx| {
+            if opened_paths.is_empty() {
+                init(workspace, cx)
+            }
+        })?;
+        Ok(())
     })
 }
 
@@ -4936,7 +4934,7 @@ pub fn join_hosted_project(
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
                     })
                 })
-            })?
+            })??
         };
 
         workspace.update(&mut cx, |_, cx| {
@@ -5011,7 +5009,7 @@ pub fn join_dev_server_project(
                             Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
                         })
                     })
-                })?
+                })??
             }
         };
 
@@ -5074,7 +5072,7 @@ pub fn join_in_room_project(
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
                     })
                 })
-            })?
+            })??
         };
 
         workspace.update(&mut cx, |workspace, cx| {
@@ -5160,18 +5158,18 @@ pub fn reload(reload: &Reload, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
-fn parse_pixel_position_env_var(value: &str) -> Option<Point<DevicePixels>> {
+fn parse_pixel_position_env_var(value: &str) -> Option<Point<Pixels>> {
     let mut parts = value.split(',');
     let x: usize = parts.next()?.parse().ok()?;
     let y: usize = parts.next()?.parse().ok()?;
-    Some(point((x as i32).into(), (y as i32).into()))
+    Some(point(px(x as f32), px(y as f32)))
 }
 
-fn parse_pixel_size_env_var(value: &str) -> Option<Size<DevicePixels>> {
+fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     let mut parts = value.split(',');
     let width: usize = parts.next()?.parse().ok()?;
     let height: usize = parts.next()?.parse().ok()?;
-    Some(size((width as i32).into(), (height as i32).into()))
+    Some(size(px(width as f32), px(height as f32)))
 }
 
 #[cfg(test)]

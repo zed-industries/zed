@@ -141,7 +141,8 @@ pub fn init(
         vec![
             Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
             Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
-        ]
+        ],
+        typescript_task_context()
     );
     language!(
         "typescript",

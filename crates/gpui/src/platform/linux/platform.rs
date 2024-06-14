@@ -39,8 +39,8 @@ use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
     OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler,
-    PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task,
-    WindowAppearance, WindowOptions, WindowParams,
+    PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, SharedString,
+    Size, Task, WindowAppearance, WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
@@ -54,18 +54,17 @@ pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
 pub trait LinuxClient {
+    fn compositor_name(&self) -> &'static str;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
-    fn can_open_windows(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Box<dyn PlatformWindow>;
+    ) -> anyhow::Result<Box<dyn PlatformWindow>>;
     fn set_cursor_style(&self, style: CursorStyle);
     fn open_uri(&self, uri: &str);
     fn write_to_primary(&self, item: ClipboardItem);
@@ -152,12 +151,12 @@ impl<P: LinuxClient + 'static> Platform for P {
         });
     }
 
-    fn can_open_windows(&self) -> anyhow::Result<()> {
-        self.can_open_windows()
-    }
-
     fn quit(&self) {
         self.with_common(|common| common.signal.stop());
+    }
+
+    fn compositor_name(&self) -> &'static str {
+        self.compositor_name()
     }
 
     fn restart(&self, binary_path: Option<PathBuf>) {
@@ -245,7 +244,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         &self,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         self.open_window(handle, options)
     }
 
@@ -367,23 +366,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| {
             common.callbacks.validate_app_menu_command = Some(callback);
         });
-    }
-
-    fn os_name(&self) -> &'static str {
-        "Linux"
-    }
-
-    fn os_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion::new(1, 0, 0))
-    }
-
-    fn app_version(&self) -> Result<SemanticVersion> {
-        const VERSION: Option<&str> = option_env!("RELEASE_VERSION");
-        if let Some(version) = VERSION {
-            version.parse()
-        } else {
-            Ok(SemanticVersion::new(1, 0, 0))
-        }
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -510,6 +492,8 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.read_from_clipboard()
     }
+
+    fn add_recent_document(&self, _path: &Path) {}
 }
 
 pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {

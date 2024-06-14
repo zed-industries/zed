@@ -17,7 +17,6 @@ use crate::{
     normal::{mark, normal_motion},
     state::{Mode, Operator},
     surrounds::SurroundsType,
-    utils::coerce_punctuation,
     visual::visual_motion,
     Vim,
 };
@@ -1761,6 +1760,14 @@ fn window_bottom(
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
     } else {
         (point, SelectionGoal::None)
+    }
+}
+
+pub fn coerce_punctuation(kind: CharKind, treat_punctuation_as_word: bool) -> CharKind {
+    if treat_punctuation_as_word && kind == CharKind::Punctuation {
+        CharKind::Word
+    } else {
+        kind
     }
 }
 

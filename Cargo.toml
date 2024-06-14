@@ -61,8 +61,10 @@ members = [
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",
+    "crates/ollama",
     "crates/open_ai",
     "crates/outline",
+    "crates/outline_panel",
     "crates/picker",
     "crates/prettier",
     "crates/project",
@@ -78,6 +80,7 @@ members = [
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
+    "crates/rustdoc",
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
@@ -207,8 +210,10 @@ menu = { path = "crates/menu" }
 multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
+ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
+outline_panel = { path = "crates/outline_panel" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
@@ -225,6 +230,7 @@ dev_server_projects = { path = "crates/dev_server_projects" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
+rustdoc = { path = "crates/rustdoc" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
@@ -268,14 +274,15 @@ async-tar = "0.4.2"
 async-trait = "0.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "bdaf8c534fbbc9fbca71d1cf272f45640b3a068d" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "bdaf8c534fbbc9fbca71d1cf272f45640b3a068d" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "bdaf8c534fbbc9fbca71d1cf272f45640b3a068d" }
+blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "33fd51359d113c03b785e28f4a6cf75bacb0b26d" }
+blade-macros = { git = "https://github.com/zed-industries/blade", rev =  "33fd51359d113c03b785e28f4a6cf75bacb0b26d" }
+blade-util = { git = "https://github.com/zed-industries/blade", rev = "33fd51359d113c03b785e28f4a6cf75bacb0b26d"  }
 cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
+cocoa = "0.25"
 ctor = "0.2.6"
 signal-hook = "0.3.17"
 core-foundation = { version = "0.9.3" }
@@ -294,6 +301,7 @@ heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 ignore = "0.4.22"
+indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "1"
 # We explicitly disable http2 support in isahc.
 isahc = { version = "1.7.2", default-features = false, features = [
@@ -408,6 +416,7 @@ features = [
     "Foundation_Numerics",
     "System",
     "System_Threading",
+    "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
     "Win32_Graphics_Direct2D",

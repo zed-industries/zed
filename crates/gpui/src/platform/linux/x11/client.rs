@@ -359,6 +359,9 @@ impl X11Client {
                             window.window.set_appearance(appearance);
                         }
                     }
+                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
+                        // noop, X11 manages this for us.
+                    }
                 }
             })
             .unwrap();
@@ -889,6 +892,10 @@ impl X11Client {
 }
 
 impl LinuxClient for X11Client {
+    fn compositor_name(&self) -> &'static str {
+        "X11"
+    }
+
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
     }
@@ -901,8 +908,11 @@ impl LinuxClient for X11Client {
             .iter()
             .enumerate()
             .filter_map(|(root_id, _)| {
-                Some(Rc::new(X11Display::new(&state.xcb_connection, root_id)?)
-                    as Rc<dyn PlatformDisplay>)
+                Some(Rc::new(X11Display::new(
+                    &state.xcb_connection,
+                    state.scale_factor,
+                    root_id,
+                )?) as Rc<dyn PlatformDisplay>)
             })
             .collect()
     }
@@ -911,8 +921,12 @@ impl LinuxClient for X11Client {
         let state = self.0.borrow();
 
         Some(Rc::new(
-            X11Display::new(&state.xcb_connection, state.x_root_index)
-                .expect("There should always be a root index"),
+            X11Display::new(
+                &state.xcb_connection,
+                state.scale_factor,
+                state.x_root_index,
+            )
+            .expect("There should always be a root index"),
         ))
     }
 
@@ -921,6 +935,7 @@ impl LinuxClient for X11Client {
 
         Some(Rc::new(X11Display::new(
             &state.xcb_connection,
+            state.scale_factor,
             id.0 as usize,
         )?))
     }
@@ -929,7 +944,7 @@ impl LinuxClient for X11Client {
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
         let x_window = state.xcb_connection.generate_id().unwrap();
 
@@ -944,7 +959,7 @@ impl LinuxClient for X11Client {
             &state.atoms,
             state.scale_factor,
             state.common.appearance,
-        );
+        )?;
 
         let screen_resources = state
             .xcb_connection
@@ -1012,7 +1027,7 @@ impl LinuxClient for X11Client {
         };
 
         state.windows.insert(x_window, window_ref);
-        Box::new(window)
+        Ok(Box::new(window))
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
