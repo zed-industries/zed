@@ -17,9 +17,9 @@ use workspace::{searchable::Direction, Workspace};
 use crate::{
     motion::{start_of_line, Motion},
     normal::substitute::substitute,
+    normal::yank::{copy_selections_content, yank_selections_content},
     object::Object,
     state::{Mode, Operator},
-    utils::{copy_selections_content, yank_selections_content},
     Vim,
 };
 
