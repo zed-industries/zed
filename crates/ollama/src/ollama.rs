@@ -66,7 +66,7 @@ impl Default for KeepAlive {
 pub struct Model {
     pub name: String,
     pub max_tokens: usize,
-    pub keep_alive: KeepAlive,
+    pub keep_alive: Option<KeepAlive>,
 }
 
 impl Model {
@@ -74,7 +74,7 @@ impl Model {
         Self {
             name: name.to_owned(),
             max_tokens: 2048,
-            keep_alive: KeepAlive::indefinite(),
+            keep_alive: Some(KeepAlive::indefinite()),
         }
     }
 
