@@ -38,9 +38,6 @@ jobs:
       - name: Remove untracked files
         run: git clean -df
 
-      - name: Set up default .cargo/config.toml
-        run: cp ./.cargo/ci-config.toml ~/.cargo/config.toml
-
       - name: Check spelling
         run: |
           if ! which typos > /dev/null; then
