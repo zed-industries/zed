@@ -838,6 +838,23 @@ impl Worktree {
         }
     }
 
+    pub fn copy_external_entries(
+        &mut self,
+        target_directory: PathBuf,
+        paths: Vec<Arc<Path>>,
+        overwrite_existing_files: bool,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<Vec<ProjectEntryId>>> {
+        match self {
+            Worktree::Local(this) => {
+                this.copy_external_entries(target_directory, paths, overwrite_existing_files, cx)
+            }
+            _ => Task::ready(Err(anyhow!(
+                "Copying external entries is not supported for remote worktrees"
+            ))),
+        }
+    }
+
     pub fn expand_entry(
         &mut self,
         entry_id: ProjectEntryId,
@@ -1576,6 +1593,87 @@ impl LocalWorktree {
                     .refresh_entry(new_path.clone(), None, cx)
             })?
             .await
+        })
+    }
+
+    pub fn copy_external_entries(
+        &mut self,
+        target_directory: PathBuf,
+        paths: Vec<Arc<Path>>,
+        overwrite_existing_files: bool,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<Vec<ProjectEntryId>>> {
+        let worktree_path = self.abs_path().clone();
+        let fs = self.fs.clone();
+        let paths = paths
+            .into_iter()
+            .filter_map(|source| {
+                let file_name = source.file_name()?;
+                let mut target = target_directory.clone();
+                target.push(file_name);
+
+                // Do not allow copying the same file to itself.
+                if source.as_ref() != target.as_path() {
+                    Some((source, target))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let paths_to_refresh = paths
+            .iter()
+            .filter_map(|(_, target)| Some(target.strip_prefix(&worktree_path).ok()?.into()))
+            .collect::<Vec<_>>();
+
+        cx.spawn(|this, cx| async move {
+            cx.background_executor()
+                .spawn(async move {
+                    for (source, target) in paths {
+                        copy_recursive(
+                            fs.as_ref(),
+                            &source,
+                            &target,
+                            fs::CopyOptions {
+                                overwrite: overwrite_existing_files,
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                        .with_context(|| {
+                            anyhow!("Failed to copy file from {source:?} to {target:?}")
+                        })?;
+                    }
+                    Ok::<(), anyhow::Error>(())
+                })
+                .await
+                .log_err();
+            let mut refresh = cx.read_model(
+                &this.upgrade().with_context(|| "Dropped worktree")?,
+                |this, _| {
+                    Ok::<postage::barrier::Receiver, anyhow::Error>(
+                        this.as_local()
+                            .with_context(|| "Worktree is not local")?
+                            .refresh_entries_for_paths(paths_to_refresh.clone()),
+                    )
+                },
+            )??;
+
+            cx.background_executor()
+                .spawn(async move {
+                    refresh.next().await;
+                    Ok::<(), anyhow::Error>(())
+                })
+                .await
+                .log_err();
+
+            let this = this.upgrade().with_context(|| "Dropped worktree")?;
+            cx.read_model(&this, |this, _| {
+                paths_to_refresh
+                    .iter()
+                    .filter_map(|path| Some(this.entry_for_path(path)?.id))
+                    .collect()
+            })
         })
     }
 
@@ -3751,6 +3849,7 @@ impl BackgroundScanner {
                         statuses,
                     });
                 }
+                self.watcher.add(child_abs_path.as_ref()).log_err();
             } else if child_name == *GITIGNORE {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
                     Ok(ignore) => {
@@ -3988,7 +4087,10 @@ impl BackgroundScanner {
                     }
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_dir()) {
-                        if state.should_scan_directory(&fs_entry) {
+                        if state.should_scan_directory(&fs_entry)
+                            || (fs_entry.path.as_os_str().is_empty()
+                                && abs_path.file_name() == Some(*DOT_GIT))
+                        {
                             state.enqueue_scan_dir(abs_path, &fs_entry, scan_queue_tx);
                         } else {
                             fs_entry.kind = EntryKind::UnloadedDir;

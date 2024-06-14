@@ -101,7 +101,6 @@ jobs:
       - name: Build other binaries and features
         run: cargo build --workspace --bins --all-features; cargo check -p gpui --features "macos-blade"
 
-  # todo(linux): Actually run the tests
   linux_tests:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
@@ -119,6 +118,9 @@ jobs:
 
       - name: cargo clippy
         run: cargo xtask clippy
+
+      - name: Run tests
+        uses: ./.github/actions/run_tests
 
       - name: Build Zed
         run: cargo build -p zed

@@ -13,8 +13,8 @@ use call::{report_call_event_for_room, ActiveCall};
 pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::{
-    actions, point, AppContext, DevicePixels, Pixels, PlatformDisplay, Size, Task,
-    WindowBackgroundAppearance, WindowBounds, WindowContext, WindowKind, WindowOptions,
+    actions, point, AppContext, Pixels, PlatformDisplay, Size, Task, WindowBackgroundAppearance,
+    WindowBounds, WindowContext, WindowKind, WindowOptions,
 };
 use panel_settings::MessageEditorSettings;
 pub use panel_settings::{
@@ -22,6 +22,7 @@ pub use panel_settings::{
 };
 use release_channel::ReleaseChannel;
 use settings::Settings;
+use ui::px;
 use workspace::{notifications::DetachAndPromptErr, AppState};
 
 actions!(
@@ -96,22 +97,19 @@ pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
 
 fn notification_window_options(
     screen: Rc<dyn PlatformDisplay>,
-    window_size: Size<Pixels>,
+    size: Size<Pixels>,
     cx: &AppContext,
 ) -> WindowOptions {
-    let notification_margin_width = DevicePixels::from(16);
-    let notification_margin_height = DevicePixels::from(-0) - DevicePixels::from(48);
+    let notification_margin_width = px(16.);
+    let notification_margin_height = px(-48.);
 
-    let screen_bounds = screen.bounds();
-    let size: Size<DevicePixels> = window_size.into();
-
-    let bounds = gpui::Bounds::<DevicePixels> {
-        origin: screen_bounds.upper_right()
+    let bounds = gpui::Bounds::<Pixels> {
+        origin: screen.bounds().upper_right()
             - point(
                 size.width + notification_margin_width,
                 notification_margin_height,
             ),
-        size: window_size.into(),
+        size,
     };
 
     let app_id = ReleaseChannel::global(cx).app_id();

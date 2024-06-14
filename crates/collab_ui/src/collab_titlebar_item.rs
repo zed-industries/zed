@@ -58,6 +58,8 @@ impl Render for CollabTitlebarItem {
         let project_id = self.project.read(cx).remote_id();
         let workspace = self.workspace.upgrade();
 
+        let platform_supported = cfg!(target_os = "macos");
+
         TitleBar::new("collab-titlebar", Box::new(workspace::CloseWindow))
             // note: on windows titlebar behaviour is handled by the platform implementation
             .when(cfg!(not(windows)), |this| {
@@ -243,7 +245,9 @@ impl Render for CollabTitlebarItem {
                                 )
                                 .tooltip(move |cx| {
                                     Tooltip::text(
-                                        if is_muted {
+                                        if !platform_supported {
+                                            "Cannot share microphone"
+                                        } else if is_muted {
                                             "Unmute microphone"
                                         } else {
                                             "Mute microphone"
@@ -253,7 +257,8 @@ impl Render for CollabTitlebarItem {
                                 })
                                 .style(ButtonStyle::Subtle)
                                 .icon_size(IconSize::Small)
-                                .selected(is_muted)
+                                .selected(platform_supported && is_muted)
+                                .disabled(!platform_supported)
                                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                                 .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                             )
@@ -271,8 +276,11 @@ impl Render for CollabTitlebarItem {
                             .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                             .icon_size(IconSize::Small)
                             .selected(is_deafened)
+                            .disabled(cfg!(not(target_os = "linux")))
                             .tooltip(move |cx| {
-                                if can_use_microphone {
+                                if !platform_supported {
+                                    Tooltip::text("Cannot share microphone", cx)
+                                } else if can_use_microphone {
                                     Tooltip::with_meta(
                                         "Deafen Audio",
                                         None,
@@ -291,10 +299,13 @@ impl Render for CollabTitlebarItem {
                                     .style(ButtonStyle::Subtle)
                                     .icon_size(IconSize::Small)
                                     .selected(is_screen_sharing)
+                                    .disabled(cfg!(not(target_os = "linux")))
                                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                                     .tooltip(move |cx| {
                                         Tooltip::text(
-                                            if is_screen_sharing {
+                                            if !platform_supported {
+                                                "Cannot share screen"
+                                            } else if is_screen_sharing {
                                                 "Stop Sharing Screen"
                                             } else {
                                                 "Share Screen"

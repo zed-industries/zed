@@ -43,8 +43,8 @@ cargo build --release --target "${target_triple}" --package zed --package cli
 
 # Strip the binary of all debug symbols
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
-strip "target/${target_triple}/release/zed"
-strip "target/${target_triple}/release/cli"
+strip --strip-debug "target/${target_triple}/release/zed"
+strip --strip-debug "target/${target_triple}/release/cli"
 
 suffix=""
 if [ "$channel" != "stable" ]; then

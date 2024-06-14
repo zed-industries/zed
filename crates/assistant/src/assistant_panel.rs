@@ -54,8 +54,8 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use ui::{
-    popover_menu, prelude::*, ButtonLike, ContextMenu, ElevationIndex, KeyBinding, ListItem,
-    ListItemSpacing, PopoverMenuHandle, Tab, TabBar, Tooltip,
+    popover_menu, prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding,
+    ListItem, ListItemSpacing, PopoverMenuHandle, Tab, TabBar, Tooltip,
 };
 use util::{paths::CONTEXTS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -3132,17 +3132,10 @@ fn render_slash_command_output_toggle(
     fold: ToggleFold,
     _cx: &mut WindowContext,
 ) -> AnyElement {
-    IconButton::new(
-        ("slash-command-output-fold-indicator", row.0),
-        ui::IconName::ChevronDown,
-    )
-    .on_click(move |_e, cx| fold(!is_folded, cx))
-    .icon_color(ui::Color::Muted)
-    .icon_size(ui::IconSize::Small)
-    .selected(is_folded)
-    .selected_icon(ui::IconName::ChevronRight)
-    .size(ui::ButtonSize::None)
-    .into_any_element()
+    Disclosure::new(("slash-command-output-fold-indicator", row.0), !is_folded)
+        .selected(is_folded)
+        .on_click(move |_e, cx| fold(!is_folded, cx))
+        .into_any_element()
 }
 
 fn render_pending_slash_command_gutter_decoration(

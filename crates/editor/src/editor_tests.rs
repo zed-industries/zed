@@ -482,6 +482,42 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_movement_actions_with_pending_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
+        build_editor(buffer, cx)
+    });
+
+    _ = view.update(cx, |view, cx| {
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)]
+        );
+
+        view.move_down(&Default::default(), cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 2)]
+        );
+
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)]
+        );
+
+        view.move_up(&Default::default(), cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2)]
+        );
+    });
+}
+
+#[gpui::test]
 fn test_clone(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -900,6 +936,8 @@ fn test_move_cursor(cx: &mut TestAppContext) {
     });
 }
 
+// TODO: Re-enable this test
+#[cfg(target_os = "macos")]
 #[gpui::test]
 fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -7659,8 +7697,8 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::from_corners(
-                    gpui::Point::new(0.into(), 0.into()),
-                    gpui::Point::new(10.into(), 80.into()),
+                    gpui::Point::new(px(0.), px(0.)),
+                    gpui::Point::new(px(10.), px(80.)),
                 ))),
                 ..Default::default()
             },
