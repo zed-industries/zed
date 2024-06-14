@@ -149,8 +149,14 @@ impl SlashCommand for RustdocSlashCommand {
                 }
             }
 
+            let indexing_crates = store.crates_being_indexed();
             let items = store.search(query).await;
-            Ok(items)
+
+            Ok(indexing_crates
+                .into_iter()
+                .map(|crate_name| format!("Indexing {crate_name}..."))
+                .chain(items)
+                .collect())
         })
     }
 

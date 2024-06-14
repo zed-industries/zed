@@ -59,6 +59,15 @@ impl RustdocStore {
         }
     }
 
+    /// Returns the list of crate names currently being indexed.
+    pub fn crates_being_indexed(&self) -> Vec<String> {
+        self.indexing_tasks_by_crate
+            .read()
+            .keys()
+            .cloned()
+            .collect()
+    }
+
     pub async fn load(
         &self,
         crate_name: String,
