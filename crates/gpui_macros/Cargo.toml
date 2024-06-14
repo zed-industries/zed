@@ -17,6 +17,3 @@ doctest = false
 proc-macro2 = "1.0.66"
 quote = "1.0.9"
 syn = { version = "1.0.72", features = ["full"] }
-
-[dev-dependencies]
-gpui = { workspace = true, features = ["test-support"] }
