@@ -240,7 +240,7 @@ impl OllamaCompletionProvider {
                     },
                 })
                 .collect(),
-            keep_alive: model.keep_alive,
+            keep_alive: model.keep_alive.unwrap_or_default(),
             stream: true,
             options: Some(ChatOptions {
                 num_ctx: Some(model.max_tokens),
