@@ -198,7 +198,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_fold_get_word_starts_no_folds(cx: &mut AppContext) {
+    fn test_easy_get_word_starts(cx: &mut AppContext) {
         init_test(cx);
 
         let marked_text = "ˇlorem ipsuˇm hi hello ";
@@ -231,20 +231,6 @@ mod tests {
         );
     }
 
-    // fn test_helper_fold_with_folds(
-    //     text: &str,
-    //     list: Vec<DisplayPoint>,
-    //     full_word: bool,
-    //     folds: Vec<(Range<Point>, FoldPlaceholder)>,
-    //     cx: &mut AppContext,
-    // ) {
-    //     let (snapshot, display_points) = marked_display_snapshot(text, cx);
-    //     let point = *display_points.first().unwrap();
-    //     let end = *display_points.last().unwrap();
-    //     let starts = word_starts_in_range_fold(&snapshot, point, end, full_word);
-    //     assert_eq!(starts, list, "full_word: {:?}, text: {}", full_word, text);
-    // }
-
     fn display_map_helper(text: &str, cx: &mut TestAppContext) -> Model<DisplayMap> {
         let buffer_start_excerpt_header_height = 1;
         let excerpt_header_height = 1;
@@ -270,7 +256,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_fold_get_word_starts_with_folds(cx: &mut TestAppContext) {
+    fn test_easy_get_word_starts_with_folds(cx: &mut TestAppContext) {
         cx.update(|cx| init_test(cx));
 
         let map = display_map_helper("lorem ipsum hi hello", cx);
@@ -369,7 +355,6 @@ mod tests {
         cx.set_global(settings_store);
         theme::init(theme::LoadThemes::JustBase, cx);
         language::init(cx);
-        crate::init(cx);
         Project::init_settings(cx);
     }
 }
