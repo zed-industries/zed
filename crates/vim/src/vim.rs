@@ -31,10 +31,7 @@ use gpui::{
 use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
-use normal::{
-    mark::{create_mark, create_mark_after, create_mark_before},
-    normal_replace,
-};
+use normal::{mark::create_visual_marks, normal_replace};
 use replace::multi_replace;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -431,8 +428,8 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
-        if mode != Mode::Insert && last_mode == Mode::Insert {
-            create_mark_after(self, "^".into(), cx)
+        if !mode.is_visual() && last_mode.is_visual() {
+            create_visual_marks(self, last_mode, cx);
         }
 
         if leave_selections {
@@ -790,7 +787,6 @@ impl Vim {
         let is_multicursor = editor.read(cx).selections.count() > 1;
 
         let state = self.state();
-        let mut is_visual = state.mode.is_visual();
         if state.mode == Mode::Insert && state.current_tx.is_some() {
             if state.current_anchor.is_none() {
                 self.update_state(|state| state.current_anchor = Some(newest));
@@ -807,18 +803,11 @@ impl Vim {
             } else {
                 self.switch_mode(Mode::Visual, false, cx)
             }
-            is_visual = true;
         } else if newest.start == newest.end
             && !is_multicursor
             && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&state.mode)
         {
             self.switch_mode(Mode::Normal, true, cx);
-            is_visual = false;
-        }
-
-        if is_visual {
-            create_mark_before(self, ">".into(), cx);
-            create_mark(self, "<".into(), true, cx)
         }
     }
 

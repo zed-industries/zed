@@ -1,4 +1,8 @@
-use crate::{normal::repeat, state::Mode, Vim};
+use crate::{
+    normal::{mark::create_mark, repeat},
+    state::Mode,
+    Vim,
+};
 use editor::{scroll::Autoscroll, Bias};
 use gpui::{actions, Action, ViewContext};
 use language::SelectionGoal;
@@ -15,6 +19,7 @@ fn normal_before(_: &mut Workspace, action: &NormalBefore, cx: &mut ViewContext<
         let count = vim.take_count(cx).unwrap_or(1);
         vim.stop_recording_immediately(action.boxed_clone());
         if count <= 1 || vim.workspace_state.replaying {
+            create_mark(vim, "^".into(), false, cx);
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.dismiss_menus_and_popups(false, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {

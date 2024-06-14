@@ -84,6 +84,7 @@ pub struct EditorState {
     pub replacements: Vec<(Range<editor::Anchor>, String)>,
 
     pub marks: HashMap<String, Vec<Anchor>>,
+    pub stored_visual_mode: Option<(Mode, Vec<bool>)>,
     pub change_list: Vec<Vec<Anchor>>,
     pub change_list_position: Option<usize>,
 
