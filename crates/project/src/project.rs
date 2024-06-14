@@ -7337,7 +7337,7 @@ impl Project {
 
                 if query.include_ignored() {
                     for (snapshot, settings) in snapshots {
-                        for ignored_entry in snapshot.entries(true).filter(|e| e.is_ignored) {
+                        for ignored_entry in snapshot.entries(true, 0).filter(|e| e.is_ignored) {
                             let limiter = Arc::clone(&max_concurrent_workers);
                             scope.spawn(async move {
                                 let _guard = limiter.acquire().await;
@@ -11397,7 +11397,16 @@ pub struct PathMatchCandidateSet {
     pub snapshot: Snapshot,
     pub include_ignored: bool,
     pub include_root_name: bool,
-    pub directories_only: bool,
+    pub candidates: Candidates,
+}
+
+pub enum Candidates {
+    /// Only consider directories.
+    Directories,
+    /// Only consider files.
+    Files,
+    /// Consider directories and files.
+    Entries,
 }
 
 impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
@@ -11427,10 +11436,10 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
 
     fn candidates(&'a self, start: usize) -> Self::Candidates {
         PathMatchCandidateSetIter {
-            traversal: if self.directories_only {
-                self.snapshot.directories(self.include_ignored, start)
-            } else {
-                self.snapshot.files(self.include_ignored, start)
+            traversal: match self.candidates {
+                Candidates::Directories => self.snapshot.directories(self.include_ignored, start),
+                Candidates::Files => self.snapshot.files(self.include_ignored, start),
+                Candidates::Entries => self.snapshot.entries(self.include_ignored, start),
             },
         }
     }

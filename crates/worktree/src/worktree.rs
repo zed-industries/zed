@@ -2122,8 +2122,8 @@ impl Snapshot {
         self.traverse_from_offset(false, true, include_ignored, start)
     }
 
-    pub fn entries(&self, include_ignored: bool) -> Traversal {
-        self.traverse_from_offset(true, true, include_ignored, 0)
+    pub fn entries(&self, include_ignored: bool, start: usize) -> Traversal {
+        self.traverse_from_offset(true, true, include_ignored, start)
     }
 
     pub fn repositories(&self) -> impl Iterator<Item = (&Arc<Path>, &RepositoryEntry)> {
@@ -2555,7 +2555,7 @@ impl LocalSnapshot {
         assert_eq!(bfs_paths, dfs_paths_via_iter);
 
         let dfs_paths_via_traversal = self
-            .entries(true)
+            .entries(true, 0)
             .map(|e| e.path.as_ref())
             .collect::<Vec<_>>();
         assert_eq!(dfs_paths_via_traversal, dfs_paths_via_iter);

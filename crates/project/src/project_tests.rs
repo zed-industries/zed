@@ -765,7 +765,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             worktree
                 .read(cx)
                 .snapshot()
-                .entries(true)
+                .entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
@@ -839,7 +839,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             worktree
                 .read(cx)
                 .snapshot()
-                .entries(true)
+                .entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[

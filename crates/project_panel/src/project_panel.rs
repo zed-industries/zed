@@ -1199,7 +1199,7 @@ impl ProjectPanel {
         if let Some(worktree) = worktree {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
-            if let Some(last_entry) = worktree.entries(true).last() {
+            if let Some(last_entry) = worktree.entries(true, 0).last() {
                 self.selection = Some(SelectedEntry {
                     worktree_id,
                     entry_id: last_entry.id,
@@ -1578,7 +1578,7 @@ impl ProjectPanel {
             }
 
             let mut visible_worktree_entries = Vec::new();
-            let mut entry_iter = snapshot.entries(true);
+            let mut entry_iter = snapshot.entries(true, 0);
             while let Some(entry) = entry_iter.entry() {
                 if auto_collapse_dirs
                     && entry.kind.is_dir()

@@ -45,7 +45,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(false)
+            tree.entries(false, 0)
                 .map(|entry| entry.path.as_ref())
                 .collect::<Vec<_>>(),
             vec![
@@ -56,7 +56,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
             ]
         );
         assert_eq!(
-            tree.entries(true)
+            tree.entries(true, 0)
                 .map(|entry| entry.path.as_ref())
                 .collect::<Vec<_>>(),
             vec![
@@ -110,7 +110,7 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(false)
+            tree.entries(false, 0)
                 .map(|entry| entry.path.as_ref())
                 .collect::<Vec<_>>(),
             vec![
@@ -136,7 +136,7 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(false)
+            tree.entries(false, 0)
                 .map(|entry| entry.path.as_ref())
                 .collect::<Vec<_>>(),
             vec![
@@ -225,7 +225,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     // The symlinked directories are not scanned by default.
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(true)
+            tree.entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_external))
                 .collect::<Vec<_>>(),
             vec![
@@ -258,7 +258,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     // not scanned yet.
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(true)
+            tree.entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_external))
                 .collect::<Vec<_>>(),
             vec![
@@ -295,7 +295,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     // The expanded subdirectory's contents are loaded.
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(true)
+            tree.entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_external))
                 .collect::<Vec<_>>(),
             vec![
@@ -358,7 +358,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
         .await;
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(true)
+            tree.entries(true, 0)
                 .map(|entry| entry.path.as_ref())
                 .collect::<Vec<_>>(),
             vec![Path::new(""), Path::new(OLD_NAME)]
@@ -380,7 +380,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(true)
+            tree.entries(true, 0)
                 .map(|entry| entry.path.as_ref())
                 .collect::<Vec<_>>(),
             vec![Path::new(""), Path::new(NEW_NAME)]
@@ -435,7 +435,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(true)
+            tree.entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             vec![
@@ -462,7 +462,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(true)
+            tree.entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             vec![
@@ -502,7 +502,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(true)
+            tree.entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             vec![
@@ -605,7 +605,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
     // Those subdirectories are now loaded.
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(true)
+            tree.entries(true, 0)
                 .map(|e| (e.path.as_ref(), e.is_ignored))
                 .collect::<Vec<_>>(),
             &[
@@ -637,7 +637,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
     // All of the directories that are no longer ignored are now loaded.
     tree.read_with(cx, |tree, _| {
         assert_eq!(
-            tree.entries(true)
+            tree.entries(true, 0)
                 .map(|e| (e.path.as_ref(), e.is_ignored))
                 .collect::<Vec<_>>(),
             &[
@@ -1203,8 +1203,8 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
 
     let snapshot2 = tree.update(cx, |tree, _| tree.as_local().unwrap().snapshot());
     assert_eq!(
-        snapshot1.lock().entries(true).collect::<Vec<_>>(),
-        snapshot2.entries(true).collect::<Vec<_>>()
+        snapshot1.lock().entries(true, 0).collect::<Vec<_>>(),
+        snapshot2.entries(true, 0).collect::<Vec<_>>()
     );
 }
 
@@ -1411,8 +1411,8 @@ async fn test_random_worktree_operations_during_initial_scan(
         }
 
         assert_eq!(
-            updated_snapshot.entries(true).collect::<Vec<_>>(),
-            final_snapshot.entries(true).collect::<Vec<_>>(),
+            updated_snapshot.entries(true, 0).collect::<Vec<_>>(),
+            final_snapshot.entries(true, 0).collect::<Vec<_>>(),
             "wrong updates after snapshot {i}: {snapshot:#?} {updates:#?}",
         );
     }
@@ -1545,11 +1545,11 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
         assert_eq!(
             prev_snapshot
-                .entries(true)
+                .entries(true, 0)
                 .map(ignore_pending_dir)
                 .collect::<Vec<_>>(),
             snapshot
-                .entries(true)
+                .entries(true, 0)
                 .map(ignore_pending_dir)
                 .collect::<Vec<_>>(),
             "wrong updates after snapshot {i}: {updates:#?}",
@@ -1568,7 +1568,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 // The worktree's `UpdatedEntries` event can be used to follow along with
 // all changes to the worktree's snapshot.
 fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Worktree>) {
-    let mut entries = tree.entries(true).cloned().collect::<Vec<_>>();
+    let mut entries = tree.entries(true, 0).cloned().collect::<Vec<_>>();
     cx.subscribe(&cx.handle(), move |tree, _, event, _| {
         if let Event::UpdatedEntries(changes) = event {
             for (path, _, change_type) in changes.iter() {
@@ -1596,7 +1596,7 @@ fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Workt
                 }
             }
 
-            let new_entries = tree.entries(true).cloned().collect::<Vec<_>>();
+            let new_entries = tree.entries(true, 0).cloned().collect::<Vec<_>>();
             assert_eq!(entries, new_entries, "incorrect changes: {:?}", changes);
         }
     })
@@ -1611,7 +1611,7 @@ fn randomly_mutate_worktree(
     log::info!("mutating worktree");
     let worktree = worktree.as_local_mut().unwrap();
     let snapshot = worktree.snapshot();
-    let entry = snapshot.entries(false).choose(rng).unwrap();
+    let entry = snapshot.entries(false, 0).choose(rng).unwrap();
 
     match rng.gen_range(0_u32..100) {
         0..=33 if entry.path.as_ref() != Path::new("") => {
@@ -1619,7 +1619,7 @@ fn randomly_mutate_worktree(
             worktree.delete_entry(entry.id, false, cx).unwrap()
         }
         ..=66 if entry.path.as_ref() != Path::new("") => {
-            let other_entry = snapshot.entries(false).choose(rng).unwrap();
+            let other_entry = snapshot.entries(false, 0).choose(rng).unwrap();
             let new_parent_path = if other_entry.is_dir() {
                 other_entry.path.clone()
             } else {
