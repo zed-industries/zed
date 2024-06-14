@@ -492,6 +492,10 @@ impl Fs for RealFs {
                         paths.sort();
                         let paths_buffer = paths_buffer.clone();
                         futures::stream::once(Box::pin(async move {
+                            if paths.is_empty() {
+                                return None;
+                            }
+
                             {
                                 let mut lock = paths_buffer.lock();
                                 if let Some(paths_buffer) = lock.as_mut() {
@@ -508,13 +512,7 @@ impl Fs for RealFs {
                             }
 
                             smol::Timer::after(latency).await;
-
-                            let paths = paths_buffer.lock().take()?;
-                            if paths.is_empty() {
-                                None
-                            } else {
-                                Some(paths)
-                            }
+                            paths_buffer.lock().take()
                         }))
                     }
                 })
