@@ -857,7 +857,7 @@ struct Args {
     /// Use `path:line:row` syntax to open a file at a specific location.
     /// Non-existing paths and directories will ignore `:line:row` suffix.
     ///
-    /// URLs can either be file:// or zed:// scheme, or relative to https://zed.dev.
+    /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
     paths_or_urls: Vec<String>,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
