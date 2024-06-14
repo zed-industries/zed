@@ -14,9 +14,15 @@ collections.workspace = true
 futures.workspace = true
 indoc.workspace = true
 lazy_static.workspace = true
-libsqlite3-sys = { version = "0.26", features = ["buildtime_bindgen"] }
+libsqlite3-sys = { version = "0.26" }
 parking_lot.workspace = true
 smol.workspace = true
 thread_local = "1.1.4"
 util.workspace = true
 uuid.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libsqlite3-sys = { version = "0.26", features = ["bundled"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libsqlite3-sys = { version = "0.26", features = ["buildtime_bindgen"] }
