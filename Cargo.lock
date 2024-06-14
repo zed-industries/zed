@@ -10514,6 +10514,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "indexmap 1.9.3",
+ "log",
  "palette",
  "parking_lot",
  "refineable",
