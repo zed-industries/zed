@@ -17,6 +17,7 @@ use multi_buffer::ToOffset;
 use project::{HoverBlock, InlayHintLabelPart};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
+use theme::ThemeSettings;
 use ui::{prelude::*, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
@@ -420,10 +421,46 @@ async fn parse_blocks(
 
     let rendered_block = cx
         .new_view(|cx| {
+            let settings = ThemeSettings::get_global(cx);
+            let buffer_font_family = settings.buffer_font.family.clone();
+
             let markdown_style = MarkdownStyle {
+                base: gpui::TextStyleRefinement {
+                    font_family: Some(buffer_font_family.clone()),
+                    color: Some(cx.theme().colors().editor_foreground),
+                    ..Default::default()
+                },
+                code_block: gpui::TextStyleRefinement {
+                    font_family: Some(buffer_font_family.clone()),
+                    color: Some(cx.theme().colors().editor_foreground),
+                    ..Default::default()
+                },
+                inline_code: gpui::TextStyleRefinement {
+                    font_family: Some(buffer_font_family.clone()),
+                    color: Some(cx.theme().colors().editor_foreground),
+                    ..Default::default()
+                },
+                rule_color: Color::Muted.color(cx),
+                block_quote_border_color: Color::Muted.color(cx),
+                block_quote: gpui::TextStyleRefinement {
+                    font_family: Some(buffer_font_family.clone()),
+                    color: Some(Color::Muted.color(cx)),
+                    ..Default::default()
+                },
+                link: gpui::TextStyleRefinement {
+                    color: Some(Color::Accent.color(cx)),
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: px(1.),
+                        color: Some(Color::Accent.color(cx)),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                syntax: cx.theme().syntax().clone(),
+                selection_background_color: { cx.theme().players().local().selection },
                 pad_blocks: false,
-                ..MarkdownStyle::get_themed_default(cx)
             };
+
             Markdown::new(
                 combined_text,
                 markdown_style.clone(),
@@ -662,8 +699,7 @@ mod tests {
     impl InfoPopover {
         fn get_rendered_text(&self, cx: &gpui::AppContext) -> String {
             let mut rendered_text = String::new();
-
-            for parsed_content in self.parsed_content.clone() {
+            while let Some(parsed_content) = self.parsed_content.clone() {
                 let markdown = parsed_content.read(cx);
                 let text = markdown.parsed_markdown().source().to_string();
                 let data = markdown.parsed_markdown().events();

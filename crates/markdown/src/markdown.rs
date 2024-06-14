@@ -11,15 +11,15 @@ use gpui::{
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
-use settings::Settings;
+
 use std::{iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
-use theme::ThemeSettings;
 use ui::prelude::*;
 use util::{ResultExt, TryFutureExt};
 
 #[derive(Clone)]
 pub struct MarkdownStyle {
+    pub base: TextStyleRefinement,
     pub code_block: TextStyleRefinement,
     pub inline_code: TextStyleRefinement,
     pub block_quote: TextStyleRefinement,
@@ -31,47 +31,10 @@ pub struct MarkdownStyle {
     pub pad_blocks: bool,
 }
 
-impl MarkdownStyle {
-    pub fn get_themed_default<V>(cx: &mut ViewContext<V>) -> Self {
-        let settings = ThemeSettings::get_global(cx);
-        let buffer_font_family = settings.buffer_font.family.clone();
-
-        Self {
-            code_block: gpui::TextStyleRefinement {
-                font_family: Some(buffer_font_family.clone()),
-                color: Some(cx.theme().colors().editor_foreground),
-                ..Default::default()
-            },
-            inline_code: gpui::TextStyleRefinement {
-                font_family: Some(buffer_font_family.clone()),
-                color: Some(cx.theme().colors().editor_foreground),
-                ..Default::default()
-            },
-            rule_color: Color::Muted.color(cx),
-            block_quote_border_color: Color::Muted.color(cx),
-            block_quote: gpui::TextStyleRefinement {
-                font_family: Some(buffer_font_family.clone()),
-                color: Some(Color::Muted.color(cx)),
-                ..Default::default()
-            },
-            link: gpui::TextStyleRefinement {
-                color: Some(Color::Accent.color(cx)),
-                underline: Some(gpui::UnderlineStyle {
-                    thickness: px(1.),
-                    color: Some(Color::Accent.color(cx)),
-                    wavy: false,
-                }),
-                ..Default::default()
-            },
-            syntax: cx.theme().syntax().clone(),
-            selection_background_color: { cx.theme().players().local().selection },
-            pad_blocks: true,
-        }
-    }
-}
 impl Default for MarkdownStyle {
     fn default() -> Self {
         Self {
+            base: Default::default(),
             code_block: Default::default(),
             inline_code: Default::default(),
             block_quote: Default::default(),
@@ -538,6 +501,7 @@ impl Element for MarkdownElement {
         let mut builder = MarkdownElementBuilder::new(cx.text_style(), self.style.syntax.clone());
         let mut opening_line = true;
         let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
+        builder.push_text_style(self.style.base.clone());
         for (range, event) in parsed_markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => {
@@ -710,6 +674,7 @@ impl Element for MarkdownElement {
             }
             opening_line = false;
         }
+        builder.pop_text_style();
         let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(cx);
         let layout_id = cx.request_layout(Style::default(), [child_layout_id]);
