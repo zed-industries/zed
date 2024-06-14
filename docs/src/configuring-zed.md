@@ -1117,6 +1117,16 @@ These values take in the same options as the root-level settings with the same n
 2. `preferred_line_length`
 3. `none`
 
+## Wrap Guides (Vertical Rulers)
+
+- Description: Where to display vertical rulers as wrap-guides. Disable by setting `show_wrap_guides` to `false`.
+- Setting: `wrap_guides`
+- Default: []
+
+**Options**
+
+List of `integer` column numbers
+
 ## Tab Size
 
 - Description: The number of spaces to use for each tab character.
