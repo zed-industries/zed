@@ -1254,6 +1254,7 @@ impl OutlinePanel {
         }
         .map(Icon::from_path)
         .map(|icon| icon.color(color));
+        // TODO kb this is a hack
         let depth = if icon.is_some() { depth + 1 } else { depth };
 
         let buffer_snapshot = self
@@ -1503,6 +1504,7 @@ impl OutlinePanel {
                     .child(if let Some(icon) = icon {
                         h_flex().child(icon)
                     } else {
+                        // TODO kb when to insert this icon?
                         h_flex()
                             .size(IconSize::default().rems())
                             .invisible()
