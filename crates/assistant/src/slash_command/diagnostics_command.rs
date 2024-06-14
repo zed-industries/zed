@@ -58,7 +58,7 @@ impl DiagnosticsCommand {
                             .root_entry()
                             .map_or(false, |entry| entry.is_ignored),
                         include_root_name: false,
-                        allowed_candidates: project::AllowedCandidates::Entries,
+                        candidates: project::Candidates::Entries,
                     }
                 })
                 .collect::<Vec<_>>();

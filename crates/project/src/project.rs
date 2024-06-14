@@ -11305,10 +11305,10 @@ pub struct PathMatchCandidateSet {
     pub snapshot: Snapshot,
     pub include_ignored: bool,
     pub include_root_name: bool,
-    pub allowed_candidates: AllowedCandidates,
+    pub candidates: Candidates,
 }
 
-pub enum AllowedCandidates {
+pub enum Candidates {
     /// Only consider directories.
     Directories,
     /// Only consider files.
@@ -11344,12 +11344,10 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
 
     fn candidates(&'a self, start: usize) -> Self::Candidates {
         PathMatchCandidateSetIter {
-            traversal: match self.allowed_candidates {
-                AllowedCandidates::Directories => {
-                    self.snapshot.directories(self.include_ignored, start)
-                }
-                AllowedCandidates::Files => self.snapshot.files(self.include_ignored, start),
-                AllowedCandidates::Entries => self.snapshot.entries(self.include_ignored, start),
+            traversal: match self.candidates {
+                Candidates::Directories => self.snapshot.directories(self.include_ignored, start),
+                Candidates::Files => self.snapshot.files(self.include_ignored, start),
+                Candidates::Entries => self.snapshot.entries(self.include_ignored, start),
             },
         }
     }
