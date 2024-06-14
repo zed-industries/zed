@@ -452,7 +452,7 @@ impl Fs for RealFs {
     async fn watch(
         &self,
         path: &Path,
-        _latency: Duration,
+        latency: Duration,
     ) -> (
         Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
         Arc<dyn Watcher>,
@@ -481,20 +481,46 @@ impl Fs for RealFs {
             watcher.add(parent).log_err();
         }
 
+        let paths_buffer: Arc<Mutex<Option<Vec<PathBuf>>>> = Default::default();
+
         (
-            Box::pin(rx.filter_map({
-                let watcher = watcher.clone();
-                move |mut paths| {
-                    paths.retain(|path| path.starts_with(&watcher.root_path));
-                    async move {
-                        if paths.is_empty() {
-                            None
-                        } else {
-                            Some(paths)
-                        }
+            Box::pin(
+                rx.map({
+                    let watcher = watcher.clone();
+                    move |mut paths| {
+                        paths.retain(|path| path.starts_with(&watcher.root_path));
+                        paths.sort();
+                        let paths_buffer = paths_buffer.clone();
+                        futures::stream::once(Box::pin(async move {
+                            {
+                                let mut lock = paths_buffer.lock();
+                                if let Some(paths_buffer) = lock.as_mut() {
+                                    util::extend_sorted(
+                                        paths_buffer,
+                                        paths,
+                                        usize::MAX,
+                                        PathBuf::cmp,
+                                    );
+                                    return None;
+                                } else {
+                                    *lock = Some(paths);
+                                }
+                            }
+
+                            smol::Timer::after(latency).await;
+
+                            let paths = paths_buffer.lock().take()?;
+                            if paths.is_empty() {
+                                None
+                            } else {
+                                Some(paths)
+                            }
+                        }))
                     }
-                }
-            })),
+                })
+                .flatten_unordered(None)
+                .filter_map(|paths| async move { paths }),
+            ),
             watcher,
         )
     }
