@@ -1,5 +1,7 @@
 mod app_menus;
 pub mod inline_completion_registry;
+#[cfg(target_os = "linux")]
+pub(crate) mod linux_prompts;
 #[cfg(not(target_os = "linux"))]
 pub(crate) mod only_instance;
 mod open_listener;
@@ -262,9 +264,20 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             .register_action(move |_, _: &ResetBufferFontSize, cx| theme::reset_font_size(cx))
             .register_action(|_, _: &install_cli::Install, cx| {
                 cx.spawn(|workspace, mut cx| async move {
+                    if cfg!(target_os = "linux") {
+                        let prompt = cx.prompt(
+                            PromptLevel::Warning,
+                            "Could not install the CLI",
+                            Some("If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source you may need to create an alias/symlink manually."),
+                            &["Ok"],
+                        );
+                        cx.background_executor().spawn(prompt).detach();
+                        return Ok(());
+                    }
                     let path = install_cli::install_cli(cx.deref())
                         .await
                         .context("error creating CLI symlink")?;
+
                     workspace.update(&mut cx, |workspace, cx| {
                         struct InstalledZedCli;
 

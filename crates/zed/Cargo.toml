@@ -94,6 +94,7 @@ terminal_view.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
 urlencoding = "2.1.2"
+ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 vim.workspace = true

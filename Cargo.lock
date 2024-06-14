@@ -13337,6 +13337,7 @@ dependencies = [
  "theme",
  "theme_selector",
  "tree-sitter-rust",
+ "ui",
  "urlencoding",
  "util",
  "uuid",
