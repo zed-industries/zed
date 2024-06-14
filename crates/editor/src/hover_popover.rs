@@ -5,6 +5,7 @@ use crate::{
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     EditorStyle, ExcerptId, Hover, RangeToAnchorExt,
 };
+use gpui::TextStyle;
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, CursorStyle, Hsla, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Pixels, ScrollHandle, SharedString, Size,
@@ -21,7 +22,6 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
-
 pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
@@ -378,10 +378,10 @@ fn transform_codeblock(input: &str, language: &str) -> String {
                 && !open_block
                 && !lines[i].contains("```")
             {
-                if line.contains("\n") {
+                if line.contains('\n') {
                     break;
                 }
-                line.push_str(" ");
+                line.push(' ');
                 line.push_str(lines[i]);
                 i += 1;
             }
@@ -423,13 +423,17 @@ async fn parse_blocks(
         .new_view(|cx| {
             let settings = ThemeSettings::get_global(cx);
             let buffer_font_family = settings.buffer_font.family.clone();
-
+            let mut base_style = cx.text_style();
+            base_style.refine(&gpui::TextStyleRefinement {
+                font_family: Some(buffer_font_family.clone()),
+                color: Some(cx.theme().colors().editor_foreground),
+                ..Default::default()
+            });
+            let b = TextStyle {
+                ..Default::default()
+            };
             let markdown_style = MarkdownStyle {
-                base: gpui::TextStyleRefinement {
-                    font_family: Some(buffer_font_family.clone()),
-                    color: Some(cx.theme().colors().editor_foreground),
-                    ..Default::default()
-                },
+                base: base_style,
                 code_block: gpui::TextStyleRefinement {
                     font_family: Some(buffer_font_family.clone()),
                     color: Some(cx.theme().colors().editor_foreground),

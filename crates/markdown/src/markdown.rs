@@ -19,7 +19,7 @@ use util::{ResultExt, TryFutureExt};
 
 #[derive(Clone)]
 pub struct MarkdownStyle {
-    pub base: TextStyleRefinement,
+    pub base: TextStyle,
     pub code_block: TextStyleRefinement,
     pub inline_code: TextStyleRefinement,
     pub block_quote: TextStyleRefinement,
@@ -453,7 +453,7 @@ impl MarkdownElement {
             .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
         let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
 
-        let text_style = cx.text_style();
+        let text_style = self.style.base.clone();
         let font_id = cx.text_system().resolve_font(&text_style.font());
         let font_size = text_style.font_size.to_pixels(cx.rem_size());
         let em_width = cx
@@ -498,10 +498,10 @@ impl Element for MarkdownElement {
         _id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let mut builder = MarkdownElementBuilder::new(cx.text_style(), self.style.syntax.clone());
+        let mut builder =
+            MarkdownElementBuilder::new(self.style.base.clone(), self.style.syntax.clone());
         let mut opening_line = true;
         let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
-        builder.push_text_style(self.style.base.clone());
         for (range, event) in parsed_markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => {
@@ -674,7 +674,6 @@ impl Element for MarkdownElement {
             }
             opening_line = false;
         }
-        builder.pop_text_style();
         let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(cx);
         let layout_id = cx.request_layout(Style::default(), [child_layout_id]);
