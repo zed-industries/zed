@@ -2487,8 +2487,9 @@ impl Project {
             }
 
             let abs_path = file.abs_path(cx);
-            let uri = lsp::Uri::from_file_path(&abs_path)
-                .unwrap_or_else(|_| panic!("Failed to register file {abs_path:?}"));
+            let Some(uri) = lsp::Uri::from_file_path(&abs_path).log_err() else {
+                return;
+            };
             let initial_snapshot = buffer.text_snapshot();
             let language = buffer.language().cloned();
             let worktree_id = file.worktree_id(cx);
