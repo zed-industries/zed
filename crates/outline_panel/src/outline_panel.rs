@@ -100,7 +100,37 @@ enum CollapsedEntry {
 
 struct Excerpt {
     range: ExcerptRange<language::Anchor>,
-    outlines: Option<Vec<Outline>>,
+    outlines: ExcerptOutlines,
+}
+
+impl Excerpt {
+    fn invalidate_outlines(&mut self) {
+        if let ExcerptOutlines::Outlines(valid_outlines) = &mut self.outlines {
+            self.outlines = ExcerptOutlines::Invalidated(std::mem::take(valid_outlines));
+        }
+    }
+
+    fn iter_outlines(&self) -> impl Iterator<Item = &Outline> {
+        match &self.outlines {
+            ExcerptOutlines::Outlines(outlines) => outlines.iter(),
+            ExcerptOutlines::Invalidated(outlines) => outlines.iter(),
+            ExcerptOutlines::NotFetched => [].iter(),
+        }
+    }
+
+    fn should_fetch_outlines(&self) -> bool {
+        match &self.outlines {
+            ExcerptOutlines::Outlines(_) => false,
+            ExcerptOutlines::Invalidated(_) => true,
+            ExcerptOutlines::NotFetched => true,
+        }
+    }
+}
+
+enum ExcerptOutlines {
+    Outlines(Vec<Outline>),
+    Invalidated(Vec<Outline>),
+    NotFetched,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1206,7 +1236,11 @@ impl OutlinePanel {
         let has_outlines = self
             .excerpts
             .get(&buffer_id)
-            .and_then(|excerpts| excerpts.get(&excerpt_id)?.outlines.as_ref())
+            .and_then(|excerpts| match &excerpts.get(&excerpt_id)?.outlines {
+                ExcerptOutlines::Outlines(outlines) => Some(outlines),
+                ExcerptOutlines::Invalidated(outlines) => Some(outlines),
+                ExcerptOutlines::NotFetched => None,
+            })
             .map_or(false, |outlines| !outlines.is_empty());
         let is_expanded = !self
             .collapsed_entries
@@ -1576,23 +1610,29 @@ impl OutlinePanel {
                     .0
                     .push(excerpt_id);
 
-                let previous_outlines = match self
+                let outlines = match self
                     .excerpts
                     .get(&buffer_id)
                     .and_then(|excerpts| excerpts.get(&excerpt_id))
                 {
-                    Some(old_excerpt) => old_excerpt.outlines.clone(),
+                    Some(old_excerpt) => match &old_excerpt.outlines {
+                        ExcerptOutlines::Outlines(outlines) => {
+                            ExcerptOutlines::Outlines(outlines.clone())
+                        }
+                        ExcerptOutlines::Invalidated(_) => ExcerptOutlines::NotFetched,
+                        ExcerptOutlines::NotFetched => ExcerptOutlines::NotFetched,
+                    },
                     None => {
                         new_collapsed_entries
                             .insert(CollapsedEntry::Excerpt(buffer_id, excerpt_id));
-                        None
+                        ExcerptOutlines::NotFetched
                     }
                 };
                 new_excerpts.entry(buffer_id).or_default().insert(
                     excerpt_id,
                     Excerpt {
                         range: excerpt_range,
-                        outlines: previous_outlines,
+                        outlines,
                     },
                 );
                 buffer_excerpts
@@ -1982,8 +2022,7 @@ impl OutlinePanel {
             .get(&buffer_id)
             .and_then(|excerpts| excerpts.get(&excerpt_id))
             .into_iter()
-            .flat_map(|excerpt| excerpt.outlines.iter())
-            .flatten()
+            .flat_map(|excerpt| excerpt.iter_outlines())
             .filter(|outline_item| {
                 range_contains(&outline_item.range, selection.text_anchor, buffer_snapshot)
             })
@@ -2029,7 +2068,7 @@ impl OutlinePanel {
                         for file_excerpt in file_excerpts {
                             if let Some(excerpt) = excerpts
                                 .and_then(|excerpts| excerpts.get(&file_excerpt))
-                                .filter(|excerpt| excerpt.outlines.is_none())
+                                .filter(|excerpt| excerpt.should_fetch_outlines())
                             {
                                 match excerpts_to_fetch.entry(buffer_id) {
                                     hash_map::Entry::Occupied(mut o) => {
@@ -2055,7 +2094,7 @@ impl OutlinePanel {
                             .excerpts
                             .get(&buffer_id)
                             .and_then(|excerpts| excerpts.get(&excerpt_id))
-                            .filter(|excerpt| excerpt.outlines.is_none())
+                            .filter(|excerpt| excerpt.should_fetch_outlines())
                         {
                             match excerpts_to_fetch.entry(buffer_id) {
                                 hash_map::Entry::Occupied(mut o) => {
@@ -2120,9 +2159,9 @@ impl OutlinePanel {
                                     .entry(buffer_id)
                                     .or_default()
                                     .get_mut(&excerpt_id)
-                                    .filter(|excerpt| excerpt.outlines.is_none())
+                                    .filter(|excerpt| excerpt.should_fetch_outlines())
                                 {
-                                    excerpt.outlines = Some(fetched_outlines);
+                                    excerpt.outlines = ExcerptOutlines::Outlines(fetched_outlines);
                                 }
                             }
                             outline_panel.cached_entries_with_depth = None;
@@ -2220,27 +2259,25 @@ impl OutlinePanel {
                                 .collapsed_entries
                                 .contains(&CollapsedEntry::Excerpt(*buffer_id, entry_excerpt))
                             {
-                                if let Some(outlines) = &excerpt.outlines {
-                                    let mut outline_data_depth = None::<usize>;
-                                    let mut outline_depth = excerpt_depth + 1;
-                                    for outline in outlines {
-                                        if let Some(outline_data_depth) = outline_data_depth {
-                                            match outline_data_depth.cmp(&outline.depth) {
-                                                cmp::Ordering::Less => outline_depth += 1,
-                                                cmp::Ordering::Equal => {}
-                                                cmp::Ordering::Greater => outline_depth -= 1,
-                                            };
-                                        }
-                                        outline_data_depth = Some(outline.depth);
-                                        entries.push((
-                                            outline_depth,
-                                            EntryOwned::Outline(
-                                                *buffer_id,
-                                                entry_excerpt,
-                                                outline.clone(),
-                                            ),
-                                        ));
+                                let mut outline_data_depth = None::<usize>;
+                                let mut outline_depth = excerpt_depth + 1;
+                                for outline in excerpt.iter_outlines() {
+                                    if let Some(outline_data_depth) = outline_data_depth {
+                                        match outline_data_depth.cmp(&outline.depth) {
+                                            cmp::Ordering::Less => outline_depth += 1,
+                                            cmp::Ordering::Equal => {}
+                                            cmp::Ordering::Greater => outline_depth -= 1,
+                                        };
                                     }
+                                    outline_data_depth = Some(outline.depth);
+                                    entries.push((
+                                        outline_depth,
+                                        EntryOwned::Outline(
+                                            *buffer_id,
+                                            entry_excerpt,
+                                            outline.clone(),
+                                        ),
+                                    ));
                                 }
                             }
                         }
@@ -2263,7 +2300,7 @@ impl OutlinePanel {
         for excerpts in self.excerpts.values_mut() {
             ids.retain(|id| {
                 if let Some(excerpt) = excerpts.get_mut(id) {
-                    excerpt.outlines = None;
+                    excerpt.invalidate_outlines();
                     false
                 } else {
                     true
@@ -2626,7 +2663,7 @@ fn subscribe_for_editor_events(
             EditorEvent::Reparsed(buffer_id) => {
                 if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
                     for (_, excerpt) in excerpts {
-                        excerpt.outlines = None;
+                        excerpt.invalidate_outlines();
                     }
                 }
                 outline_panel.update_fs_entries(
