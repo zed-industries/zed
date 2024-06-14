@@ -3446,6 +3446,7 @@ dependencies = [
  "language",
  "multi_buffer",
  "project",
+ "rope",
  "serde",
  "settings",
  "text",

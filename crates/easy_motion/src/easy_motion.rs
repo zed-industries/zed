@@ -1,4 +1,5 @@
 use collections::HashMap;
+use search::word_starts_fold;
 use serde::Deserialize;
 use std::fmt;
 
@@ -15,7 +16,7 @@ use workspace::Workspace;
 
 use crate::{
     editor_state::{EditorState, OverlayState},
-    search::{row_starts, sort_matches_display, word_starts},
+    search::{row_starts, sort_matches_display},
     trie::{Trie, TrimResult},
 };
 
@@ -252,22 +253,16 @@ impl EasyMotion {
 
     fn word(action: &Word, _workspace: &Workspace, cx: &mut WindowContext) {
         let Word(direction) = *action;
-        // TODO other directions?
-        // not sure if check for multiple editors is totally necessary
         EasyMotion::word_single_pane(WordType::Word, direction, cx);
     }
 
     fn sub_word(action: &SubWord, _workspace: &Workspace, cx: &mut WindowContext) {
         let SubWord(direction) = *action;
-        // TODO other directions?
-        // not sure if check for multiple editors is totally necessary
         EasyMotion::word_single_pane(WordType::SubWord, direction, cx);
     }
 
     fn full_word(action: &FullWord, _workspace: &Workspace, cx: &mut WindowContext) {
         let FullWord(direction) = *action;
-        // TODO other directions?
-        // not sure if check for multiple editors is totally necessary
         EasyMotion::word_single_pane(WordType::FullWord, direction, cx);
     }
 
@@ -278,7 +273,11 @@ impl EasyMotion {
         let entity_id = active_editor.entity_id();
 
         let new_state = active_editor.update(cx, |editor, cx| {
-            let word_starts = word_starts(word_type, direction, editor, cx);
+            // TODO: watch for folds opening and adjust overlays?
+            // or maybe overlays should be positioned via anchor and then the editor can figure out the
+            // display position?
+            // or maybe easy should just search again to find the words inside the newly open folds?
+            let word_starts = word_starts_fold(word_type, direction, editor, cx);
 
             Self::handle_new_matches(word_starts, direction, editor, cx)
         });

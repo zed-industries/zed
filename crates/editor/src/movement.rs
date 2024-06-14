@@ -3,7 +3,8 @@
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{
-    char_kind, scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, RowExt, ToOffset, ToPoint,
+    char_kind, display_map::FoldSnapshot, scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle,
+    FoldOffset, FoldPoint, RowExt, ToOffset, ToPoint,
 };
 use gpui::{px, Pixels, WindowTextSystem};
 use language::Point;
@@ -490,6 +491,35 @@ pub fn find_boundary_point_in_range(
     None
 }
 
+pub fn find_boundary_point_in_range_fold(
+    map: &FoldSnapshot,
+    from: FoldPoint,
+    to: FoldPoint,
+    mut is_boundary: impl FnMut(char, char) -> bool,
+    return_point_before_boundary: bool,
+) -> Option<FoldPoint> {
+    let mut offset = from.to_offset(&map);
+    let to_offset = to.to_offset(&map);
+    let mut prev_offset = offset;
+
+    let mut iter = map.chars_for_range(offset, to_offset);
+    let mut prev_ch = iter.next()?;
+    offset += FoldOffset(1);
+    for ch in iter {
+        if is_boundary(prev_ch, ch) {
+            if return_point_before_boundary {
+                return Some(map.clip_point(prev_offset.to_point(map), Bias::Right));
+            } else {
+                return Some(map.clip_point(offset.to_point(map), Bias::Right));
+            }
+        }
+        prev_offset = offset;
+        offset += FoldOffset(1);
+        prev_ch = ch;
+    }
+    None
+}
+
 pub fn find_boundary(
     map: &DisplaySnapshot,
     from: DisplayPoint,
@@ -506,6 +536,15 @@ pub fn find_boundary_range(
     is_boundary: impl FnMut(char, char) -> bool,
 ) -> Option<DisplayPoint> {
     return find_boundary_point_in_range(map, from, to, is_boundary, false);
+}
+
+pub fn find_boundary_range_fold(
+    map: &FoldSnapshot,
+    from: FoldPoint,
+    to: FoldPoint,
+    is_boundary: impl FnMut(char, char) -> bool,
+) -> Option<FoldPoint> {
+    find_boundary_point_in_range_fold(map, from, to, is_boundary, false)
 }
 
 pub fn find_boundary_exclusive(

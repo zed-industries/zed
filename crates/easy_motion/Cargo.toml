@@ -36,6 +36,7 @@ workspace.workspace = true
 [dev-dependencies]
 command_palette.workspace = true
 editor = { workspace = true, features = ["test-support"] }
+rope.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

@@ -69,6 +69,14 @@ impl FoldPoint {
         self.0.column
     }
 
+    pub fn zero() -> FoldPoint {
+        FoldPoint(Point::zero())
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+
     pub fn row_mut(&mut self) -> &mut u32 {
         &mut self.0.row
     }
@@ -533,7 +541,7 @@ pub struct FoldSnapshot {
 }
 
 impl FoldSnapshot {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn text(&self) -> String {
         self.chunks(FoldOffset(0)..self.len(), false, Highlights::default())
             .map(|c| c.text)
@@ -742,13 +750,22 @@ impl FoldSnapshot {
         }
     }
 
-    pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
+    pub fn chars_at(&self, start: FoldPoint) -> impl Iterator<Item = char> + '_ {
         self.chunks(
             start.to_offset(self)..self.len(),
             false,
             Highlights::default(),
         )
         .flat_map(|chunk| chunk.text.chars())
+    }
+
+    pub fn chars_for_range(
+        &self,
+        start: FoldOffset,
+        end: FoldOffset,
+    ) -> impl Iterator<Item = char> + '_ {
+        self.chunks(start..end, false, Highlights::default())
+            .flat_map(|chunk| chunk.text.chars())
     }
 
     #[cfg(test)]
