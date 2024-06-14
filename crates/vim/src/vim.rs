@@ -22,7 +22,6 @@ use anyhow::Result;
 use change_list::push_to_change_list;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
-use easy_motion::EasyMotion;
 use editor::{
     movement::{self, FindRange},
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,

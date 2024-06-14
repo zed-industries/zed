@@ -102,6 +102,7 @@ pub fn sort_matches_display(matches: &mut [DisplayPoint], cursor: &DisplayPoint)
     });
 }
 
+// TODO investigate interaction with inlay hints
 pub fn word_starts_fold(
     word_type: WordType,
     direction: Direction,

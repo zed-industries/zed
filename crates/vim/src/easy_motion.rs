@@ -6,13 +6,12 @@ use std::fmt;
 use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{
     actions, impl_actions, saturate, AppContext, Entity, EntityId, Global, HighlightStyle,
-    KeystrokeEvent, Model, ModelContext, View, ViewContext, WeakView,
+    KeystrokeEvent, Model, ModelContext, View, ViewContext,
 };
 use settings::Settings;
 use text::{Bias, SelectionGoal};
 use theme::ThemeSettings;
 use ui::{Context, WindowContext};
-use workspace::Workspace;
 
 use crate::easy_motion::{
     editor_state::{EditorState, OverlayState},
@@ -20,7 +19,6 @@ use crate::easy_motion::{
     trie::{Trie, TrimResult},
 };
 
-mod editor_events;
 mod editor_state;
 mod search;
 mod trie;
@@ -73,7 +71,6 @@ enum WordType {
 }
 
 pub struct EasyMotion {
-    active_editor: Option<WeakView<Editor>>,
     dimming: bool,
     keys: String,
     enabled: bool,
@@ -83,10 +80,6 @@ pub struct EasyMotion {
 impl fmt::Debug for EasyMotion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EasyMotion")
-            .field(
-                "active_editor",
-                &self.active_editor.as_ref().map(|editor| editor.entity_id()),
-            )
             .field("dimming", &self.dimming)
             .field("enabled", &self.enabled)
             .field("editor_states(members)", &self.editor_states)
@@ -103,7 +96,6 @@ const DEFAULT_KEYS: &'static str = "asdghklqwertyuiopzxcvbnmfj";
 pub fn init(cx: &mut AppContext) {
     let easy = cx.new_model({
         |_| EasyMotion {
-            active_editor: None,
             dimming: true,
             editor_states: HashMap::default(),
             enabled: true,
@@ -111,32 +103,43 @@ pub fn init(cx: &mut AppContext) {
         }
     });
     EasyMotion::set_global(easy.clone(), cx);
-    cx.observe_keystrokes(EasyMotion::observe_keystrokes)
+    cx.observe_new_views(|editor: &mut Editor, cx| register(editor, cx))
         .detach();
-    cx.observe_new_views(|workspace: &mut Workspace, cx| register(workspace, cx))
-        .detach();
-
-    editor_events::init(cx);
 }
 
-fn register(workspace: &mut Workspace, _: &ViewContext<Workspace>) {
-    workspace.register_action(|workspace: &mut Workspace, action: &Word, cx| {
-        EasyMotion::word(action, workspace, cx);
+fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+    let view = cx.view().clone();
+    editor.register_action(move |action: &Word, cx| {
+        EasyMotion::word(view.clone(), action, cx);
     });
-    workspace.register_action(|workspace: &mut Workspace, action: &SubWord, cx| {
-        EasyMotion::sub_word(action, workspace, cx);
+    let view = cx.view().clone();
+    editor.register_action(move |action: &SubWord, cx| {
+        EasyMotion::sub_word(view.clone(), action, cx);
     });
-    workspace.register_action(|workspace: &mut Workspace, action: &FullWord, cx| {
-        EasyMotion::full_word(action, workspace, cx);
+    let view = cx.view().clone();
+    editor.register_action(move |action: &FullWord, cx| {
+        EasyMotion::full_word(view.clone(), action, cx);
     });
 
-    workspace.register_action(|workspace: &mut Workspace, action: &Row, cx| {
-        EasyMotion::row(action, workspace, cx);
+    let view = cx.view().clone();
+    editor.register_action(move |action: &Row, cx| {
+        EasyMotion::row(view.clone(), action, cx);
     });
 
-    workspace.register_action(|workspace: &mut Workspace, _: &Cancel, cx| {
-        EasyMotion::cancel(workspace, cx);
+    let view = cx.view().clone();
+    editor.register_action(move |_: &Cancel, cx| {
+        EasyMotion::cancel(view.clone(), cx);
     });
+
+    let view = cx.view().clone();
+    cx.observe_keystrokes(move |event, cx| EasyMotion::observe_keystrokes(view.clone(), event, cx))
+        .detach();
+
+    let entity_id = cx.view().entity_id();
+    cx.on_release(move |_, _, cx| {
+        EasyMotion::update(cx, |easy, _cx| easy.editor_states.remove(&entity_id));
+    })
+    .detach();
 }
 
 impl EasyMotion {
@@ -161,41 +164,6 @@ impl EasyMotion {
         f: impl FnOnce(&EasyMotion, &AppContext) -> S,
     ) -> Option<S> {
         EasyMotion::global(cx).map(|easy| easy.read_with(cx, f))
-    }
-
-    #[allow(dead_code)]
-    fn update_active_editor<S>(
-        cx: &mut ViewContext<Workspace>,
-        update: impl FnOnce(&Editor, &ViewContext<Editor>) -> S,
-    ) -> Option<S> {
-        let editor = EasyMotion::read_with(cx, |easy, _cx| easy.active_editor.clone())
-            .flatten()?
-            .upgrade()?;
-        Some(editor.update(cx, |editor, cx| update(editor, cx)))
-    }
-
-    fn activate_editor(&mut self, editor: View<Editor>) {
-        self.active_editor = Some(editor.downgrade());
-    }
-
-    fn active_editor(cx: &WindowContext) -> Option<View<Editor>> {
-        Self::read_with(cx, |easy, _| {
-            easy.active_editor.as_ref().and_then(|weak| weak.upgrade())
-        })
-        .flatten()
-    }
-
-    #[allow(dead_code)]
-    fn clear_state(&mut self) -> Option<()> {
-        let active_editor = self.active_editor.as_ref()?;
-        self.editor_states.remove(&active_editor.entity_id());
-        Some(())
-    }
-
-    fn take_state(&mut self) -> Option<EditorState> {
-        self.active_editor
-            .as_ref()
-            .and_then(|active_editor| self.editor_states.remove(&active_editor.entity_id()))
     }
 
     fn handle_new_matches(
@@ -251,28 +219,30 @@ impl EasyMotion {
         Some(new_state)
     }
 
-    fn word(action: &Word, _workspace: &Workspace, cx: &mut WindowContext) {
+    fn word(editor: View<Editor>, action: &Word, cx: &mut WindowContext) {
         let Word(direction) = *action;
-        EasyMotion::word_single_pane(WordType::Word, direction, cx);
+        EasyMotion::word_single_pane(editor, WordType::Word, direction, cx);
     }
 
-    fn sub_word(action: &SubWord, _workspace: &Workspace, cx: &mut WindowContext) {
+    fn sub_word(editor: View<Editor>, action: &SubWord, cx: &mut WindowContext) {
         let SubWord(direction) = *action;
-        EasyMotion::word_single_pane(WordType::SubWord, direction, cx);
+        EasyMotion::word_single_pane(editor, WordType::SubWord, direction, cx);
     }
 
-    fn full_word(action: &FullWord, _workspace: &Workspace, cx: &mut WindowContext) {
+    fn full_word(editor: View<Editor>, action: &FullWord, cx: &mut WindowContext) {
         let FullWord(direction) = *action;
-        EasyMotion::word_single_pane(WordType::FullWord, direction, cx);
+        EasyMotion::word_single_pane(editor, WordType::FullWord, direction, cx);
     }
 
-    fn word_single_pane(word_type: WordType, direction: Direction, cx: &mut WindowContext) {
-        let Some(active_editor) = Self::active_editor(cx) else {
-            return;
-        };
-        let entity_id = active_editor.entity_id();
+    fn word_single_pane(
+        editor: View<Editor>,
+        word_type: WordType,
+        direction: Direction,
+        cx: &mut WindowContext,
+    ) {
+        let entity_id = editor.entity_id();
 
-        let new_state = active_editor.update(cx, |editor, cx| {
+        let new_state = editor.update(cx, |editor, cx| {
             // TODO: watch for folds opening and adjust overlays?
             // or maybe overlays should be positioned via anchor and then the editor can figure out the
             // display position?
@@ -290,14 +260,11 @@ impl EasyMotion {
         });
     }
 
-    fn row(action: &Row, _: &Workspace, cx: &mut WindowContext) {
+    fn row(editor: View<Editor>, action: &Row, cx: &mut WindowContext) {
         let Row(direction) = *action;
-        let Some(active_editor) = Self::active_editor(cx) else {
-            return;
-        };
-        let entity_id = active_editor.entity_id();
+        let entity_id = editor.entity_id();
 
-        let new_state = active_editor.update(cx, |editor, cx| {
+        let new_state = editor.update(cx, |editor, cx| {
             let matches = row_starts(direction, editor, cx);
             Self::handle_new_matches(matches, direction, editor, cx)
         });
@@ -310,41 +277,39 @@ impl EasyMotion {
         });
     }
 
-    fn cancel(_workspace: &Workspace, cx: &mut WindowContext) {
-        if let Some(editor) = Self::active_editor(cx) {
-            editor.update(cx, |editor, cx| {
-                editor.clear_overlays::<Self>(cx);
-                editor.clear_highlights::<Self>(cx);
-                editor.remove_keymap_context_layer::<Self>(cx);
-            });
-        }
+    fn cancel(editor: View<Editor>, cx: &mut WindowContext) {
+        editor.update(cx, |editor, cx| {
+            editor.clear_overlays::<Self>(cx);
+            editor.clear_highlights::<Self>(cx);
+            editor.remove_keymap_context_layer::<Self>(cx);
+        });
     }
 
-    fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) {
+    fn observe_keystrokes(
+        editor: View<Editor>,
+        keystroke_event: &KeystrokeEvent,
+        cx: &mut WindowContext,
+    ) {
         if keystroke_event.action.is_some() {
             return;
         } else if cx.has_pending_keystrokes() {
             return;
         }
 
-        Self::observe_keystrokes_impl(keystroke_event, cx);
+        Self::observe_keystrokes_impl(editor, keystroke_event, cx);
     }
 
-    fn observe_keystrokes_impl(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) {
-        let Some((state, weak_editor)) = Self::update(cx, |easy, _| {
-            let state = easy.take_state()?;
-            let weak_editor = easy.active_editor.clone()?;
-            Some((state, weak_editor))
-        })
-        .flatten() else {
-            return;
-        };
-
-        let editor = weak_editor.upgrade();
-        let Some(editor) = editor else {
-            return;
-        };
+    fn observe_keystrokes_impl(
+        editor: View<Editor>,
+        keystroke_event: &KeystrokeEvent,
+        cx: &mut WindowContext,
+    ) {
         let entity_id = editor.entity_id();
+        let Some(state) =
+            Self::update(cx, |easy, _| easy.editor_states.remove(&entity_id)).flatten()
+        else {
+            return;
+        };
 
         let keys = keystroke_event.keystroke.key.as_str();
         let new_state = editor.update(cx, |editor, cx| Self::handle_trim(state, keys, editor, cx));
