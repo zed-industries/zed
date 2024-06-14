@@ -8,7 +8,7 @@ pub use error::*;
 pub use typed_envelope::*;
 
 use collections::HashMap;
-pub use prost::Message;
+pub use prost::{DecodeError, Message};
 use serde::Serialize;
 use std::any::{Any, TypeId};
 use std::time::Instant;
