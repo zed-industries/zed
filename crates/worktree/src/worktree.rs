@@ -2640,7 +2640,6 @@ impl BackgroundScannerState {
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(mtime) = entry.mtime {
             if let Some(removed_entry_id) = self.removed_entry_ids.remove(&(entry.inode, mtime)) {
-                eprintln!("detected that entry {entry:?} was renamed from inode and mtime reusing id {removed_entry_id:?}");
                 entry.id = removed_entry_id;
             } else if let Some(existing_entry) = self.snapshot.entry_for_path(&entry.path) {
                 entry.id = existing_entry.id;
