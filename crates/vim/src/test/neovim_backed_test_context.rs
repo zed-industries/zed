@@ -254,7 +254,7 @@ impl NeovimBackedTestContext {
     #[must_use]
     pub async fn shared_register(&mut self, register: char) -> SharedClipboard {
         SharedClipboard {
-            register: register,
+            register,
             state: self.shared_state().await,
             neovim: self.neovim.read_register(register).await,
             editor: self.update(|cx| {
@@ -264,6 +264,8 @@ impl NeovimBackedTestContext {
                     .get(&register)
                     .cloned()
                     .unwrap_or_default()
+                    .text
+                    .into()
             }),
         }
     }

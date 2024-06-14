@@ -335,7 +335,6 @@ struct MacWindowState {
     input_handler: Option<PlatformInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
-    last_fresh_keydown: Option<Keystroke>,
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     // State tracking what the IME did after the last request
@@ -615,7 +614,6 @@ impl MacWindow {
                 input_handler: None,
                 last_key_equivalent: None,
                 synthetic_drag_counter: 0,
-                last_fresh_keydown: None,
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
@@ -1219,15 +1217,6 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
         let keydown = event.keystroke.clone();
         let fn_modifier = keydown.modifiers.function;
-        // Ignore events from held-down keys after some of the initially-pressed keys
-        // were released.
-        if event.is_held {
-            if lock.last_fresh_keydown.as_ref() != Some(&keydown) {
-                return YES;
-            }
-        } else {
-            lock.last_fresh_keydown = Some(keydown.clone());
-        }
         lock.last_ime_inputs = Some(Default::default());
         drop(lock);
 
@@ -1439,7 +1428,6 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
         is_held: false,
     });
 
-    lock.last_fresh_keydown = Some(keystroke);
     if let Some(mut callback) = lock.event_callback.take() {
         drop(lock);
         callback(event);

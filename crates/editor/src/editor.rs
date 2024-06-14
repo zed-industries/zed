@@ -1522,7 +1522,7 @@ struct ActiveDiagnosticGroup {
     is_valid: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ClipboardSelection {
     pub len: usize,
     pub is_entire_line: bool,

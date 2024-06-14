@@ -28,3 +28,14 @@
 {"ReadRegister":{"name":"\"","value":"lazy dog"}}
 {"Get":{"state":"The quick brown\nˇ","mode":"Normal"}}
 {"ReadRegister":{"name":"\"","value":"lazy dog"}}
+{"Key":"/"}
+{"Key":"d"}
+{"Key":"o"}
+{"Key":"g"}
+{"Key":"enter"}
+{"Get":{"state":"The quick brown\nˇ","mode":"Normal"}}
+{"ReadRegister":{"name":"/","value":"dog"}}
+{"Key":"\""}
+{"Key":"/"}
+{"Key":"shift-p"}
+{"Get":{"state":"The quick brown\ndoˇg","mode":"Normal"}}

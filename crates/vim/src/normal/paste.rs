@@ -1,19 +1,15 @@
 use std::cmp;
 
-use editor::{
-    display_map::ToDisplayPoint, movement, scroll::Autoscroll, ClipboardSelection, DisplayPoint,
-    RowExt,
-};
-use gpui::{impl_actions, AppContext, ViewContext};
+use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
+use gpui::{impl_actions, ViewContext};
 use language::{Bias, SelectionGoal};
 use serde::Deserialize;
-use settings::Settings;
 use workspace::Workspace;
 
 use crate::{
-    state::Mode,
-    utils::{copy_selections_content, SYSTEM_CLIPBOARD},
-    UseSystemClipboard, Vim, VimSettings,
+    normal::yank::copy_selections_content,
+    state::{Mode, Register},
+    Vim,
 };
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -31,16 +27,6 @@ pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>
     workspace.register_action(paste);
 }
 
-fn system_clipboard_is_newer(vim: &Vim, cx: &mut AppContext) -> bool {
-    cx.read_from_clipboard().is_some_and(|item| {
-        if let Some(last_state) = vim.workspace_state.registers.get(&SYSTEM_CLIPBOARD) {
-            last_state != item.text()
-        } else {
-            true
-        }
-    })
-}
-
 fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
@@ -50,40 +36,19 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
-                let (clipboard_text, clipboard_selections): (String, Option<_>) = if let Some(
-                    register,
-                ) =
-                    vim.update_state(|state| state.selected_register.take())
-                {
-                    (
-                        vim.read_register(register, Some(editor), cx)
-                            .unwrap_or_default(),
-                        None,
-                    )
-                } else if VimSettings::get_global(cx).use_system_clipboard
-                    == UseSystemClipboard::Never
-                    || VimSettings::get_global(cx).use_system_clipboard
-                        == UseSystemClipboard::OnYank
-                        && !system_clipboard_is_newer(vim, cx)
-                {
-                    (vim.read_register('"', None, cx).unwrap_or_default(), None)
-                } else {
-                    if let Some(item) = cx.read_from_clipboard() {
-                        let clipboard_selections = item
-                            .metadata::<Vec<ClipboardSelection>>()
-                            .filter(|clipboard_selections| {
-                                clipboard_selections.len() > 1
-                                    && vim.state().mode != Mode::VisualLine
-                            });
-                        (item.text().clone(), clipboard_selections)
-                    } else {
-                        ("".into(), None)
-                    }
-                };
+                let selected_register = vim.update_state(|state| state.selected_register.take());
 
-                if clipboard_text.is_empty() {
+                let Some(Register {
+                    text,
+                    clipboard_selections,
+                }) = vim
+                    .read_register(selected_register, Some(editor), cx)
+                    .filter(|reg| !reg.text.is_empty())
+                else {
                     return;
-                }
+                };
+                let clipboard_selections = clipboard_selections
+                    .filter(|sel| sel.len() > 1 && vim.state().mode != Mode::VisualLine);
 
                 if !action.preserve_clipboard && vim.state().mode.is_visual() {
                     copy_selections_content(vim, editor, vim.state().mode == Mode::VisualLine, cx);
@@ -135,14 +100,14 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                         if let Some(clipboard_selections) = &clipboard_selections {
                             if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                                 let end_offset = start_offset + clipboard_selection.len;
-                                let text = clipboard_text[start_offset..end_offset].to_string();
+                                let text = text[start_offset..end_offset].to_string();
                                 start_offset = end_offset + 1;
                                 (text, Some(clipboard_selection.first_line_indent))
                             } else {
                                 ("".to_string(), first_selection_indent_column)
                             }
                         } else {
-                            (clipboard_text.to_string(), first_selection_indent_column)
+                            (text.to_string(), first_selection_indent_column)
                         };
                     let line_mode = to_insert.ends_with('\n');
                     let is_multiline = to_insert.contains('\n');
@@ -679,6 +644,7 @@ mod test {
         cx.shared_register('a').await.assert_eq("jumps ");
         cx.simulate_shared_keystrokes("\" shift-a d i w").await;
         cx.shared_register('a').await.assert_eq("jumps over");
+        cx.shared_register('"').await.assert_eq("jumps over");
         cx.simulate_shared_keystrokes("\" a p").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
@@ -719,12 +685,50 @@ mod test {
         cx.shared_clipboard().await.assert_eq("lazy dog");
         cx.shared_register('"').await.assert_eq("lazy dog");
 
+        cx.simulate_shared_keystrokes("/ d o g enter").await;
+        cx.shared_register('/').await.assert_eq("dog");
+        cx.simulate_shared_keystrokes("\" / shift-p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                The quick brown
+                doˇg"});
+
         // not testing nvim as it doesn't have a filename
         cx.simulate_keystrokes("\" % p");
         cx.assert_state(
             indoc! {"
                     The quick brown
-                    dir/file.rˇs"},
+                    dogdir/file.rˇs"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_multicursor_paste(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<VimSettings>(cx, |s| {
+                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            });
+        });
+
+        cx.set_state(
+            indoc! {"
+               ˇfish one
+               fish two
+               fish red
+               fish blue
+                "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("4 g l w escape d i w 0 shift-p");
+        cx.assert_state(
+            indoc! {"
+               onˇefish•
+               twˇofish•
+               reˇdfish•
+               bluˇefish•
+                "},
             Mode::Normal,
         );
     }
