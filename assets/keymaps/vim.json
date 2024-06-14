@@ -248,7 +248,7 @@
       ],
       "g ]": "editor::GoToDiagnostic",
       "g [": "editor::GoToPrevDiagnostic",
-      "g i": ["workspace::SendKeystrokes", "` ^ i"],
+      "g i": "vim::InsertAtPrevious",
       "g ,": "vim::ChangeListNewer",
       "g ;": "vim::ChangeListOlder",
       "shift-h": "vim::WindowTop",

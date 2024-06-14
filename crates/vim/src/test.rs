@@ -1166,4 +1166,14 @@ async fn test_caret_mark(cx: &mut TestAppContext) {
         Line five
     "
     });
+
+    cx.simulate_shared_keystrokes("k a ! escape k g i ?").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+        Line one
+        Line two
+        Line three!?ˇ
+        Straight thing four
+        Line five
+    "
+    });
 }

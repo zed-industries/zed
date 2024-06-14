@@ -33,7 +33,7 @@ use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::{
-    mark::{create_mark, create_mark_after, create_mark_before},
+    mark::{create_mark, create_mark_before},
     normal_replace,
 };
 use replace::multi_replace;
@@ -433,8 +433,9 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
-        if mode != Mode::Insert && last_mode == Mode::Insert {
-            create_mark_after(self, "^".into(), cx)
+        if !mode.is_visual() && last_mode.is_visual() {
+            create_mark_before(self, ">".into(), cx);
+            create_mark(self, "<".into(), true, cx)
         }
 
         if leave_selections {
@@ -803,11 +804,6 @@ impl Vim {
         {
             self.switch_mode(Mode::Normal, true, cx);
             is_visual = false;
-        }
-
-        if is_visual {
-            create_mark_before(self, ">".into(), cx);
-            create_mark(self, "<".into(), true, cx)
         }
     }
 

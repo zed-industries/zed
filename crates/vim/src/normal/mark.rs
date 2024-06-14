@@ -25,25 +25,14 @@ pub fn create_mark(vim: &mut Vim, text: Arc<str>, tail: bool, cx: &mut WindowCon
     }) else {
         return;
     };
-    vim.update_state(|state| state.marks.insert(text.to_string(), anchors));
-    vim.clear_operator(cx);
-}
-
-pub fn create_mark_after(vim: &mut Vim, text: Arc<str>, cx: &mut WindowContext) {
-    let Some(anchors) = vim.update_active_editor(cx, |_, editor, cx| {
-        let (map, selections) = editor.selections.all_display(cx);
-        selections
-            .into_iter()
-            .map(|selection| {
-                let point = movement::saturating_right(&map, selection.tail());
-                map.buffer_snapshot
-                    .anchor_before(point.to_offset(&map, Bias::Left))
+    dbg!(anchors
+        .iter()
+        .map(|anchor| {
+            vim.update_active_editor(cx, |_, editor, cx| {
+                anchor.to_display_point(&editor.snapshot(cx))
             })
-            .collect::<Vec<_>>()
-    }) else {
-        return;
-    };
-
+        })
+        .collect::<Vec<_>>());
     vim.update_state(|state| state.marks.insert(text.to_string(), anchors));
     vim.clear_operator(cx);
 }
