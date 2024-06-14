@@ -39,7 +39,9 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
 use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
 };
-use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
+use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::{
+    self, ZwpPrimarySelectionOfferV1,
+};
 use wayland_protocols::wp::primary_selection::zv1::client::{
     zwp_primary_selection_device_manager_v1, zwp_primary_selection_device_v1,
     zwp_primary_selection_source_v1,
@@ -1938,8 +1940,33 @@ impl Dispatch<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1, ()>
     }
 
     event_created_child!(WaylandClientStatePtr, zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1, [
-        zwp_primary_selection_device_v1::EVT_DATA_OFFER_OPCODE => (zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()),
+        zwp_primary_selection_device_v1::EVT_DATA_OFFER_OPCODE => (zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()),
     ]);
+}
+
+impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()>
+    for WaylandClientStatePtr
+{
+    fn event(
+        this: &mut Self,
+        _data_offer: &zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1,
+        event: zwp_primary_selection_offer_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+
+        match event {
+            zwp_primary_selection_offer_v1::Event::Offer { mime_type } => {
+                if let Some(offer) = state.primary_data_offer.as_mut() {
+                    offer.add_mime_type(mime_type);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>

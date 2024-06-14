@@ -4,12 +4,7 @@ use std::{
 };
 
 use filedescriptor::{FileDescriptor, Pipe};
-use smallvec::SmallVec;
-use wayland_backend::client::ObjectId;
-use wayland_client::{
-    protocol::{wl_data_offer::WlDataOffer, wl_data_source::WlDataSource},
-    Connection, Proxy,
-};
+use wayland_client::{protocol::wl_data_offer::WlDataOffer, Connection};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
 use crate::platform::linux::platform::read_fd;
@@ -204,7 +199,7 @@ impl Clipboard {
         }
 
         if offer.has_mime_type(&self.self_mime) {
-            return self.contents.clone();
+            return self.primary_contents.clone();
         }
         if !offer.has_mime_type(TEXT_MIME_TYPE) {
             return None;

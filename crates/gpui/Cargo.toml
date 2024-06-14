@@ -109,8 +109,8 @@ copypasta = "0.10.1"
 [target.'cfg(target_os = "linux")'.dependencies]
 as-raw-xcb-connection = "1"
 ashpd.workspace = true
-calloop = "0.12.4"
-calloop-wayland-source = "0.2.0"
+calloop = "0.13.0"
+calloop-wayland-source = "0.3.0"
 wayland-backend = { version = "0.3.3", features = ["client_system"] }
 wayland-client = { version = "0.31.2" }
 wayland-cursor = "0.31.1"
