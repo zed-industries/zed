@@ -8714,6 +8714,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "collections",
+ "derive_more",
  "fs",
  "futures 0.3.28",
  "fuzzy",

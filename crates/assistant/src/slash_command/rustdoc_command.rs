@@ -10,8 +10,8 @@ use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
-use rustdoc::LocalProvider;
 use rustdoc::{convert_rustdoc_to_markdown, RustdocStore};
+use rustdoc::{CrateName, LocalProvider};
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use util::{maybe, ResultExt};
 use workspace::Workspace;
@@ -30,14 +30,14 @@ impl RustdocSlashCommand {
     async fn build_message(
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
-        crate_name: String,
+        crate_name: CrateName,
         module_path: Vec<String>,
         path_to_cargo_toml: Option<&Path>,
     ) -> Result<(RustdocSource, String)> {
         let cargo_workspace_root = path_to_cargo_toml.and_then(|path| path.parent());
         if let Some(cargo_workspace_root) = cargo_workspace_root {
             let mut local_cargo_doc_path = cargo_workspace_root.join("target/doc");
-            local_cargo_doc_path.push(&crate_name);
+            local_cargo_doc_path.push(crate_name.as_ref());
             if !module_path.is_empty() {
                 local_cargo_doc_path.push(module_path.join("/"));
             }
@@ -144,7 +144,7 @@ impl SlashCommand for RustdocSlashCommand {
                         let provider = Box::new(LocalProvider::new(fs, cargo_workspace_root));
                         // We don't need to hold onto this task, as the `RustdocStore` will hold it
                         // until it completes.
-                        let _ = store.clone().index(crate_name.to_string(), provider);
+                        let _ = store.clone().index(crate_name.into(), provider);
                     }
                 }
             }
@@ -178,7 +178,7 @@ impl SlashCommand for RustdocSlashCommand {
             .next()
             .ok_or_else(|| anyhow!("missing crate name"))
         {
-            Ok(crate_name) => crate_name.to_string(),
+            Ok(crate_name) => CrateName::from(crate_name),
             Err(err) => return Task::ready(Err(err)),
         };
         let item_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
@@ -207,7 +207,6 @@ impl SlashCommand for RustdocSlashCommand {
             }
         });
 
-        let crate_name = SharedString::from(crate_name);
         let module_path = if item_path.is_empty() {
             None
         } else {
@@ -242,7 +241,7 @@ struct RustdocPlaceholder {
     pub id: ElementId,
     pub unfold: Arc<dyn Fn(&mut WindowContext)>,
     pub source: RustdocSource,
-    pub crate_name: SharedString,
+    pub crate_name: CrateName,
     pub module_path: Option<SharedString>,
 }
 
