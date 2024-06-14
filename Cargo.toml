@@ -105,7 +105,6 @@ members = [
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
-    "crates/easy_motion",
     "crates/welcome",
     "crates/workspace",
     "crates/worktree",
@@ -253,7 +252,6 @@ ui_text_field = { path = "crates/ui_text_field" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
-easy_motion = { path = "crates/easy_motion" }
 welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 zed = { path = "crates/zed" }

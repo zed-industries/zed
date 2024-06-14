@@ -1,7 +1,7 @@
 use editor::DisplayPoint;
 use gpui::{HighlightStyle, KeyContext};
 
-use crate::trie::{Trie, TrimResult};
+use crate::easy_motion::trie::{Trie, TrimResult};
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct OverlayState {

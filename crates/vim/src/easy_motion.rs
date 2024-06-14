@@ -14,7 +14,7 @@ use theme::ThemeSettings;
 use ui::{Context, WindowContext};
 use workspace::Workspace;
 
-use crate::{
+use crate::easy_motion::{
     editor_state::{EditorState, OverlayState},
     search::{row_starts, sort_matches_display},
     trie::{Trie, TrimResult},

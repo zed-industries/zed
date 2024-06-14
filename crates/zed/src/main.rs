@@ -150,7 +150,6 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
     search::init(cx);
     vim::init(cx);
-    easy_motion::init(cx);
     terminal_view::init(cx);
 
     journal::init(app_state.clone(), cx);

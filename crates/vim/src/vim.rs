@@ -5,6 +5,7 @@ mod test;
 
 mod change_list;
 mod command;
+mod easy_motion;
 mod editor_events;
 mod insert;
 mod mode_indicator;
@@ -21,6 +22,7 @@ use anyhow::Result;
 use change_list::push_to_change_list;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
+use easy_motion::EasyMotion;
 use editor::{
     movement::{self, FindRange},
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
@@ -93,6 +95,8 @@ pub fn init(cx: &mut AppContext) {
     cx.set_global(Vim::default());
     VimModeSetting::register(cx);
     VimSettings::register(cx);
+
+    easy_motion::init(cx);
 
     cx.observe_keystrokes(observe_keystrokes).detach();
     editor_events::init(cx);

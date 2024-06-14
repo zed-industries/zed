@@ -10,7 +10,7 @@ use multi_buffer::MultiBufferPoint;
 use text::{Bias, Selection};
 use ui::ViewContext;
 
-use crate::{Direction, WordType};
+use crate::easy_motion::{Direction, WordType};
 
 pub fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bias: f32) -> f32 {
     x_bias * (point_1.row().as_f32() - point_2.row().as_f32()).abs()
