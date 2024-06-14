@@ -2,6 +2,7 @@
 mod tab_switcher_tests;
 
 use collections::HashMap;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId,
     EventEmitter, FocusHandle, FocusableView, Modifiers, ModifiersChangedEvent, MouseButton,
@@ -75,7 +76,8 @@ impl TabSwitcher {
 
     fn new(delegate: TabSwitcherDelegate, cx: &mut ViewContext<Self>) -> Self {
         Self {
-            picker: cx.new_view(|cx| Picker::nonsearchable_uniform_list(delegate, cx)),
+            // enable text field on tabswitcher
+            picker: cx.new_view(|cx| Picker::uniform_list(delegate, cx)),
             init_modifiers: cx.modifiers().modified().then_some(cx.modifiers()),
         }
     }
@@ -85,7 +87,7 @@ impl TabSwitcher {
         event: &ModifiersChangedEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(init_modifiers) = self.init_modifiers else {
+        let Some(init_modifiers) = self.init_modifiers.take() else {
             return;
         };
         if !event.modified() || !init_modifiers.is_subset_of(event) {
@@ -167,7 +169,7 @@ impl TabSwitcherDelegate {
                 PaneEvent::AddItem { .. } | PaneEvent::RemoveItem { .. } | PaneEvent::Remove => {
                     tab_switcher.picker.update(cx, |picker, cx| {
                         let selected_item_id = picker.delegate.selected_item_id();
-                        picker.delegate.update_matches(cx);
+                        picker.delegate.update_matches_a(cx);
                         if let Some(item_id) = selected_item_id {
                             picker.delegate.select_item(item_id, cx);
                         }
@@ -180,12 +182,66 @@ impl TabSwitcherDelegate {
         .detach();
     }
 
-    fn update_matches(&mut self, cx: &mut WindowContext) {
+    fn update_matches_by_query(&mut self, raw_query: String, cx: &mut WindowContext) {
+      let raw_query = raw_query.replace(' ', "");
+      let query = raw_query.trim();
+
+      let Some(items) = self.fetch_item_candidates(cx) else {
+        return;
+      };
+
+      let executor = cx.background_executor().clone();
+
+      async move {
+      let candidates = items
+          .iter()
+          .enumerate()
+          .map(|(ix, item)| StringMatchCandidate {
+              id: ix,
+              string: item.tab_tooltip_text(cx).unwrap().to_string(),
+              char_bag: item.tab_tooltip_text(cx).unwrap().chars().collect(),
+          })
+          .collect::<Vec<_>>();
+
+          let ret = fuzzy::match_strings(
+              &candidates,
+              &query,
+              true,
+              10000,
+              &Default::default(),
+              executor,
+          )
+          .await;
+          println!("{:?}", ret);
+          ret
+      };
+    }
+
+    fn fetch_item_candidates(&self, cx: &mut WindowContext) -> Option<Vec<Box<dyn ItemHandle>>> {
+      let Some(pane) = self.pane.upgrade() else {
+          return None;
+      };
+      let pane = pane.read(cx);
+      let mut history_indices = HashMap::default();
+      pane.activation_history().iter().rev().enumerate().for_each(
+          |(history_index, history_entry)| {
+              history_indices.insert(history_entry.entity_id, history_index);
+          },
+      );
+
+      Some(pane.items().map(|item| item.boxed_clone()).collect())
+    }
+
+    fn update_matches_a(&mut self, cx: &mut WindowContext) {
         self.matches.clear();
+
+        // let Some(items) = self.fetch_item_candidates(cx) else {
+        //   return;
+        // };
+
         let Some(pane) = self.pane.upgrade() else {
             return;
         };
-
         let pane = pane.read(cx);
         let mut history_indices = HashMap::default();
         pane.activation_history().iter().rev().enumerate().for_each(
@@ -195,6 +251,7 @@ impl TabSwitcherDelegate {
         );
 
         let items: Vec<Box<dyn ItemHandle>> = pane.items().map(|item| item.boxed_clone()).collect();
+
         items
             .iter()
             .enumerate()
@@ -264,7 +321,7 @@ impl PickerDelegate for TabSwitcherDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
-        "".into()
+        "Search a open buffer...".into()
     }
 
     fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
@@ -290,10 +347,14 @@ impl PickerDelegate for TabSwitcherDelegate {
 
     fn update_matches(
         &mut self,
-        _raw_query: String,
+        raw_query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Task<()> {
-        self.update_matches(cx);
+        if raw_query.is_empty() {
+          self.update_matches_a(cx);
+        } else {
+          self.update_matches_by_query(raw_query, cx);
+        }
         Task::ready(())
     }
 

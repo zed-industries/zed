@@ -10288,6 +10288,7 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
+ "fuzzy",
  "gpui",
  "language",
  "menu",
