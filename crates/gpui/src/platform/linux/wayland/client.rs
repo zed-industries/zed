@@ -220,13 +220,12 @@ pub(crate) struct WaylandClientState {
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_style: Option<CursorStyle>,
     clipboard: Clipboard,
-    data_offers: HashMap<ObjectId, DataOffer<WlDataOffer>>,
+    data_offers: Vec<DataOffer<WlDataOffer>>,
     primary_data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
     cursor: Cursor,
+    pending_open_uri: Option<String>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
-
-    pending_open_uri: Option<String>,
 }
 
 pub struct DragState {
@@ -533,12 +532,11 @@ impl WaylandClient {
             enter_token: None,
             cursor_style: None,
             clipboard: Clipboard::new(conn.clone()),
-            data_offers: HashMap::default(),
+            data_offers: Vec::new(),
             primary_data_offer: None,
             cursor,
-            event_loop: Some(event_loop),
-
             pending_open_uri: None,
+            event_loop: Some(event_loop),
         }));
 
         foreground
@@ -681,8 +679,6 @@ impl LinuxClient for WaylandClient {
     }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {
-        println!("write_to_primary: {item:?}");
-        // TODO
         let mut state = self.0.borrow_mut();
         let (Some(primary_selection_manager), Some(primary_selection)) = (
             state.globals.primary_selection_manager.clone(),
@@ -701,7 +697,6 @@ impl LinuxClient for WaylandClient {
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
-        println!("write_to_clipboard: {item:?}");
         let mut state = self.0.borrow_mut();
         let (Some(data_device_manager), Some(data_device)) = (
             state.globals.data_device_manager.clone(),
@@ -1712,15 +1707,18 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
         match event {
             // Clipboard
             wl_data_device::Event::DataOffer { id: data_offer } => {
-                // TODO: maximum 2 offers, remove old ones
-                println!("{}", data_offer.id());
-                state
-                    .data_offers
-                    .insert(data_offer.id(), DataOffer::new(data_offer));
+                state.data_offers.push(DataOffer::new(data_offer));
+                if state.data_offers.len() > 2 {
+                    // At most we store a clipboard offer and a drag and drop offer.
+                    state.data_offers.remove(0).inner.destroy();
+                }
             }
             wl_data_device::Event::Selection { id: data_offer } => {
                 if let Some(offer) = data_offer {
-                    let offer = state.data_offers.get(&offer.id());
+                    let offer = state
+                        .data_offers
+                        .iter()
+                        .find(|wrapper| wrapper.inner.id() == offer.id());
                     let offer = offer.cloned();
                     state.clipboard.set_offer(offer);
                 } else {
@@ -1873,7 +1871,11 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
                 }
 
                 // Clipboard
-                if let Some(offer) = state.data_offers.get_mut(&data_offer.id()) {
+                if let Some(offer) = state
+                    .data_offers
+                    .iter_mut()
+                    .find(|wrapper| wrapper.inner.id() == data_offer.id())
+                {
                     offer.add_mime_type(mime_type);
                 }
             }
@@ -1920,12 +1922,12 @@ impl Dispatch<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1, ()>
         let client = this.get_client();
         let mut state = client.borrow_mut();
 
-        println!("{event:?}");
-
         match event {
             zwp_primary_selection_device_v1::Event::DataOffer { offer } => {
-                println!("primary: {}", offer.id());
-                state.primary_data_offer.replace(DataOffer::new(offer));
+                let old_offer = state.primary_data_offer.replace(DataOffer::new(offer));
+                if let Some(old_offer) = old_offer {
+                    old_offer.inner.destroy();
+                }
             }
             zwp_primary_selection_device_v1::Event::Selection { id: data_offer } => {
                 if data_offer.is_some() {

@@ -27,24 +27,11 @@ pub(crate) struct Clipboard {
     current_primary_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
 }
 
-// Reference: https://specifications.freedesktop.org/clipboards-spec/clipboards-latest.txt
-// pub(crate) enum TargetSelection {
-//     Clipboard(WlDataOffer),
-//     Primary(ZwpPrimarySelectionOfferV1),
-// }
-
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct DataOffer<T> {
-    inner: T,
+    pub inner: T,
     mime_types: Vec<String>,
 }
-
-// // At most we have to store three data offers: drag and drop, primary selection and clipboard.
-// const MAX_DATA_OFFERS: usize = 3;
-
-// pub(crate) struct DataOffersMap {
-//     inner: SmallVec<[(ObjectId, DataOffer); MAX_DATA_OFFERS]>,
-// }
 
 impl<T> DataOffer<T> {
     pub fn new(offer: T) -> Self {
@@ -62,35 +49,6 @@ impl<T> DataOffer<T> {
         self.mime_types.iter().any(|t| t == mime_type)
     }
 }
-
-// impl DataOffersMap {
-//     pub fn new() -> Self {
-//         Self {
-//             inner: SmallVec::new(),
-//         }
-//     }
-
-//     pub fn insert(&mut self, id: ObjectId, data_offer: DataOffer) {
-//         if self.inner.len() == MAX_DATA_OFFERS {
-//             self.inner.remove(0);
-//         }
-//         self.inner.push((id, data_offer));
-//     }
-
-//     pub fn get(&self, id: &ObjectId) -> Option<&DataOffer> {
-//         self.inner
-//             .iter()
-//             .find(|(key, _)| key == id)
-//             .map(|(_, value)| value)
-//     }
-
-//     pub fn get_mut(&mut self, id: &ObjectId) -> Option<&mut DataOffer> {
-//         self.inner
-//             .iter_mut()
-//             .find(|(key, _)| key == id)
-//             .map(|(_, value)| value)
-//     }
-// }
 
 impl Clipboard {
     pub fn new(connection: Connection) -> Self {
@@ -118,19 +76,11 @@ impl Clipboard {
 
     pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) {
         self.cached_read = None;
-        // TODO: destroy old offer
-        // if let Some(old_offer) = self.current_offer.take() {
-        //     old_offer.inner.destroy();
-        // }
         self.current_offer = data_offer;
     }
 
     pub fn set_primary_offer(&mut self, data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>) {
         self.cached_primary_read = None;
-        // TODO: destroy old offer
-        // if let Some(old_offer) = self.current_offer.take() {
-        //     old_offer.inner.destroy();
-        // }
         self.current_primary_offer = data_offer;
     }
 
@@ -148,7 +98,6 @@ impl Clipboard {
     }
 
     pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
-        println!("send_primary");
         if let Some(primary_contents) = &self.primary_contents {
             let mut file = FileDescriptor::new(fd);
             if let Err(err) = file.write(primary_contents.as_bytes()) {
@@ -192,7 +141,6 @@ impl Clipboard {
     }
 
     pub fn read_primary(&mut self) -> Option<String> {
-        println!("read_primary");
         let offer = self.current_primary_offer.clone()?;
         if let Some(cached) = self.cached_primary_read.clone() {
             return Some(cached);
