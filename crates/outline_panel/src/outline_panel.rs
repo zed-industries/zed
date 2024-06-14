@@ -2177,10 +2177,28 @@ impl OutlinePanel {
             let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
             let mut folded_dirs_entry = None::<(usize, WorktreeId, Vec<Entry>)>;
             let mut entries = Vec::new();
+            let is_singleton = self
+                .active_item
+                .as_ref()
+                .and_then(|active_item| {
+                    Some(
+                        active_item
+                            .active_editor
+                            .upgrade()?
+                            .read(cx)
+                            .buffer()
+                            .read(cx)
+                            .is_singleton(),
+                    )
+                })
+                .unwrap_or(false);
 
             for entry in &self.fs_entries {
                 let depth = match entry {
                     FsEntry::Directory(worktree_id, dir_entry) => {
+                        if is_singleton {
+                            continue;
+                        }
                         let depth = self
                             .fs_entries_depth
                             .get(&(*worktree_id, dir_entry.id))
@@ -2223,11 +2241,16 @@ impl OutlinePanel {
                         depth
                     }
                     FsEntry::ExternalFile(..) => 0,
-                    FsEntry::File(worktree_id, file_entry, ..) => self
-                        .fs_entries_depth
-                        .get(&(*worktree_id, file_entry.id))
-                        .map(|&(_, depth)| depth)
-                        .unwrap_or(0),
+                    FsEntry::File(worktree_id, file_entry, ..) => {
+                        if is_singleton {
+                            0
+                        } else {
+                            self.fs_entries_depth
+                                .get(&(*worktree_id, file_entry.id))
+                                .map(|&(_, depth)| depth)
+                                .unwrap_or(0)
+                        }
+                    }
                 };
                 if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take() {
                     entries.push((
