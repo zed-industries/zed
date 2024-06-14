@@ -21,6 +21,9 @@ thread_local = "1.1.4"
 util.workspace = true
 uuid.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+libsqlite3-sys = { version = "0.26", features = ["bundled"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 libsqlite3-sys = { version = "0.26", features = ["bundled"] }
 
