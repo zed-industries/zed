@@ -2271,9 +2271,9 @@ impl OutlinePanel {
                                 ),
                             ));
 
-                            let mut outline_depth = excerpt_depth + 1;
+                            let mut outline_base_depth = excerpt_depth + 1;
                             if is_singleton {
-                                outline_depth = 0;
+                                outline_base_depth = 0;
                                 entries.clear();
                             } else if self
                                 .collapsed_entries
@@ -2282,22 +2282,12 @@ impl OutlinePanel {
                                 continue;
                             }
 
-                            let mut outline_data_depth = None::<usize>;
                             for outline in excerpt.iter_outlines() {
-                                if let Some(outline_data_depth) = outline_data_depth {
-                                    match outline_data_depth.cmp(&outline.depth) {
-                                        cmp::Ordering::Less => outline_depth += 1,
-                                        cmp::Ordering::Equal => {}
-                                        cmp::Ordering::Greater => outline_depth -= 1,
-                                    };
-                                }
-                                outline_data_depth = Some(outline.depth);
                                 entries.push((
-                                    outline_depth,
+                                    outline_base_depth + outline.depth,
                                     EntryOwned::Outline(*buffer_id, entry_excerpt, outline.clone()),
                                 ));
                             }
-
                             if is_singleton && entries.is_empty() {
                                 entries.push((0, EntryOwned::Entry(entry.clone())));
                             }
@@ -2311,7 +2301,7 @@ impl OutlinePanel {
                     EntryOwned::FoldedDirs(worktree_id, folded_dirs),
                 ));
             }
-            dbg!(entries)
+            entries
         })
     }
 
