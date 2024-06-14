@@ -7857,13 +7857,13 @@ impl Project {
         updated_entries_set: &UpdatedEntriesSet,
         cx: &mut ModelContext<Self>,
     ) {
+        let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
         let client = self.client();
 
         for (project_file_name, project_type_telemetry) in
             self.telemetry_worktree_id_map.0.iter_mut()
         {
-            let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
-
             if project_type_telemetry
                 .worktree_ids_reported
                 .contains(&worktree_id)
