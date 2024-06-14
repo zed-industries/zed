@@ -1,7 +1,7 @@
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
-use fuzzy::PathMatch;
+use fuzzy::{PathMatch, StringMatchCandidate};
 use gpui::{svg, AppContext, Model, RenderOnce, Task, View, WeakView};
 use language::{
     Anchor, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, LspAdapterDelegate,
@@ -108,9 +108,10 @@ impl SlashCommand for DiagnosticsCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let paths = self.search_paths(query, cancellation_flag, &workspace, cx);
+        let paths = self.search_paths(query.clone(), cancellation_flag.clone(), &workspace, cx);
+        let executor = cx.background_executor().clone();
         cx.background_executor().spawn(async move {
-            Ok(paths
+            let mut matches: Vec<String> = paths
                 .await
                 .into_iter()
                 .map(|path_match| {
@@ -120,7 +121,23 @@ impl SlashCommand for DiagnosticsCommand {
                         path_match.path.to_string_lossy()
                     )
                 })
-                .collect())
+                .collect();
+
+            matches.extend(
+                fuzzy::match_strings(
+                    &Options::match_candidates_for_args(),
+                    &query,
+                    false,
+                    10,
+                    &cancellation_flag,
+                    executor,
+                )
+                .await
+                .into_iter()
+                .map(|candidate| candidate.string),
+            );
+
+            Ok(matches)
         })
     }
 
@@ -162,13 +179,13 @@ impl SlashCommand for DiagnosticsCommand {
     }
 }
 
-const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
-
 #[derive(Default)]
 struct Options {
     include_warnings: bool,
     path_matcher: Option<PathMatcher>,
 }
+
+const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
 
 impl Options {
     pub fn parse(arguments_line: Option<&str>) -> Self {
@@ -190,6 +207,13 @@ impl Options {
                 }
             })
             .unwrap_or_default()
+    }
+
+    fn match_candidates_for_args() -> [StringMatchCandidate; 1] {
+        [StringMatchCandidate::new(
+            0,
+            INCLUDE_WARNINGS_ARGUMENT.to_string(),
+        )]
     }
 
     fn header(&self) -> String {
