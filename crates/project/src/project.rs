@@ -259,9 +259,9 @@ struct ProjectTypeTelemetry {
 }
 
 impl ProjectTypeTelemetry {
-    fn new(project_type_name: String) -> Self {
+    fn new(name: String) -> Self {
         Self {
-            name: project_type_name,
+            name,
             worktree_ids_reported: HashSet::default(),
         }
     }
