@@ -351,66 +351,13 @@ fn show_hover(
     editor.hover_state.info_task = Some(task);
 }
 
-fn transform_codeblock(input: &str, language: &str) -> String {
-    let lines: Vec<&str> = input.lines().collect();
-    let mut result: Vec<String> = Vec::new();
-    let mut i = 0;
-    let mut open_block = false;
-    let mut language_tag = String::from("```");
-    language_tag.push_str(language);
-    while i < lines.len() {
-        let mut line = lines[i].to_string();
-        if line.starts_with("```") {
-            if !open_block {
-                if line == "```" {
-                    //only modify the line if the lsp didn't provide a language
-                    line = language_tag.clone();
-                }
-
-                //skip empty lines following the opening of a codeblock
-                while i < lines.len() && lines[i].trim().is_empty() {
-                    i += 1;
-                }
-            }
-            //remove empty lines preceeding the end of a codeblock
-            while !result.is_empty() && result.last().unwrap().trim().is_empty() {
-                result.pop();
-            }
-
-            open_block = !open_block;
-            i += 1;
-        } else {
-            i += 1;
-
-            while i < lines.len()
-                && !lines[i].trim().is_empty()
-                && !open_block
-                && !lines[i].contains("```")
-            {
-                if line.contains("\n") {
-                    break;
-                }
-                line.push_str(" ");
-                line.push_str(lines[i]);
-                i += 1;
-            }
-        }
-        println!("{:?}", line.clone());
-
-        result.push(line);
-    }
-    result.join("\n")
-}
-
 async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
-) -> Vec<View<Markdown>> {
-    let mut parsed_blocks: Vec<View<Markdown>> = Vec::new();
-
-    // let compined_text = String::new();
+) -> Option<View<Markdown>> {
+    let mut combined_text = String::new();
     for block in blocks {
         let language_name = if let Some(ref l) = language {
             let l = Arc::clone(l);
@@ -419,36 +366,35 @@ async fn parse_blocks(
             "".to_string()
         };
         println!("{}", language_name);
-        let mut text = transform_codeblock(
-            block.clone().text.replace("\\n", "\n").trim(),
-            language_name.as_str(),
-        );
+        // let mut text = transform_codeblock(
+        //     block.clone().text.replace("\\n", "\n").trim(),
+        //     language_name.as_str(),
+        // );
 
-        // let mut text = block.clone().text;
-        // .replace("\n", "||");
-        // .replace("\\n", "\n")
-        // .trim()
-        // .to_string();
+        let mut text = block.clone().text;
 
         text = text.replace("```js", "```javascript");
         // println!("{}", text);
-        let rendered_block = cx.new_view(|cx| {
+
+        combined_text.push_str(text.as_str());
+    }
+
+    let rendered_block = cx
+        .new_view(|cx| {
             let markdown_style = MarkdownStyle {
                 pad_blocks: false,
                 ..MarkdownStyle::get_themed_default(cx)
             };
             Markdown::new(
-                text,
+                combined_text,
                 markdown_style.clone(),
                 Some(language_registry.clone()),
                 cx,
             )
-        });
-        if let Ok(rendered_block) = rendered_block {
-            parsed_blocks.push(rendered_block);
-        }
-    }
-    parsed_blocks
+        })
+        .ok();
+
+    rendered_block
 }
 
 #[derive(Default, Debug)]
@@ -531,14 +477,14 @@ impl HoverState {
 
 pub struct InfoPopover {
     pub symbol_range: RangeInEditor,
-    pub parsed_content: Vec<View<Markdown>>,
+    pub parsed_content: Option<View<Markdown>>,
     pub scroll_handle: ScrollHandle,
     // pub markdown_element: View<Markdown>,
 }
 
 impl InfoPopover {
     pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
-        div()
+        let mut d = div()
             .id("info_popover")
             .elevation_2(cx)
             .overflow_y_scroll()
@@ -549,9 +495,12 @@ impl InfoPopover {
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            .p_2()
-            .children(self.parsed_content.clone())
-            .into_any_element()
+            .p_2();
+
+        if let Some(markdown) = &self.parsed_content {
+            d = d.child(markdown.clone());
+        }
+        d.into_any_element()
     }
 
     pub fn scroll(&self, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {

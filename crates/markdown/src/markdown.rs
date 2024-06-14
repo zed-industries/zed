@@ -2,7 +2,6 @@ pub mod parser;
 
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
-use gpui::rgb;
 use gpui::{
     actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
