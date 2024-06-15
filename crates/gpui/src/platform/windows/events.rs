@@ -98,13 +98,16 @@ fn handle_move_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let x = lparam.signed_loword() as f32;
-    let y = lparam.signed_hiword() as f32;
     let mut lock = state_ptr.state.borrow_mut();
-    lock.origin = point(px(x), px(y));
+    let origin = logical_point(
+        lparam.signed_loword() as f32,
+        lparam.signed_hiword() as f32,
+        lock.scale_factor,
+    );
+    lock.origin = origin;
     let size = lock.logical_size;
-    let center_x = x + size.width.0 / 2.;
-    let center_y = y + size.height.0 / 2.;
+    let center_x = origin.x.0 + size.width.0 / 2.;
+    let center_y = origin.y.0 + size.height.0 / 2.;
     let monitor_bounds = lock.display.bounds();
     if center_x < monitor_bounds.left().0
         || center_x > monitor_bounds.right().0
