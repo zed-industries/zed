@@ -9,6 +9,8 @@ use smol::stream::StreamExt;
 
 use crate::{BackgroundExecutor, WindowAppearance};
 
+mod status_notifier;
+
 pub enum Event {
     WindowAppearance(WindowAppearance),
     CursorTheme(String),
