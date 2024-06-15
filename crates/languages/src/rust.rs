@@ -491,7 +491,6 @@ struct CargoMetadata {
 
 #[derive(serde::Deserialize)]
 struct CargoPackage {
-    id: String,
     targets: Vec<CargoTarget>,
 }
 
