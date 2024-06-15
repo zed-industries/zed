@@ -531,7 +531,7 @@ impl WaylandClient {
             loop_handle: handle.clone(),
             enter_token: None,
             cursor_style: None,
-            clipboard: Clipboard::new(conn.clone()),
+            clipboard: Clipboard::new(conn.clone(), handle.clone()),
             data_offers: Vec::new(),
             primary_data_offer: None,
             cursor,

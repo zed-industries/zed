@@ -1,21 +1,25 @@
 use std::{
-    io::Write,
+    fs::File,
+    io::{ErrorKind, Write},
     os::fd::{AsRawFd, BorrowedFd, OwnedFd},
 };
 
-use filedescriptor::{FileDescriptor, Pipe};
+use calloop::{LoopHandle, PostAction};
+use filedescriptor::Pipe;
 use wayland_client::{protocol::wl_data_offer::WlDataOffer, Connection};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
-use crate::platform::linux::platform::read_fd;
+use crate::{platform::linux::platform::read_fd, WaylandClientStatePtr};
 
 pub(crate) const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
 pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
 
+/// Text mime types that we'll accept from other programs.
 pub(crate) const ALLOWED_TEXT_MIME_TYPES: [&str; 2] = ["text/plain;charset=utf-8", "UTF8_STRING"];
 
 pub(crate) struct Clipboard {
     connection: Connection,
+    loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     self_mime: String,
 
     // Internal clipboard
@@ -30,7 +34,7 @@ pub(crate) struct Clipboard {
 }
 
 #[derive(Clone, Debug)]
-/// Wrapper for `WlDataOffer` and `ZwpPrimarySelectionOfferV1`, used to help track offered mime types.
+/// Wrapper for `WlDataOffer` and `ZwpPrimarySelectionOfferV1`, used to help track mime types.
 pub(crate) struct DataOffer<T> {
     pub inner: T,
     mime_types: Vec<String>,
@@ -66,9 +70,13 @@ impl<T> DataOffer<T> {
 }
 
 impl Clipboard {
-    pub fn new(connection: Connection) -> Self {
+    pub fn new(
+        connection: Connection,
+        loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
+    ) -> Self {
         Self {
             connection,
+            loop_handle,
             self_mime: format!("pid/{}", std::process::id()),
 
             contents: None,
@@ -105,19 +113,13 @@ impl Clipboard {
 
     pub fn send(&self, _mime_type: String, fd: OwnedFd) {
         if let Some(contents) = &self.contents {
-            let mut file = FileDescriptor::new(fd);
-            if let Err(err) = file.write(contents.as_bytes()) {
-                log::error!("error sending clipboard data: {err:?}");
-            }
+            self.send_internal(fd, contents.as_bytes().to_owned());
         }
     }
 
     pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
         if let Some(primary_contents) = &self.primary_contents {
-            let mut file = FileDescriptor::new(fd);
-            if let Err(err) = file.write(primary_contents.as_bytes()) {
-                log::error!("error sending clipboard data: {err:?}");
-            }
+            self.send_internal(fd, primary_contents.as_bytes().to_owned());
         }
     }
 
@@ -183,5 +185,34 @@ impl Clipboard {
                 None
             }
         }
+    }
+
+    fn send_internal(&self, fd: OwnedFd, bytes: Vec<u8>) {
+        let mut written = 0;
+        self.loop_handle
+            .insert_source(
+                calloop::generic::Generic::new(
+                    File::from(fd),
+                    calloop::Interest::WRITE,
+                    calloop::Mode::Level,
+                ),
+                move |_, file, _| {
+                    let mut file = unsafe { file.get_mut() };
+                    loop {
+                        match file.write(&bytes[written..]) {
+                            Ok(n) if written + n == bytes.len() => {
+                                written += n;
+                                break Ok(PostAction::Remove);
+                            }
+                            Ok(n) => written += n,
+                            Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                                break Ok(PostAction::Continue)
+                            }
+                            Err(_) => break Ok(PostAction::Remove),
+                        }
+                    }
+                },
+            )
+            .unwrap();
     }
 }
