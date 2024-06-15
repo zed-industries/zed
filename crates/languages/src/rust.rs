@@ -346,6 +346,10 @@ pub(crate) struct RustContextProvider;
 const RUST_PACKAGE_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_PACKAGE"));
 
+/// The bin name corresponding to the current file in Cargo.toml
+const RUST_BIN_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_BIN_NAME"));
+
 impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
@@ -358,17 +362,24 @@ impl ContextProvider for RustContextProvider {
             .read(cx)
             .file()
             .and_then(|file| Some(file.as_local()?.abs_path(cx)));
-        Ok(
-            if let Some(package_name) = local_abs_path
-                .as_deref()
-                .and_then(|local_abs_path| local_abs_path.parent())
-                .and_then(human_readable_package_name)
-            {
-                TaskVariables::from_iter(Some((RUST_PACKAGE_TASK_VARIABLE.clone(), package_name)))
-            } else {
-                TaskVariables::default()
-            },
-        )
+
+        let mut task_variables = TaskVariables::default();
+
+        let local_abs_path = local_abs_path.as_deref();
+        if let Some(package_name) = local_abs_path
+            .and_then(|local_abs_path| local_abs_path.parent())
+            .and_then(human_readable_package_name)
+        {
+            task_variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
+        }
+
+        if let Some(bin_name) =
+            local_abs_path.and_then(|local_abs_path| bin_name_from_abs_path(local_abs_path))
+        {
+            task_variables.insert(RUST_BIN_NAME_TASK_VARIABLE.clone(), bin_name);
+        }
+
+        Ok(task_variables)
     }
 
     fn associated_tasks(&self) -> Option<TaskTemplates> {
@@ -428,14 +439,17 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "cargo run -p {}",
-                    RUST_PACKAGE_TASK_VARIABLE.template_value()
+                    "cargo run -p {} --bin {}",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    RUST_BIN_NAME_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
                 args: vec![
                     "run".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    "--bin".into(),
+                    RUST_BIN_NAME_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-main".to_owned()],
                 ..TaskTemplate::default()
@@ -467,6 +481,56 @@ impl ContextProvider for RustContextProvider {
             },
         ]))
     }
+}
+
+/// Part of the data structure of Cargo metadata
+#[derive(serde::Deserialize)]
+struct CargoMetadata {
+    packages: Vec<CargoPackage>,
+}
+
+#[derive(serde::Deserialize)]
+struct CargoPackage {
+    id: String,
+    targets: Vec<CargoTarget>,
+}
+
+#[derive(serde::Deserialize)]
+struct CargoTarget {
+    name: String,
+    kind: Vec<String>,
+    src_path: String,
+}
+
+fn bin_name_from_abs_path(abs_path: &Path) -> Option<String> {
+    let output = std::process::Command::new("cargo")
+        .current_dir(abs_path.parent()?)
+        .arg("metadata")
+        .arg("--no-deps")
+        .arg("--format-version")
+        .arg("1")
+        .output()
+        .log_err()?
+        .stdout;
+
+    let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
+
+    find_bin_name_from_metadata(metadata, abs_path)
+}
+
+fn find_bin_name_from_metadata(metadata: CargoMetadata, abs_path: &Path) -> Option<String> {
+    let abs_path = abs_path.to_str()?;
+
+    for package in metadata.packages {
+        for target in package.targets {
+            let is_bin = target.kind.iter().any(|kind| kind == "bin");
+            if target.src_path == abs_path && is_bin {
+                return Some(target.name);
+            }
+        }
+    }
+
+    None
 }
 
 fn human_readable_package_name(package_directory: &Path) -> Option<String> {
@@ -827,6 +891,36 @@ mod tests {
             ),
         ] {
             assert_eq!(package_name_from_pkgid(input), Some(expected));
+        }
+    }
+
+    #[test]
+    fn test_find_bin_name_from_metadata() {
+        for (input, absolute_path, expected) in [
+            (
+                r#"{"packages":[{"name":"zed","targets":[{"name":"zed","kind":["bin"],"src_path":"/absolute/path/to/project/zed/src/main.rs"}]}]}"#,
+                "/absolute/path/to/project/zed/src/main.rs",
+                Some("zed"),
+            ),
+            (
+                r#"{"packages":[{"name":"custom-package","targets":[{"name":"my-custom-package","kind":["bin"],"src_path":"/absolute/path/to/project/custom-package/src/main.rs"}]}]}"#,
+                "/absolute/path/to/project/custom-package/src/main.rs",
+                Some("my-custom-package"),
+            ),
+            (
+                r#"{"packages":[{"name":"custom-package","targets":[{"name":"my-custom-package","kind":["lib"],"src_path":"/absolute/path/to/project/custom-package/src/main.rs"}]}]}"#,
+                "/absolute/path/to/project/custom-package/src/main.rs",
+                None,
+            ),
+        ] {
+            let metadata: CargoMetadata = serde_json::from_str(input).unwrap();
+
+            let absolute_path = Path::new(absolute_path);
+
+            assert_eq!(
+                find_bin_name_from_metadata(metadata, absolute_path),
+                expected.map(|s| s.to_string())
+            );
         }
     }
 }
