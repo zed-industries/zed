@@ -64,6 +64,7 @@ members = [
     "crates/ollama",
     "crates/open_ai",
     "crates/outline",
+    "crates/outline_panel",
     "crates/picker",
     "crates/prettier",
     "crates/project",
@@ -79,6 +80,7 @@ members = [
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
+    "crates/rustdoc",
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
@@ -211,6 +213,7 @@ notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
+outline_panel = { path = "crates/outline_panel" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
@@ -227,6 +230,7 @@ dev_server_projects = { path = "crates/dev_server_projects" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
+rustdoc = { path = "crates/rustdoc" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
@@ -406,12 +410,13 @@ wit-component = "0.201"
 sys-locale = "0.3.1"
 
 [workspace.dependencies.windows]
-version = "0.56.0"
+version = "0.57"
 features = [
     "implement",
     "Foundation_Numerics",
     "System",
     "System_Threading",
+    "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
     "Win32_Graphics_Direct2D",

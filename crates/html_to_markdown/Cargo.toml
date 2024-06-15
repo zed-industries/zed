@@ -14,10 +14,8 @@ path = "src/html_to_markdown.rs"
 [dependencies]
 anyhow.workspace = true
 html5ever.workspace = true
-indexmap.workspace = true
 markup5ever_rcdom.workspace = true
 regex.workspace = true
-strum.workspace = true
 
 [dev-dependencies]
 indoc.workspace = true

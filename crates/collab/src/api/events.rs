@@ -724,25 +724,25 @@ impl EditorEventRow {
 
 #[derive(Serialize, Debug, clickhouse::Row)]
 pub struct InlineCompletionEventRow {
-    pub installation_id: String,
-    pub provider: String,
-    pub suggestion_accepted: bool,
-    pub app_version: String,
-    pub file_extension: String,
-    pub os_name: String,
-    pub os_version: String,
-    pub release_channel: String,
-    pub signed_in: bool,
+    installation_id: String,
+    provider: String,
+    suggestion_accepted: bool,
+    app_version: String,
+    file_extension: String,
+    os_name: String,
+    os_version: String,
+    release_channel: String,
+    signed_in: bool,
     #[serde(serialize_with = "serialize_country_code")]
-    pub country_code: String,
-    pub region_code: String,
-    pub city: String,
-    pub time: i64,
-    pub is_staff: Option<bool>,
-    pub session_id: Option<String>,
-    pub major: Option<i32>,
-    pub minor: Option<i32>,
-    pub patch: Option<i32>,
+    country_code: String,
+    region_code: String,
+    city: String,
+    time: i64,
+    is_staff: Option<bool>,
+    session_id: Option<String>,
+    major: Option<i32>,
+    minor: Option<i32>,
+    patch: Option<i32>,
 }
 
 impl InlineCompletionEventRow {
@@ -788,6 +788,8 @@ pub struct CallEventRow {
     minor: Option<i32>,
     patch: Option<i32>,
     release_channel: String,
+    os_name: String,
+    os_version: String,
 
     // ClientEventBase
     installation_id: String,
@@ -818,6 +820,8 @@ impl CallEventRow {
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
+            os_name: body.os_name.clone(),
+            os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone().unwrap_or_default(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -837,6 +841,8 @@ pub struct AssistantEventRow {
     minor: Option<i32>,
     patch: Option<i32>,
     release_channel: String,
+    os_name: String,
+    os_version: String,
 
     // ClientEventBase
     installation_id: Option<String>,
@@ -869,6 +875,8 @@ impl AssistantEventRow {
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
+            os_name: body.os_name.clone(),
+            os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -886,18 +894,20 @@ impl AssistantEventRow {
 
 #[derive(Debug, clickhouse::Row, Serialize)]
 pub struct CpuEventRow {
-    pub installation_id: Option<String>,
-    pub is_staff: Option<bool>,
-    pub usage_as_percentage: f32,
-    pub core_count: u32,
-    pub app_version: String,
-    pub release_channel: String,
-    pub time: i64,
-    pub session_id: Option<String>,
+    installation_id: Option<String>,
+    is_staff: Option<bool>,
+    usage_as_percentage: f32,
+    core_count: u32,
+    app_version: String,
+    release_channel: String,
+    os_name: String,
+    os_version: String,
+    time: i64,
+    session_id: Option<String>,
     // pub normalized_cpu_usage: f64, MATERIALIZED
-    pub major: Option<i32>,
-    pub minor: Option<i32>,
-    pub patch: Option<i32>,
+    major: Option<i32>,
+    minor: Option<i32>,
+    patch: Option<i32>,
 }
 
 impl CpuEventRow {
@@ -917,6 +927,8 @@ impl CpuEventRow {
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
+            os_name: body.os_name.clone(),
+            os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -935,6 +947,8 @@ pub struct MemoryEventRow {
     minor: Option<i32>,
     patch: Option<i32>,
     release_channel: String,
+    os_name: String,
+    os_version: String,
 
     // ClientEventBase
     installation_id: Option<String>,
@@ -964,6 +978,8 @@ impl MemoryEventRow {
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
+            os_name: body.os_name.clone(),
+            os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -982,6 +998,8 @@ pub struct AppEventRow {
     minor: Option<i32>,
     patch: Option<i32>,
     release_channel: String,
+    os_name: String,
+    os_version: String,
 
     // ClientEventBase
     installation_id: Option<String>,
@@ -1010,6 +1028,8 @@ impl AppEventRow {
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
+            os_name: body.os_name.clone(),
+            os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1027,6 +1047,8 @@ pub struct SettingEventRow {
     minor: Option<i32>,
     patch: Option<i32>,
     release_channel: String,
+    os_name: String,
+    os_version: String,
 
     // ClientEventBase
     installation_id: Option<String>,
@@ -1055,6 +1077,8 @@ impl SettingEventRow {
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
+            os_name: body.os_name.clone(),
+            os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1073,6 +1097,8 @@ pub struct ExtensionEventRow {
     minor: Option<i32>,
     patch: Option<i32>,
     release_channel: String,
+    os_name: String,
+    os_version: String,
 
     // ClientEventBase
     installation_id: Option<String>,
@@ -1106,6 +1132,8 @@ impl ExtensionEventRow {
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
+            os_name: body.os_name.clone(),
+            os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1135,6 +1163,8 @@ pub struct EditEventRow {
     minor: Option<i32>,
     patch: Option<i32>,
     release_channel: String,
+    os_name: String,
+    os_version: String,
 
     // ClientEventBase
     installation_id: Option<String>,
@@ -1170,6 +1200,8 @@ impl EditEventRow {
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
+            os_name: body.os_name.clone(),
+            os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
@@ -1189,6 +1221,8 @@ pub struct ActionEventRow {
     minor: Option<i32>,
     patch: Option<i32>,
     release_channel: String,
+    os_name: String,
+    os_version: String,
 
     // ClientEventBase
     installation_id: Option<String>,
@@ -1219,6 +1253,8 @@ impl ActionEventRow {
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
+            os_name: body.os_name.clone(),
+            os_version: body.os_version.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,

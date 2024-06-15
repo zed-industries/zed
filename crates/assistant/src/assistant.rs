@@ -21,12 +21,13 @@ pub(crate) use context_store::*;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 pub(crate) use inline_assistant::*;
 pub(crate) use model_selector::*;
+use rustdoc::RustdocStore;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, fetch_command, file_command, now_command, project_command,
-    prompt_command, rustdoc_command, search_command, tabs_command,
+    active_command, default_command, diagnostics_command, fetch_command, file_command, now_command,
+    project_command, prompt_command, rustdoc_command, search_command, tabs_command,
 };
 use std::{
     fmt::{self, Display},
@@ -286,6 +287,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     register_slash_commands(cx);
     assistant_panel::init(cx);
     inline_assistant::init(client.telemetry().clone(), cx);
+    RustdocStore::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(Assistant::NAMESPACE);
@@ -314,6 +316,7 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, true);
+    slash_command_registry.register_command(diagnostics_command::DiagnosticsCommand, true);
     slash_command_registry.register_command(rustdoc_command::RustdocSlashCommand, false);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 }

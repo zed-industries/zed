@@ -368,6 +368,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rope",
+ "rustdoc",
  "schemars",
  "search",
  "semantic_index",
@@ -2240,7 +2241,7 @@ dependencies = [
  "tiny_http",
  "url",
  "util",
- "windows 0.56.0",
+ "windows 0.57.0",
 ]
 
 [[package]]
@@ -4050,6 +4051,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bad48618fdb549078c333a7a8528acb57af271d0433bdecd523eb620628364e"
 
 [[package]]
+name = "fluent-uri"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17c704e9dbe1ddd863da1e6ff3567795087b1eb201ce80d8fa81162e1516500d"
+dependencies = [
+ "bitflags 1.3.2",
+]
+
+[[package]]
 name = "flume"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4229,7 +4239,7 @@ dependencies = [
  "text",
  "time",
  "util",
- "windows 0.56.0",
+ "windows 0.57.0",
 ]
 
 [[package]]
@@ -4549,7 +4559,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
- "windows 0.56.0",
+ "windows 0.57.0",
 ]
 
 [[package]]
@@ -4772,8 +4782,8 @@ dependencies = [
  "wayland-cursor",
  "wayland-protocols",
  "wayland-protocols-plasma",
- "windows 0.56.0",
- "windows-core 0.56.0",
+ "windows 0.57.0",
+ "windows-core 0.57.0",
  "x11rb",
  "xim",
  "xkbcommon",
@@ -5073,12 +5083,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "html5ever",
- "indexmap 1.9.3",
  "indoc",
  "markup5ever_rcdom",
  "pretty_assertions",
  "regex",
- "strum",
 ]
 
 [[package]]
@@ -6082,25 +6090,26 @@ dependencies = [
  "log",
  "lsp-types",
  "parking_lot",
+ "pct-str",
  "postage",
  "release_channel",
  "serde",
  "serde_json",
  "smol",
  "util",
- "windows 0.56.0",
+ "windows 0.57.0",
 ]
 
 [[package]]
 name = "lsp-types"
-version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?branch=apply-snippet-edit#853c7881d200777e20799026651ca36727144646"
+version = "0.97.0"
+source = "git+https://github.com/zed-industries/lsp-types?branch=zed-main#258db672ceab9e66c6da3883d37c4dcf1094c6ac"
 dependencies = [
  "bitflags 1.3.2",
+ "fluent-uri",
  "serde",
  "serde_json",
  "serde_repr",
- "url",
 ]
 
 [[package]]
@@ -6584,7 +6593,7 @@ dependencies = [
  "tempfile",
  "util",
  "walkdir",
- "windows 0.56.0",
+ "windows 0.57.0",
 ]
 
 [[package]]
@@ -7134,7 +7143,6 @@ dependencies = [
  "project",
  "rope",
  "serde_json",
- "settings",
  "smol",
  "theme",
  "tree-sitter-rust",
@@ -7142,6 +7150,31 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "outline_panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "db",
+ "editor",
+ "file_icons",
+ "futures 0.3.28",
+ "gpui",
+ "itertools 0.11.0",
+ "language",
+ "log",
+ "menu",
+ "project",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "util",
+ "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -7300,6 +7333,16 @@ checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
 dependencies = [
  "digest 0.10.7",
  "hmac 0.12.1",
+]
+
+[[package]]
+name = "pct-str"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf1bdcc492c285a50bed60860dfa00b50baf1f60c73c7d6b435b01a2a11fd6ff"
+dependencies = [
+ "thiserror",
+ "utf8-decode",
 ]
 
 [[package]]
@@ -7820,6 +7863,7 @@ dependencies = [
  "tempfile",
  "terminal",
  "text",
+ "unicase",
  "unindent",
  "util",
  "which 6.0.0",
@@ -7850,7 +7894,6 @@ dependencies = [
  "settings",
  "theme",
  "ui",
- "unicase",
  "util",
  "workspace",
  "worktree",
@@ -8663,6 +8706,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa0f585226d2e68097d4f95d113b15b83a82e819ab25717ec0590d9584ef366"
 dependencies = [
  "semver",
+]
+
+[[package]]
+name = "rustdoc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "derive_more",
+ "fs",
+ "futures 0.3.28",
+ "fuzzy",
+ "gpui",
+ "heed",
+ "html_to_markdown",
+ "http 0.1.0",
+ "indexmap 1.9.3",
+ "indoc",
+ "parking_lot",
+ "pretty_assertions",
+ "serde",
+ "strum",
+ "util",
 ]
 
 [[package]]
@@ -10374,7 +10441,7 @@ dependencies = [
  "theme",
  "thiserror",
  "util",
- "windows 0.56.0",
+ "windows 0.57.0",
 ]
 
 [[package]]
@@ -11302,7 +11369,7 @@ dependencies = [
  "story",
  "strum",
  "theme",
- "windows 0.56.0",
+ "windows 0.57.0",
 ]
 
 [[package]]
@@ -11457,6 +11524,12 @@ name = "utf-8"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
+
+[[package]]
+name = "utf8-decode"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca61eb27fa339aa08826a29f03e87b99b4d8f0fc2255306fd266bb1b6a9de498"
 
 [[package]]
 name = "utf8parse"
@@ -12440,11 +12513,11 @@ dependencies = [
 
 [[package]]
 name = "windows"
-version = "0.56.0"
+version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1de69df01bdf1ead2f4ac895dc77c9351aefff65b2f3db429a343f9cbf05e132"
+checksum = "12342cb4d8e3b046f3d80effd474a7a02447231330ef77d71daa6fbc40681143"
 dependencies = [
- "windows-core 0.56.0",
+ "windows-core 0.57.0",
  "windows-targets 0.52.5",
 ]
 
@@ -12459,9 +12532,9 @@ dependencies = [
 
 [[package]]
 name = "windows-core"
-version = "0.56.0"
+version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4698e52ed2d08f8658ab0c39512a7c00ee5fe2688c65f8c0a4f06750d729f2a6"
+checksum = "d2ed2439a290666cd67ecce2b0ffaad89c2a56b976b736e6ece670297897832d"
 dependencies = [
  "windows-implement",
  "windows-interface",
@@ -12471,9 +12544,9 @@ dependencies = [
 
 [[package]]
 name = "windows-implement"
-version = "0.56.0"
+version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6fc35f58ecd95a9b71c4f2329b911016e6bec66b3f2e6a4aad86bd2e99e2f9b"
+checksum = "9107ddc059d5b6fbfbffdfa7a7fe3e22a226def0b2608f72e9d552763d3e1ad7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12482,9 +12555,9 @@ dependencies = [
 
 [[package]]
 name = "windows-interface"
-version = "0.56.0"
+version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08990546bf4edef8f431fa6326e032865f27138718c587dc21bc0265bbcb57cc"
+checksum = "29bee4b38ea3cde66011baa44dba677c432a78593e202392d1e9070cf2a7fca7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13240,6 +13313,7 @@ dependencies = [
  "node_runtime",
  "notifications",
  "outline",
+ "outline_panel",
  "parking_lot",
  "profiling",
  "project",
@@ -13263,7 +13337,9 @@ dependencies = [
  "terminal_view",
  "theme",
  "theme_selector",
+ "tree-sitter-markdown",
  "tree-sitter-rust",
+ "ui",
  "urlencoding",
  "util",
  "uuid",

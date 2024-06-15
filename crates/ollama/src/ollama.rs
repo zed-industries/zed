@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{convert::TryFrom, time::Duration};
 
@@ -38,12 +39,34 @@ impl From<Role> for String {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum KeepAlive {
+    /// Keep model alive for N seconds
+    Seconds(isize),
+    /// Keep model alive for a fixed duration. Accepts durations like "5m", "10m", "1h", "1d", etc.
+    Duration(String),
+}
+
+impl KeepAlive {
+    /// Keep model alive until a new model is loaded or until Ollama shuts down
+    fn indefinite() -> Self {
+        Self::Seconds(-1)
+    }
+}
+
+impl Default for KeepAlive {
+    fn default() -> Self {
+        Self::indefinite()
+    }
+}
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
     pub max_tokens: usize,
-    pub keep_alive: Option<String>,
+    pub keep_alive: Option<KeepAlive>,
 }
 
 impl Model {
@@ -51,7 +74,7 @@ impl Model {
         Self {
             name: name.to_owned(),
             max_tokens: 2048,
-            keep_alive: Some("10m".to_owned()),
+            keep_alive: Some(KeepAlive::indefinite()),
         }
     }
 
@@ -81,7 +104,7 @@ pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
     pub stream: bool,
-    pub keep_alive: Option<String>,
+    pub keep_alive: KeepAlive,
     pub options: Option<ChatOptions>,
 }
 

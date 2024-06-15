@@ -14,8 +14,8 @@ use futures::{
 use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, percentage, point, size, Animation, AnimationExt, AppContext, BackgroundExecutor,
-    Bounds, DevicePixels, EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task,
-    TitlebarOptions, Transformation, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
+    Bounds, EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions,
+    Transformation, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -80,11 +80,7 @@ pub fn open_prompt_library(
         cx.spawn(|cx| async move {
             let store = store.await?;
             cx.update(|cx| {
-                let bounds = Bounds::centered(
-                    None,
-                    size(DevicePixels::from(1024), DevicePixels::from(768)),
-                    cx,
-                );
+                let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
                 cx.open_window(
                     WindowOptions {
                         titlebar: Some(TitlebarOptions {
@@ -454,6 +450,7 @@ impl PromptLibrary {
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
                             editor.set_show_indent_guides(false, cx);
+                            editor.set_use_modal_editing(false);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Box::new(
                                 SlashCommandCompletionProvider::new(commands, None, None),
@@ -589,19 +586,6 @@ impl PromptLibrary {
                     }
                 }
             }
-        }
-    }
-
-    fn cancel_last_inline_assist(
-        &mut self,
-        _: &editor::actions::Cancel,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let canceled = InlineAssistant::update_global(cx, |assistant, cx| {
-            assistant.cancel_last_inline_assist(cx)
-        });
-        if !canceled {
-            cx.propagate();
         }
     }
 
@@ -743,7 +727,6 @@ impl PromptLibrary {
                             div()
                                 .on_action(cx.listener(Self::focus_picker))
                                 .on_action(cx.listener(Self::inline_assist))
-                                .on_action(cx.listener(Self::cancel_last_inline_assist))
                                 .flex_grow()
                                 .h_full()
                                 .pt(Spacing::XXLarge.rems(cx))

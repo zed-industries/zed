@@ -575,7 +575,8 @@ async fn test_save_as_remote(cx1: &mut gpui::TestAppContext, cx2: &mut gpui::Tes
 
     let title = remote_workspace
         .update(&mut cx, |ws, cx| {
-            ws.active_item(cx).unwrap().tab_description(0, &cx).unwrap()
+            let active_item = ws.active_item(cx).unwrap();
+            active_item.tab_description(0, &cx).unwrap()
         })
         .unwrap();
 

@@ -62,14 +62,16 @@ pub(crate) fn handle_msg(
         WM_NCMBUTTONUP => {
             handle_nc_mouse_up_msg(handle, MouseButton::Middle, wparam, lparam, state_ptr)
         }
-        WM_LBUTTONDOWN => handle_mouse_down_msg(MouseButton::Left, lparam, state_ptr),
-        WM_RBUTTONDOWN => handle_mouse_down_msg(MouseButton::Right, lparam, state_ptr),
-        WM_MBUTTONDOWN => handle_mouse_down_msg(MouseButton::Middle, lparam, state_ptr),
-        WM_XBUTTONDOWN => handle_xbutton_msg(wparam, lparam, handle_mouse_down_msg, state_ptr),
-        WM_LBUTTONUP => handle_mouse_up_msg(MouseButton::Left, lparam, state_ptr),
-        WM_RBUTTONUP => handle_mouse_up_msg(MouseButton::Right, lparam, state_ptr),
-        WM_MBUTTONUP => handle_mouse_up_msg(MouseButton::Middle, lparam, state_ptr),
-        WM_XBUTTONUP => handle_xbutton_msg(wparam, lparam, handle_mouse_up_msg, state_ptr),
+        WM_LBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Left, lparam, state_ptr),
+        WM_RBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Right, lparam, state_ptr),
+        WM_MBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Middle, lparam, state_ptr),
+        WM_XBUTTONDOWN => {
+            handle_xbutton_msg(handle, wparam, lparam, handle_mouse_down_msg, state_ptr)
+        }
+        WM_LBUTTONUP => handle_mouse_up_msg(handle, MouseButton::Left, lparam, state_ptr),
+        WM_RBUTTONUP => handle_mouse_up_msg(handle, MouseButton::Right, lparam, state_ptr),
+        WM_MBUTTONUP => handle_mouse_up_msg(handle, MouseButton::Middle, lparam, state_ptr),
+        WM_XBUTTONUP => handle_xbutton_msg(handle, wparam, lparam, handle_mouse_up_msg, state_ptr),
         WM_MOUSEWHEEL => handle_mouse_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
@@ -96,13 +98,13 @@ fn handle_move_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let x = lparam.signed_loword() as i32;
-    let y = lparam.signed_hiword() as i32;
+    let x = lparam.signed_loword() as f32;
+    let y = lparam.signed_hiword() as f32;
     let mut lock = state_ptr.state.borrow_mut();
-    lock.origin = point(x.into(), y.into());
+    lock.origin = point(px(x), px(y));
     let size = lock.physical_size;
-    let center_x = x + size.width.0 / 2;
-    let center_y = y + size.height.0 / 2;
+    let center_x = x + size.width.0 / 2.;
+    let center_y = y + size.height.0 / 2.;
     let monitor_bounds = lock.display.bounds();
     if center_x < monitor_bounds.left().0
         || center_x > monitor_bounds.right().0
@@ -129,18 +131,15 @@ fn handle_move_msg(
 fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
-    let new_physical_size = size(width.into(), height.into());
     let mut lock = state_ptr.state.borrow_mut();
+    let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
-    lock.physical_size = new_physical_size;
-    lock.renderer.update_drawable_size(Size {
-        width: width as f64,
-        height: height as f64,
-    });
+    lock.renderer.update_drawable_size(new_size);
+    let new_size = new_size.to_pixels(lock.scale_factor);
+    lock.physical_size = new_size;
     if let Some(mut callback) = lock.callbacks.resize.take() {
         drop(lock);
-        let logical_size = logical_size(new_physical_size, scale_factor);
-        callback(logical_size, scale_factor);
+        callback(new_size, scale_factor);
         state_ptr.state.borrow_mut().callbacks.resize = Some(callback);
     }
     Some(0)
@@ -409,10 +408,12 @@ fn handle_char_msg(
 }
 
 fn handle_mouse_down_msg(
+    handle: HWND,
     button: MouseButton,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    unsafe { SetCapture(handle) };
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let x = lparam.signed_loword() as f32;
@@ -443,10 +444,12 @@ fn handle_mouse_down_msg(
 }
 
 fn handle_mouse_up_msg(
+    _handle: HWND,
     button: MouseButton,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    unsafe { ReleaseCapture().log_err() };
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let x = lparam.signed_loword() as f32;
@@ -475,9 +478,10 @@ fn handle_mouse_up_msg(
 }
 
 fn handle_xbutton_msg(
+    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
-    handler: impl Fn(MouseButton, LPARAM, Rc<WindowsWindowStatePtr>) -> Option<isize>,
+    handler: impl Fn(HWND, MouseButton, LPARAM, Rc<WindowsWindowStatePtr>) -> Option<isize>,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let nav_dir = match wparam.hiword() {
@@ -485,7 +489,7 @@ fn handle_xbutton_msg(
         XBUTTON2 => NavigationDirection::Forward,
         _ => return Some(1),
     };
-    handler(MouseButton::Navigate(nav_dir), lparam, state_ptr)
+    handler(handle, MouseButton::Navigate(nav_dir), lparam, state_ptr)
 }
 
 fn handle_mouse_wheel_msg(
@@ -919,7 +923,7 @@ fn handle_nc_mouse_down_msg(
     }
 
     let mut lock = state_ptr.state.borrow_mut();
-    let result = if let Some(mut callback) = lock.callbacks.input.take() {
+    if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
@@ -943,13 +947,25 @@ fn handle_nc_mouse_down_msg(
         };
         state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
-        result
+        if result.is_some() {
+            return result;
+        }
     } else {
-        None
+        drop(lock);
     };
 
     // Since these are handled in handle_nc_mouse_up_msg we must prevent the default window proc
-    result.or_else(|| matches!(wparam.0 as u32, HTMINBUTTON | HTMAXBUTTON | HTCLOSE).then_some(0))
+    if button == MouseButton::Left {
+        match wparam.0 as u32 {
+            HTMINBUTTON => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTMINBUTTON),
+            HTMAXBUTTON => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTMAXBUTTON),
+            HTCLOSE => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTCLOSE),
+            _ => return None,
+        };
+        Some(0)
+    } else {
+        None
+    }
 }
 
 fn handle_nc_mouse_up_msg(
@@ -991,24 +1007,41 @@ fn handle_nc_mouse_up_msg(
         drop(lock);
     }
 
-    if button == MouseButton::Left {
+    let last_pressed = state_ptr.state.borrow_mut().nc_button_pressed.take();
+    if button == MouseButton::Left && last_pressed.is_some() {
+        let last_button = last_pressed.unwrap();
+        let mut handled = false;
         match wparam.0 as u32 {
-            HTMINBUTTON => unsafe {
-                ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err();
-            },
-            HTMAXBUTTON => unsafe {
-                if state_ptr.state.borrow().is_maximized() {
-                    ShowWindowAsync(handle, SW_NORMAL).ok().log_err();
-                } else {
-                    ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err();
+            HTMINBUTTON => {
+                if last_button == HTMINBUTTON {
+                    unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
+                    handled = true;
                 }
-            },
-            HTCLOSE => unsafe {
-                PostMessageW(handle, WM_CLOSE, WPARAM::default(), LPARAM::default()).log_err();
-            },
-            _ => return None,
+            }
+            HTMAXBUTTON => {
+                if last_button == HTMAXBUTTON {
+                    if state_ptr.state.borrow().is_maximized() {
+                        unsafe { ShowWindowAsync(handle, SW_NORMAL).ok().log_err() };
+                    } else {
+                        unsafe { ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err() };
+                    }
+                    handled = true;
+                }
+            }
+            HTCLOSE => {
+                if last_button == HTCLOSE {
+                    unsafe {
+                        PostMessageW(handle, WM_CLOSE, WPARAM::default(), LPARAM::default())
+                            .log_err()
+                    };
+                    handled = true;
+                }
+            }
+            _ => {}
         };
-        return Some(0);
+        if handled {
+            return Some(0);
+        }
     }
 
     None

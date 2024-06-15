@@ -13,6 +13,8 @@
 {"Key":"w"}
 {"Get":{"state":"The quick brown\nfoxˇ \nthe lazy dog","mode":"Normal"}}
 {"ReadRegister":{"name":"a","value":"jumps over"}}
+{"Get":{"state":"The quick brown\nfoxˇ \nthe lazy dog","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"jumps over"}}
 {"Key":"\""}
 {"Key":"a"}
 {"Key":"p"}

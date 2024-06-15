@@ -310,7 +310,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
-        self.set_selected_index(new_index, false, cx);
+        self.set_selected_index(new_index, true, cx);
         cx.notify();
     }
 
@@ -536,6 +536,16 @@ impl<D: PickerDelegate> Picker<D> {
                 .flex_grow()
                 .py_2()
                 .into_any_element(),
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn logical_scroll_top_index(&self) -> usize {
+        match &self.element_container {
+            ElementContainer::List(state) => state.logical_scroll_top().item_ix,
+            ElementContainer::UniformList(scroll_handle) => {
+                scroll_handle.logical_scroll_top_index()
+            }
         }
     }
 }

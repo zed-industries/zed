@@ -58,10 +58,10 @@ use language::{
 };
 use log::error;
 use lsp::{
-    DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, Edit, FileSystemWatcher, LanguageServer, LanguageServerBinary,
-    LanguageServerId, LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities,
-    ServerHealthStatus, ServerStatus, TextEdit,
+    CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
+    DocumentHighlightKind, Edit, FileSystemWatcher, InsertTextFormat, LanguageServer,
+    LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, OneOf,
+    ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit, Uri,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -105,12 +105,13 @@ use task::{
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
+use unicase::UniCase;
 use util::{
     debug_panic, defer, maybe, merge_json_value_into, parse_env_output,
     paths::{
         LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
     },
-    post_inc, ResultExt, TryFutureExt as _,
+    post_inc, NumericPrefixWithSuffix, ResultExt, TryFutureExt as _,
 };
 use worktree::{CreatedEntry, RemoteWorktreeClient, Snapshot, Traversal};
 
@@ -230,7 +231,40 @@ pub struct Project {
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
-    yarn_worktree_ids_reported: Vec<WorktreeId>,
+    telemetry_worktree_id_map: TelemetryWorktreeIdMap,
+}
+
+#[derive(Debug)]
+struct TelemetryWorktreeIdMap(HashMap<String, ProjectTypeTelemetry>);
+
+impl Default for TelemetryWorktreeIdMap {
+    fn default() -> Self {
+        Self(HashMap::from_iter([
+            (
+                "yarn.lock".to_string(),
+                ProjectTypeTelemetry::new("yarn".to_string()),
+            ),
+            (
+                "package.json".to_string(),
+                ProjectTypeTelemetry::new("node".to_string()),
+            ),
+        ]))
+    }
+}
+
+#[derive(Debug)]
+struct ProjectTypeTelemetry {
+    name: String,
+    worktree_ids_reported: HashSet<WorktreeId>,
+}
+
+impl ProjectTypeTelemetry {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            worktree_ids_reported: HashSet::default(),
+        }
+    }
 }
 
 pub enum LanguageServerToQuery {
@@ -620,27 +654,9 @@ enum SearchMatchCandidate {
     Path {
         worktree_id: WorktreeId,
         is_ignored: bool,
+        is_file: bool,
         path: Arc<Path>,
     },
-}
-
-impl SearchMatchCandidate {
-    fn path(&self) -> Option<Arc<Path>> {
-        match self {
-            SearchMatchCandidate::OpenBuffer { path, .. } => path.clone(),
-            SearchMatchCandidate::Path { path, .. } => Some(path.clone()),
-        }
-    }
-
-    fn is_ignored(&self) -> bool {
-        matches!(
-            self,
-            SearchMatchCandidate::Path {
-                is_ignored: true,
-                ..
-            }
-        )
-    }
 }
 
 pub enum SearchResult {
@@ -650,6 +666,12 @@ pub enum SearchResult {
     },
     LimitReached,
 }
+
+#[cfg(any(test, feature = "test-support"))]
+pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
+    trigger_kind: lsp::CompletionTriggerKind::INVOKED,
+    trigger_character: None,
+};
 
 impl Project {
     pub fn init_settings(cx: &mut AppContext) {
@@ -790,7 +812,7 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
-                yarn_worktree_ids_reported: Vec::new(),
+                telemetry_worktree_id_map: TelemetryWorktreeIdMap::default(),
             }
         })
     }
@@ -955,7 +977,7 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
-                yarn_worktree_ids_reported: Vec::new(),
+                telemetry_worktree_id_map: TelemetryWorktreeIdMap::default(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -2158,7 +2180,7 @@ impl Project {
     /// LanguageServerName is owned, because it is inserted into a map
     pub fn open_local_buffer_via_lsp(
         &mut self,
-        abs_path: lsp::Url,
+        abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
         language_server_name: LanguageServerName,
         cx: &mut ModelContext<Self>,
@@ -2458,13 +2480,15 @@ impl Project {
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
-                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                    let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
                     for server in this.language_servers_for_buffer(buffer, cx) {
                         server
                             .1
                             .notify::<lsp::notification::DidCloseTextDocument>(
                                 lsp::DidCloseTextDocumentParams {
-                                    text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
+                                    text_document: lsp::TextDocumentIdentifier::new(
+                                        uri.clone().into(),
+                                    ),
                                 },
                             )
                             .log_err();
@@ -2496,8 +2520,9 @@ impl Project {
             }
 
             let abs_path = file.abs_path(cx);
-            let uri = lsp::Url::from_file_path(&abs_path)
-                .unwrap_or_else(|()| panic!("Failed to register file {abs_path:?}"));
+            let Some(uri) = lsp::Uri::from_file_path(&abs_path).log_err() else {
+                return;
+            };
             let initial_snapshot = buffer.text_snapshot();
             let language = buffer.language().cloned();
             let worktree_id = file.worktree_id(cx);
@@ -2533,7 +2558,7 @@ impl Project {
                         .notify::<lsp::notification::DidOpenTextDocument>(
                             lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
-                                    uri.clone(),
+                                    uri.clone().into(),
                                     adapter.language_id(&language),
                                     0,
                                     initial_snapshot.text(),
@@ -2591,12 +2616,14 @@ impl Project {
             }
 
             self.buffer_snapshots.remove(&buffer.remote_id());
-            let file_url = lsp::Url::from_file_path(old_path).unwrap();
+            let file_url = lsp::Uri::from_file_path(old_path).unwrap();
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
                 language_server
                     .notify::<lsp::notification::DidCloseTextDocument>(
                         lsp::DidCloseTextDocumentParams {
-                            text_document: lsp::TextDocumentIdentifier::new(file_url.clone()),
+                            text_document: lsp::TextDocumentIdentifier::new(
+                                file_url.clone().into(),
+                            ),
                         },
                     )
                     .log_err();
@@ -2755,7 +2782,7 @@ impl Project {
                 let buffer = buffer.read(cx);
                 let file = File::from_dyn(buffer.file())?;
                 let abs_path = file.as_local()?.abs_path(cx);
-                let uri = lsp::Url::from_file_path(abs_path).unwrap();
+                let uri = lsp::Uri::from_file_path(abs_path).unwrap();
                 let next_snapshot = buffer.text_snapshot();
 
                 let language_servers: Vec<_> = self
@@ -2836,7 +2863,7 @@ impl Project {
                         .notify::<lsp::notification::DidChangeTextDocument>(
                             lsp::DidChangeTextDocumentParams {
                                 text_document: lsp::VersionedTextDocumentIdentifier::new(
-                                    uri.clone(),
+                                    uri.clone().into(),
                                     next_version,
                                 ),
                                 content_changes,
@@ -2851,7 +2878,7 @@ impl Project {
                 let worktree_id = file.worktree_id(cx);
                 let abs_path = file.as_local()?.abs_path(cx);
                 let text_document = lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(abs_path).unwrap(),
+                    uri: lsp::Uri::from_file_path(abs_path).unwrap().into(),
                 };
 
                 for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
@@ -3891,11 +3918,11 @@ impl Project {
                 let snapshot = versions.last().unwrap();
                 let version = snapshot.version;
                 let initial_snapshot = &snapshot.snapshot;
-                let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
                 language_server.notify::<lsp::notification::DidOpenTextDocument>(
                     lsp::DidOpenTextDocumentParams {
                         text_document: lsp::TextDocumentItem::new(
-                            uri,
+                            uri.into(),
                             adapter.language_id(&language),
                             version,
                             initial_snapshot.text(),
@@ -4497,10 +4524,13 @@ impl Project {
                                         lsp::OneOf::Left(workspace_folder) => &workspace_folder.uri,
                                         lsp::OneOf::Right(base_uri) => base_uri,
                                     };
-                                    base_uri.to_file_path().ok().and_then(|file_path| {
-                                        (file_path.to_str() == Some(abs_path))
-                                            .then_some(rp.pattern.as_str())
-                                    })
+                                    lsp::Uri::from(base_uri.clone())
+                                        .to_file_path()
+                                        .ok()
+                                        .and_then(|file_path| {
+                                            (file_path.to_str() == Some(abs_path))
+                                                .then_some(rp.pattern.as_str())
+                                        })
                                 }
                             };
                             if let Some(relative_glob_pattern) = relative_glob_pattern {
@@ -4589,10 +4619,9 @@ impl Project {
         disk_based_sources: &[String],
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let abs_path = params
-            .uri
+        let abs_path = Uri::from(params.uri.clone())
             .to_file_path()
-            .map_err(|_| anyhow!("URI is not a file"))?;
+            .map_err(|_| anyhow!("URI `{}` is not a file", params.uri.as_str()))?;
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
@@ -5273,9 +5302,9 @@ impl Project {
         tab_size: NonZeroU32,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
-        let uri = lsp::Url::from_file_path(abs_path)
+        let uri = lsp::Uri::from_file_path(abs_path)
             .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
-        let text_document = lsp::TextDocumentIdentifier::new(uri);
+        let text_document = lsp::TextDocumentIdentifier::new(uri.into());
         let capabilities = &language_server.capabilities();
 
         let formatting_provider = capabilities.document_formatting_provider.as_ref();
@@ -5580,7 +5609,8 @@ impl Project {
                         lsp_symbols
                             .into_iter()
                             .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
-                                let abs_path = symbol_location.uri.to_file_path().ok()?;
+                                let abs_path: lsp::Uri = symbol_location.uri.into();
+                                let abs_path = abs_path.to_file_path().ok()?;
                                 let source_worktree = source_worktree.upgrade()?;
                                 let source_worktree_id = source_worktree.read(cx).id();
 
@@ -5682,7 +5712,7 @@ impl Project {
             };
 
             let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
-            let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
+            let symbol_uri = if let Ok(uri) = lsp::Uri::from_file_path(symbol_abs_path) {
                 uri
             } else {
                 return Task::ready(Err(anyhow!("invalid symbol path")));
@@ -5868,6 +5898,7 @@ impl Project {
         &self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
+        context: CompletionContext,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
         let language_registry = self.languages.clone();
@@ -5901,7 +5932,10 @@ impl Project {
                             this.request_lsp(
                                 buffer.clone(),
                                 LanguageServerToQuery::Other(server_id),
-                                GetCompletions { position },
+                                GetCompletions {
+                                    position,
+                                    context: context.clone(),
+                                },
                                 cx,
                             ),
                         ));
@@ -5928,7 +5962,7 @@ impl Project {
             let task = self.send_lsp_proto_request(
                 buffer.clone(),
                 project_id,
-                GetCompletions { position },
+                GetCompletions { position, context },
                 cx,
             );
             let language = buffer.read(cx).language().cloned();
@@ -5962,10 +5996,11 @@ impl Project {
         &self,
         buffer: &Model<Buffer>,
         position: T,
+        context: CompletionContext,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.completions_impl(buffer, position, cx)
+        self.completions_impl(buffer, position, context, cx)
     }
 
     pub fn resolve_completions(
@@ -6114,6 +6149,14 @@ impl Project {
 
                 completion.new_text = new_text;
                 completion.old_range = old_range;
+            }
+        }
+        if completion_item.insert_text_format == Some(InsertTextFormat::SNIPPET) {
+            // vtsls might change the type of completion after resolution.
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            if completion_item.insert_text_format != completion.lsp_completion.insert_text_format {
+                completion.lsp_completion.insert_text_format = completion_item.insert_text_format;
             }
         }
     }
@@ -6602,8 +6645,7 @@ impl Project {
         for operation in operations {
             match operation {
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Create(op)) => {
-                    let abs_path = op
-                        .uri
+                    let abs_path = Uri::from(op.uri)
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
 
@@ -6627,12 +6669,10 @@ impl Project {
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(op)) => {
-                    let source_abs_path = op
-                        .old_uri
+                    let source_abs_path = Uri::from(op.old_uri)
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
-                    let target_abs_path = op
-                        .new_uri
+                    let target_abs_path = Uri::from(op.new_uri)
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
                     fs.rename(
@@ -6649,8 +6689,7 @@ impl Project {
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
-                    let abs_path = op
-                        .uri
+                    let abs_path: PathBuf = Uri::from(op.uri)
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
                     let options = op
@@ -6671,7 +6710,7 @@ impl Project {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
                             this.open_local_buffer_via_lsp(
-                                op.text_document.uri.clone(),
+                                op.text_document.uri.clone().into(),
                                 language_server.server_id(),
                                 lsp_adapter.name.clone(),
                                 cx,
@@ -7176,7 +7215,9 @@ impl Project {
             } else {
                 false
             };
-            matching_paths.sort_by_key(|candidate| (candidate.is_ignored(), candidate.path()));
+            cx.update(|cx| {
+                sort_search_matches(&mut matching_paths, cx);
+            })?;
 
             let mut range_count = 0;
             let query = Arc::new(query);
@@ -7315,7 +7356,7 @@ impl Project {
 
                 if query.include_ignored() {
                     for (snapshot, settings) in snapshots {
-                        for ignored_entry in snapshot.entries(true).filter(|e| e.is_ignored) {
+                        for ignored_entry in snapshot.entries(true, 0).filter(|e| e.is_ignored) {
                             let limiter = Arc::clone(&max_concurrent_workers);
                             scope.spawn(async move {
                                 let _guard = limiter.acquire().await;
@@ -7757,7 +7798,7 @@ impl Project {
                         changes.clone(),
                     ));
 
-                    this.report_yarn_project(&worktree, changes, cx);
+                    this.report_project_events(&worktree, changes, cx);
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
                     if is_local {
@@ -7810,7 +7851,7 @@ impl Project {
         self.metadata_changed(cx);
     }
 
-    fn report_yarn_project(
+    fn report_project_events(
         &mut self,
         worktree: &Model<Worktree>,
         updated_entries_set: &UpdatedEntriesSet,
@@ -7818,21 +7859,37 @@ impl Project {
     ) {
         let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
 
-        if !self.yarn_worktree_ids_reported.contains(&worktree_id) {
-            let is_yarn_project = updated_entries_set.iter().any(|(path, _, _)| {
+        let client = self.client();
+
+        for (project_file_name, project_type_telemetry) in
+            self.telemetry_worktree_id_map.0.iter_mut()
+        {
+            if project_type_telemetry
+                .worktree_ids_reported
+                .contains(&worktree_id)
+            {
+                continue;
+            }
+
+            let project_file_found = updated_entries_set.iter().any(|(path, _, _)| {
                 path.as_ref()
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .map(|name_str| name_str == "yarn.lock")
+                    .map(|name_str| name_str == project_file_name)
                     .unwrap_or(false)
             });
 
-            if is_yarn_project {
-                self.client()
-                    .telemetry()
-                    .report_app_event("open yarn project".to_string());
-                self.yarn_worktree_ids_reported.push(worktree_id);
+            if !project_file_found {
+                continue;
             }
+
+            client
+                .telemetry()
+                .report_app_event(format!("open {} project", project_type_telemetry.name));
+
+            project_type_telemetry
+                .worktree_ids_reported
+                .insert(worktree_id);
         }
     }
 
@@ -8004,7 +8061,9 @@ impl Project {
                                     PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                                 };
                                 Some(lsp::FileEvent {
-                                    uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
+                                    uri: lsp::Uri::from_file_path(abs_path.join(path))
+                                        .unwrap()
+                                        .into(),
                                     typ,
                                 })
                             })
@@ -11233,6 +11292,7 @@ async fn search_snapshots(
                         worktree_id: snapshot.id(),
                         path: entry.path.clone(),
                         is_ignored: entry.is_ignored,
+                        is_file: entry.is_file(),
                     };
                     if results_tx.send(project_path).await.is_err() {
                         return;
@@ -11305,6 +11365,7 @@ async fn search_ignored_entry(
                                 .expect("scanning worktree-related files"),
                         ),
                         is_ignored: true,
+                        is_file: ignored_entry.is_file(),
                     };
                     if counter_tx.send(project_path).await.is_err() {
                         return;
@@ -11373,7 +11434,16 @@ pub struct PathMatchCandidateSet {
     pub snapshot: Snapshot,
     pub include_ignored: bool,
     pub include_root_name: bool,
-    pub directories_only: bool,
+    pub candidates: Candidates,
+}
+
+pub enum Candidates {
+    /// Only consider directories.
+    Directories,
+    /// Only consider files.
+    Files,
+    /// Consider directories and files.
+    Entries,
 }
 
 impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
@@ -11403,10 +11473,10 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
 
     fn candidates(&'a self, start: usize) -> Self::Candidates {
         PathMatchCandidateSetIter {
-            traversal: if self.directories_only {
-                self.snapshot.directories(self.include_ignored, start)
-            } else {
-                self.snapshot.files(self.include_ignored, start)
+            traversal: match self.candidates {
+                Candidates::Directories => self.snapshot.directories(self.include_ignored, start),
+                Candidates::Files => self.snapshot.files(self.include_ignored, start),
+                Candidates::Entries => self.snapshot.entries(self.include_ignored, start),
             },
         }
     }
@@ -11958,6 +12028,130 @@ impl DiagnosticSummary {
             language_server_id: language_server_id.0 as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,
+        }
+    }
+}
+
+pub fn sort_worktree_entries(entries: &mut Vec<Entry>) {
+    entries.sort_by(|entry_a, entry_b| {
+        compare_paths(
+            (&entry_a.path, entry_a.is_file()),
+            (&entry_b.path, entry_b.is_file()),
+        )
+    });
+}
+
+fn sort_search_matches(search_matches: &mut Vec<SearchMatchCandidate>, cx: &AppContext) {
+    search_matches.sort_by(|entry_a, entry_b| match (entry_a, entry_b) {
+        (
+            SearchMatchCandidate::OpenBuffer {
+                buffer: buffer_a,
+                path: None,
+            },
+            SearchMatchCandidate::OpenBuffer {
+                buffer: buffer_b,
+                path: None,
+            },
+        ) => buffer_a
+            .read(cx)
+            .remote_id()
+            .cmp(&buffer_b.read(cx).remote_id()),
+        (
+            SearchMatchCandidate::OpenBuffer { path: None, .. },
+            SearchMatchCandidate::Path { .. }
+            | SearchMatchCandidate::OpenBuffer { path: Some(_), .. },
+        ) => Ordering::Less,
+        (
+            SearchMatchCandidate::OpenBuffer { path: Some(_), .. }
+            | SearchMatchCandidate::Path { .. },
+            SearchMatchCandidate::OpenBuffer { path: None, .. },
+        ) => Ordering::Greater,
+        (
+            SearchMatchCandidate::OpenBuffer {
+                path: Some(path_a), ..
+            },
+            SearchMatchCandidate::Path {
+                is_file: is_file_b,
+                path: path_b,
+                ..
+            },
+        ) => compare_paths((path_a.as_ref(), true), (path_b.as_ref(), *is_file_b)),
+        (
+            SearchMatchCandidate::Path {
+                is_file: is_file_a,
+                path: path_a,
+                ..
+            },
+            SearchMatchCandidate::OpenBuffer {
+                path: Some(path_b), ..
+            },
+        ) => compare_paths((path_a.as_ref(), *is_file_a), (path_b.as_ref(), true)),
+        (
+            SearchMatchCandidate::OpenBuffer {
+                path: Some(path_a), ..
+            },
+            SearchMatchCandidate::OpenBuffer {
+                path: Some(path_b), ..
+            },
+        ) => compare_paths((path_a.as_ref(), true), (path_b.as_ref(), true)),
+        (
+            SearchMatchCandidate::Path {
+                worktree_id: worktree_id_a,
+                is_file: is_file_a,
+                path: path_a,
+                ..
+            },
+            SearchMatchCandidate::Path {
+                worktree_id: worktree_id_b,
+                is_file: is_file_b,
+                path: path_b,
+                ..
+            },
+        ) => worktree_id_a.cmp(&worktree_id_b).then_with(|| {
+            compare_paths((path_a.as_ref(), *is_file_a), (path_b.as_ref(), *is_file_b))
+        }),
+    });
+}
+
+fn compare_paths(
+    (path_a, a_is_file): (&Path, bool),
+    (path_b, b_is_file): (&Path, bool),
+) -> cmp::Ordering {
+    let mut components_a = path_a.components().peekable();
+    let mut components_b = path_b.components().peekable();
+    loop {
+        match (components_a.next(), components_b.next()) {
+            (Some(component_a), Some(component_b)) => {
+                let a_is_file = components_a.peek().is_none() && a_is_file;
+                let b_is_file = components_b.peek().is_none() && b_is_file;
+                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
+                    let maybe_numeric_ordering = maybe!({
+                        let num_and_remainder_a = Path::new(component_a.as_os_str())
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
+                        let num_and_remainder_b = Path::new(component_b.as_os_str())
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
+
+                        num_and_remainder_a.partial_cmp(&num_and_remainder_b)
+                    });
+
+                    maybe_numeric_ordering.unwrap_or_else(|| {
+                        let name_a = UniCase::new(component_a.as_os_str().to_string_lossy());
+                        let name_b = UniCase::new(component_b.as_os_str().to_string_lossy());
+
+                        name_a.cmp(&name_b)
+                    })
+                });
+                if !ordering.is_eq() {
+                    return ordering;
+                }
+            }
+            (Some(_), None) => break cmp::Ordering::Greater,
+            (None, Some(_)) => break cmp::Ordering::Less,
+            (None, None) => break cmp::Ordering::Equal,
         }
     }
 }

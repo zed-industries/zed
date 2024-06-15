@@ -52,8 +52,7 @@ mod prompts;
 
 pub use prompts::*;
 
-pub(crate) const DEFAULT_WINDOW_SIZE: Size<DevicePixels> =
-    size(DevicePixels(1024), DevicePixels(700));
+pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1024.), px(700.));
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -581,8 +580,8 @@ pub(crate) struct ElementStateBox {
     pub(crate) type_name: &'static str,
 }
 
-fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<DevicePixels> {
-    const DEFAULT_WINDOW_OFFSET: Point<DevicePixels> = point(DevicePixels(0), DevicePixels(35));
+fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<Pixels> {
+    const DEFAULT_WINDOW_OFFSET: Point<Pixels> = point(px(0.), px(35.));
 
     cx.active_window()
         .and_then(|w| w.update(cx, |_, cx| cx.bounds()).ok())
@@ -594,9 +593,7 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
 
             display
                 .map(|display| display.default_bounds())
-                .unwrap_or_else(|| {
-                    Bounds::new(point(DevicePixels(0), DevicePixels(0)), DEFAULT_WINDOW_SIZE)
-                })
+                .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE))
         })
 }
 
@@ -1145,7 +1142,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
-    pub fn bounds(&self) -> Bounds<DevicePixels> {
+    pub fn bounds(&self) -> Bounds<Pixels> {
         self.window.platform_window.bounds()
     }
 

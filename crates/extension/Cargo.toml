@@ -12,6 +12,9 @@ workspace = true
 path = "src/extension_store.rs"
 doctest = false
 
+[features]
+no-webrtc = ["workspace/no-webrtc"]
+
 [dependencies]
 anyhow.workspace = true
 assistant_slash_command.workspace = true
