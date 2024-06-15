@@ -75,7 +75,7 @@ impl WindowsWindowState {
         let origin = logical_point(cs.x as f32, cs.y as f32, scale_factor);
         let logical_size = {
             let physical_size = size(DevicePixels(cs.cx), DevicePixels(cs.cy));
-            logical_size(physical_size, scale_factor)
+            physical_size.to_pixels(scale_factor)
         };
         let fullscreen_restore_bounds = Bounds {
             origin,
@@ -142,7 +142,7 @@ impl WindowsWindowState {
                 placement.rcNormalPosition.top as f32,
                 self.scale_factor,
             ),
-            size: logical_size(physical_size, self.scale_factor),
+            size: physical_size.to_pixels(self.scale_factor),
         };
 
         if self.is_fullscreen() {

@@ -15,10 +15,7 @@ use windows::{
     },
 };
 
-use crate::{
-    logical_point, logical_size, point, size, Bounds, DevicePixels, DisplayId, Pixels,
-    PlatformDisplay,
-};
+use crate::{logical_point, point, size, Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowsDisplay {
@@ -52,7 +49,7 @@ impl WindowsDisplay {
                     monitor_size.top as f32,
                     scale_factor,
                 ),
-                size: logical_size(physical_size, scale_factor),
+                size: physical_size.to_pixels(scale_factor),
             },
             physical_bounds: Bounds {
                 origin: point(monitor_size.left.into(), monitor_size.top.into()),
@@ -87,7 +84,7 @@ impl WindowsDisplay {
                     monitor_size.top as f32,
                     scale_factor,
                 ),
-                size: logical_size(physical_size, scale_factor),
+                size: physical_size.to_pixels(scale_factor),
             },
             physical_bounds: Bounds {
                 origin: point(monitor_size.left.into(), monitor_size.top.into()),
@@ -118,7 +115,7 @@ impl WindowsDisplay {
                     monitor_size.top as f32,
                     scale_factor,
                 ),
-                size: logical_size(physical_size, scale_factor),
+                size: physical_size.to_pixels(scale_factor),
             },
             physical_bounds: Bounds {
                 origin: point(monitor_size.left.into(), monitor_size.top.into()),

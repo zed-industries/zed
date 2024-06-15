@@ -112,14 +112,6 @@ pub(crate) fn load_cursor(style: CursorStyle) -> HCURSOR {
 }
 
 #[inline]
-pub(crate) fn logical_size(physical_size: Size<DevicePixels>, scale_factor: f32) -> Size<Pixels> {
-    Size {
-        width: px(physical_size.width.0 as f32 / scale_factor),
-        height: px(physical_size.height.0 as f32 / scale_factor),
-    }
-}
-
-#[inline]
 pub(crate) fn logical_point(x: f32, y: f32, scale_factor: f32) -> Point<Pixels> {
     Point {
         x: px(x / scale_factor),
