@@ -256,7 +256,6 @@ impl EasyMotion {
     }
 
     fn word(editor: View<Editor>, action: &Word, cx: &mut WindowContext) {
-        dbg!("hi there");
         let Word(direction) = *action;
         EasyMotion::word_single_pane(editor, WordType::Word, direction, cx);
     }
