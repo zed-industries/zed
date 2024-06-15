@@ -6413,80 +6413,94 @@ impl Editor {
         cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
     }
 
-    pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+    pub fn do_paste(
+        &mut self,
+        text: &String,
+        clipboard_selections: Option<Vec<ClipboardSelection>>,
+        handle_entire_lines: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         if self.read_only(cx) {
             return;
         }
 
+        let clipboard_text = Cow::Borrowed(text);
+
         self.transact(cx, |this, cx| {
-            if let Some(item) = cx.read_from_clipboard() {
-                let clipboard_text = Cow::Borrowed(item.text());
-                if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
-                    let old_selections = this.selections.all::<usize>(cx);
-                    let all_selections_were_entire_line =
-                        clipboard_selections.iter().all(|s| s.is_entire_line);
-                    let first_selection_indent_column =
-                        clipboard_selections.first().map(|s| s.first_line_indent);
-                    if clipboard_selections.len() != old_selections.len() {
-                        clipboard_selections.drain(..);
-                    }
-
-                    this.buffer.update(cx, |buffer, cx| {
-                        let snapshot = buffer.read(cx);
-                        let mut start_offset = 0;
-                        let mut edits = Vec::new();
-                        let mut original_indent_columns = Vec::new();
-                        let line_mode = this.selections.line_mode;
-                        for (ix, selection) in old_selections.iter().enumerate() {
-                            let to_insert;
-                            let entire_line;
-                            let original_indent_column;
-                            if let Some(clipboard_selection) = clipboard_selections.get(ix) {
-                                let end_offset = start_offset + clipboard_selection.len;
-                                to_insert = &clipboard_text[start_offset..end_offset];
-                                entire_line = clipboard_selection.is_entire_line;
-                                start_offset = end_offset + 1;
-                                original_indent_column =
-                                    Some(clipboard_selection.first_line_indent);
-                            } else {
-                                to_insert = clipboard_text.as_str();
-                                entire_line = all_selections_were_entire_line;
-                                original_indent_column = first_selection_indent_column
-                            }
-
-                            // If the corresponding selection was empty when this slice of the
-                            // clipboard text was written, then the entire line containing the
-                            // selection was copied. If this selection is also currently empty,
-                            // then paste the line before the current line of the buffer.
-                            let range = if selection.is_empty() && !line_mode && entire_line {
-                                let column = selection.start.to_point(&snapshot).column as usize;
-                                let line_start = selection.start - column;
-                                line_start..line_start
-                            } else {
-                                selection.range()
-                            };
-
-                            edits.push((range, to_insert));
-                            original_indent_columns.extend(original_indent_column);
-                        }
-                        drop(snapshot);
-
-                        buffer.edit(
-                            edits,
-                            Some(AutoindentMode::Block {
-                                original_indent_columns,
-                            }),
-                            cx,
-                        );
-                    });
-
-                    let selections = this.selections.all::<usize>(cx);
-                    this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
-                } else {
-                    this.insert(&clipboard_text, cx);
+            if let Some(mut clipboard_selections) = clipboard_selections {
+                let old_selections = this.selections.all::<usize>(cx);
+                let all_selections_were_entire_line =
+                    clipboard_selections.iter().all(|s| s.is_entire_line);
+                let first_selection_indent_column =
+                    clipboard_selections.first().map(|s| s.first_line_indent);
+                if clipboard_selections.len() != old_selections.len() {
+                    clipboard_selections.drain(..);
                 }
+
+                this.buffer.update(cx, |buffer, cx| {
+                    let snapshot = buffer.read(cx);
+                    let mut start_offset = 0;
+                    let mut edits = Vec::new();
+                    let mut original_indent_columns = Vec::new();
+                    for (ix, selection) in old_selections.iter().enumerate() {
+                        let to_insert;
+                        let entire_line;
+                        let original_indent_column;
+                        if let Some(clipboard_selection) = clipboard_selections.get(ix) {
+                            let end_offset = start_offset + clipboard_selection.len;
+                            to_insert = &clipboard_text[start_offset..end_offset];
+                            entire_line = clipboard_selection.is_entire_line;
+                            start_offset = end_offset + 1;
+                            original_indent_column = Some(clipboard_selection.first_line_indent);
+                        } else {
+                            to_insert = clipboard_text.as_str();
+                            entire_line = all_selections_were_entire_line;
+                            original_indent_column = first_selection_indent_column
+                        }
+
+                        // If the corresponding selection was empty when this slice of the
+                        // clipboard text was written, then the entire line containing the
+                        // selection was copied. If this selection is also currently empty,
+                        // then paste the line before the current line of the buffer.
+                        let range = if selection.is_empty() && handle_entire_lines && entire_line {
+                            let column = selection.start.to_point(&snapshot).column as usize;
+                            let line_start = selection.start - column;
+                            line_start..line_start
+                        } else {
+                            selection.range()
+                        };
+
+                        edits.push((range, to_insert));
+                        original_indent_columns.extend(original_indent_column);
+                    }
+                    drop(snapshot);
+
+                    buffer.edit(
+                        edits,
+                        Some(AutoindentMode::Block {
+                            original_indent_columns,
+                        }),
+                        cx,
+                    );
+                });
+
+                let selections = this.selections.all::<usize>(cx);
+                this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+            } else {
+                this.insert(&clipboard_text, cx);
             }
         });
+    }
+
+    pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        if let Some(item) = cx.read_from_clipboard() {
+            self.do_paste(
+                item.text(),
+                item.metadata::<Vec<ClipboardSelection>>(),
+                true,
+                cx,
+            )
+        };
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
