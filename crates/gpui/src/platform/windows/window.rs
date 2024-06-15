@@ -560,10 +560,10 @@ impl PlatformWindow for WindowsWindow {
                     unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
                     let _ = lock.fullscreen.insert(StyleAndBounds {
                         style,
-                        x: px(rc.left as f32),
-                        y: px(rc.top as f32),
-                        cx: px((rc.right - rc.left) as f32),
-                        cy: px((rc.bottom - rc.top) as f32),
+                        x: rc.left,
+                        y: rc.top,
+                        cx: rc.right - rc.left,
+                        cy: rc.bottom - rc.top,
                     });
                     let style = style
                         & !(WS_THICKFRAME
@@ -571,13 +571,13 @@ impl PlatformWindow for WindowsWindow {
                             | WS_MAXIMIZEBOX
                             | WS_MINIMIZEBOX
                             | WS_CAPTION);
-                    let bounds = lock.display.bounds();
+                    let physical_bounds = lock.display.physical_bounds();
                     StyleAndBounds {
                         style,
-                        x: bounds.left(),
-                        y: bounds.top(),
-                        cx: bounds.size.width,
-                        cy: bounds.size.height,
+                        x: physical_bounds.left().0,
+                        y: physical_bounds.top().0,
+                        cx: physical_bounds.size.width.0,
+                        cy: physical_bounds.size.height.0,
                     }
                 };
                 drop(lock);
@@ -586,10 +586,10 @@ impl PlatformWindow for WindowsWindow {
                     SetWindowPos(
                         state_ptr.hwnd,
                         HWND::default(),
-                        x.0 as i32,
-                        y.0 as i32,
-                        cx.0 as i32,
-                        cy.0 as i32,
+                        x,
+                        y,
+                        cx,
+                        cy,
                         SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
                     )
                 }
@@ -842,10 +842,10 @@ impl ClickState {
 
 struct StyleAndBounds {
     style: WINDOW_STYLE,
-    x: Pixels,
-    y: Pixels,
-    cx: Pixels,
-    cy: Pixels,
+    x: i32,
+    y: i32,
+    cx: i32,
+    cy: i32,
 }
 
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {

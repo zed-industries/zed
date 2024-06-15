@@ -15,46 +15,56 @@ use windows::{
     },
 };
 
-use crate::{px, Bounds, DisplayId, Pixels, PlatformDisplay, Point, Size};
+use crate::{
+    logical_point, logical_size, point, size, Bounds, DevicePixels, DisplayId, Pixels,
+    PlatformDisplay,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowsDisplay {
     pub handle: HMONITOR,
     pub display_id: DisplayId,
-    bounds: Bounds<Pixels>,
-    uuid: Uuid,
     scale_factor: f32,
+    bounds: Bounds<Pixels>,
+    physical_bounds: Bounds<DevicePixels>,
+    uuid: Uuid,
 }
 
 impl WindowsDisplay {
     pub(crate) fn new(display_id: DisplayId) -> Option<Self> {
         let screen = available_monitors().into_iter().nth(display_id.0 as _)?;
         let info = get_monitor_info(screen).log_err()?;
-        let size = info.monitorInfo.rcMonitor;
+        let monitor_size = info.monitorInfo.rcMonitor;
         let uuid = generate_uuid(&info.szDevice);
         let scale_factor = get_scale_factor_for_monitor(screen).log_err()?;
+        let physical_size = size(
+            (monitor_size.right - monitor_size.left).into(),
+            (monitor_size.bottom - monitor_size.top).into(),
+        );
 
         Some(WindowsDisplay {
             handle: screen,
             display_id,
+            scale_factor,
             bounds: Bounds {
-                origin: Point {
-                    x: px(size.left as f32 / scale_factor),
-                    y: px(size.top as f32 / scale_factor),
-                },
-                size: Size {
-                    width: px((size.right - size.left) as f32 / scale_factor),
-                    height: px((size.bottom - size.top) as f32 / scale_factor),
-                },
+                origin: logical_point(
+                    monitor_size.left as f32,
+                    monitor_size.top as f32,
+                    scale_factor,
+                ),
+                size: logical_size(physical_size, scale_factor),
+            },
+            physical_bounds: Bounds {
+                origin: point(monitor_size.left.into(), monitor_size.top.into()),
+                size: physical_size,
             },
             uuid,
-            scale_factor,
         })
     }
 
     pub fn new_with_handle(monitor: HMONITOR) -> Self {
         let info = get_monitor_info(monitor).expect("unable to get monitor info");
-        let size = info.monitorInfo.rcMonitor;
+        let monitor_size = info.monitorInfo.rcMonitor;
         let uuid = generate_uuid(&info.szDevice);
         let display_id = available_monitors()
             .iter()
@@ -62,47 +72,59 @@ impl WindowsDisplay {
             .unwrap();
         let scale_factor =
             get_scale_factor_for_monitor(monitor).expect("unable to get scale factor for monitor");
+        let physical_size = size(
+            (monitor_size.right - monitor_size.left).into(),
+            (monitor_size.bottom - monitor_size.top).into(),
+        );
 
         WindowsDisplay {
             handle: monitor,
             display_id: DisplayId(display_id as _),
+            scale_factor,
             bounds: Bounds {
-                origin: Point {
-                    x: px(size.left as f32 / scale_factor),
-                    y: px(size.top as f32 / scale_factor),
-                },
-                size: Size {
-                    width: px((size.right - size.left) as f32 / scale_factor),
-                    height: px((size.bottom - size.top) as f32 / scale_factor),
-                },
+                origin: logical_point(
+                    monitor_size.left as f32,
+                    monitor_size.top as f32,
+                    scale_factor,
+                ),
+                size: logical_size(physical_size, scale_factor),
+            },
+            physical_bounds: Bounds {
+                origin: point(monitor_size.left.into(), monitor_size.top.into()),
+                size: physical_size,
             },
             uuid,
-            scale_factor,
         }
     }
 
     fn new_with_handle_and_id(handle: HMONITOR, display_id: DisplayId) -> Self {
         let info = get_monitor_info(handle).expect("unable to get monitor info");
-        let size = info.monitorInfo.rcMonitor;
+        let monitor_size = info.monitorInfo.rcMonitor;
         let uuid = generate_uuid(&info.szDevice);
         let scale_factor =
             get_scale_factor_for_monitor(handle).expect("unable to get scale factor for monitor");
+        let physical_size = size(
+            (monitor_size.right - monitor_size.left).into(),
+            (monitor_size.bottom - monitor_size.top).into(),
+        );
 
         WindowsDisplay {
             handle,
             display_id,
+            scale_factor,
             bounds: Bounds {
-                origin: Point {
-                    x: px(size.left as f32 / scale_factor),
-                    y: px(size.top as f32 / scale_factor),
-                },
-                size: Size {
-                    width: px((size.right - size.left) as f32 / scale_factor),
-                    height: px((size.bottom - size.top) as f32 / scale_factor),
-                },
+                origin: logical_point(
+                    monitor_size.left as f32,
+                    monitor_size.top as f32,
+                    scale_factor,
+                ),
+                size: logical_size(physical_size, scale_factor),
+            },
+            physical_bounds: Bounds {
+                origin: point(monitor_size.left.into(), monitor_size.top.into()),
+                size: physical_size,
             },
             uuid,
-            scale_factor,
         }
     }
 
@@ -167,6 +189,10 @@ impl WindowsDisplay {
     /// Check if this monitor is still online
     pub fn is_connected(hmonitor: HMONITOR) -> bool {
         available_monitors().iter().contains(&hmonitor)
+    }
+
+    pub fn physical_bounds(&self) -> Bounds<DevicePixels> {
+        self.physical_bounds
     }
 }
 
