@@ -10,12 +10,12 @@ pub(crate) struct OverlayState {
 }
 
 #[derive(Debug)]
-pub(crate) struct EditorState {
+pub(crate) struct EasyMotionState {
     selection: String,
     trie: Trie<OverlayState>,
 }
 
-impl EditorState {
+impl EasyMotionState {
     pub(crate) fn new(trie: Trie<OverlayState>) -> Self {
         Self {
             selection: String::new(),

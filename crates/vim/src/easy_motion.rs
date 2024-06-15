@@ -13,13 +13,17 @@ use text::{Bias, SelectionGoal};
 use theme::ThemeSettings;
 use ui::{Context, WindowContext};
 
-use crate::easy_motion::{
-    editor_state::{EditorState, OverlayState},
-    search::{row_starts, sort_matches_display},
-    trie::{Trie, TrimResult},
+use crate::{
+    easy_motion::{
+        editor_state::{EasyMotionState, OverlayState},
+        search::{row_starts, sort_matches_display},
+        trie::{Trie, TrimResult},
+    },
+    state::Mode,
+    Vim,
 };
 
-mod editor_state;
+pub mod editor_state;
 mod search;
 mod trie;
 
@@ -74,7 +78,7 @@ pub struct EasyMotion {
     dimming: bool,
     keys: String,
     enabled: bool,
-    editor_states: HashMap<EntityId, EditorState>,
+    editor_states: HashMap<EntityId, EasyMotionState>,
 }
 
 impl fmt::Debug for EasyMotion {
@@ -203,7 +207,7 @@ impl EasyMotion {
         direction: Direction,
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<EditorState> {
+    ) -> Option<EasyMotionState> {
         let selections = editor.selections.newest_display(cx);
         let snapshot = editor.snapshot(cx);
         let map = &snapshot.display_snapshot;
@@ -245,13 +249,14 @@ impl EasyMotion {
             editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
         }
 
-        let new_state = EditorState::new(trie);
+        let new_state = EasyMotionState::new(trie);
         let ctx = new_state.keymap_context_layer();
         editor.set_keymap_context_layer::<Self>(ctx, cx);
         Some(new_state)
     }
 
     fn word(editor: View<Editor>, action: &Word, cx: &mut WindowContext) {
+        dbg!("hi there");
         let Word(direction) = *action;
         EasyMotion::word_single_pane(editor, WordType::Word, direction, cx);
     }
@@ -272,6 +277,8 @@ impl EasyMotion {
         direction: Direction,
         cx: &mut WindowContext,
     ) {
+        Vim::update(cx, |vim, cx| vim.switch_mode(Mode::EasyMotion, false, cx));
+
         let entity_id = editor.entity_id();
 
         let new_state = editor.update(cx, |editor, cx| {
@@ -328,14 +335,6 @@ impl EasyMotion {
             return;
         }
 
-        Self::observe_keystrokes_impl(editor, keystroke_event, cx);
-    }
-
-    fn observe_keystrokes_impl(
-        editor: View<Editor>,
-        keystroke_event: &KeystrokeEvent,
-        cx: &mut WindowContext,
-    ) {
         let entity_id = editor.entity_id();
         let Some(state) =
             Self::update(cx, |easy, _| easy.editor_states.remove(&entity_id)).flatten()
@@ -346,6 +345,7 @@ impl EasyMotion {
         let keys = keystroke_event.keystroke.key.as_str();
         let new_state = editor.update(cx, |editor, cx| Self::handle_trim(state, keys, editor, cx));
 
+        Vim::update(cx, |vim, cx| vim.switch_mode(Mode::Normal, false, cx));
         Self::update(cx, move |easy, cx| {
             if let Some(new_state) = new_state {
                 easy.editor_states.insert(entity_id, new_state);
@@ -355,11 +355,11 @@ impl EasyMotion {
     }
 
     fn handle_trim(
-        selection: EditorState,
+        selection: EasyMotionState,
         keys: &str,
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<EditorState> {
+    ) -> Option<EasyMotionState> {
         let (selection, res) = selection.record_str(keys);
         match res {
             TrimResult::Found(overlay) => {

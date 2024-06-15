@@ -164,6 +164,9 @@ where
                         }
                         cursor_positions.push(end..end)
                     }
+                    Mode::EasyMotion => {
+                        // Shouldn't execute in this mode. Ignoring
+                    }
                 }
             }
             editor.transact(cx, |editor, cx| {

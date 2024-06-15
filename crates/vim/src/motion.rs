@@ -414,6 +414,7 @@ pub(crate) fn search_motion(m: Motion, cx: &mut WindowContext) {
                     return;
                 }
             }
+            _ => {}
         }
     }
 
@@ -443,8 +444,8 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
             visual_motion(motion.clone(), count, cx)
         }
-        Mode::Insert => {
-            // Shouldn't execute a motion in insert mode. Ignoring
+        Mode::Insert | Mode::EasyMotion => {
+            // Shouldn't execute in these modes. Ignoring
         }
     }
     Vim::update(cx, |vim, cx| {

@@ -18,6 +18,7 @@ pub enum Mode {
     Visual,
     VisualLine,
     VisualBlock,
+    EasyMotion,
 }
 
 impl Display for Mode {
@@ -29,6 +30,7 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
+            Mode::EasyMotion => write!(f, "EASY MOTION"),
         }
     }
 }
@@ -36,7 +38,7 @@ impl Display for Mode {
 impl Mode {
     pub fn is_visual(&self) -> bool {
         match self {
-            Mode::Normal | Mode::Insert | Mode::Replace => false,
+            Mode::Normal | Mode::Insert | Mode::Replace | Mode::EasyMotion => false,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
         }
     }
@@ -204,22 +206,17 @@ pub struct SearchState {
 impl EditorState {
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
-            Mode::Normal => {
-                if self.operator_stack.is_empty() {
-                    CursorShape::Block
-                } else {
-                    CursorShape::Underscore
-                }
+            Mode::Normal if self.operator_stack.is_empty() => CursorShape::Block,
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::EasyMotion => {
+                CursorShape::Block
             }
-            Mode::Replace => CursorShape::Underscore,
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
+            Mode::Normal | Mode::Replace => CursorShape::Underscore,
             Mode::Insert => CursorShape::Bar,
         }
     }
 
     pub fn vim_controlled(&self) -> bool {
-        let is_insert_mode = matches!(self.mode, Mode::Insert);
-        if !is_insert_mode {
+        if !matches!(self.mode, Mode::Insert) {
             return true;
         }
         matches!(
@@ -240,7 +237,7 @@ impl EditorState {
             Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::Replace => {
                 false
             }
-            Mode::Normal => true,
+            Mode::Normal | Mode::EasyMotion => true,
         }
     }
 
@@ -257,6 +254,7 @@ impl EditorState {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
                 Mode::Insert => "insert",
                 Mode::Replace => "replace",
+                Mode::EasyMotion => "easy_motion",
             },
         );
 
@@ -286,7 +284,7 @@ impl EditorState {
                 .unwrap_or_else(|| "none"),
         );
 
-        if self.mode == Mode::Replace {
+        if matches!(self.mode, Mode::Replace | Mode::EasyMotion) {
             context.add("VimWaiting");
         }
         context

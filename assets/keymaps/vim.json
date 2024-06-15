@@ -703,7 +703,6 @@
   {
     "context": "Editor && VimWaiting",
     "bindings": {
-      "escape": "easy_motion::Cancel",
       "ctrl-c": "easy_motion::Cancel"
     }
   }
