@@ -1,5 +1,6 @@
 mod direct_write;
 mod directx;
+mod directx_atlas;
 mod dispatcher;
 mod display;
 mod events;
@@ -10,6 +11,7 @@ mod window;
 
 pub(crate) use direct_write::*;
 pub(crate) use directx::*;
+pub(crate) use directx_atlas::*;
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use events::*;
