@@ -1101,10 +1101,8 @@ impl LinuxClient for X11Client {
                 state.clipboard.getter.atoms.property,
                 Duration::from_secs(3),
             )
-            .map(|text| String::from_utf8(text))
-            .ok()?
             .map(|text| crate::ClipboardItem {
-                text,
+                text: String::from_utf8(text).unwrap(),
                 metadata: None,
             })
             .ok()
@@ -1120,10 +1118,8 @@ impl LinuxClient for X11Client {
                 state.clipboard.getter.atoms.property,
                 Duration::from_secs(3),
             )
-            .map(|text| String::from_utf8(text))
-            .ok()?
             .map(|text| crate::ClipboardItem {
-                text,
+                text: String::from_utf8(text).unwrap(),
                 metadata: None,
             })
             .ok()
