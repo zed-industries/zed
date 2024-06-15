@@ -5,9 +5,9 @@ use futures::FutureExt;
 use gpui::{
     actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
-    Hitbox, Hsla, KeyContext, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point,
-    Render, StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun, TextStyle,
-    TextStyleRefinement, View,
+    Hitbox, Hsla, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Point, Render, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun,
+    TextStyle, TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -19,8 +19,8 @@ use util::{ResultExt, TryFutureExt};
 
 #[derive(Clone)]
 pub struct MarkdownStyle {
-    pub base: TextStyle,
-    pub code_block: TextStyleRefinement,
+    pub base_text_style: TextStyle,
+    pub code_block: StyleRefinement,
     pub inline_code: TextStyleRefinement,
     pub block_quote: TextStyleRefinement,
     pub link: TextStyleRefinement,
@@ -28,13 +28,12 @@ pub struct MarkdownStyle {
     pub block_quote_border_color: Hsla,
     pub syntax: Arc<SyntaxTheme>,
     pub selection_background_color: Hsla,
-    pub pad_blocks: bool,
 }
 
 impl Default for MarkdownStyle {
     fn default() -> Self {
         Self {
-            base: Default::default(),
+            base_text_style: Default::default(),
             code_block: Default::default(),
             inline_code: Default::default(),
             block_quote: Default::default(),
@@ -43,7 +42,6 @@ impl Default for MarkdownStyle {
             block_quote_border_color: Default::default(),
             syntax: Arc::new(SyntaxTheme::default()),
             selection_background_color: Default::default(),
-            pad_blocks: true,
         }
     }
 }
@@ -453,7 +451,7 @@ impl MarkdownElement {
             .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
         let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
 
-        let text_style = self.style.base.clone();
+        let text_style = self.style.base_text_style.clone();
         let font_id = cx.text_system().resolve_font(&text_style.font());
         let font_size = text_style.font_size.to_pixels(cx.rem_size());
         let em_width = cx
@@ -498,20 +496,26 @@ impl Element for MarkdownElement {
         _id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let mut builder =
-            MarkdownElementBuilder::new(self.style.base.clone(), self.style.syntax.clone());
-        let mut opening_line = true;
+        let mut builder = MarkdownElementBuilder::new(
+            self.style.base_text_style.clone(),
+            self.style.syntax.clone(),
+        );
         let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
+        let markdown_end = if let Some(last) = parsed_markdown.events.last() {
+            last.0.end
+        } else {
+            0
+        };
         for (range, event) in parsed_markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
                         MarkdownTag::Paragraph => {
-                            if self.style.pad_blocks {
-                                builder.push_div(div().mb_2().line_height(rems(1.3)));
-                            } else {
-                                builder.push_div(div().line_height(rems(1.3)));
-                            }
+                            builder.push_div(
+                                div().mb_2().line_height(rems(1.3)),
+                                range,
+                                markdown_end,
+                            );
                         }
                         MarkdownTag::Heading { level, .. } => {
                             let mut heading = div().mb_2();
@@ -522,7 +526,7 @@ impl Element for MarkdownElement {
                                 pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
                                 _ => heading,
                             };
-                            builder.push_div(heading);
+                            builder.push_div(heading, range, markdown_end);
                         }
                         MarkdownTag::BlockQuote => {
                             builder.push_text_style(self.style.block_quote.clone());
@@ -536,6 +540,8 @@ impl Element for MarkdownElement {
                                     //     div()pl_4().mb_2().border_l_4()
                                     // }
                                     .border_color(self.style.block_quote_border_color),
+                                range,
+                                markdown_end,
                             );
                         }
                         MarkdownTag::CodeBlock(kind) => {
@@ -545,27 +551,25 @@ impl Element for MarkdownElement {
                                 None
                             };
 
+                            // let mut d = if self.style.pad_blocks {
+                            //     div().p_4().mb_2()
+                            // } else if !opening_line {
+                            //     div().mb_4().mt_4()
+                            // } else {
+                            //     div().mb_4()
+                            // }
+                            // }
+                            // .rounded_lg()
+                            // .w_full();
+                            let mut d = div().w_full();
+                            d.style().refine(&self.style.code_block);
                             builder.push_code_block(language);
-                            builder.push_text_style(self.style.code_block.clone());
-                            builder.push_div(
-                                if self.style.pad_blocks {
-                                    div().p_4().mb_2()
-                                } else if !opening_line {
-                                    div().mb_4().mt_4()
-                                } else {
-                                    div().mb_4()
-                                }
-                                .rounded_lg()
-                                .w_full()
-                                .when_some(self.style.code_block.background_color, |div, color| {
-                                    div.bg(color)
-                                }),
-                            );
+                            builder.push_div(d, range, markdown_end);
                         }
-                        MarkdownTag::HtmlBlock => builder.push_div(div()),
+                        MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
                         MarkdownTag::List(bullet_index) => {
                             builder.push_list(*bullet_index);
-                            builder.push_div(div().pl_4());
+                            builder.push_div(div().pl_4(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
                             let bullet = if let Some(bullet_index) = builder.next_bullet_index() {
@@ -581,9 +585,11 @@ impl Element for MarkdownElement {
                                     .items_start()
                                     .gap_1()
                                     .child(bullet),
+                                range,
+                                markdown_end,
                             );
                             // Without `w_0`, text doesn't wrap to the width of the container.
-                            builder.push_div(div().flex_1().w_0());
+                            builder.push_div(div().flex_1().w_0(), range, markdown_end);
                         }
                         MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
                             font_style: Some(FontStyle::Italic),
@@ -623,7 +629,6 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
                         builder.pop_div();
-                        builder.pop_text_style();
                         builder.pop_code_block();
                     }
                     MarkdownTagEnd::HtmlBlock => builder.pop_div(),
@@ -665,6 +670,8 @@ impl Element for MarkdownElement {
                             .border_b_1()
                             .my_2()
                             .border_color(self.style.rule_color),
+                        range,
+                        markdown_end,
                     );
                     builder.pop_div()
                 }
@@ -672,11 +679,10 @@ impl Element for MarkdownElement {
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.start),
                 _ => log::error!("unsupported markdown event {:?}", event),
             }
-            opening_line = false;
         }
         let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(cx);
-        let layout_id = cx.request_layout(Style::default(), [child_layout_id]);
+        let layout_id = cx.request_layout(gpui::Style::default(), [child_layout_id]);
         (layout_id, rendered_markdown)
     }
 
@@ -788,8 +794,32 @@ impl MarkdownElementBuilder {
         self.text_style_stack.pop();
     }
 
-    fn push_div(&mut self, div: Div) {
+    fn push_div(&mut self, mut div: Div, range: &Range<usize>, markdown_end: usize) {
         self.flush_text();
+
+        if range.start == 0 {
+            //first element, remove top margin
+            div.style().refine(&StyleRefinement {
+                margin: gpui::EdgesRefinement {
+                    top: Some(Length::Definite(px(0.).into())),
+                    left: None,
+                    right: None,
+                    bottom: None,
+                },
+                ..Default::default()
+            });
+        }
+        if range.end == markdown_end {
+            div.style().refine(&StyleRefinement {
+                margin: gpui::EdgesRefinement {
+                    top: None,
+                    left: None,
+                    right: None,
+                    bottom: Some(Length::Definite(Rems(0_f32).into())),
+                },
+                ..Default::default()
+            });
+        }
         self.div_stack.push(div);
     }
 

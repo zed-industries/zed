@@ -114,10 +114,13 @@ impl DevServerProjects {
         });
 
         let markdown_style = MarkdownStyle {
-            code_block: gpui::TextStyleRefinement {
-                font_family: Some("Zed Mono".into()),
-                color: Some(cx.theme().colors().editor_foreground),
-                background_color: Some(cx.theme().colors().editor_background),
+            code_block: gpui::StyleRefinement {
+                text: Some(gpui::TextStyleRefinement {
+                    font_family: Some("Zed Mono".into()),
+                    color: Some(cx.theme().colors().editor_foreground),
+                    background_color: Some(cx.theme().colors().editor_background),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             link: gpui::TextStyleRefinement {

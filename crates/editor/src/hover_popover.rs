@@ -8,8 +8,8 @@ use crate::{
 use gpui::TextStyle;
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, CursorStyle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, ScrollHandle, SharedString, Size,
-    StatefulInteractiveElement, Styled, Task, View, ViewContext, WeakView,
+    Length, MouseButton, ParentElement, Pixels, Rems, ScrollHandle, SharedString, Size,
+    StatefulInteractiveElement, Style, StyleRefinement, Styled, Task, View, ViewContext, WeakView,
 };
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
@@ -364,7 +364,7 @@ fn transform_codeblock(input: &str, language: &str) -> String {
         if line.starts_with("```") {
             if !open_block && line == "```" {
                 //modify the line if the lsp didn't provide a language
-                line = language_tag.clone();
+                line.clone_from(&language_tag);
             }
 
             open_block = !open_block;
@@ -418,7 +418,6 @@ async fn parse_blocks(
 
         combined_text.push_str(text.as_str());
     }
-
     let rendered_block = cx
         .new_view(|cx| {
             let settings = ThemeSettings::get_global(cx);
@@ -433,10 +432,19 @@ async fn parse_blocks(
                 ..Default::default()
             };
             let markdown_style = MarkdownStyle {
-                base: base_style,
-                code_block: gpui::TextStyleRefinement {
-                    font_family: Some(buffer_font_family.clone()),
-                    color: Some(cx.theme().colors().editor_foreground),
+                base_text_style: base_style,
+                code_block: gpui::StyleRefinement {
+                    text: Some(gpui::TextStyleRefinement {
+                        font_family: Some(buffer_font_family.clone()),
+                        color: Some(cx.theme().colors().editor_foreground),
+                        ..Default::default()
+                    }),
+                    margin: gpui::EdgesRefinement {
+                        top: Some(Length::Definite(Rems(1_f32).into())),
+                        left: None,
+                        right: None,
+                        bottom: Some(Length::Definite(Rems(1_f32).into())),
+                    },
                     ..Default::default()
                 },
                 inline_code: gpui::TextStyleRefinement {
@@ -462,7 +470,6 @@ async fn parse_blocks(
                 },
                 syntax: cx.theme().syntax().clone(),
                 selection_background_color: { cx.theme().players().local().selection },
-                pad_blocks: false,
             };
 
             Markdown::new(
