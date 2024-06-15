@@ -51,10 +51,11 @@
       // "alt-h": "editor::DeleteToPreviousWordStart",
       // "alt-d": "editor::DeleteToNextWordEnd",
       "ctrl-x": "editor::Cut",
-      "ctrl-c": "editor::Copy",
       "ctrl-insert": "editor::Copy",
-      "ctrl-v": "editor::Paste",
+      "ctrl-c": "editor::Copy",
       "shift-insert": "editor::Paste",
+      "ctrl-v": "editor::Paste",
+      "ctrl-y": "editor::Redo",
       "ctrl-z": "editor::Undo",
       "ctrl-shift-z": "editor::Redo",
       "up": "editor::MoveUp",
@@ -205,18 +206,6 @@
     }
   },
   {
-    "context": "ConversationEditor > Editor",
-    "bindings": {
-      "ctrl-enter": "assistant::Assist",
-      "ctrl-s": "workspace::Save",
-      "ctrl->": "assistant::QuoteSelection",
-      "shift-enter": "assistant::Split",
-      "ctrl-r": "assistant::CycleMessageRole",
-      "enter": "assistant::ConfirmCommand",
-      "alt-enter": "editor::Newline"
-    }
-  },
-  {
     "context": "PromptLibrary",
     "bindings": {
       "ctrl-n": "prompt_library::NewPrompt",
@@ -232,7 +221,8 @@
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
       "ctrl-f": "search::FocusSearch",
-      "ctrl-h": "search::ToggleReplace"
+      "ctrl-h": "search::ToggleReplace",
+      "ctrl-l": "search::ToggleSelection"
     }
   },
   {
@@ -296,6 +286,7 @@
       "ctrl-alt-g": "search::SelectNextMatch",
       "ctrl-alt-shift-g": "search::SelectPrevMatch",
       "ctrl-alt-shift-h": "search::ToggleReplace",
+      "ctrl-alt-shift-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
@@ -429,7 +420,7 @@
       "alt-8": ["workspace::ActivatePane", 7],
       "alt-9": ["workspace::ActivatePane", 8],
       "ctrl-alt-b": "workspace::ToggleLeftDock",
-      "ctrl-b": "workspace::ToggleRightDock",
+      "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "ctrl-shift-f": "pane::DeploySearch",
@@ -449,6 +440,7 @@
       "ctrl-shift-p": "command_palette::Toggle",
       "ctrl-shift-m": "diagnostics::Deploy",
       "ctrl-shift-e": "project_panel::ToggleFocus",
+      "ctrl-shift-b": "outline_panel::ToggleFocus",
       "ctrl-?": "assistant::ToggleFocus",
       "ctrl-alt-s": "workspace::SaveAll",
       "ctrl-k m": "language_selector::Toggle",
@@ -555,9 +547,34 @@
     }
   },
   {
+    "context": "ContextEditor > Editor",
+    "bindings": {
+      "ctrl-enter": "assistant::Assist",
+      "ctrl-s": "workspace::Save",
+      "ctrl->": "assistant::QuoteSelection",
+      "shift-enter": "assistant::Split",
+      "ctrl-r": "assistant::CycleMessageRole",
+      "enter": "assistant::ConfirmCommand",
+      "alt-enter": "editor::Newline"
+    }
+  },
+  {
     "context": "ProjectSearchBar && !in_replace",
     "bindings": {
       "ctrl-enter": "project_search::SearchInNew"
+    }
+  },
+  {
+    "context": "OutlinePanel",
+    "bindings": {
+      "left": "outline_panel::CollapseSelectedEntry",
+      "right": "outline_panel::ExpandSelectedEntry",
+      "ctrl-alt-c": "outline_panel::CopyPath",
+      "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
+      "alt-ctrl-r": "outline_panel::RevealInFinder",
+      "space": "outline_panel::Open",
+      "shift-down": "menu::SelectNext",
+      "shift-up": "menu::SelectPrev"
     }
   },
   {
@@ -581,7 +598,10 @@
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFinder",
-      "alt-shift-f": "project_panel::NewSearchInDirectory"
+      "alt-shift-f": "project_panel::NewSearchInDirectory",
+      "shift-down": "menu::SelectNext",
+      "shift-up": "menu::SelectPrev",
+      "escape": "menu::Cancel"
     }
   },
   {

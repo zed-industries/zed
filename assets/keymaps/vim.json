@@ -39,6 +39,7 @@
       "right": "vim::Right",
       "space": "vim::Space",
       "$": "vim::EndOfLine",
+      "end": "vim::EndOfLine",
       "^": "vim::FirstNonWhitespace",
       "_": "vim::StartOfLineDownward",
       "g _": "vim::EndOfLineDownward",
@@ -80,6 +81,7 @@
       "g shift-e": ["vim::PreviousWordEnd", { "ignorePunctuation": true }],
 
       "/": "vim::Search",
+      "g /": "pane::DeploySearch",
       "?": [
         "vim::Search",
         {
@@ -139,7 +141,8 @@
       "ctrl-q": "vim::ToggleVisualBlock",
       "shift-k": "editor::Hover",
       "shift-r": "vim::ToggleReplace",
-      "0": "vim::StartOfLine", // When no number operator present, use start of line motion
+      "0": "vim::StartOfLine",
+      "home": "vim::StartOfLine",
       "ctrl-f": "vim::PageDown",
       "pagedown": "vim::PageDown",
       "ctrl-b": "vim::PageUp",
@@ -245,9 +248,10 @@
           "displayLines": true
         }
       ],
+      "g v": "vim::RestoreVisualSelection",
       "g ]": "editor::GoToDiagnostic",
       "g [": "editor::GoToPrevDiagnostic",
-      "g i": ["workspace::SendKeystrokes", "` ^ i"],
+      "g i": "vim::InsertAtPrevious",
       "g ,": "vim::ChangeListNewer",
       "g ;": "vim::ChangeListOlder",
       "shift-h": "vim::WindowTop",
@@ -379,8 +383,12 @@
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
-      "> >": "vim::Indent",
-      "< <": "vim::Outdent",
+      ">": ["vim::PushOperator", "Indent"],
+      "<": ["vim::PushOperator", "Outdent"],
+      "g u": ["vim::PushOperator", "Lowercase"],
+      "g shift-u": ["vim::PushOperator", "Uppercase"],
+      "g ~": ["vim::PushOperator", "OppositeCase"],
+      "\"": ["vim::PushOperator", "Register"],
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       // tree-sitter related commands
@@ -395,13 +403,14 @@
   {
     "context": "Editor && vim_mode == visual && vim_operator == none && !VimWaiting",
     "bindings": {
+      "\"": ["vim::PushOperator", "Register"],
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode"
     }
   },
   {
-    "context": "Editor && VimCount",
+    "context": "Editor && VimCount && vim_mode != insert",
     "bindings": {
       "0": ["vim::Number", 0]
     }
@@ -431,6 +440,27 @@
     }
   },
   {
+    "context": "Editor && vim_operator == gu",
+    "bindings": {
+      "g u": "vim::CurrentLine",
+      "u": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == gU",
+    "bindings": {
+      "g shift-u": "vim::CurrentLine",
+      "shift-u": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == g~",
+    "bindings": {
+      "g ~": "vim::CurrentLine",
+      "~": "vim::CurrentLine"
+    }
+  },
+  {
     "context": "Editor && vim_mode == normal && vim_operator == d",
     "bindings": {
       "s": ["vim::PushOperator", "DeleteSurrounds"]
@@ -457,6 +487,18 @@
     "context": "Editor && vim_operator == ys",
     "bindings": {
       "s": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == >",
+    "bindings": {
+      ">": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_operator == <",
+    "bindings": {
+      "<": "vim::CurrentLine"
     }
   },
   {
@@ -594,8 +636,7 @@
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
-      "ctrl-r \"": "editor::Paste",
-      "ctrl-r +": "editor::Paste"
+      "ctrl-r": ["vim::PushOperator", "Register"]
     }
   },
   {

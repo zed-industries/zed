@@ -1378,7 +1378,7 @@ async fn test_unshare_project(
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     executor.run_until_parked();
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
 
     project_b
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
@@ -1403,7 +1403,7 @@ async fn test_unshare_project(
         .unwrap();
     executor.run_until_parked();
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| !tree.has_update_observer()));
 
     assert!(project_c.read_with(cx_c, |project, _| project.is_disconnected()));
 
@@ -1415,7 +1415,7 @@ async fn test_unshare_project(
     let project_c2 = client_c.build_dev_server_project(project_id, cx_c).await;
     executor.run_until_parked();
 
-    assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+    assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
     project_c2
         .update(cx_c, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
@@ -1522,7 +1522,7 @@ async fn test_project_reconnect(
     executor.run_until_parked();
 
     let worktree1_id = worktree_a1.read_with(cx_a, |worktree, _| {
-        assert!(worktree.as_local().unwrap().is_shared());
+        assert!(worktree.has_update_observer());
         worktree.id()
     });
     let (worktree_a2, _) = project_a1
@@ -1534,7 +1534,7 @@ async fn test_project_reconnect(
     executor.run_until_parked();
 
     let worktree2_id = worktree_a2.read_with(cx_a, |tree, _| {
-        assert!(tree.as_local().unwrap().is_shared());
+        assert!(tree.has_update_observer());
         tree.id()
     });
     executor.run_until_parked();
@@ -1567,9 +1567,7 @@ async fn test_project_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
-    worktree_a1.read_with(cx_a, |tree, _| {
-        assert!(tree.as_local().unwrap().is_shared())
-    });
+    worktree_a1.read_with(cx_a, |tree, _| assert!(tree.has_update_observer()));
 
     // While client A is disconnected, add and remove files from client A's project.
     client_a
@@ -1611,7 +1609,7 @@ async fn test_project_reconnect(
         .await;
 
     let worktree3_id = worktree_a3.read_with(cx_a, |tree, _| {
-        assert!(!tree.as_local().unwrap().is_shared());
+        assert!(!tree.has_update_observer());
         tree.id()
     });
     executor.run_until_parked();
@@ -1634,7 +1632,7 @@ async fn test_project_reconnect(
 
     project_a1.read_with(cx_a, |project, cx| {
         assert!(project.is_shared());
-        assert!(worktree_a1.read(cx).as_local().unwrap().is_shared());
+        assert!(worktree_a1.read(cx).has_update_observer());
         assert_eq!(
             worktree_a1
                 .read(cx)
@@ -1652,7 +1650,7 @@ async fn test_project_reconnect(
                 "subdir2/i.txt"
             ]
         );
-        assert!(worktree_a3.read(cx).as_local().unwrap().is_shared());
+        assert!(worktree_a3.read(cx).has_update_observer());
         assert_eq!(
             worktree_a3
                 .read(cx)
@@ -1733,7 +1731,7 @@ async fn test_project_reconnect(
     executor.run_until_parked();
 
     let worktree4_id = worktree_a4.read_with(cx_a, |tree, _| {
-        assert!(tree.as_local().unwrap().is_shared());
+        assert!(tree.has_update_observer());
         tree.id()
     });
     project_a1.update(cx_a, |project, cx| {
@@ -3899,7 +3897,7 @@ async fn test_collaborating_with_diagnostics(
         .await;
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Uri::from_file_path("/a/a.rs").unwrap().into(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -3919,7 +3917,7 @@ async fn test_collaborating_with_diagnostics(
         .unwrap();
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Uri::from_file_path("/a/a.rs").unwrap().into(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::ERROR),
@@ -3993,7 +3991,7 @@ async fn test_collaborating_with_diagnostics(
     // Simulate a language server reporting more errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Uri::from_file_path("/a/a.rs").unwrap().into(),
             version: None,
             diagnostics: vec![
                 lsp::Diagnostic {
@@ -4087,7 +4085,7 @@ async fn test_collaborating_with_diagnostics(
     // Simulate a language server reporting no errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Uri::from_file_path("/a/a.rs").unwrap().into(),
             version: None,
             diagnostics: vec![],
         },
@@ -4191,7 +4189,9 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     for file_name in file_names {
         fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
             lsp::PublishDiagnosticsParams {
-                uri: lsp::Url::from_file_path(Path::new("/test").join(file_name)).unwrap(),
+                uri: lsp::Uri::from_file_path(Path::new("/test").join(file_name))
+                    .unwrap()
+                    .into(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -4609,7 +4609,7 @@ async fn test_definition(
     fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
+                lsp::Uri::from_file_path("/root/dir-2/b.rs").unwrap().into(),
                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
             ),
         )))
@@ -4638,7 +4638,7 @@ async fn test_definition(
     fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
+                lsp::Uri::from_file_path("/root/dir-2/b.rs").unwrap().into(),
                 lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
             ),
         )))
@@ -4674,7 +4674,7 @@ async fn test_definition(
             );
             Ok(Some(lsp::GotoDefinitionResponse::Scalar(
                 lsp::Location::new(
-                    lsp::Url::from_file_path("/root/dir-2/c.rs").unwrap(),
+                    lsp::Uri::from_file_path("/root/dir-2/c.rs").unwrap().into(),
                     lsp::Range::new(lsp::Position::new(0, 5), lsp::Position::new(0, 7)),
                 ),
             )))
@@ -4786,15 +4786,21 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Ok(Some(vec![
             lsp::Location {
-                uri: lsp::Url::from_file_path("/root/dir-1/two.rs").unwrap(),
+                uri: lsp::Uri::from_file_path("/root/dir-1/two.rs")
+                    .unwrap()
+                    .into(),
                 range: lsp::Range::new(lsp::Position::new(0, 24), lsp::Position::new(0, 27)),
             },
             lsp::Location {
-                uri: lsp::Url::from_file_path("/root/dir-1/two.rs").unwrap(),
+                uri: lsp::Uri::from_file_path("/root/dir-1/two.rs")
+                    .unwrap()
+                    .into(),
                 range: lsp::Range::new(lsp::Position::new(0, 35), lsp::Position::new(0, 38)),
             },
             lsp::Location {
-                uri: lsp::Url::from_file_path("/root/dir-2/three.rs").unwrap(),
+                uri: lsp::Uri::from_file_path("/root/dir-2/three.rs")
+                    .unwrap()
+                    .into(),
                 range: lsp::Range::new(lsp::Position::new(0, 37), lsp::Position::new(0, 40)),
             },
         ])))
@@ -5294,7 +5300,9 @@ async fn test_project_symbols(
             lsp::SymbolInformation {
                 name: "TWO".into(),
                 location: lsp::Location {
-                    uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
+                    uri: lsp::Uri::from_file_path("/code/crate-2/two.rs")
+                        .unwrap()
+                        .into(),
                     range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                 },
                 kind: lsp::SymbolKind::CONSTANT,
@@ -5384,7 +5392,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Url::from_file_path("/root/b.rs").unwrap(),
+                lsp::Uri::from_file_path("/root/b.rs").unwrap().into(),
                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
             ),
         )))

@@ -153,7 +153,7 @@ impl EditorElement {
     fn register_actions(&self, cx: &mut WindowContext) {
         let view = &self.editor;
         view.update(cx, |editor, cx| {
-            for action in editor.editor_actions.iter() {
+            for action in editor.editor_actions.borrow().values() {
                 (action)(cx)
             }
         });
@@ -318,6 +318,7 @@ impl EditorElement {
         register_action(view, cx, Editor::open_excerpts);
         register_action(view, cx, Editor::open_excerpts_in_split);
         register_action(view, cx, Editor::toggle_soft_wrap);
+        register_action(view, cx, Editor::toggle_tab_bar);
         register_action(view, cx, Editor::toggle_line_numbers);
         register_action(view, cx, Editor::toggle_indent_guides);
         register_action(view, cx, Editor::toggle_inlay_hints);
@@ -585,7 +586,7 @@ impl EditorElement {
             editor.handle_click_hovered_link(point, event.modifiers, cx);
 
             cx.stop_propagation();
-        } else if end_selection {
+        } else if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
         } else if cfg!(target_os = "linux") && event.button == MouseButton::Middle {
             if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
@@ -593,7 +594,7 @@ impl EditorElement {
             }
 
             #[cfg(target_os = "linux")]
-            if let Some(item) = cx.read_from_clipboard() {
+            if let Some(item) = cx.read_from_primary() {
                 let point_for_position =
                     position_map.point_for_position(text_hitbox.bounds, event.position);
                 let position = point_for_position.previous_valid;
@@ -1220,34 +1221,41 @@ impl EditorElement {
                 .collect::<HashMap<_, _>>()
         });
 
+        let git_gutter_setting = ProjectSettings::get_global(cx)
+            .git
+            .git_gutter
+            .unwrap_or_default();
         buffer_snapshot
             .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
             .map(|hunk| diff_hunk_to_display(&hunk, snapshot))
             .dedup()
-            .map(|hunk| {
-                let hitbox = if let DisplayDiffHunk::Unfolded {
-                    display_row_range, ..
-                } = &hunk
-                {
-                    let was_expanded = expanded_hunk_display_rows
-                        .get(&display_row_range.start)
-                        .map(|expanded_end_row| expanded_end_row == &display_row_range.end)
-                        .unwrap_or(false);
-                    if was_expanded {
-                        None
+            .map(|hunk| match git_gutter_setting {
+                GitGutterSetting::TrackedFiles => {
+                    let hitbox = if let DisplayDiffHunk::Unfolded {
+                        display_row_range, ..
+                    } = &hunk
+                    {
+                        let was_expanded = expanded_hunk_display_rows
+                            .get(&display_row_range.start)
+                            .map(|expanded_end_row| expanded_end_row == &display_row_range.end)
+                            .unwrap_or(false);
+                        if was_expanded {
+                            None
+                        } else {
+                            let hunk_bounds = Self::diff_hunk_bounds(
+                                &snapshot,
+                                line_height,
+                                gutter_hitbox.bounds,
+                                &hunk,
+                            );
+                            Some(cx.insert_hitbox(hunk_bounds, true))
+                        }
                     } else {
-                        let hunk_bounds = Self::diff_hunk_bounds(
-                            &snapshot,
-                            line_height,
-                            gutter_hitbox.bounds,
-                            &hunk,
-                        );
-                        Some(cx.insert_hitbox(hunk_bounds, true))
-                    }
-                } else {
-                    None
-                };
-                (hunk, hitbox)
+                        None
+                    };
+                    (hunk, hitbox)
+                }
+                GitGutterSetting::Hide => (hunk, None),
             })
             .collect()
     }
@@ -2829,6 +2837,8 @@ impl EditorElement {
             Self::paint_diff_hunks(layout.gutter_hitbox.bounds, layout, cx)
         }
 
+        self.paint_gutter_highlights(layout, cx);
+
         if layout.blamed_display_rows.is_some() {
             self.paint_blamed_display_rows(layout, cx);
         }
@@ -2996,6 +3006,37 @@ impl EditorElement {
                 }
             },
         }
+    }
+
+    fn paint_gutter_highlights(&self, layout: &EditorLayout, cx: &mut WindowContext) {
+        let highlight_width = 0.275 * layout.position_map.line_height;
+        let highlight_corner_radii = Corners::all(0.05 * layout.position_map.line_height);
+        cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
+            for (range, color) in &layout.highlighted_gutter_ranges {
+                let start_row = if range.start.row() < layout.visible_display_row_range.start {
+                    layout.visible_display_row_range.start - DisplayRow(1)
+                } else {
+                    range.start.row()
+                };
+                let end_row = if range.end.row() > layout.visible_display_row_range.end {
+                    layout.visible_display_row_range.end + DisplayRow(1)
+                } else {
+                    range.end.row()
+                };
+
+                let start_y = layout.gutter_hitbox.top()
+                    + start_row.0 as f32 * layout.position_map.line_height
+                    - layout.position_map.scroll_pixel_position.y;
+                let end_y = layout.gutter_hitbox.top()
+                    + (end_row.0 + 1) as f32 * layout.position_map.line_height
+                    - layout.position_map.scroll_pixel_position.y;
+                let bounds = Bounds::from_corners(
+                    point(layout.gutter_hitbox.left(), start_y),
+                    point(layout.gutter_hitbox.left() + highlight_width, end_y),
+                );
+                cx.paint_quad(fill(bounds, *color).corner_radii(highlight_corner_radii));
+            }
+        });
     }
 
     fn paint_blamed_display_rows(&self, layout: &mut EditorLayout, cx: &mut WindowContext) {
@@ -4064,6 +4105,7 @@ impl LineWithInvisibles {
                                 if non_whitespace_added || !inside_wrapped_string {
                                     invisibles.push(Invisible::Tab {
                                         line_start_offset: line.len(),
+                                        line_end_offset: line.len() + line_chunk.len(),
                                     });
                                 }
                             } else {
@@ -4179,16 +4221,15 @@ impl LineWithInvisibles {
         whitespace_setting: ShowWhitespaceSetting,
         cx: &mut WindowContext,
     ) {
-        let allowed_invisibles_regions = match whitespace_setting {
-            ShowWhitespaceSetting::None => return,
-            ShowWhitespaceSetting::Selection => Some(selection_ranges),
-            ShowWhitespaceSetting::All => None,
-        };
-
-        for invisible in &self.invisibles {
-            let (&token_offset, invisible_symbol) = match invisible {
-                Invisible::Tab { line_start_offset } => (line_start_offset, &layout.tab_invisible),
-                Invisible::Whitespace { line_offset } => (line_offset, &layout.space_invisible),
+        let extract_whitespace_info = |invisible: &Invisible| {
+            let (token_offset, token_end_offset, invisible_symbol) = match invisible {
+                Invisible::Tab {
+                    line_start_offset,
+                    line_end_offset,
+                } => (*line_start_offset, *line_end_offset, &layout.tab_invisible),
+                Invisible::Whitespace { line_offset } => {
+                    (*line_offset, line_offset + 1, &layout.space_invisible)
+                }
             };
 
             let x_offset = self.x_for_index(token_offset);
@@ -4200,17 +4241,73 @@ impl LineWithInvisibles {
                     line_y,
                 );
 
-            if let Some(allowed_regions) = allowed_invisibles_regions {
-                let invisible_point = DisplayPoint::new(row, token_offset as u32);
-                if !allowed_regions
+            (
+                [token_offset, token_end_offset],
+                Box::new(move |cx: &mut WindowContext| {
+                    invisible_symbol.paint(origin, line_height, cx).log_err();
+                }),
+            )
+        };
+
+        let invisible_iter = self.invisibles.iter().map(extract_whitespace_info);
+        match whitespace_setting {
+            ShowWhitespaceSetting::None => return,
+            ShowWhitespaceSetting::All => invisible_iter.for_each(|(_, paint)| paint(cx)),
+            ShowWhitespaceSetting::Selection => invisible_iter.for_each(|([start, _], paint)| {
+                let invisible_point = DisplayPoint::new(row, start as u32);
+                if !selection_ranges
                     .iter()
                     .any(|region| region.start <= invisible_point && invisible_point < region.end)
                 {
-                    continue;
+                    return;
+                }
+
+                paint(cx);
+            }),
+
+            // For a whitespace to be on a boundary, any of the following conditions need to be met:
+            // - It is a tab
+            // - It is adjacent to an edge (start or end)
+            // - It is adjacent to a whitespace (left or right)
+            ShowWhitespaceSetting::Boundary => {
+                // We'll need to keep track of the last invisible we've seen and then check if we are adjacent to it for some of
+                // the above cases.
+                // Note: We zip in the original `invisibles` to check for tab equality
+                let mut last_seen: Option<(bool, usize, Box<dyn Fn(&mut WindowContext)>)> = None;
+                for (([start, end], paint), invisible) in
+                    invisible_iter.zip_eq(self.invisibles.iter())
+                {
+                    let should_render = match (&last_seen, invisible) {
+                        (_, Invisible::Tab { .. }) => true,
+                        (Some((_, last_end, _)), _) => *last_end == start,
+                        _ => false,
+                    };
+
+                    if should_render || start == 0 || end == self.len {
+                        paint(cx);
+
+                        // Since we are scanning from the left, we will skip over the first available whitespace that is part
+                        // of a boundary between non-whitespace segments, so we correct by manually redrawing it if needed.
+                        if let Some((should_render_last, last_end, paint_last)) = last_seen {
+                            // Note that we need to make sure that the last one is actually adjacent
+                            if !should_render_last && last_end == start {
+                                paint_last(cx);
+                            }
+                        }
+                    }
+
+                    // Manually render anything within a selection
+                    let invisible_point = DisplayPoint::new(row, start as u32);
+                    if selection_ranges.iter().any(|region| {
+                        region.start <= invisible_point && invisible_point < region.end
+                    }) {
+                        paint(cx);
+                    }
+
+                    last_seen = Some((should_render, end, paint));
                 }
             }
-            invisible_symbol.paint(origin, line_height, cx).log_err();
-        }
+        };
     }
 
     pub fn x_for_index(&self, index: usize) -> Pixels {
@@ -4300,8 +4397,18 @@ impl LineWithInvisibles {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Invisible {
-    Tab { line_start_offset: usize },
-    Whitespace { line_offset: usize },
+    /// A tab character
+    ///
+    /// A tab character is internally represented by spaces (configured by the user's tab width)
+    /// aligned to the nearest column, so it's necessary to store the start and end offset for
+    /// adjacency checks.
+    Tab {
+        line_start_offset: usize,
+        line_end_offset: usize,
+    },
+    Whitespace {
+        line_offset: usize,
+    },
 }
 
 impl EditorElement {
@@ -4557,6 +4664,12 @@ impl Element for EditorElement {
                         &snapshot.display_snapshot,
                         cx.theme().colors(),
                     );
+                    let highlighted_gutter_ranges =
+                        self.editor.read(cx).gutter_highlights_in_range(
+                            start_anchor..end_anchor,
+                            &snapshot.display_snapshot,
+                            cx,
+                        );
 
                     let redacted_ranges = self.editor.read(cx).redacted_ranges(
                         start_anchor..end_anchor,
@@ -4917,6 +5030,7 @@ impl Element for EditorElement {
                         active_rows,
                         highlighted_rows,
                         highlighted_ranges,
+                        highlighted_gutter_ranges,
                         redacted_ranges,
                         line_elements,
                         line_numbers,
@@ -5047,6 +5161,7 @@ pub struct EditorLayout {
     inline_blame: Option<AnyElement>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+    highlighted_gutter_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     redacted_ranges: Vec<Range<DisplayPoint>>,
     cursors: Vec<(DisplayPoint, Hsla)>,
     visible_cursors: Vec<CursorLayout>,
@@ -5846,15 +5961,18 @@ mod tests {
         let expected_invisibles = vec![
             Invisible::Tab {
                 line_start_offset: 0,
+                line_end_offset: TAB_SIZE as usize,
             },
             Invisible::Whitespace {
                 line_offset: TAB_SIZE as usize,
             },
             Invisible::Tab {
                 line_start_offset: TAB_SIZE as usize + 1,
+                line_end_offset: TAB_SIZE as usize * 2,
             },
             Invisible::Tab {
                 line_start_offset: TAB_SIZE as usize * 2 + 1,
+                line_end_offset: TAB_SIZE as usize * 3,
             },
             Invisible::Whitespace {
                 line_offset: TAB_SIZE as usize * 3 + 1,
@@ -5908,10 +6026,11 @@ mod tests {
     #[gpui::test]
     fn test_wrapped_invisibles_drawing(cx: &mut TestAppContext) {
         let tab_size = 4;
-        let input_text = "a\tbcd   ".repeat(9);
+        let input_text = "a\tbcd     ".repeat(9);
         let repeated_invisibles = [
             Invisible::Tab {
                 line_start_offset: 1,
+                line_end_offset: tab_size as usize,
             },
             Invisible::Whitespace {
                 line_offset: tab_size as usize + 3,
@@ -5921,6 +6040,12 @@ mod tests {
             },
             Invisible::Whitespace {
                 line_offset: tab_size as usize + 5,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 6,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 7,
             },
         ];
         let expected_invisibles = std::iter::once(repeated_invisibles)

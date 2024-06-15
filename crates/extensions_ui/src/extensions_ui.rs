@@ -16,6 +16,7 @@ use gpui::{
     InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
+use num_format::{Locale, ToFormattedString};
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use std::ops::DerefMut;
@@ -487,8 +488,11 @@ impl ExtensionsPage {
                         .size(LabelSize::Small),
                     )
                     .child(
-                        Label::new(format!("Downloads: {}", extension.download_count))
-                            .size(LabelSize::Small),
+                        Label::new(format!(
+                            "Downloads: {}",
+                            extension.download_count.to_formatted_string(&Locale::en)
+                        ))
+                        .size(LabelSize::Small),
                     ),
             )
             .child(
@@ -769,7 +773,7 @@ impl ExtensionsPage {
         event: &editor::EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let editor::EditorEvent::Edited = event {
+        if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
             self.fetch_extensions_debounced(cx);
         }

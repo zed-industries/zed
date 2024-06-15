@@ -91,6 +91,10 @@ impl BufferId {
         self.0 = self.0.saturating_add(1);
         old
     }
+
+    pub fn to_proto(self) -> u64 {
+        self.into()
+    }
 }
 impl From<BufferId> for u64 {
     fn from(id: BufferId) -> Self {
@@ -350,6 +354,19 @@ impl History {
         } else {
             None
         }
+    }
+
+    fn transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        let entry = self
+            .undo_stack
+            .iter()
+            .rfind(|entry| entry.transaction.id == transaction_id)
+            .or_else(|| {
+                self.redo_stack
+                    .iter()
+                    .rfind(|entry| entry.transaction.id == transaction_id)
+            })?;
+        Some(&entry.transaction)
     }
 
     fn transaction_mut(&mut self, transaction_id: TransactionId) -> Option<&mut Transaction> {
@@ -1383,6 +1400,19 @@ impl Buffer {
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         self.history.push_transaction(transaction, now);
         self.history.finalize_last_transaction();
+    }
+
+    pub fn edited_ranges_for_transaction_id<D>(
+        &self,
+        transaction_id: TransactionId,
+    ) -> impl '_ + Iterator<Item = Range<D>>
+    where
+        D: TextDimension,
+    {
+        self.history
+            .transaction(transaction_id)
+            .into_iter()
+            .flat_map(|transaction| self.edited_ranges_for_transaction(transaction))
     }
 
     pub fn edited_ranges_for_transaction<'a, D>(

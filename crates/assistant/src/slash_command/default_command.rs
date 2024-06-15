@@ -34,7 +34,7 @@ impl SlashCommand for DefaultSlashCommand {
         &self,
         _query: String,
         _cancellation_flag: Arc<AtomicBool>,
-        _workspace: WeakView<Workspace>,
+        _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))

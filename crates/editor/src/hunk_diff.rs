@@ -10,7 +10,7 @@ use language::Buffer;
 use multi_buffer::{
     Anchor, ExcerptRange, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToPoint,
 };
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use text::{BufferId, Point};
 use ui::{
     div, ActiveTheme, Context as _, IntoElement, ParentElement, Styled, ViewContext, VisualContext,
@@ -21,7 +21,7 @@ use crate::{
     editor_settings::CurrentLineHighlight,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hunk_status, hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle,
-    DiffRowHighlight, Editor, EditorSettings, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
+    DiffRowHighlight, Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt,
     RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
@@ -591,7 +591,7 @@ fn editor_with_deleted_text(
         let subscription_editor = parent_editor.clone();
         editor._subscriptions.extend([
             cx.on_blur(&editor.focus_handle, |editor, cx| {
-                editor.set_current_line_highlight(CurrentLineHighlight::None);
+                editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                 editor.change_selections(None, cx, |s| {
                     s.try_cancel();
                 });
@@ -602,45 +602,49 @@ fn editor_with_deleted_text(
                 {
                     parent_editor.read(cx).current_line_highlight
                 } else {
-                    EditorSettings::get_global(cx).current_line_highlight
+                    None
                 };
                 editor.set_current_line_highlight(restored_highlight);
                 cx.notify();
             }),
             cx.observe_global::<SettingsStore>(|editor, cx| {
                 if !editor.is_focused(cx) {
-                    editor.set_current_line_highlight(CurrentLineHighlight::None);
+                    editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                 }
             }),
         ]);
         let original_multi_buffer_range = hunk.multi_buffer_range.clone();
         let diff_base_range = hunk.diff_base_byte_range.clone();
-        editor.register_action::<RevertSelectedHunks>(move |_, cx| {
-            parent_editor
-                .update(cx, |editor, cx| {
-                    let Some((buffer, original_text)) = editor.buffer().update(cx, |buffer, cx| {
-                        let (_, buffer, _) =
-                            buffer.excerpt_containing(original_multi_buffer_range.start, cx)?;
-                        let original_text =
-                            buffer.read(cx).diff_base()?.slice(diff_base_range.clone());
-                        Some((buffer, Arc::from(original_text.to_string())))
-                    }) else {
-                        return;
-                    };
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.edit(
-                            Some((
-                                original_multi_buffer_range.start.text_anchor
-                                    ..original_multi_buffer_range.end.text_anchor,
-                                original_text,
-                            )),
-                            None,
-                            cx,
-                        )
-                    });
-                })
-                .ok();
-        });
+        editor
+            .register_action::<RevertSelectedHunks>(move |_, cx| {
+                parent_editor
+                    .update(cx, |editor, cx| {
+                        let Some((buffer, original_text)) =
+                            editor.buffer().update(cx, |buffer, cx| {
+                                let (_, buffer, _) = buffer
+                                    .excerpt_containing(original_multi_buffer_range.start, cx)?;
+                                let original_text =
+                                    buffer.read(cx).diff_base()?.slice(diff_base_range.clone());
+                                Some((buffer, Arc::from(original_text.to_string())))
+                            })
+                        else {
+                            return;
+                        };
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.edit(
+                                Some((
+                                    original_multi_buffer_range.start.text_anchor
+                                        ..original_multi_buffer_range.end.text_anchor,
+                                    original_text,
+                                )),
+                                None,
+                                cx,
+                            )
+                        });
+                    })
+                    .ok();
+            })
+            .detach();
         editor
     });
 

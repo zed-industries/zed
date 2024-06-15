@@ -1,13 +1,12 @@
 use crate::{Event, *};
 use fs::FakeFs;
 use futures::{future, StreamExt};
-use gpui::{AppContext, UpdateGlobal};
+use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
-use lsp::Url;
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -17,7 +16,6 @@ use std::task::Poll;
 use task::{ResolvedTask, TaskContext, TaskTemplate, TaskTemplates};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
-use worktree::WorktreeModelHandle as _;
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -25,7 +23,7 @@ async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
 
     let (tx, mut rx) = futures::channel::mpsc::unbounded();
     let _thread = std::thread::spawn(move || {
-        std::fs::metadata("/Users").unwrap();
+        std::fs::metadata("/tmp").unwrap();
         std::thread::sleep(Duration::from_millis(1000));
         tx.unbounded_send(1).unwrap();
     });
@@ -379,7 +377,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            uri: lsp::Uri::from_file_path("/the-root/test.rs")
+                .unwrap()
+                .into(),
             version: 0,
             text: "const A: i32 = 1;".to_string(),
             language_id: "rust".to_string(),
@@ -405,7 +405,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::VersionedTextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            lsp::Uri::from_file_path("/the-root/test.rs")
+                .unwrap()
+                .into(),
             1
         )
     );
@@ -426,7 +428,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+            uri: lsp::Uri::from_file_path("/the-root/package.json")
+                .unwrap()
+                .into(),
             version: 0,
             text: "{\"a\": 1}".to_string(),
             language_id: "json".to_string(),
@@ -465,7 +469,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::VersionedTextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/test2.rs").unwrap(),
+            lsp::Uri::from_file_path("/the-root/test2.rs")
+                .unwrap()
+                .into(),
             1
         )
     );
@@ -480,14 +486,22 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidSaveTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap())
+        lsp::TextDocumentIdentifier::new(
+            lsp::Uri::from_file_path("/the-root/Cargo.toml")
+                .unwrap()
+                .into()
+        )
     );
     assert_eq!(
         fake_json_server
             .receive_notification::<lsp::notification::DidSaveTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap())
+        lsp::TextDocumentIdentifier::new(
+            lsp::Uri::from_file_path("/the-root/Cargo.toml")
+                .unwrap()
+                .into()
+        )
     );
 
     // Renames are reported only to servers matching the buffer's language.
@@ -503,7 +517,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidCloseTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/test2.rs").unwrap()),
+        lsp::TextDocumentIdentifier::new(
+            lsp::Uri::from_file_path("/the-root/test2.rs")
+                .unwrap()
+                .into()
+        ),
     );
     assert_eq!(
         fake_rust_server
@@ -511,7 +529,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),
+            uri: lsp::Uri::from_file_path("/the-root/test3.rs")
+                .unwrap()
+                .into(),
             version: 0,
             text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
             language_id: "rust".to_string(),
@@ -553,7 +573,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidCloseTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),),
+        lsp::TextDocumentIdentifier::new(
+            lsp::Uri::from_file_path("/the-root/test3.rs")
+                .unwrap()
+                .into(),
+        ),
     );
     assert_eq!(
         fake_json_server
@@ -561,7 +585,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+            uri: lsp::Uri::from_file_path("/the-root/test3.json")
+                .unwrap()
+                .into(),
             version: 0,
             text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
             language_id: "json".to_string(),
@@ -587,7 +613,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::VersionedTextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+            lsp::Uri::from_file_path("/the-root/test3.json")
+                .unwrap()
+                .into(),
             1
         )
     );
@@ -616,7 +644,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            uri: lsp::Uri::from_file_path("/the-root/test.rs")
+                .unwrap()
+                .into(),
             version: 0,
             text: rust_buffer.update(cx, |buffer, _| buffer.text()),
             language_id: "rust".to_string(),
@@ -637,13 +667,17 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         ],
         [
             lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+                uri: lsp::Uri::from_file_path("/the-root/package.json")
+                    .unwrap()
+                    .into(),
                 version: 0,
                 text: json_buffer.update(cx, |buffer, _| buffer.text()),
                 language_id: "json".to_string(),
             },
             lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+                uri: lsp::Uri::from_file_path("/the-root/test3.json")
+                    .unwrap()
+                    .into(),
                 version: 0,
                 text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
                 language_id: "json".to_string(),
@@ -655,7 +689,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     cx.update(|_| drop(json_buffer));
     let close_message = lsp::DidCloseTextDocumentParams {
         text_document: lsp::TextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+            lsp::Uri::from_file_path("/the-root/package.json")
+                .unwrap()
+                .into(),
         ),
     };
     assert_eq!(
@@ -728,7 +764,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             worktree
                 .read(cx)
                 .snapshot()
-                .entries(true)
+                .entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
@@ -802,7 +838,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             worktree
                 .read(cx)
                 .snapshot()
-                .entries(true)
+                .entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
@@ -845,15 +881,21 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         &*file_changes.lock(),
         &[
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/src/b.rs").unwrap(),
+                uri: lsp::Uri::from_file_path("/the-root/src/b.rs")
+                    .unwrap()
+                    .into(),
                 typ: lsp::FileChangeType::DELETED,
             },
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/src/c.rs").unwrap(),
+                uri: lsp::Uri::from_file_path("/the-root/src/c.rs")
+                    .unwrap()
+                    .into(),
                 typ: lsp::FileChangeType::CREATED,
             },
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/target/y/out/y2.rs").unwrap(),
+                uri: lsp::Uri::from_file_path("/the-root/target/y/out/y2.rs")
+                    .unwrap()
+                    .into(),
                 typ: lsp::FileChangeType::CREATED,
             },
         ]
@@ -890,7 +932,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
             .update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
-                    uri: Url::from_file_path("/dir/a.rs").unwrap(),
+                    uri: Uri::from_file_path("/dir/a.rs").unwrap().into(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 5)),
@@ -907,7 +949,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
             .update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
-                    uri: Url::from_file_path("/dir/b.rs").unwrap(),
+                    uri: Uri::from_file_path("/dir/b.rs").unwrap().into(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 5)),
@@ -996,7 +1038,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
             .update_diagnostics(
                 server_id,
                 lsp::PublishDiagnosticsParams {
-                    uri: Url::from_file_path("/root/dir/b.rs").unwrap(),
+                    uri: Uri::from_file_path("/root/dir/b.rs").unwrap().into(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 5)),
@@ -1013,7 +1055,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
             .update_diagnostics(
                 server_id,
                 lsp::PublishDiagnosticsParams {
-                    uri: Url::from_file_path("/root/other.rs").unwrap(),
+                    uri: Uri::from_file_path("/root/other.rs").unwrap().into(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 9)),
@@ -1148,7 +1190,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     );
 
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: Uri::from_file_path("/dir/a.rs").unwrap().into(),
         version: None,
         diagnostics: vec![lsp::Diagnostic {
             range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
@@ -1200,7 +1242,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
 
     // Ensure publishing empty diagnostics twice only results in one update event.
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: Uri::from_file_path("/dir/a.rs").unwrap().into(),
         version: None,
         diagnostics: Default::default(),
     });
@@ -1213,7 +1255,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     );
 
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: Uri::from_file_path("/dir/a.rs").unwrap().into(),
         version: None,
         diagnostics: Default::default(),
     });
@@ -1295,7 +1337,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             project
                 .language_servers_running_disk_based_diagnostics()
                 .collect::<Vec<_>>(),
-            [LanguageServerId(0); 0]
+            [] as [language::LanguageServerId; 0]
         );
     });
 }
@@ -1322,7 +1364,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     // Publish diagnostics
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: Uri::from_file_path("/dir/a.rs").unwrap().into(),
         version: None,
         diagnostics: vec![lsp::Diagnostic {
             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
@@ -1402,7 +1444,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     // Before restarting the server, report diagnostics with an unknown buffer version.
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: lsp::Uri::from_file_path("/dir/a.rs").unwrap().into(),
         version: Some(10000),
         diagnostics: Vec::new(),
     });
@@ -1578,7 +1620,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
     // Report some diagnostics for the initial version of the buffer
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: lsp::Uri::from_file_path("/dir/a.rs").unwrap().into(),
         version: Some(open_notification.text_document.version),
         diagnostics: vec![
             lsp::Diagnostic {
@@ -1664,7 +1706,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
     // Ensure overlapping diagnostics are highlighted correctly.
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: lsp::Uri::from_file_path("/dir/a.rs").unwrap().into(),
         version: Some(open_notification.text_document.version),
         diagnostics: vec![
             lsp::Diagnostic {
@@ -1756,7 +1798,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
     // Handle out-of-order diagnostics
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-        uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+        uri: lsp::Uri::from_file_path("/dir/a.rs").unwrap().into(),
         version: Some(change_notification_2.text_document.version),
         diagnostics: vec![
             lsp::Diagnostic {
@@ -2350,14 +2392,14 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
         let params = params.text_document_position_params;
         assert_eq!(
-            params.text_document.uri.to_file_path().unwrap(),
+            Uri::from(params.text_document.uri).to_file_path().unwrap(),
             Path::new("/dir/b.rs"),
         );
         assert_eq!(params.position, lsp::Position::new(0, 22));
 
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+                lsp::Uri::from_file_path("/dir/a.rs").unwrap().into(),
                 lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
             ),
         )))
@@ -2456,7 +2498,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     let text = "let a = b.fqn";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len(), cx)
+        project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server
@@ -2483,7 +2525,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     let text = "let a = \"atoms/cmp\"";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len() - 1, cx)
+        project.completions(&buffer, text.len() - 1, DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server
@@ -2548,7 +2590,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
     let text = "let a = b.fqn";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len(), cx)
+        project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server
@@ -2665,7 +2707,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                                 edit: lsp::WorkspaceEdit {
                                     changes: Some(
                                         [(
-                                            lsp::Url::from_file_path("/dir/a.ts").unwrap(),
+                                            lsp::Uri::from_file_path("/dir/a.ts").unwrap().into(),
                                             vec![lsp::TextEdit {
                                                 range: lsp::Range::new(
                                                     lsp::Position::new(0, 0),
@@ -2937,6 +2979,8 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test(retries = 5)]
 async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
+    use worktree::WorktreeModelHandle as _;
+
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -2955,7 +2999,6 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     }));
 
     let project = Project::test(Arc::new(RealFs::default()), [dir.path()], cx).await;
-    let rpc = project.update(cx, |p, _| p.client.clone());
 
     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
         let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
@@ -2982,21 +3025,26 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
 
     // Create a remote copy of this worktree.
     let tree = project.update(cx, |project, _| project.worktrees().next().unwrap());
-
-    let metadata = tree.update(cx, |tree, _| tree.as_local().unwrap().metadata_proto());
+    let metadata = tree.update(cx, |tree, _| tree.metadata_proto());
 
     let updates = Arc::new(Mutex::new(Vec::new()));
     tree.update(cx, |tree, cx| {
-        let _ = tree.as_local_mut().unwrap().observe_updates(0, cx, {
-            let updates = updates.clone();
-            move |update| {
-                updates.lock().push(update);
-                async { true }
-            }
+        let updates = updates.clone();
+        tree.observe_updates(0, cx, move |update| {
+            updates.lock().push(update);
+            async { true }
         });
     });
 
-    let remote = cx.update(|cx| Worktree::remote(1, 1, metadata, rpc.clone(), cx));
+    let remote = cx.update(|cx| {
+        Worktree::remote(
+            0,
+            1,
+            metadata,
+            Box::new(CollabRemoteWorktreeClient(project.read(cx).client())),
+            cx,
+        )
+    });
 
     cx.executor().run_until_parked();
 
@@ -3492,9 +3540,9 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let buffer_uri = Url::from_file_path("/the-dir/a.rs").unwrap();
+    let buffer_uri = Uri::from_file_path("/the-dir/a.rs").unwrap();
     let message = lsp::PublishDiagnosticsParams {
-        uri: buffer_uri.clone(),
+        uri: buffer_uri.clone().into(),
         diagnostics: vec![
             lsp::Diagnostic {
                 range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
@@ -3502,7 +3550,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 message: "error 1".to_string(),
                 related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                     location: lsp::Location {
-                        uri: buffer_uri.clone(),
+                        uri: buffer_uri.clone().into(),
                         range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
                     },
                     message: "error 1 hint 1".to_string(),
@@ -3515,7 +3563,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 message: "error 1 hint 1".to_string(),
                 related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                     location: lsp::Location {
-                        uri: buffer_uri.clone(),
+                        uri: buffer_uri.clone().into(),
                         range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
                     },
                     message: "original diagnostic".to_string(),
@@ -3529,7 +3577,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 related_information: Some(vec![
                     lsp::DiagnosticRelatedInformation {
                         location: lsp::Location {
-                            uri: buffer_uri.clone(),
+                            uri: buffer_uri.clone().into(),
                             range: lsp::Range::new(
                                 lsp::Position::new(1, 13),
                                 lsp::Position::new(1, 15),
@@ -3539,7 +3587,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     },
                     lsp::DiagnosticRelatedInformation {
                         location: lsp::Location {
-                            uri: buffer_uri.clone(),
+                            uri: buffer_uri.clone().into(),
                             range: lsp::Range::new(
                                 lsp::Position::new(1, 13),
                                 lsp::Position::new(1, 15),
@@ -3556,7 +3604,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 message: "error 2 hint 1".to_string(),
                 related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                     location: lsp::Location {
-                        uri: buffer_uri.clone(),
+                        uri: buffer_uri.clone().into(),
                         range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
                     },
                     message: "original diagnostic".to_string(),
@@ -3569,7 +3617,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 message: "error 2 hint 2".to_string(),
                 related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                     location: lsp::Location {
-                        uri: buffer_uri,
+                        uri: buffer_uri.into(),
                         range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
                     },
                     message: "original diagnostic".to_string(),
@@ -3786,14 +3834,14 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
                 changes: Some(
                     [
                         (
-                            lsp::Url::from_file_path("/dir/one.rs").unwrap(),
+                            lsp::Uri::from_file_path("/dir/one.rs").unwrap().into(),
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                                 "THREE".to_string(),
                             )],
                         ),
                         (
-                            lsp::Url::from_file_path("/dir/two.rs").unwrap(),
+                            lsp::Uri::from_file_path("/dir/two.rs").unwrap().into(),
                             vec![
                                 lsp::TextEdit::new(
                                     lsp::Range::new(
@@ -5131,7 +5179,7 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        release_channel::init("0.0.0", cx);
+        release_channel::init(SemanticVersion::default(), cx);
         language::init(cx);
         Project::init_settings(cx);
     });

@@ -161,10 +161,7 @@ mod linux {
         env,
         ffi::OsString,
         io,
-        os::{
-            linux::net::SocketAddrExt,
-            unix::net::{SocketAddr, UnixDatagram},
-        },
+        os::unix::net::{SocketAddr, UnixDatagram},
         path::{Path, PathBuf},
         process::{self, ExitStatus},
         thread,
@@ -175,6 +172,7 @@ mod linux {
     use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
     use fork::Fork;
     use once_cell::sync::Lazy;
+    use util::paths;
 
     use crate::{Detect, InstalledApp};
 
@@ -191,14 +189,15 @@ mod linux {
                 let cli = env::current_exe()?;
                 let dir = cli
                     .parent()
+                    .and_then(Path::parent)
                     .ok_or_else(|| anyhow!("no parent path for cli"))?;
 
-                match dir.join("zed").canonicalize() {
+                match dir.join("libexec").join("zed-editor").canonicalize() {
                     Ok(path) => Ok(path),
-                    // development builds have Zed capitalized
-                    Err(e) => match dir.join("Zed").canonicalize() {
-                        Ok(path) => Ok(path),
-                        Err(_) => Err(e),
+                    // In development cli and zed are in the ./target/ directory together
+                    Err(e) => match cli.parent().unwrap().join("zed").canonicalize() {
+                        Ok(path) if path != cli => Ok(path),
+                        _ => Err(e),
                     },
                 }
             }?;
@@ -222,12 +221,9 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let uid: u32 = unsafe { libc::getuid() };
-            let sock_addr =
-                SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL, uid))?;
-
+            let sock_path = paths::SUPPORT_DIR.join(format!("zed-{}.sock", *RELEASE_CHANNEL));
             let sock = UnixDatagram::unbound()?;
-            if sock.connect_addr(&sock_addr).is_err() {
+            if sock.connect(&sock_path).is_err() {
                 self.boot_background(ipc_url)?;
             } else {
                 sock.send(ipc_url.as_bytes())?;
@@ -254,10 +250,8 @@ mod linux {
                         eprintln!("failed to setsid: {}", std::io::Error::last_os_error());
                         process::exit(1);
                     }
-                    if std::env::var("ZED_KEEP_FD").is_err() {
-                        if let Err(_) = fork::close_fd() {
-                            eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
-                        }
+                    if let Err(_) = fork::close_fd() {
+                        eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                     }
                     let error =
                         exec::execvp(path.clone(), &[path.as_os_str(), &OsString::from(ipc_url)]);
@@ -315,7 +309,7 @@ mod flatpak {
         if let Some(flatpak_dir) = get_flatpak_dir() {
             let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
             args.append(&mut get_xdg_env_args());
-            args.push("--env=ZED_IS_FLATPAK_INSTALL=1".into());
+            args.push("--env=ZED_UPDATE_EXPLANATION=Please use flatpak to update zed".into());
             args.push(
                 format!(
                     "--env={EXTRA_LIB_ENV_NAME}={}",
@@ -333,7 +327,7 @@ mod flatpak {
 
             if !is_app_location_set {
                 args.push("--zed".into());
-                args.push(flatpak_dir.join("bin").join("zed-app").into());
+                args.push(flatpak_dir.join("libexec").join("zed-editor").into());
             }
 
             let error = exec::execvp("/usr/bin/flatpak-spawn", args);
@@ -347,8 +341,8 @@ mod flatpak {
             && env::var("FLATPAK_ID").map_or(false, |id| id.starts_with("dev.zed.Zed"))
         {
             if args.zed.is_none() {
-                args.zed = Some("/app/bin/zed-app".into());
-                env::set_var("ZED_IS_FLATPAK_INSTALL", "1");
+                args.zed = Some("/app/libexec/zed-editor".into());
+                env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed");
             }
         }
         args

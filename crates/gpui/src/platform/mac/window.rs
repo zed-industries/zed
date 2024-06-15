@@ -1,11 +1,10 @@
 use super::{ns_string, renderer, MacDisplay, NSRange, NSStringExt};
 use crate::{
-    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DevicePixels,
-    DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind,
-    WindowParams,
+    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DisplayLink,
+    ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -311,6 +310,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
 }
 
 #[allow(clippy::enum_variant_names)]
+#[derive(Clone)]
 enum ImeInput {
     InsertText(String, Option<Range<usize>>),
     SetMarkedText(String, Option<Range<usize>>, Option<Range<usize>>),
@@ -335,16 +335,15 @@ struct MacWindowState {
     input_handler: Option<PlatformInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
-    last_fresh_keydown: Option<Keystroke>,
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     // State tracking what the IME did after the last request
-    input_during_keydown: Option<SmallVec<[ImeInput; 1]>>,
+    last_ime_inputs: Option<SmallVec<[(String, Option<Range<usize>>); 1]>>,
     previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
-    fullscreen_restore_bounds: Bounds<DevicePixels>,
+    fullscreen_restore_bounds: Bounds<Pixels>,
 }
 
 impl MacWindowState {
@@ -438,7 +437,7 @@ impl MacWindowState {
         }
     }
 
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
         let screen_frame = unsafe {
             let screen = NSWindow::screen(self.native_window);
@@ -451,12 +450,12 @@ impl MacWindowState {
 
         let bounds = Bounds::new(
             point(
-                ((window_frame.origin.x - screen_frame.origin.x) as i32).into(),
-                ((window_frame.origin.y - screen_frame.origin.y) as i32).into(),
+                px((window_frame.origin.x - screen_frame.origin.x) as f32),
+                px((window_frame.origin.y - screen_frame.origin.y) as f32),
             ),
             size(
-                (window_frame.size.width as i32).into(),
-                (window_frame.size.height as i32).into(),
+                px(window_frame.size.width as f32),
+                px(window_frame.size.height as f32),
             ),
         );
         bounds
@@ -470,13 +469,6 @@ impl MacWindowState {
 
     fn scale_factor(&self) -> f32 {
         get_scale_factor(self.native_window)
-    }
-
-    fn update_drawable_size(&mut self, drawable_size: NSSize) {
-        self.renderer.update_drawable_size(Size {
-            width: drawable_size.width,
-            height: drawable_size.height,
-        })
     }
 
     fn titlebar_height(&self) -> Pixels {
@@ -598,14 +590,6 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
-            let window_size = {
-                let scale = get_scale_factor(native_window);
-                size(
-                    bounds.size.width.0 as f32 * scale,
-                    bounds.size.height.0 as f32 * scale,
-                )
-            };
-
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
@@ -616,7 +600,7 @@ impl MacWindow {
                     renderer_context,
                     native_window as *mut _,
                     native_view as *mut _,
-                    window_size,
+                    bounds.size.map(|pixels| pixels.0),
                     window_background != WindowBackgroundAppearance::Opaque,
                 ),
                 request_frame_callback: None,
@@ -630,12 +614,11 @@ impl MacWindow {
                 input_handler: None,
                 last_key_equivalent: None,
                 synthetic_drag_counter: 0,
-                last_fresh_keydown: None,
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
-                input_during_keydown: None,
+                last_ime_inputs: None,
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
                 first_mouse: false,
@@ -771,7 +754,7 @@ impl Drop for MacWindow {
 }
 
 impl PlatformWindow for MacWindow {
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.0.as_ref().lock().bounds()
     }
 
@@ -1190,14 +1173,30 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 }
 
 // Things to test if you're modifying this method:
+//  U.S. layout:
+//   - The IME consumes characters like 'j' and 'k', which makes paging through `less` in
+//     the terminal behave incorrectly by default. This behavior should be patched by our
+//     IME integration
+//   - `alt-t` should open the tasks menu
+//   - In vim mode, this keybinding should work:
+//     ```
+//        {
+//          "context": "Editor && vim_mode == insert",
+//          "bindings": {"j j": "vim::NormalBefore"}
+//        }
+//     ```
+//     and typing 'j k' in insert mode with this keybinding should insert the two characters
 //  Brazilian layout:
-//   - `" space` should type a quote
+//   - `" space` should create an unmarked quote
 //   - `" backspace` should delete the marked quote
-//   - `" up` should type the quote, unmark it, and move up one line
-//   - `" cmd-down` should not leave a marked quote behind (it maybe should dispatch the key though?)
+//   - `" up` should insert a quote, unmark it, and move up one line
+//   - `" cmd-down` should insert a quote, unmark it, and move to the end of the file
+//      - NOTE: The current implementation does not move the selection to the end of the file
 //   - `cmd-ctrl-space` and clicking on an emoji should type it
 //  Czech (QWERTY) layout:
 //   - in vim mode `option-4`  should go to end of line (same as $)
+//  Japanese (Romaji) layout:
+//   - type `a i left down up enter enter` should create an unmarked text "愛"
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
@@ -1218,16 +1217,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
         let keydown = event.keystroke.clone();
         let fn_modifier = keydown.modifiers.function;
-        // Ignore events from held-down keys after some of the initially-pressed keys
-        // were released.
-        if event.is_held {
-            if lock.last_fresh_keydown.as_ref() != Some(&keydown) {
-                return YES;
-            }
-        } else {
-            lock.last_fresh_keydown = Some(keydown.clone());
-        }
-        lock.input_during_keydown = Some(SmallVec::new());
+        lock.last_ime_inputs = Some(Default::default());
         drop(lock);
 
         // Send the event to the input context for IME handling, unless the `fn` modifier is
@@ -1243,15 +1233,16 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         let mut handled = false;
         let mut lock = window_state.lock();
         let previous_keydown_inserted_text = lock.previous_keydown_inserted_text.take();
-        let mut input_during_keydown = lock.input_during_keydown.take().unwrap();
+        let mut last_inserts = lock.last_ime_inputs.take().unwrap();
+
         let mut callback = lock.event_callback.take();
         drop(lock);
 
-        let last_ime = input_during_keydown.pop();
+        let last_insert = last_inserts.pop();
         // on a brazilian keyboard typing `"` and then hitting `up` will cause two IME
         // events, one to unmark the quote, and one to send the up arrow.
-        for ime in input_during_keydown {
-            send_to_input_handler(this, ime);
+        for (text, range) in last_inserts {
+            send_to_input_handler(this, ImeInput::InsertText(text, range));
         }
 
         let is_composing =
@@ -1259,20 +1250,18 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 .flatten()
                 .is_some();
 
-        if let Some(ime) = last_ime {
-            if let ImeInput::InsertText(text, _) = &ime {
-                if !is_composing {
-                    window_state.lock().previous_keydown_inserted_text = Some(text.clone());
-                    if let Some(callback) = callback.as_mut() {
-                        event.keystroke.ime_key = Some(text.clone());
-                        handled = !callback(PlatformInput::KeyDown(event)).propagate;
-                    }
+        if let Some((text, range)) = last_insert {
+            if !is_composing {
+                window_state.lock().previous_keydown_inserted_text = Some(text.clone());
+                if let Some(callback) = callback.as_mut() {
+                    event.keystroke.ime_key = Some(text.clone());
+                    handled = !callback(PlatformInput::KeyDown(event)).propagate;
                 }
             }
 
             if !handled {
                 handled = true;
-                send_to_input_handler(this, ime);
+                send_to_input_handler(this, ImeInput::InsertText(text, range));
             }
         } else if !is_composing {
             let is_held = event.is_held;
@@ -1439,7 +1428,6 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
         is_held: false,
     });
 
-    lock.last_fresh_keydown = Some(keystroke);
     if let Some(mut callback) = lock.event_callback.take() {
         drop(lock);
         callback(event);
@@ -1564,20 +1552,17 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
 
-    let scale_factor = lock.scale_factor() as f64;
+    let scale_factor = lock.scale_factor();
     let size = lock.content_size();
-    let drawable_size: NSSize = NSSize {
-        width: f64::from(size.width) * scale_factor,
-        height: f64::from(size.height) * scale_factor,
-    };
+    let drawable_size = size.to_device_pixels(scale_factor);
     unsafe {
         let _: () = msg_send![
             lock.renderer.layer(),
-            setContentsScale: scale_factor
+            setContentsScale: scale_factor as f64
         ];
     }
 
-    lock.update_drawable_size(drawable_size);
+    lock.renderer.update_drawable_size(drawable_size);
 
     if let Some(mut callback) = lock.resize_callback.take() {
         let content_size = lock.content_size();
@@ -1592,7 +1577,8 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
 
-    if lock.content_size() == size.into() {
+    let new_size = Size::<Pixels>::from(size);
+    if lock.content_size() == new_size {
         return;
     }
 
@@ -1600,16 +1586,10 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
         let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
     }
 
-    let scale_factor = lock.scale_factor() as f64;
-    let drawable_size: NSSize = NSSize {
-        width: size.width * scale_factor,
-        height: size.height * scale_factor,
-    };
+    let scale_factor = lock.scale_factor();
+    let drawable_size = new_size.to_device_pixels(scale_factor);
+    lock.renderer.update_drawable_size(drawable_size);
 
-    lock.update_drawable_size(drawable_size);
-
-    drop(lock);
-    let mut lock = window_state.lock();
     if let Some(mut callback) = lock.resize_callback.take() {
         let content_size = lock.content_size();
         let scale_factor = lock.scale_factor();
@@ -1654,21 +1634,24 @@ extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {
 }
 
 extern "C" fn has_marked_text(this: &Object, _: Sel) -> BOOL {
-    with_input_handler(this, |input_handler| input_handler.marked_text_range())
-        .flatten()
-        .is_some() as BOOL
+    let has_marked_text_result =
+        with_input_handler(this, |input_handler| input_handler.marked_text_range()).flatten();
+
+    has_marked_text_result.is_some() as BOOL
 }
 
 extern "C" fn marked_range(this: &Object, _: Sel) -> NSRange {
-    with_input_handler(this, |input_handler| input_handler.marked_text_range())
-        .flatten()
-        .map_or(NSRange::invalid(), |range| range.into())
+    let marked_range_result =
+        with_input_handler(this, |input_handler| input_handler.marked_text_range()).flatten();
+
+    marked_range_result.map_or(NSRange::invalid(), |range| range.into())
 }
 
 extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
-    with_input_handler(this, |input_handler| input_handler.selected_text_range())
-        .flatten()
-        .map_or(NSRange::invalid(), |range| range.into())
+    let selected_range_result =
+        with_input_handler(this, |input_handler| input_handler.selected_text_range()).flatten();
+
+    selected_range_result.map_or(NSRange::invalid(), |range| range.into())
 }
 
 extern "C" fn first_rect_for_character_range(
@@ -1761,7 +1744,7 @@ extern "C" fn attributed_substring_for_proposed_range(
             return None;
         }
 
-        let selected_text = input_handler.text_for_range(range)?;
+        let selected_text = input_handler.text_for_range(range.clone())?;
         unsafe {
             let string: id = msg_send![class!(NSAttributedString), alloc];
             let string: id = msg_send![string, initWithString: ns_string(&selected_text)];
@@ -1926,20 +1909,26 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
     unsafe {
         let window_state = get_window_state(window);
         let mut lock = window_state.lock();
-        if let Some(ime_input) = lock.input_during_keydown.as_mut() {
-            ime_input.push(ime);
-            return;
-        }
+
         if let Some(mut input_handler) = lock.input_handler.take() {
-            drop(lock);
-            match ime {
+            match ime.clone() {
                 ImeInput::InsertText(text, range) => {
+                    if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
+                        ime_input.push((text, range));
+                        lock.input_handler = Some(input_handler);
+                        return;
+                    }
+                    drop(lock);
                     input_handler.replace_text_in_range(range, &text)
                 }
                 ImeInput::SetMarkedText(text, range, marked_range) => {
+                    drop(lock);
                     input_handler.replace_and_mark_text_in_range(range, &text, marked_range)
                 }
-                ImeInput::UnmarkText => input_handler.unmark_text(),
+                ImeInput::UnmarkText => {
+                    drop(lock);
+                    input_handler.unmark_text()
+                }
             }
             window_state.lock().input_handler = Some(input_handler);
         }

@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -5,11 +7,18 @@ use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use futures::AsyncReadExt;
 use gpui::{AppContext, Task, WeakView};
+use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
-use rustdoc_to_markdown::convert_html_to_markdown;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum ContentType {
+    Html,
+    Plaintext,
+    Json,
+}
 
 pub(crate) struct FetchSlashCommand;
 
@@ -37,7 +46,52 @@ impl FetchSlashCommand {
             );
         }
 
-        convert_html_to_markdown(&body[..])
+        let Some(content_type) = response.headers().get("content-type") else {
+            bail!("missing Content-Type header");
+        };
+        let content_type = content_type
+            .to_str()
+            .context("invalid Content-Type header")?;
+        let content_type = match content_type {
+            "text/html" => ContentType::Html,
+            "text/plain" => ContentType::Plaintext,
+            "application/json" => ContentType::Json,
+            _ => ContentType::Html,
+        };
+
+        match content_type {
+            ContentType::Html => {
+                let mut handlers: Vec<TagHandler> = vec![
+                    Rc::new(RefCell::new(markdown::ParagraphHandler)),
+                    Rc::new(RefCell::new(markdown::HeadingHandler)),
+                    Rc::new(RefCell::new(markdown::ListHandler)),
+                    Rc::new(RefCell::new(markdown::TableHandler::new())),
+                    Rc::new(RefCell::new(markdown::StyledTextHandler)),
+                ];
+                if url.contains("wikipedia.org") {
+                    use html_to_markdown::structure::wikipedia;
+
+                    handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaChromeRemover)));
+                    handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaInfoboxHandler)));
+                    handlers.push(Rc::new(
+                        RefCell::new(wikipedia::WikipediaCodeHandler::new()),
+                    ));
+                } else {
+                    handlers.push(Rc::new(RefCell::new(markdown::CodeHandler)));
+                }
+
+                convert_html_to_markdown(&body[..], &mut handlers)
+            }
+            ContentType::Plaintext => Ok(std::str::from_utf8(&body)?.to_owned()),
+            ContentType::Json => {
+                let json: serde_json::Value = serde_json::from_slice(&body)?;
+
+                Ok(format!(
+                    "```json\n{}\n```",
+                    serde_json::to_string_pretty(&json)?
+                ))
+            }
+        }
     }
 }
 
@@ -62,7 +116,7 @@ impl SlashCommand for FetchSlashCommand {
         &self,
         _query: String,
         _cancel: Arc<AtomicBool>,
-        _workspace: WeakView<Workspace>,
+        _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Ok(Vec::new()))

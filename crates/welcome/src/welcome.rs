@@ -5,7 +5,7 @@ use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
 use settings::{Settings, SettingsStore};
@@ -36,19 +36,21 @@ pub fn init(cx: &mut AppContext) {
     base_keymap_picker::init(cx);
 }
 
-pub fn show_welcome_view(app_state: Arc<AppState>, cx: &mut AppContext) {
+pub fn show_welcome_view(
+    app_state: Arc<AppState>,
+    cx: &mut AppContext,
+) -> Task<anyhow::Result<()>> {
     open_new(app_state, cx, |workspace, cx| {
         workspace.toggle_dock(DockPosition::Left, cx);
         let welcome_page = WelcomePage::new(workspace, cx);
         workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
         cx.focus_view(&welcome_page);
         cx.notify();
-    })
-    .detach();
 
-    db::write_and_log(cx, || {
-        KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
-    });
+        db::write_and_log(cx, || {
+            KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
+        });
+    })
 }
 
 pub struct WelcomePage {

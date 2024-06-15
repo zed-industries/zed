@@ -58,7 +58,7 @@ impl FileSlashCommand {
                             .root_entry()
                             .map_or(false, |entry| entry.is_ignored),
                         include_root_name: true,
-                        directories_only: false,
+                        candidates: project::Candidates::Files,
                     }
                 })
                 .collect::<Vec<_>>();
@@ -101,10 +101,10 @@ impl SlashCommand for FileSlashCommand {
         &self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        workspace: WeakView<Workspace>,
+        workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
-        let Some(workspace) = workspace.upgrade() else {
+        let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 

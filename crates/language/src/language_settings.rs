@@ -71,12 +71,12 @@ pub struct LanguageSettings {
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
-    /// Whether to show wrap guides in the editor. Setting this to true will
-    /// show a guide at the 'preferred_line_length' value if softwrap is set to
-    /// 'preferred_line_length', and will show any additional guides as specified
-    /// by the 'wrap_guides' setting.
+    // Whether to show wrap guides (vertical rulers) in the editor.
+    // Setting this to true will show a guide at the 'preferred_line_length' value
+    // if softwrap is set to 'preferred_line_length', and will show any
+    // additional guides as specified by the 'wrap_guides' setting.
     pub show_wrap_guides: bool,
-    /// Character counts at which to show wrap guides in the editor.
+    /// Character counts at which to show wrap guides (vertical rulers) in the editor.
     pub wrap_guides: Vec<usize>,
     /// Indent guide related settings.
     pub indent_guides: IndentGuideSettings,
@@ -116,6 +116,8 @@ pub struct LanguageSettings {
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
     pub code_actions_on_format: HashMap<String, bool>,
+    /// Whether to perform linked edits
+    pub linked_edits: bool,
 }
 
 impl LanguageSettings {
@@ -326,6 +328,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
     pub code_actions_on_format: Option<HashMap<String, bool>>,
+    /// Whether to perform linked edits of associated ranges, if the language server supports it.
+    /// For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
+    ///
+    /// Default: true
+    pub linked_edits: Option<bool>,
 }
 
 /// The contents of the inline completion settings.
@@ -391,6 +398,13 @@ pub enum ShowWhitespaceSetting {
     None,
     /// Draw all invisible symbols.
     All,
+    /// Draw whitespaces at boundaries only.
+    ///
+    /// For a whitespace to be on a boundary, any of the following conditions need to be met:
+    /// - It is a tab
+    /// - It is adjacent to an edge (start or end)
+    /// - It is adjacent to a whitespace (left or right)
+    Boundary,
 }
 
 /// Controls which formatter should be used when formatting code.
@@ -778,6 +792,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         &mut settings.code_actions_on_format,
         src.code_actions_on_format.clone(),
     );
+    merge(&mut settings.linked_edits, src.linked_edits);
 
     merge(
         &mut settings.preferred_line_length,
