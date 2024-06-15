@@ -121,8 +121,8 @@ impl WindowsDisplay {
     pub fn check_given_bounds(&self, bounds: Bounds<Pixels>) -> bool {
         let center = bounds.center();
         let center = POINT {
-            x: center.x.0 as i32,
-            y: center.y.0 as i32,
+            x: (center.x.0 * self.scale_factor) as i32,
+            y: (center.y.0 * self.scale_factor) as i32,
         };
         let monitor = unsafe { MonitorFromPoint(center, MONITOR_DEFAULTTONULL) };
         if monitor.is_invalid() {
