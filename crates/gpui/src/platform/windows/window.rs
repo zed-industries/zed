@@ -68,15 +68,18 @@ impl WindowsWindowState {
         current_cursor: HCURSOR,
         display: WindowsDisplay,
     ) -> Self {
-        let origin = point(px(cs.x as f32), px(cs.y as f32));
-        let logical_size = size(px(cs.cx as f32), px(cs.cy as f32));
-        let fullscreen_restore_bounds = Bounds {
-            origin,
-            size: logical_size,
-        };
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
+        };
+        let origin = logical_point(cs.x as f32, cs.y as f32, scale_factor);
+        let logical_size = {
+            let physical_size = size(DevicePixels(cs.cx), DevicePixels(cs.cy));
+            logical_size(physical_size, scale_factor)
+        };
+        let fullscreen_restore_bounds = Bounds {
+            origin,
+            size: logical_size,
         };
         let renderer = windows_renderer::windows_renderer(hwnd, transparent);
         let callbacks = Callbacks::default();
