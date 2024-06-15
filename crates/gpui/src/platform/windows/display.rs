@@ -29,7 +29,7 @@ impl WindowsDisplay {
         let info = get_monitor_info(screen).log_err()?;
         let size = info.monitorInfo.rcMonitor;
         let uuid = generate_uuid(&info.szDevice);
-        let scale_facotr = get_scale_factor_for_monitor(screen).log_err()?;
+        let scale_factor = get_scale_factor_for_monitor(screen).log_err()?;
 
         Some(WindowsDisplay {
             handle: screen,
