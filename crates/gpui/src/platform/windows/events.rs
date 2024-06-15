@@ -102,7 +102,7 @@ fn handle_move_msg(
     let y = lparam.signed_hiword() as f32;
     let mut lock = state_ptr.state.borrow_mut();
     lock.origin = point(px(x), px(y));
-    let size = lock.physical_size;
+    let size = lock.logical_size;
     let center_x = x + size.width.0 / 2.;
     let center_y = y + size.height.0 / 2.;
     let monitor_bounds = lock.display.bounds();
@@ -136,7 +136,7 @@ fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Opti
     let scale_factor = lock.scale_factor;
     lock.renderer.update_drawable_size(new_size);
     let new_size = new_size.to_pixels(lock.scale_factor);
-    lock.physical_size = new_size;
+    lock.logical_size = new_size;
     if let Some(mut callback) = lock.callbacks.resize.take() {
         drop(lock);
         callback(new_size, scale_factor);

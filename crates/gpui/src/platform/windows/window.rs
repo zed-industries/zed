@@ -33,7 +33,7 @@ pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
 
 pub struct WindowsWindowState {
     pub origin: Point<Pixels>,
-    pub physical_size: Size<Pixels>,
+    pub logical_size: Size<Pixels>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub scale_factor: f32,
 
@@ -69,10 +69,10 @@ impl WindowsWindowState {
         display: WindowsDisplay,
     ) -> Self {
         let origin = point(px(cs.x as f32), px(cs.y as f32));
-        let physical_size = size(px(cs.cx as f32), px(cs.cy as f32));
+        let logical_size = size(px(cs.cx as f32), px(cs.cy as f32));
         let fullscreen_restore_bounds = Bounds {
             origin,
-            size: physical_size,
+            size: logical_size,
         };
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -88,7 +88,7 @@ impl WindowsWindowState {
 
         Self {
             origin,
-            physical_size,
+            logical_size,
             fullscreen_restore_bounds,
             scale_factor,
             callbacks,
@@ -116,7 +116,7 @@ impl WindowsWindowState {
     fn bounds(&self) -> Bounds<Pixels> {
         Bounds {
             origin: self.origin,
-            size: self.physical_size,
+            size: self.logical_size,
         }
     }
 
@@ -160,7 +160,7 @@ impl WindowsWindowState {
     /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
-        self.physical_size
+        self.logical_size
     }
 
     fn title_bar_padding(&self) -> Pixels {
@@ -544,7 +544,7 @@ impl PlatformWindow for WindowsWindow {
                 let mut lock = state_ptr.state.borrow_mut();
                 lock.fullscreen_restore_bounds = Bounds {
                     origin: lock.origin,
-                    size: lock.physical_size,
+                    size: lock.logical_size,
                 };
                 let StyleAndBounds {
                     style,
