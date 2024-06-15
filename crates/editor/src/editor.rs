@@ -9302,10 +9302,11 @@ impl Editor {
                                                 status: cx.editor_style.status.clone(),
                                                 inlay_hints_style: InlayHintStyles {
                                                     parameter_style: Some(HighlightStyle {
-                                                        color: Some(cx
-                                                            .theme()
-                                                            .status()
-                                                            .inlay_hint_parameter),
+                                                        color: Some(
+                                                            cx.theme()
+                                                                .status()
+                                                                .inlay_hint_parameter,
+                                                        ),
                                                         background_color: cx
                                                             .theme()
                                                             .status()
@@ -9314,7 +9315,9 @@ impl Editor {
                                                         ..HighlightStyle::default()
                                                     }),
                                                     type_style: Some(HighlightStyle {
-                                                        color: Some(cx.theme().status().inlay_hint_type),
+                                                        color: Some(
+                                                            cx.theme().status().inlay_hint_type,
+                                                        ),
                                                         background_color: cx
                                                             .theme()
                                                             .status()
