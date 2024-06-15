@@ -371,7 +371,6 @@ impl Default for EditorStyle {
             // We should look into removing the status colors from the editor
             // style and retrieve them directly from the theme.
             status: StatusColors::dark(),
-            // inlay_hints_style: HighlightStyle::default(),
             inlay_hints_style: InlayHintStyles::default(),
             suggestions_style: HighlightStyle::default(),
         }
