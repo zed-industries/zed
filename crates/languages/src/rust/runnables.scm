@@ -25,3 +25,15 @@
     )
     (#set! tag rust-test)
 )
+
+; Rust main function
+(
+    (
+        (function_item
+            name: (_) @run
+            body: _
+        ) @end
+        (#eq? @run "main")
+    )
+    (#set! tag rust-main)
+)
