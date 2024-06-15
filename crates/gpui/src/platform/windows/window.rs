@@ -27,7 +27,7 @@ use windows::{
 };
 
 use crate::platform::blade::BladeRenderer;
-use crate::{Pixels, *};
+use crate::*;
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
 
@@ -131,12 +131,18 @@ impl WindowsWindowState {
         };
         let bounds = Bounds {
             origin: point(
-                px(placement.rcNormalPosition.left as f32),
-                px(placement.rcNormalPosition.top as f32),
+                px(placement.rcNormalPosition.left as f32 * self.scale_factor),
+                px(placement.rcNormalPosition.top as f32 * self.scale_factor),
             ),
             size: size(
-                px((placement.rcNormalPosition.right - placement.rcNormalPosition.left) as f32),
-                px((placement.rcNormalPosition.bottom - placement.rcNormalPosition.top) as f32),
+                px(
+                    (placement.rcNormalPosition.right - placement.rcNormalPosition.left) as f32
+                        * self.scale_factor,
+                ),
+                px(
+                    (placement.rcNormalPosition.bottom - placement.rcNormalPosition.top) as f32
+                        * self.scale_factor,
+                ),
             ),
         };
 
