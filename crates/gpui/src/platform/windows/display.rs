@@ -36,12 +36,12 @@ impl WindowsDisplay {
             display_id,
             bounds: Bounds {
                 origin: Point {
-                    x: px(size.left as f32 / scale_facotr),
-                    y: px(size.top as f32 / scale_facotr),
+                    x: px(size.left as f32 / scale_factor),
+                    y: px(size.top as f32 / scale_factor),
                 },
                 size: Size {
-                    width: px((size.right - size.left) as f32 / scale_facotr),
-                    height: px((size.bottom - size.top) as f32 / scale_facotr),
+                    width: px((size.right - size.left) as f32 / scale_factor),
+                    height: px((size.bottom - size.top) as f32 / scale_factor),
                 },
             },
             uuid,
@@ -65,12 +65,12 @@ impl WindowsDisplay {
             display_id: DisplayId(display_id as _),
             bounds: Bounds {
                 origin: Point {
-                    x: px(size.left as f32),
-                    y: px(size.top as f32),
+                    x: px(size.left as f32 / scale_factor),
+                    y: px(size.top as f32 / scale_factor),
                 },
                 size: Size {
-                    width: px((size.right - size.left) as f32),
-                    height: px((size.bottom - size.top) as f32),
+                    width: px((size.right - size.left) as f32 / scale_factor),
+                    height: px((size.bottom - size.top) as f32 / scale_factor),
                 },
             },
             uuid,
@@ -90,12 +90,12 @@ impl WindowsDisplay {
             display_id,
             bounds: Bounds {
                 origin: Point {
-                    x: px(size.left as f32),
-                    y: px(size.top as f32),
+                    x: px(size.left as f32 / scale_factor),
+                    y: px(size.top as f32 / scale_factor),
                 },
                 size: Size {
-                    width: px((size.right - size.left) as f32),
-                    height: px((size.bottom - size.top) as f32),
+                    width: px((size.right - size.left) as f32 / scale_factor),
+                    height: px((size.bottom - size.top) as f32 / scale_factor),
                 },
             },
             uuid,
