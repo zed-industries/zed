@@ -634,8 +634,7 @@
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
-      "ctrl-r \"": "editor::Paste",
-      "ctrl-r +": "editor::Paste"
+      "ctrl-r": ["vim::PushOperator", "Register"]
     }
   },
   {
