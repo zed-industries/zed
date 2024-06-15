@@ -349,7 +349,7 @@ pub struct EditorStyle {
     pub scrollbar_width: Pixels,
     pub syntax: Arc<SyntaxTheme>,
     pub status: StatusColors,
-    pub inlay_hints_style: HighlightStyle,
+    pub inlay_hints_style: InlayHintStyles,
     pub suggestions_style: HighlightStyle,
 }
 
@@ -365,7 +365,8 @@ impl Default for EditorStyle {
             // We should look into removing the status colors from the editor
             // style and retrieve them directly from the theme.
             status: StatusColors::dark(),
-            inlay_hints_style: HighlightStyle::default(),
+            // inlay_hints_style: HighlightStyle::default(),
+            inlay_hints_style: InlayHintStyles::default(),
             suggestions_style: HighlightStyle::default(),
         }
     }
@@ -9053,10 +9054,37 @@ impl Editor {
                                                 scrollbar_width: cx.editor_style.scrollbar_width,
                                                 syntax: cx.editor_style.syntax.clone(),
                                                 status: cx.editor_style.status.clone(),
-                                                inlay_hints_style: HighlightStyle {
-                                                    color: Some(cx.theme().status().hint),
-                                                    font_weight: Some(FontWeight::BOLD),
-                                                    ..HighlightStyle::default()
+                                                inlay_hints_style: InlayHintStyles {
+                                                    parameter_style: Some(HighlightStyle {
+                                                        color: Some(cx
+                                                            .theme()
+                                                            .status()
+                                                            .inlay_hint_parameter),
+                                                        background_color: cx
+                                                            .theme()
+                                                            .status()
+                                                            .inlay_hint_parameter_background,
+                                                        font_weight: Some(FontWeight::BOLD),
+                                                        ..HighlightStyle::default()
+                                                    }),
+                                                    type_style: Some(HighlightStyle {
+                                                        color: Some(cx.theme().status().inlay_hint_type),
+                                                        background_color: cx
+                                                            .theme()
+                                                            .status()
+                                                            .inlay_hint_type_background,
+                                                        font_weight: Some(FontWeight::BOLD),
+                                                        ..HighlightStyle::default()
+                                                    }),
+                                                    other_style: Some(HighlightStyle {
+                                                        color: Some(cx.theme().status().inlay_hint),
+                                                        background_color: cx
+                                                            .theme()
+                                                            .status()
+                                                            .inlay_hint_background,
+                                                        font_weight: Some(FontWeight::BOLD),
+                                                        ..HighlightStyle::default()
+                                                    }),
                                                 },
                                                 suggestions_style: HighlightStyle {
                                                     color: Some(cx.theme().status().predictive),
@@ -11549,9 +11577,22 @@ impl Render for Editor {
                 scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
-                inlay_hints_style: HighlightStyle {
-                    color: Some(cx.theme().status().hint),
-                    ..HighlightStyle::default()
+                inlay_hints_style: InlayHintStyles {
+                    parameter_style: Some(HighlightStyle {
+                        color: Some(cx.theme().status().inlay_hint_parameter),
+                        background_color: cx.theme().status().inlay_hint_parameter_background,
+                        ..HighlightStyle::default()
+                    }),
+                    type_style: Some(HighlightStyle {
+                        color: Some(cx.theme().status().inlay_hint_type),
+                        background_color: cx.theme().status().inlay_hint_type_background,
+                        ..HighlightStyle::default()
+                    }),
+                    other_style: Some(HighlightStyle {
+                        color: Some(cx.theme().status().inlay_hint),
+                        background_color: cx.theme().status().inlay_hint_background,
+                        ..HighlightStyle::default()
+                    }),
                 },
                 suggestions_style: HighlightStyle {
                     color: Some(cx.theme().status().predictive),

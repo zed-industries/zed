@@ -960,6 +960,27 @@ pub struct StatusColorsContent {
     #[serde(rename = "hint.border")]
     pub hint_border: Option<String>,
 
+    /// Default style for inlay hints of all kinds
+    #[serde(rename = "inlay-hint")]
+    pub inlay_hint: Option<String>,
+
+    #[serde(rename = "inlay-hint.background")]
+    pub inlay_hint_background: Option<String>,
+
+    /// Style for inlay hints of kind parameter
+    #[serde(rename = "inlay-hint.parameter")]
+    pub inlay_hint_parameter: Option<String>,
+
+    #[serde(rename = "inlay-hint.parameter.background")]
+    pub inlay_hint_parameter_background: Option<String>,
+
+    /// Style for inlay hints of kind type
+    #[serde(rename = "inlay-hint.type")]
+    pub inlay_hint_type: Option<String>,
+
+    #[serde(rename = "inlay-hint.type.background")]
+    pub inlay_hint_type_background: Option<String>,
+
     /// Indicates that something is deliberately ignored, such as a file or operation ignored by Git.
     #[serde(rename = "ignored")]
     pub ignored: Option<String>,
@@ -1115,6 +1136,55 @@ impl StatusColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             hint_border: self
                 .hint_border
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            inlay_hint: self
+                .inlay_hint
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or_else(|| {
+                    self.hint
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok())
+                }),
+            inlay_hint_background: self
+                .inlay_hint_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            inlay_hint_parameter: self
+                .inlay_hint_parameter
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or_else(|| {
+                    self.inlay_hint
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok())
+                })
+                .or_else(|| {
+                    self.hint
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok())
+                }),
+            inlay_hint_parameter_background: self
+                .inlay_hint_parameter_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            inlay_hint_type: self
+                .inlay_hint_type
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or_else(|| {
+                    self.inlay_hint
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok())
+                })
+                .or_else(|| {
+                    self.hint
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok())
+                }),
+            inlay_hint_type_background: self
+                .inlay_hint_type_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             ignored: self

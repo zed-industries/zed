@@ -719,21 +719,25 @@ mod tests {
                     Inlay {
                         id: InlayId::Suggestion(post_inc(&mut id)),
                         position: buffer_snapshot.anchor_at(offset, Bias::Left),
+                        kind: None,
                         text: "test".into(),
                     },
                     Inlay {
                         id: InlayId::Suggestion(post_inc(&mut id)),
                         position: buffer_snapshot.anchor_at(offset, Bias::Right),
+                        kind: None,
                         text: "test".into(),
                     },
                     Inlay {
                         id: InlayId::Hint(post_inc(&mut id)),
                         position: buffer_snapshot.anchor_at(offset, Bias::Left),
+                        kind: None,
                         text: "test".into(),
                     },
                     Inlay {
                         id: InlayId::Hint(post_inc(&mut id)),
                         position: buffer_snapshot.anchor_at(offset, Bias::Right),
+                        kind: None,
                         text: "test".into(),
                     },
                 ]

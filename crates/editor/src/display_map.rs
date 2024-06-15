@@ -404,8 +404,15 @@ pub(crate) struct Highlights<'a> {
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct HighlightStyles {
-    pub inlay_hint: Option<HighlightStyle>,
+    pub inlay_hint: Option<InlayHintStyles>,
     pub suggestion: Option<HighlightStyle>,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct InlayHintStyles {
+    pub parameter_style: Option<HighlightStyle>,
+    pub type_style: Option<HighlightStyle>,
+    pub other_style: Option<HighlightStyle>,
 }
 
 pub struct HighlightedChunk<'a> {

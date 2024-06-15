@@ -1,7 +1,7 @@
 use crate::{HighlightStyles, InlayId};
 use collections::{BTreeMap, BTreeSet};
 use gpui::HighlightStyle;
-use language::{Chunk, Edit, Point, TextSummary};
+use language::{language_settings::InlayHintKind, Chunk, Edit, Point, TextSummary};
 use multi_buffer::{
     Anchor, MultiBufferChunks, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, ToOffset,
 };
@@ -39,10 +39,17 @@ enum Transform {
     Inlay(Inlay),
 }
 
+#[derive(Clone, Debug)]
+pub enum InlayKind {
+    Hint(Option<InlayHintKind>),
+    // Suggestion...
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Inlay {
     pub(crate) id: InlayId,
     pub position: Anchor,
+    pub kind: Option<InlayKind>,
     pub text: text::Rope,
 }
 
@@ -58,6 +65,7 @@ impl Inlay {
         Self {
             id: InlayId::Hint(id),
             position,
+            kind: Some(InlayKind::Hint(hint.kind)),
             text: text.into(),
         }
     }
@@ -66,6 +74,7 @@ impl Inlay {
         Self {
             id: InlayId::Suggestion(id),
             position,
+            kind: None,
             text: text.into(),
         }
     }
@@ -307,9 +316,25 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }
                 }
 
+                let (inlay_hint_parameter_style, inlay_hint_type_style, inlay_hint_other_style) =
+                    match self.highlight_styles.inlay_hint {
+                        Some(inlay_hint_styles) => (
+                            inlay_hint_styles.parameter_style,
+                            inlay_hint_styles.type_style,
+                            inlay_hint_styles.other_style,
+                        ),
+                        None => (None, None, None),
+                    };
+
                 let mut highlight_style = match inlay.id {
                     InlayId::Suggestion(_) => self.highlight_styles.suggestion,
-                    InlayId::Hint(_) => self.highlight_styles.inlay_hint,
+                    InlayId::Hint(_) => match inlay.kind {
+                        Some(InlayKind::Hint(Some(InlayHintKind::Parameter))) => {
+                            inlay_hint_parameter_style
+                        }
+                        Some(InlayKind::Hint(Some(InlayHintKind::Type))) => inlay_hint_type_style,
+                        _ => inlay_hint_other_style,
+                    },
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
@@ -672,6 +697,7 @@ impl InlayMap {
                 to_insert.push(Inlay {
                     id: inlay_id,
                     position: snapshot.buffer.anchor_at(position, bias),
+                    kind: None,
                     text: text.into(),
                 });
             } else {
@@ -1278,6 +1304,7 @@ mod tests {
             vec![Inlay {
                 id: InlayId::Hint(post_inc(&mut next_inlay_id)),
                 position: buffer.read(cx).snapshot(cx).anchor_after(3),
+                kind: None,
                 text: "|123|".into(),
             }],
         );
@@ -1355,11 +1382,13 @@ mod tests {
                 Inlay {
                     id: InlayId::Hint(post_inc(&mut next_inlay_id)),
                     position: buffer.read(cx).snapshot(cx).anchor_before(3),
+                    kind: None,
                     text: "|123|".into(),
                 },
                 Inlay {
                     id: InlayId::Suggestion(post_inc(&mut next_inlay_id)),
                     position: buffer.read(cx).snapshot(cx).anchor_after(3),
+                    kind: None,
                     text: "|456|".into(),
                 },
             ],
@@ -1566,16 +1595,19 @@ mod tests {
                 Inlay {
                     id: InlayId::Hint(post_inc(&mut next_inlay_id)),
                     position: buffer.read(cx).snapshot(cx).anchor_before(0),
+                    kind: None,
                     text: "|123|\n".into(),
                 },
                 Inlay {
                     id: InlayId::Hint(post_inc(&mut next_inlay_id)),
                     position: buffer.read(cx).snapshot(cx).anchor_before(4),
+                    kind: None,
                     text: "|456|".into(),
                 },
                 Inlay {
                     id: InlayId::Suggestion(post_inc(&mut next_inlay_id)),
                     position: buffer.read(cx).snapshot(cx).anchor_before(7),
+                    kind: None,
                     text: "\n|567|\n".into(),
                 },
             ],

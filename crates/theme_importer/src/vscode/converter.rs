@@ -91,6 +91,15 @@ impl VsCodeThemeConverter {
                 .clone()
                 .or(vscode_base_status_colors.hint),
             hint_border: vscode_colors.editor_hint.border.clone(),
+            inlay_hint: vscode_colors.editor_inlay_hint.foreground.clone(),
+            inlay_hint_background: vscode_colors.editor_inlay_hint.background.clone(),
+            inlay_hint_parameter: vscode_colors.editor_inlay_hint.parameter_foreground.clone(),
+            inlay_hint_parameter_background: vscode_colors
+                .editor_inlay_hint
+                .parameter_background
+                .clone(),
+            inlay_hint_type: vscode_colors.editor_inlay_hint.type_foreground.clone(),
+            inlay_hint_type_background: vscode_colors.editor_inlay_hint.type_background.clone(),
             ignored: vscode_colors
                 .git_decoration
                 .ignored_resource_foreground

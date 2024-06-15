@@ -37,6 +37,18 @@ pub struct StatusColors {
     pub hint_background: Hsla,
     pub hint_border: Hsla,
 
+    /// Default style for inlay hints of all kinds
+    pub inlay_hint: Hsla,
+    pub inlay_hint_background: Option<Hsla>,
+
+    /// Style for inlay hints of kind parameter
+    pub inlay_hint_parameter: Hsla,
+    pub inlay_hint_parameter_background: Option<Hsla>,
+
+    /// Style for inlay hints of kind type
+    pub inlay_hint_type: Hsla,
+    pub inlay_hint_type_background: Option<Hsla>,
+
     /// Indicates that something is deliberately ignored, such as a file or operation ignored by Git.
     pub ignored: Hsla,
     pub ignored_background: Hsla,
@@ -114,6 +126,12 @@ impl StatusColors {
             hint: blue().dark().step_9(),
             hint_background: blue().dark().step_9(),
             hint_border: blue().dark().step_9(),
+            inlay_hint: blue().light().step_9(),
+            inlay_hint_background: None,
+            inlay_hint_parameter: blue().light().step_9(),
+            inlay_hint_parameter_background: None,
+            inlay_hint_type: blue().light().step_9(),
+            inlay_hint_type_background: None,
             ignored: neutral().dark().step_9(),
             ignored_background: neutral().dark().step_9(),
             ignored_border: neutral().dark().step_9(),
@@ -161,6 +179,12 @@ impl StatusColors {
             hint: blue().light().step_9(),
             hint_background: blue().light().step_9(),
             hint_border: blue().light().step_9(),
+            inlay_hint: blue().light().step_9(),
+            inlay_hint_background: None,
+            inlay_hint_parameter: blue().light().step_9(),
+            inlay_hint_parameter_background: None,
+            inlay_hint_type: blue().light().step_9(),
+            inlay_hint_type_background: None,
             ignored: neutral().light().step_9(),
             ignored_background: neutral().light().step_9(),
             ignored_border: neutral().light().step_9(),
