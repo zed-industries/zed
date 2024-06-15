@@ -15,12 +15,6 @@ this text should be selectable
 wow so cool
 
 ## Heading 2
-```rust
-
-
-
-let hovered_point: Vector2F
-```
 "#;
 pub fn main() {
     env_logger::init();
@@ -47,10 +41,25 @@ pub fn main() {
         let _ = cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|cx| {
                 let markdown_style = MarkdownStyle {
-                    code_block: gpui::TextStyleRefinement {
-                        font_family: Some("Zed Mono".into()),
-                        color: Some(cx.theme().colors().editor_foreground),
-                        background_color: Some(cx.theme().colors().editor_background),
+                    base_text_style: gpui::TextStyle {
+                        font_family: "Zed Mono".into(),
+                        // @nate: Could we add inline-code specific styles to the theme?
+                        // color: cx.theme().colors().text,
+                        ..Default::default()
+                    },
+                    code_block: StyleRefinement {
+                        text: Some(gpui::TextStyleRefinement {
+                            font_family: Some("Zed Mono".into()),
+                            // color: Some(cx.theme().colors().text),
+                            background_color: Some(cx.theme().colors().editor_background),
+                            ..Default::default()
+                        }),
+                        margin: gpui::EdgesRefinement {
+                            top: Some(Length::Definite(Rems(4_f32).into())),
+                            left: Some(Length::Definite(Rems(4_f32).into())),
+                            right: Some(Length::Definite(Rems(4_f32).into())),
+                            bottom: Some(Length::Definite(Rems(4_f32).into())),
+                        },
                         ..Default::default()
                     },
                     inline_code: gpui::TextStyleRefinement {
@@ -81,7 +90,6 @@ pub fn main() {
                         selection.fade_out(0.7);
                         selection
                     },
-                    pad_blocks: true,
                 };
                 let markdown = cx.new_view(|cx| {
                     Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, cx)
@@ -101,7 +109,7 @@ impl Render for HelloWorld {
         div()
             .flex()
             .bg(rgb(0x2e7d32))
-            .size(Length::Definite(Pixels(300.0).into()))
+            .size(Length::Definite(Pixels(700.0).into()))
             .justify_center()
             .items_center()
             .shadow_lg()
@@ -109,6 +117,6 @@ impl Render for HelloWorld {
             .border_color(rgb(0x0000ff))
             .text_xl()
             .text_color(rgb(0xffffff))
-            .child(self.markdown.clone())
+            .child(div().child(self.markdown.clone()).p_20())
     }
 }

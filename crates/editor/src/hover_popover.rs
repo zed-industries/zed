@@ -5,11 +5,10 @@ use crate::{
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     EditorStyle, ExcerptId, Hover, RangeToAnchorExt,
 };
-use gpui::TextStyle;
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, CursorStyle, Hsla, InteractiveElement, IntoElement,
     Length, MouseButton, ParentElement, Pixels, Rems, ScrollHandle, SharedString, Size,
-    StatefulInteractiveElement, Style, StyleRefinement, Styled, Task, View, ViewContext, WeakView,
+    StatefulInteractiveElement, Styled, Task, View, ViewContext, WeakView,
 };
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
@@ -372,7 +371,7 @@ fn transform_codeblock(input: &str, language: &str) -> String {
         } else {
             i += 1;
 
-            //remove mid-sentance single linebreaks
+            //remove mid-sentence single linebreaks
             while i < lines.len()
                 && !lines[i].trim().is_empty()
                 && !open_block
@@ -428,9 +427,7 @@ async fn parse_blocks(
                 color: Some(cx.theme().colors().editor_foreground),
                 ..Default::default()
             });
-            let b = TextStyle {
-                ..Default::default()
-            };
+
             let markdown_style = MarkdownStyle {
                 base_text_style: base_style,
                 code_block: gpui::StyleRefinement {
