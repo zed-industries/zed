@@ -108,32 +108,64 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-    let view = cx.view().clone();
-    let _ = editor.register_action(move |action: &Word, cx| {
-        EasyMotion::word(view.clone(), action, cx);
-    });
-    let view = cx.view().clone();
-    let _ = editor.register_action(move |action: &SubWord, cx| {
-        EasyMotion::sub_word(view.clone(), action, cx);
-    });
-    let view = cx.view().clone();
-    let _ = editor.register_action(move |action: &FullWord, cx| {
-        EasyMotion::full_word(view.clone(), action, cx);
-    });
-
-    let view = cx.view().clone();
-    let _ = editor.register_action(move |action: &Row, cx| {
-        EasyMotion::row(view.clone(), action, cx);
-    });
-
-    let view = cx.view().clone();
-    let _ = editor.register_action(move |_: &Cancel, cx| {
-        EasyMotion::cancel(view.clone(), cx);
-    });
-
-    let view = cx.view().clone();
-    cx.observe_keystrokes(move |event, cx| EasyMotion::observe_keystrokes(view.clone(), event, cx))
+    let view = cx.view().downgrade();
+    editor
+        .register_action(move |action: &Word, cx| {
+            let Some(editor) = view.upgrade() else {
+                return;
+            };
+            EasyMotion::word(editor, action, cx);
+        })
         .detach();
+
+    let view = cx.view().downgrade();
+    editor
+        .register_action(move |action: &SubWord, cx| {
+            let Some(editor) = view.upgrade() else {
+                return;
+            };
+            EasyMotion::sub_word(editor, action, cx);
+        })
+        .detach();
+
+    let view = cx.view().downgrade();
+    editor
+        .register_action(move |action: &FullWord, cx| {
+            let Some(editor) = view.upgrade() else {
+                return;
+            };
+            EasyMotion::full_word(editor, action, cx);
+        })
+        .detach();
+
+    let view = cx.view().downgrade();
+    editor
+        .register_action(move |action: &Row, cx| {
+            let Some(editor) = view.upgrade() else {
+                return;
+            };
+            EasyMotion::row(editor, action, cx);
+        })
+        .detach();
+
+    let view = cx.view().downgrade();
+    editor
+        .register_action(move |_: &Cancel, cx| {
+            let Some(editor) = view.upgrade() else {
+                return;
+            };
+            EasyMotion::cancel(editor, cx);
+        })
+        .detach();
+
+    let view = cx.view().downgrade();
+    cx.observe_keystrokes(move |event, cx| {
+        let Some(editor) = view.clone().upgrade() else {
+            return;
+        };
+        EasyMotion::observe_keystrokes(editor, event, cx);
+    })
+    .detach();
 
     let entity_id = cx.view().entity_id();
     cx.on_release(move |_, _, cx| {
