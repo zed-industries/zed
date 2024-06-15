@@ -132,21 +132,17 @@ impl WindowsWindowState {
             GetWindowPlacement(self.hwnd, &mut placement).log_err();
             placement
         };
+        let physical_size = size(
+            DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
+            DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
+        );
         let bounds = Bounds {
-            origin: point(
-                px(placement.rcNormalPosition.left as f32 * self.scale_factor),
-                px(placement.rcNormalPosition.top as f32 * self.scale_factor),
+            origin: logical_point(
+                placement.rcNormalPosition.left as f32,
+                placement.rcNormalPosition.top as f32,
+                self.scale_factor,
             ),
-            size: size(
-                px(
-                    (placement.rcNormalPosition.right - placement.rcNormalPosition.left) as f32
-                        * self.scale_factor,
-                ),
-                px(
-                    (placement.rcNormalPosition.bottom - placement.rcNormalPosition.top) as f32
-                        * self.scale_factor,
-                ),
-            ),
+            size: logical_size(physical_size, self.scale_factor),
         };
 
         if self.is_fullscreen() {
