@@ -770,6 +770,14 @@ impl PlatformWindow for X11Window {
             .xcb_connection
             .configure_window(self.0.x_window, &win_aux)
             .log_err();
+        self.0
+            .xcb_connection
+            .set_input_focus(
+                xproto::InputFocus::POINTER_ROOT,
+                self.0.x_window,
+                xproto::Time::CURRENT_TIME,
+            )
+            .log_err();
     }
 
     fn is_active(&self) -> bool {

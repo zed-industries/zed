@@ -2977,8 +2977,6 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     assert_eq!(opened_buffer, buffer);
 }
 
-// This test is currently disabled on Linux as it fails fails pretty consistently on that target.
-#[cfg(not(target_os = "linux"))]
 #[gpui::test(retries = 5)]
 async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     use worktree::WorktreeModelHandle as _;
