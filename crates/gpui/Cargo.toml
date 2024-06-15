@@ -137,7 +137,6 @@ xim = { git = "https://github.com/npmania/xim-rs", rev = "27132caffc5b9bc9c432ca
 ] }
 x11-clipboard = "0.9.2"
 
-
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 windows-core = "0.57"
