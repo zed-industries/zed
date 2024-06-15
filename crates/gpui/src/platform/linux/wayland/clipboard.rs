@@ -12,6 +12,8 @@ use crate::platform::linux::platform::read_fd;
 pub(crate) const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
 pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
 
+pub(crate) const ALLOWED_TEXT_MIME_TYPES: [&str; 2] = ["text/plain;charset=utf-8", "UTF8_STRING"];
+
 pub(crate) struct Clipboard {
     connection: Connection,
     self_mime: String,
@@ -28,6 +30,7 @@ pub(crate) struct Clipboard {
 }
 
 #[derive(Clone, Debug)]
+/// Wrapper for `WlDataOffer` and `ZwpPrimarySelectionOfferV1`, used to help track offered mime types.
 pub(crate) struct DataOffer<T> {
     pub inner: T,
     mime_types: Vec<String>,
@@ -47,6 +50,18 @@ impl<T> DataOffer<T> {
 
     pub fn has_mime_type(&self, mime_type: &str) -> bool {
         self.mime_types.iter().any(|t| t == mime_type)
+    }
+
+    pub fn find_text_mime_type(&self) -> Option<String> {
+        for offered_mime_type in &self.mime_types {
+            if let Some(offer_text_mime_type) = ALLOWED_TEXT_MIME_TYPES
+                .into_iter()
+                .find(|text_mime_type| text_mime_type == offered_mime_type)
+            {
+                return Some(offer_text_mime_type.to_owned());
+            }
+        }
+        None
     }
 }
 
@@ -115,12 +130,10 @@ impl Clipboard {
         if offer.has_mime_type(&self.self_mime) {
             return self.contents.clone();
         }
-        if !offer.has_mime_type(TEXT_MIME_TYPE) {
-            return None;
-        }
 
+        let mime_type = offer.find_text_mime_type()?;
         let pipe = Pipe::new().unwrap();
-        offer.inner.receive(TEXT_MIME_TYPE.to_string(), unsafe {
+        offer.inner.receive(mime_type, unsafe {
             BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
         });
         let fd = pipe.read;
@@ -149,12 +162,10 @@ impl Clipboard {
         if offer.has_mime_type(&self.self_mime) {
             return self.primary_contents.clone();
         }
-        if !offer.has_mime_type(TEXT_MIME_TYPE) {
-            return None;
-        }
 
+        let mime_type = offer.find_text_mime_type()?;
         let pipe = Pipe::new().unwrap();
-        offer.inner.receive(TEXT_MIME_TYPE.to_string(), unsafe {
+        offer.inner.receive(mime_type, unsafe {
             BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
         });
         let fd = pipe.read;
