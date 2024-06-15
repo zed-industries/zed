@@ -30,7 +30,7 @@ use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
-use project::{File, Fs, Project};
+use project::{File, Fs, Item, Project};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use util::{ResultExt, TryFutureExt};
@@ -1148,55 +1148,78 @@ impl OutlinePanel {
         if !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
             return;
         }
-        let Some((buffer_id, excerpt_id, outline)) = self.location_for_editor_selection(editor, cx)
-        else {
+        let Some(entry_with_selection) = self.location_for_editor_selection(editor, cx) else {
             return;
         };
-        let Some((file_entry_with_selection, entry_with_selection)) =
-            self.entry_for_selection(buffer_id, excerpt_id, outline)
-        else {
-            return;
+        let related_buffer_entry = match entry_with_selection {
+            EntryOwned::Entry(FsEntry::File(worktree_id, _, buffer_id, _)) => {
+                let project = self.project.read(cx);
+                let entry_id = project
+                    .buffer_for_id(buffer_id)
+                    .and_then(|buffer| buffer.read(cx).entry_id(cx));
+                project
+                    .worktree_for_id(worktree_id, cx)
+                    .zip(entry_id)
+                    .and_then(|(worktree, entry_id)| {
+                        let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
+                        Some((worktree, entry))
+                    })
+            }
+            EntryOwned::Outline(buffer_id, excerpt_id, _)
+            | EntryOwned::Excerpt(buffer_id, excerpt_id, _) => {
+                self.collapsed_entries
+                    .remove(&CollapsedEntry::Excerpt(buffer_id, excerpt_id));
+                let project = self.project.read(cx);
+                let entry_id = project
+                    .buffer_for_id(buffer_id)
+                    .and_then(|buffer| buffer.read(cx).entry_id(cx));
+                entry_id.and_then(|entry_id| {
+                    let worktree = project.worktree_for_entry(entry_id, cx)?;
+                    let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
+                    Some((worktree, entry))
+                })
+            }
+            EntryOwned::Entry(FsEntry::ExternalFile(..)) => None,
+            _ => return,
         };
-        if self.selected_entry.as_ref() == Some(&entry_with_selection) {
-            return;
-        }
+        if let Some((worktree, buffer_entry)) = related_buffer_entry {
+            let worktree_id = worktree.read(cx).id();
+            let mut dirs_to_expand = Vec::new();
+            {
+                let mut traversal = worktree.read(cx).traverse_from_path(
+                    true,
+                    true,
+                    true,
+                    buffer_entry.path.as_ref(),
+                );
+                let mut current_entry = buffer_entry;
+                loop {
+                    if current_entry.is_dir() {
+                        if self
+                            .collapsed_entries
+                            .remove(&CollapsedEntry::Dir(worktree_id, current_entry.id))
+                        {
+                            dirs_to_expand.push(current_entry.id);
+                        }
+                    }
 
-        if let FsEntry::File(file_worktree_id, file_entry, ..) = file_entry_with_selection {
-            if let Some(worktree) = self.project.read(cx).worktree_for_id(file_worktree_id, cx) {
-                let parent_entry = {
-                    let mut traversal = worktree.read(cx).traverse_from_path(
-                        true,
-                        true,
-                        true,
-                        file_entry.path.as_ref(),
-                    );
                     if traversal.back_to_parent() {
-                        traversal.entry()
-                    } else {
-                        None
+                        if let Some(parent_entry) = traversal.entry() {
+                            current_entry = parent_entry.clone();
+                            continue;
+                        }
                     }
-                    .cloned()
-                };
-                if let Some(directory_entry) = parent_entry {
-                    let worktree_id = worktree.read(cx).id();
-                    let entry_id = directory_entry.id;
-                    if self
-                        .collapsed_entries
-                        .remove(&CollapsedEntry::Dir(worktree_id, entry_id))
-                    {
-                        self.project
-                            .update(cx, |project, cx| {
-                                project.expand_entry(worktree_id, entry_id, cx)
-                            })
-                            .unwrap_or_else(|| Task::ready(Ok(())))
-                            .detach_and_log_err(cx)
-                    }
+                    break;
                 }
             }
-        }
-        if let EntryOwned::Outline(buffer_id, excerpt_id, _) = &entry_with_selection {
-            self.collapsed_entries
-                .remove(&CollapsedEntry::Excerpt(*buffer_id, *excerpt_id));
+            for dir_to_expand in dirs_to_expand {
+                self.project
+                    .update(cx, |project, cx| {
+                        project.expand_entry(worktree_id, dir_to_expand, cx)
+                    })
+                    .unwrap_or_else(|| Task::ready(Ok(())))
+                    .detach_and_log_err(cx)
+            }
         }
 
         self.update_fs_entries(
@@ -1207,26 +1230,6 @@ impl OutlinePanel {
             false,
             cx,
         );
-    }
-
-    fn entry_for_selection(
-        &mut self,
-        buffer_id: BufferId,
-        excerpt_id: ExcerptId,
-        outline: Option<OutlineItem<language::Anchor>>,
-    ) -> Option<(FsEntry, EntryOwned)> {
-        let fs_entry_with_selection = self.fs_entries.iter().find(|entry| match entry {
-            FsEntry::File(_, _, file_buffer_id, excerpts)
-            | FsEntry::ExternalFile(file_buffer_id, excerpts) => {
-                file_buffer_id == &buffer_id && excerpts.contains(&excerpt_id)
-            }
-            _ => false,
-        });
-        let entry_with_selection = outline
-            .map(|outline| EntryOwned::Outline(buffer_id, excerpt_id, outline))
-            .or_else(|| Some(EntryOwned::Entry(fs_entry_with_selection.cloned()?)));
-
-        fs_entry_with_selection.cloned().zip(entry_with_selection)
     }
 
     fn render_excerpt(
@@ -1964,18 +1967,13 @@ impl OutlinePanel {
         new_active_editor: View<Editor>,
         cx: &mut ViewContext<Self>,
     ) {
+        let new_selected_entry = self.location_for_editor_selection(&new_active_editor, cx);
         self.clear_previous();
         self.active_item = Some(ActiveItem {
             item_id: new_active_editor.item_id(),
             _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
             active_editor: new_active_editor.downgrade(),
         });
-        let new_selected_entry = self
-            .location_for_editor_selection(&new_active_editor, cx)
-            .and_then(|(buffer_id, excerpt_id, outline)| {
-                let (_, entry) = self.entry_for_selection(buffer_id, excerpt_id, outline)?;
-                Some(entry)
-            });
         let new_entries =
             HashSet::from_iter(new_active_editor.read(cx).buffer().read(cx).excerpt_ids());
         self.update_fs_entries(
@@ -2006,7 +2004,7 @@ impl OutlinePanel {
         &self,
         editor: &View<Editor>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<(BufferId, ExcerptId, Option<Outline>)> {
+    ) -> Option<EntryOwned> {
         let selection = editor
             .read(cx)
             .selections
@@ -2038,8 +2036,35 @@ impl OutlinePanel {
                 distance_to_closest_endpoint
             })
             .cloned();
-
-        Some((buffer_id, excerpt_id, outline_item))
+        let closest_container = match outline_item {
+            Some(outline) => EntryOwned::Outline(buffer_id, excerpt_id, outline),
+            None => self
+                .cached_entries_with_depth
+                .iter()
+                .flatten()
+                .rev()
+                .find_map(|(_, entry)| match entry {
+                    EntryOwned::Excerpt(entry_buffer_id, entry_excerpt_id, _) => {
+                        if entry_buffer_id == &buffer_id && entry_excerpt_id == &excerpt_id {
+                            Some(entry.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    EntryOwned::Entry(
+                        FsEntry::ExternalFile(file_buffer_id, file_excerpts)
+                        | FsEntry::File(_, _, file_buffer_id, file_excerpts),
+                    ) => {
+                        if file_buffer_id == &buffer_id && file_excerpts.contains(&excerpt_id) {
+                            Some(entry.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                })?,
+        };
+        Some(closest_container)
     }
 
     fn fetch_outlines(&mut self, range: &Range<usize>, cx: &mut ViewContext<Self>) {
@@ -2434,13 +2459,7 @@ impl Panel for OutlinePanel {
                 if self.active_item.as_ref().map(|item| item.item_id)
                     == Some(active_editor.item_id())
                 {
-                    let new_selected_entry = self
-                        .location_for_editor_selection(&active_editor, cx)
-                        .and_then(|(buffer_id, excerpt_id, outline)| {
-                            let (_, entry) =
-                                self.entry_for_selection(buffer_id, excerpt_id, outline)?;
-                            Some(entry)
-                        });
+                    let new_selected_entry = self.location_for_editor_selection(&active_editor, cx);
                     self.update_fs_entries(
                         &active_editor,
                         HashSet::default(),
