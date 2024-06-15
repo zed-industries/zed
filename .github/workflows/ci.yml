@@ -353,7 +353,7 @@ jobs:
 
       - uses: rui314/setup-mold@v1
         with:
-          mold_version: 2.32.0
+          mold-version: 2.32.0
 
       - name: rustup
         run: |
