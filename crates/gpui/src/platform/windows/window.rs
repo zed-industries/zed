@@ -81,7 +81,7 @@ impl WindowsWindowState {
             size: logical_size,
         };
         // let renderer = windows_renderer::windows_renderer(hwnd, transparent);
-        let renderer = DirectXRenderer::new();
+        let renderer = DirectXRenderer::new(hwnd);
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
@@ -278,7 +278,7 @@ impl WindowsWindow {
         let lpparam = Some(&context as *const _ as *const _);
         let raw_hwnd = unsafe {
             CreateWindowExW(
-                WS_EX_APPWINDOW,
+                WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP,
                 classname,
                 &windowname,
                 dwstyle,
