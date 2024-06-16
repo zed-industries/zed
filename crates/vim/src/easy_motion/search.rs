@@ -5,6 +5,7 @@ use editor::{
     movement::{find_boundary_range_fold, TextLayoutDetails},
     DisplayPoint, Editor, RowExt, RowRangeExt,
 };
+use itertools::Itertools;
 use language::{char_kind, CharKind, LanguageScope};
 use multi_buffer::MultiBufferPoint;
 use text::{Bias, Selection};
@@ -88,7 +89,7 @@ pub fn row_starts(
                 Some(map.point_to_display_point(MultiBufferPoint::new(row.0, 0), Bias::Left))
             }
         })
-        .collect::<Vec<_>>()
+        .collect_vec()
 }
 
 pub fn sort_matches_display(matches: &mut [DisplayPoint], cursor: &DisplayPoint) {
@@ -139,30 +140,28 @@ pub fn word_starts_in_range_fold(
 
     let fold_snapshot = &map.fold_snapshot;
 
-    if from.is_zero() {
-        let first_char = fold_snapshot
+    if from.is_zero()
+        && fold_snapshot
             .chars_at(map.display_point_to_fold_point(from, Bias::Right))
-            .next();
-        if let Some(first_char) = first_char {
-            if char_kind(&scope, first_char) == CharKind::Word {
-                results.push(DisplayPoint::zero());
-            }
-        }
+            .next()
+            .map(|first_char| char_kind(&scope, first_char) == CharKind::Word)
+            .unwrap_or_default()
+    {
+        results.push(DisplayPoint::zero());
     }
 
     let mut from = map.display_point_to_fold_point(from, Bias::Right);
     let to = map.display_point_to_fold_point(to, Bias::Right);
     while from < to {
-        let new_point = find_boundary_range_fold(fold_snapshot, from, to, |left, right| {
+        let Some(new_point) = find_boundary_range_fold(fold_snapshot, from, to, |left, right| {
             is_boundary(&scope, full_word, left, right)
-        });
-
-        let Some(new_point) = new_point else {
+        }) else {
             break;
         };
         if from == new_point {
             break;
         }
+
         let new_point_display = map.fold_point_to_display_point(new_point);
         results.push(new_point_display);
         from = new_point;

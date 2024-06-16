@@ -297,8 +297,8 @@ impl<'a, T> Iterator for TrieIterator<'a, T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut node = self.stack.pop();
-        while node.is_some() {
-            match node.unwrap() {
+        while let Some(curr) = node {
+            match curr {
                 (TrieNode::Leaf(val), path) => {
                     return Some((path, val));
                 }

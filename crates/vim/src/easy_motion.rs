@@ -75,7 +75,6 @@ enum WordType {
 }
 
 pub struct EasyMotion {
-    dimming: bool,
     keys: String,
     enabled: bool,
     editor_states: HashMap<EntityId, EasyMotionState>,
@@ -84,7 +83,6 @@ pub struct EasyMotion {
 impl fmt::Debug for EasyMotion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EasyMotion")
-            .field("dimming", &self.dimming)
             .field("enabled", &self.enabled)
             .field("editor_states(members)", &self.editor_states)
             .finish()
@@ -100,7 +98,6 @@ const DEFAULT_KEYS: &'static str = "asdghklqwertyuiopzxcvbnmfj";
 pub fn init(cx: &mut AppContext) {
     let easy = cx.new_model({
         |_| EasyMotion {
-            dimming: true,
             editor_states: HashMap::default(),
             enabled: true,
             keys: DEFAULT_KEYS.into(),
@@ -217,8 +214,7 @@ impl EasyMotion {
         }
         sort_matches_display(&mut matches, &selections.start);
 
-        let (keys, dimming) = Self::read_with(cx, |easy, _| (easy.keys.clone(), easy.dimming))
-            .unwrap_or((DEFAULT_KEYS.into(), true));
+        let keys = Self::read_with(cx, |easy, _| easy.keys.clone()).unwrap_or(DEFAULT_KEYS.into());
 
         let (style_0, style_1, style_2) = Self::get_highlights(cx);
         let trie = Trie::new_from_vec(keys, matches, |depth, point| {
@@ -234,23 +230,21 @@ impl EasyMotion {
         });
         Self::add_overlays(editor, trie.iter(), trie.len(), cx);
 
-        if dimming {
-            let start = match direction {
-                Direction::Both | Direction::Backwards => DisplayPoint::zero(),
-                Direction::Forwards => selections.start,
-            };
-            let end = match direction {
-                Direction::Both | Direction::Forwards => map.max_point(),
-                Direction::Backwards => selections.end,
-            };
-            let anchor_start = map.display_point_to_anchor(start, Bias::Left);
-            let anchor_end = map.display_point_to_anchor(end, Bias::Left);
-            let highlight = HighlightStyle {
-                fade_out: Some(0.7),
-                ..Default::default()
-            };
-            editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
-        }
+        let start = match direction {
+            Direction::Both | Direction::Backwards => DisplayPoint::zero(),
+            Direction::Forwards => selections.start,
+        };
+        let end = match direction {
+            Direction::Both | Direction::Forwards => map.max_point(),
+            Direction::Backwards => selections.end,
+        };
+        let anchor_start = map.display_point_to_anchor(start, Bias::Left);
+        let anchor_end = map.display_point_to_anchor(end, Bias::Left);
+        let highlight = HighlightStyle {
+            fade_out: Some(0.7),
+            ..Default::default()
+        };
+        editor.highlight_text::<Self>(vec![anchor_start..anchor_end], highlight, cx);
 
         let new_state = EasyMotionState::new(trie);
         let ctx = new_state.keymap_context_layer();
@@ -284,12 +278,7 @@ impl EasyMotion {
         let entity_id = editor.entity_id();
 
         let new_state = editor.update(cx, |editor, cx| {
-            // TODO: watch for folds opening and adjust overlays?
-            // or maybe overlays should be positioned via anchor and then the editor can figure out the
-            // display position?
-            // or maybe easy should just search again to find the words inside the newly open folds?
             let word_starts = word_starts_fold(word_type, direction, editor, cx);
-
             Self::handle_new_matches(word_starts, direction, editor, cx)
         });
 
