@@ -10,8 +10,10 @@ use windows::{
             Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1},
             Direct3D11::{
                 D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11RenderTargetView,
-                ID3D11Texture2D, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_DEBUG,
-                D3D11_SDK_VERSION, D3D11_VIEWPORT,
+                ID3D11Texture2D, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_FLAG,
+                D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                D3D11_CREATE_DEVICE_DEBUG, D3D11_SDK_VERSION, D3D11_SUBRESOURCE_DATA,
+                D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT,
             },
             DirectComposition::{
                 DCompositionCreateDevice, DCompositionCreateDevice2, IDCompositionDesktopDevice,
@@ -34,11 +36,15 @@ use windows::{
     },
 };
 
-use crate::{DevicePixels, DirectXAtlas, PlatformAtlas, Scene, Size, WindowBackgroundAppearance};
+use crate::{
+    point, DevicePixels, DirectXAtlas, PlatformAtlas, Point, Scene, Shadow, Size,
+    WindowBackgroundAppearance,
+};
 
 pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
     context: DirectXContext,
+    render: DirectXRenderContext,
 }
 
 struct DirectXContext {
@@ -54,11 +60,16 @@ struct DirectXContext {
     comp_visual: IDCompositionVisual,
 }
 
+struct DirectXRenderContext {}
+
 impl DirectXRenderer {
     pub(crate) fn new(hwnd: HWND) -> Self {
+        let context = DirectXContext::new(hwnd).unwrap();
+        let render = DirectXRenderContext::new(&context.device).unwrap();
         DirectXRenderer {
             atlas: Arc::new(DirectXAtlas::new()),
-            context: DirectXContext::new(hwnd).unwrap(),
+            context,
+            render,
         }
     }
 
@@ -123,6 +134,39 @@ impl DirectXRenderer {
             }
         }
     }
+
+    fn draw_primitives(&mut self, scene: &Scene) {
+        for batch in scene.batches() {
+            let ok = match batch {
+                crate::PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
+                // crate::PrimitiveBatch::Quads(_) => todo!(),
+                // crate::PrimitiveBatch::Paths(_) => todo!(),
+                // crate::PrimitiveBatch::Underlines(_) => todo!(),
+                // crate::PrimitiveBatch::MonochromeSprites { texture_id, sprites } => todo!(),
+                // crate::PrimitiveBatch::PolychromeSprites { texture_id, sprites } => todo!(),
+                // crate::PrimitiveBatch::Surfaces(_) => todo!(),
+                _ => true,
+            };
+            if !ok {
+                log::error!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                    scene.paths.len(),
+                    scene.shadows.len(),
+                    scene.quads.len(),
+                    scene.underlines.len(),
+                    scene.monochrome_sprites.len(),
+                    scene.polychrome_sprites.len(),
+                    scene.surfaces.len(),);
+                return;
+            }
+        }
+    }
+
+    fn draw_shadows(&mut self, shadows: &[Shadow]) -> bool {
+        if shadows.is_empty() {
+            return true;
+        }
+        true
+    }
 }
 
 impl DirectXContext {
@@ -160,6 +204,45 @@ impl DirectXContext {
             comp_target,
             comp_visual,
         })
+    }
+}
+
+impl DirectXRenderContext {
+    pub fn new(device: &ID3D11Device) -> Result<Self> {
+        fn to_float2_bits(point: Point<f32>) -> u64 {
+            let mut output = point.y.to_bits() as u64;
+            output <<= 32;
+            output |= point.x.to_bits() as u64;
+            output
+        }
+        let unit_vertices = [
+            to_float2_bits(point(0., 0.)),
+            to_float2_bits(point(1., 0.)),
+            to_float2_bits(point(0., 1.)),
+            to_float2_bits(point(0., 1.)),
+            to_float2_bits(point(1., 0.)),
+            to_float2_bits(point(1., 1.)),
+        ];
+        let uint_vertices_buffer = unsafe {
+            let desc = D3D11_BUFFER_DESC {
+                ByteWidth: std::mem::size_of_val(&unit_vertices) as u32,
+                Usage: D3D11_USAGE_IMMUTABLE,
+                BindFlags: D3D11_BIND_VERTEX_BUFFER.0 as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
+                StructureByteStride: 8,
+            };
+            let data = D3D11_SUBRESOURCE_DATA {
+                pSysMem: unit_vertices.as_ptr() as _,
+                SysMemPitch: 0,
+                SysMemSlicePitch: 0,
+            };
+            let mut buffer = None;
+            device.CreateBuffer(&desc, Some(&data), Some(&mut buffer))?;
+            buffer.unwrap()
+        };
+
+        Ok(Self {})
     }
 }
 
