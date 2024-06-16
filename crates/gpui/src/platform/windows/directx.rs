@@ -11,17 +11,23 @@ use windows::{
             Direct3D11::{
                 D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11RenderTargetView,
                 ID3D11Texture2D, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_DEBUG,
-                D3D11_SDK_VERSION,
+                D3D11_SDK_VERSION, D3D11_VIEWPORT,
             },
-            DirectComposition::{DCompositionCreateDevice, IDCompositionDevice},
+            DirectComposition::{
+                DCompositionCreateDevice, DCompositionCreateDevice2, IDCompositionDesktopDevice,
+                IDCompositionDevice, IDCompositionSurface, IDCompositionTarget,
+                IDCompositionVisual, IDCompositionVisual2,
+            },
             Dxgi::{
                 Common::{
-                    DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
+                    DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN,
+                    DXGI_SAMPLE_DESC,
                 },
                 CreateDXGIFactory2, IDXGIAdapter1, IDXGIDevice, IDXGIFactory6, IDXGISwapChain1,
-                DXGI_CREATE_FACTORY_DEBUG, DXGI_GPU_PREFERENCE_MINIMUM_POWER, DXGI_SCALING_STRETCH,
-                DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_DISCARD,
-                DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
+                DXGI_CREATE_FACTORY_DEBUG, DXGI_GPU_PREFERENCE_MINIMUM_POWER,
+                DXGI_MWA_NO_ALT_ENTER, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1,
+                DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+                DXGI_USAGE_RENDER_TARGET_OUTPUT,
             },
         },
         UI::WindowsAndMessaging::GetClientRect,
@@ -38,9 +44,14 @@ pub(crate) struct DirectXRenderer {
 struct DirectXContext {
     dxgi_factory: IDXGIFactory6,
     device: ID3D11Device,
-    comp_device: IDCompositionDevice,
+    dxgi_device: IDXGIDevice,
     context: ID3D11DeviceContext,
     swap_chain: IDXGISwapChain1,
+    back_buffer: Option<ID3D11RenderTargetView>,
+
+    comp_device: IDCompositionDevice,
+    comp_target: IDCompositionTarget,
+    comp_visual: IDCompositionVisual,
 }
 
 impl DirectXRenderer {
@@ -57,10 +68,43 @@ impl DirectXRenderer {
 
     pub(crate) fn draw(&mut self, scene: &Scene) {
         // TODO:
+        unsafe {
+            self.context.context.ClearRenderTargetView(
+                self.context.back_buffer.as_ref().unwrap(),
+                &[0.0, 0.2, 0.4, 0.6],
+            );
+            self.context.swap_chain.Present(0, 0).ok().log_err();
+        }
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) {
         // TODO:
+        unsafe {
+            self.context.context.OMSetRenderTargets(None, None);
+            drop(self.context.back_buffer.take().unwrap());
+            self.context
+                .swap_chain
+                .ResizeBuffers(
+                    BUFFER_COUNT as u32,
+                    new_size.width.0 as u32,
+                    new_size.height.0 as u32,
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    0,
+                )
+                .log_err();
+            let backbuffer = set_render_target_view(
+                &self.context.swap_chain,
+                &self.context.device,
+                &self.context.context,
+            )
+            .unwrap();
+            self.context.back_buffer = Some(backbuffer);
+            set_viewport(
+                &self.context.context,
+                new_size.width.0 as f32,
+                new_size.height.0 as f32,
+            );
+        }
     }
 
     pub(crate) fn update_transparency(
@@ -91,23 +135,30 @@ impl DirectXContext {
             get_device(&adapter, Some(&mut device), Some(&mut context))?;
             (device.unwrap(), context.unwrap())
         };
-        let comp_device = get_comp_device(&device)?;
+        let dxgi_device: IDXGIDevice = device.cast().unwrap();
+        let comp_device = get_comp_device(&dxgi_device)?;
         let swap_chain = get_swap_chain(&dxgi_factory, &device)?;
+        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        let comp_visual = unsafe { comp_device.CreateVisual() }?;
         unsafe {
-            let comp_target = comp_device.CreateTargetForHwnd(hwnd, true)?;
-            let visual = comp_device.CreateVisual()?;
-            visual.SetContent(&swap_chain)?;
-            comp_target.SetRoot(&visual)?;
+            comp_visual.SetContent(&swap_chain)?;
+            comp_target.SetRoot(&comp_visual)?;
             comp_device.Commit()?;
+            dxgi_factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER)?;
         }
-        set_render_target_view(&swap_chain, &device, &context);
+        let back_buffer = Some(set_render_target_view(&swap_chain, &device, &context)?);
+        set_viewport(&context, 1.0, 1.0);
 
         Ok(Self {
             dxgi_factory,
             device,
-            comp_device,
+            dxgi_device,
             context,
             swap_chain,
+            back_buffer,
+            comp_device,
+            comp_target,
+            comp_visual,
         })
     }
 }
@@ -170,9 +221,8 @@ fn get_device(
     }?)
 }
 
-fn get_comp_device(device: &ID3D11Device) -> Result<IDCompositionDevice> {
-    let dxgi_device: IDXGIDevice = device.cast().unwrap();
-    Ok(unsafe { DCompositionCreateDevice(&dxgi_device)? })
+fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
+    Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
 }
 
 fn get_swap_chain(dxgi_factory: &IDXGIFactory6, device: &ID3D11Device) -> Result<IDXGISwapChain1> {
@@ -201,18 +251,29 @@ fn set_render_target_view(
     swap_chain: &IDXGISwapChain1,
     device: &ID3D11Device,
     device_context: &ID3D11DeviceContext,
-) {
+) -> Result<ID3D11RenderTargetView> {
     // In dx11, ID3D11RenderTargetView is supposed to always point to the new back buffer.
-    let render_targets: [Option<ID3D11RenderTargetView>; 1] =
-        ::core::array::from_fn(|buffer_index| unsafe {
-            let resource: ID3D11Texture2D = swap_chain.GetBuffer(buffer_index as u32).unwrap();
-            let mut buffer: Option<ID3D11RenderTargetView> = None;
-            device
-                .CreateRenderTargetView(&resource, None, Some(&mut buffer))
-                .unwrap();
-            buffer
-        });
-    unsafe { device_context.OMSetRenderTargets(Some(&render_targets), None) };
+    // https://stackoverflow.com/questions/65246961/does-the-backbuffer-that-a-rendertargetview-points-to-automagically-change-after
+    let back_buffer = unsafe {
+        let resource: ID3D11Texture2D = swap_chain.GetBuffer(0)?;
+        let mut buffer: Option<ID3D11RenderTargetView> = None;
+        device.CreateRenderTargetView(&resource, None, Some(&mut buffer))?;
+        buffer.unwrap()
+    };
+    unsafe { device_context.OMSetRenderTargets(Some(&[Some(back_buffer.clone())]), None) };
+    Ok(back_buffer)
+}
+
+fn set_viewport(device_context: &ID3D11DeviceContext, width: f32, height: f32) {
+    let viewport = D3D11_VIEWPORT {
+        TopLeftX: 0.0,
+        TopLeftY: 0.0,
+        Width: width,
+        Height: height,
+        MinDepth: 0.0,
+        MaxDepth: 1.0,
+    };
+    unsafe { device_context.RSSetViewports(Some(&[viewport])) };
 }
 
 const BUFFER_COUNT: usize = 3;
