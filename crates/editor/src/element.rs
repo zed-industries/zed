@@ -2597,6 +2597,7 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_signature_help(
         &self,
         hitbox: &Hitbox,

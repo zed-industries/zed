@@ -5755,7 +5755,7 @@ impl Project {
                 all_actions_task
                     .await
                     .into_iter()
-                    .filter_map(|signature_help| signature_help)
+                    .flatten()
                     .next()
             })
         }
