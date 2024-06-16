@@ -440,7 +440,9 @@ fn toggle_inline_completions_for_language(
 
 fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
-        file.features.get_or_insert(Default::default()).copilot = Some(false);
+        file.features
+            .get_or_insert(Default::default())
+            .inline_completion_provider = Some(InlineCompletionProvider::None);
     });
 }
 
