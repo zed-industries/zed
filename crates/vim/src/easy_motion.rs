@@ -1,14 +1,18 @@
+use anyhow::Result;
 use collections::HashMap;
+use itertools::Itertools;
+use schemars::JsonSchema;
 use search::word_starts_fold;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
+use workspace::Workspace;
 
 use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor, ToPoint};
 use gpui::{
     actions, impl_actions, saturate, AppContext, Entity, EntityId, Global, HighlightStyle,
-    KeystrokeEvent, Model, ModelContext, View, ViewContext,
+    KeystrokeEvent, Model, ModelContext, Subscription, View, ViewContext,
 };
-use settings::Settings;
+use settings::{Settings, SettingsSources, SettingsStore};
 use text::{Bias, SelectionGoal};
 use theme::ThemeSettings;
 use ui::{Context, WindowContext};
@@ -75,14 +79,13 @@ enum WordType {
 
 pub struct EasyMotion {
     keys: String,
-    enabled: bool,
     editor_states: HashMap<EntityId, EasyMotionState>,
+    subscriptions: Vec<Subscription>,
 }
 
 impl fmt::Debug for EasyMotion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EasyMotion")
-            .field("enabled", &self.enabled)
             .field("editor_states(members)", &self.editor_states)
             .finish()
     }
@@ -92,79 +95,24 @@ struct GlobalEasyMotion(Model<EasyMotion>);
 
 impl Global for GlobalEasyMotion {}
 
-const DEFAULT_KEYS: &'static str = "asdghklqwertyuiopzxcvbnmfj";
-
 pub fn init(cx: &mut AppContext) {
-    let easy = cx.new_model({
-        |_| EasyMotion {
-            editor_states: HashMap::default(),
-            enabled: true,
-            keys: DEFAULT_KEYS.into(),
-        }
-    });
-    EasyMotion::set_global(easy.clone(), cx);
-    cx.observe_new_views(|editor: &mut Editor, cx| register(editor, cx))
-        .detach();
-}
-
-fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-    let view = cx.view().downgrade();
-    editor
-        .register_action(move |action: &Word, cx| {
-            let Some(editor) = view.upgrade() else {
-                return;
-            };
-            EasyMotion::word(editor, action, cx);
-        })
-        .detach();
-
-    let view = cx.view().downgrade();
-    editor
-        .register_action(move |action: &FullWord, cx| {
-            let Some(editor) = view.upgrade() else {
-                return;
-            };
-            EasyMotion::full_word(editor, action, cx);
-        })
-        .detach();
-
-    let view = cx.view().downgrade();
-    editor
-        .register_action(move |action: &Row, cx| {
-            let Some(editor) = view.upgrade() else {
-                return;
-            };
-            EasyMotion::row(editor, action, cx);
-        })
-        .detach();
-
-    let view = cx.view().downgrade();
-    editor
-        .register_action(move |_: &Cancel, cx| {
-            let Some(editor) = view.upgrade() else {
-                return;
-            };
-            EasyMotion::cancel(editor, cx);
-        })
-        .detach();
-
-    let view = cx.view().downgrade();
-    cx.observe_keystrokes(move |event, cx| {
-        let Some(editor) = view.clone().upgrade() else {
-            return;
-        };
-        EasyMotion::observe_keystrokes(editor, event, cx);
-    })
-    .detach();
-
-    let entity_id = cx.view().entity_id();
-    cx.on_release(move |_, _, cx| {
-        EasyMotion::update(cx, |easy, _cx| easy.editor_states.remove(&entity_id));
+    EasyMotionSettings::register(cx);
+    EasyMotion::sync(true, cx);
+    cx.observe_global::<SettingsStore>(|cx| {
+        EasyMotion::sync(false, cx);
     })
     .detach();
 }
 
 impl EasyMotion {
+    pub fn new(keys: String, subscriptions: Vec<Subscription>) -> Self {
+        Self {
+            editor_states: HashMap::default(),
+            keys,
+            subscriptions,
+        }
+    }
+
     pub fn update<F, S>(cx: &mut AppContext, f: F) -> Option<S>
     where
         F: FnOnce(&mut EasyMotion, &mut ModelContext<EasyMotion>) -> S,
@@ -188,6 +136,115 @@ impl EasyMotion {
         EasyMotion::global(cx).map(|easy| easy.read_with(cx, f))
     }
 
+    fn active_editor_views(workspace: &Workspace, cx: &AppContext) -> Vec<View<Editor>> {
+        let panes = workspace.panes();
+        panes
+            .iter()
+            .flat_map(|pane| {
+                pane.read(cx)
+                    .items()
+                    .filter_map(|item| item.downcast::<Editor>())
+            })
+            .collect()
+    }
+
+    fn sync(init: bool, cx: &mut AppContext) {
+        let settings = EasyMotionSettings::get_global(cx);
+        let was_enabled = cx.has_global::<GlobalEasyMotion>();
+
+        if !settings.enabled {
+            if was_enabled {
+                cx.remove_global::<GlobalEasyMotion>();
+            }
+            return;
+        }
+
+        // TODO: there's a bug where t/f motions break after changing the easy motion keys
+        if was_enabled {
+            let keys = settings.keys.clone();
+            EasyMotion::update(cx, |easy, _cx| easy.keys = keys);
+        } else {
+            let keys = settings.keys.clone();
+            let mut subs = if init {
+                Vec::new()
+            } else {
+                // if the application is already open then we need to add listeners to all the open editors
+                // TODO: there must be a better way to do this
+                cx.windows()[0]
+                    .downcast::<Workspace>()
+                    .unwrap()
+                    .update(cx, |workspace, cx| {
+                        Self::active_editor_views(workspace, cx)
+                            .into_iter()
+                            .flat_map(|editor| {
+                                editor
+                                    .update(cx, |editor, cx| Self::register(editor, cx))
+                                    .into_iter()
+                            })
+                            .collect_vec()
+                    })
+                    .unwrap()
+            };
+            subs.push(cx.observe_new_views(|editor: &mut Editor, cx| {
+                let mut hi = EasyMotion::register(editor, cx);
+                Self::update(cx, |easy, _cx| easy.subscriptions.append(&mut hi));
+            }));
+
+            let easy = cx.new_model(move |_| EasyMotion::new(keys, subs));
+            Self::set_global(easy.clone(), cx);
+        }
+    }
+
+    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> Vec<Subscription> {
+        let view = cx.view().downgrade();
+        let mut subs = Vec::new();
+        subs.push(editor.register_action(move |action: &Word, cx| {
+            let Some(editor) = view.upgrade() else {
+                return;
+            };
+            EasyMotion::word(editor, action, cx);
+        }));
+
+        let view = cx.view().downgrade();
+        subs.push(editor.register_action(move |action: &FullWord, cx| {
+            let Some(editor) = view.upgrade() else {
+                return;
+            };
+            EasyMotion::full_word(editor, action, cx);
+        }));
+
+        let view = cx.view().downgrade();
+        subs.push(editor.register_action(move |action: &Row, cx| {
+            let Some(editor) = view.upgrade() else {
+                return;
+            };
+            EasyMotion::row(editor, action, cx);
+        }));
+
+        let view = cx.view().downgrade();
+        subs.push(editor.register_action(move |_: &Cancel, cx| {
+            let Some(editor) = view.upgrade() else {
+                return;
+            };
+            EasyMotion::cancel(editor, cx);
+        }));
+
+        let view = cx.view().downgrade();
+        subs.push(cx.observe_keystrokes(move |event, cx| {
+            let Some(editor) = view.clone().upgrade() else {
+                return;
+            };
+            EasyMotion::observe_keystrokes(editor, event, cx);
+        }));
+
+        let entity_id = cx.view().entity_id();
+        subs.push(cx.on_release(move |_, _, cx| {
+            EasyMotion::update(cx, |easy, _cx| easy.editor_states.remove(&entity_id));
+        }));
+
+        subs
+    }
+
     fn handle_new_matches(
         mut matches: Vec<DisplayPoint>,
         direction: Direction,
@@ -203,7 +260,7 @@ impl EasyMotion {
         }
         sort_matches_display(&mut matches, &selections.start);
 
-        let keys = Self::read_with(cx, |easy, _| easy.keys.clone()).unwrap_or(DEFAULT_KEYS.into());
+        let keys = Self::read_with(cx, |easy, _| easy.keys.clone()).unwrap();
 
         let (style_0, style_1, style_2) = Self::get_highlights(cx);
         let trie = Trie::new_from_vec(keys, matches, |depth, point| {
@@ -414,5 +471,27 @@ impl EasyMotion {
             ..HighlightStyle::default()
         };
         (style_0, style_1, style_2)
+    }
+}
+
+#[derive(Deserialize)]
+struct EasyMotionSettings {
+    pub enabled: bool,
+    pub keys: String,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+struct EasyMotionSettingsContent {
+    pub enabled: Option<bool>,
+    pub keys: Option<String>,
+}
+
+impl Settings for EasyMotionSettings {
+    const KEY: Option<&'static str> = Some("easy_motion");
+
+    type FileContent = EasyMotionSettingsContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
     }
 }

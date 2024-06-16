@@ -837,6 +837,11 @@
     "use_multiline_find": false,
     "use_smartcase_find": false
   },
+  // Easy motion settings
+  "easy_motion": {
+    "enabled": false,
+    "keys": "fjdksla;ghruvntyghbeicmx,wo.qpz"
+  },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
   "server_url": "https://zed.dev",
