@@ -123,7 +123,6 @@ pub fn word_starts_fold(
     let full_word = match word_type {
         WordType::Word => false,
         WordType::FullWord => true,
-        _ => false,
     };
 
     word_starts_in_range_fold(map, start, end, full_word)

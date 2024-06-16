@@ -63,14 +63,13 @@ struct FullWord(Direction);
 #[serde(rename_all = "camelCase")]
 struct Row(Direction);
 
-impl_actions!(easy_motion, [NChar, Pattern, Word, SubWord, FullWord, Row]);
+impl_actions!(easy_motion, [NChar, Pattern, Word, FullWord, Row]);
 
 actions!(easy_motion, [Cancel, PatternSubmit]);
 
 #[derive(Clone, Copy, Debug)]
 enum WordType {
     Word,
-    SubWord,
     FullWord,
 }
 
@@ -116,16 +115,6 @@ fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
                 return;
             };
             EasyMotion::word(editor, action, cx);
-        })
-        .detach();
-
-    let view = cx.view().downgrade();
-    editor
-        .register_action(move |action: &SubWord, cx| {
-            let Some(editor) = view.upgrade() else {
-                return;
-            };
-            EasyMotion::sub_word(editor, action, cx);
         })
         .detach();
 
@@ -255,11 +244,6 @@ impl EasyMotion {
     fn word(editor: View<Editor>, action: &Word, cx: &mut WindowContext) {
         let Word(direction) = *action;
         EasyMotion::word_single_pane(editor, WordType::Word, direction, cx);
-    }
-
-    fn sub_word(editor: View<Editor>, action: &SubWord, cx: &mut WindowContext) {
-        let SubWord(direction) = *action;
-        EasyMotion::word_single_pane(editor, WordType::SubWord, direction, cx);
     }
 
     fn full_word(editor: View<Editor>, action: &FullWord, cx: &mut WindowContext) {
