@@ -984,7 +984,18 @@ impl DisplaySnapshot {
                 }
             }
             let end = end.unwrap_or(max_point);
-            Some((start..end, self.fold_placeholder.clone()))
+
+            // Adjust end point to exclude folding line break if present
+            let adjusted_end = if self.buffer_snapshot.is_line_blank(MultiBufferRow(end.row)) {
+                Point::new(
+                    end.row - 1,
+                    self.buffer_snapshot.line_len(MultiBufferRow(end.row - 1)),
+                )
+            } else {
+                end
+            };
+
+            Some((start..adjusted_end, self.fold_placeholder.clone()))
         } else {
             None
         }
