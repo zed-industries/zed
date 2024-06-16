@@ -1,14 +1,14 @@
 use std::ops::Range;
 
-use crate::{DisplayPoint, DisplayRow};
+use crate::{DisplayPoint, DisplayRow, DisplaySnapshot};
 use gpui::{AnyElement, HighlightStyle, IntoElement, StyledText, TextStyle};
+use multi_buffer::MultiBufferSnapshot;
 
 #[derive(Debug, Clone, Default)]
 pub struct Overlay {
     pub text: String,
     pub highlights: Vec<(Range<usize>, HighlightStyle)>,
-    pub point: DisplayPoint,
-    pub offset: f32,
+    pub buffer_offset: usize,
 }
 
 impl Overlay {
@@ -16,8 +16,12 @@ impl Overlay {
         &self,
         style: &TextStyle,
         visible_display_row_range: Range<DisplayRow>,
-    ) -> Option<(DisplayPoint, f32, AnyElement)> {
-        if !visible_display_row_range.contains(&self.point.row()) {
+        buffer_snapshot: &MultiBufferSnapshot,
+        display_snapshot: &DisplaySnapshot,
+    ) -> Option<(DisplayPoint, AnyElement)> {
+        let point = buffer_snapshot.offset_to_point(self.buffer_offset);
+        let display_point = display_snapshot.point_to_display_point(point, text::Bias::Left);
+        if !visible_display_row_range.contains(&display_point.row()) {
             return None;
         }
         let iter = self.highlights.iter().cloned();
@@ -25,6 +29,6 @@ impl Overlay {
         let el = StyledText::new(self.text.clone())
             .with_highlights(style, iter)
             .into_any_element();
-        Some((self.point, self.offset, el))
+        Some((display_point, el))
     }
 }

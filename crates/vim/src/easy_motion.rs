@@ -3,7 +3,7 @@ use search::word_starts_fold;
 use serde::Deserialize;
 use std::fmt;
 
-use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor};
+use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor, ToPoint};
 use gpui::{
     actions, impl_actions, saturate, AppContext, Entity, EntityId, Global, HighlightStyle,
     KeystrokeEvent, Model, ModelContext, View, ViewContext,
@@ -227,7 +227,10 @@ impl EasyMotion {
                 2 => style_1,
                 3.. => style_2,
             };
-            OverlayState { style, point }
+            OverlayState {
+                style,
+                offset: point.to_offset(map, Bias::Right),
+            }
         });
         Self::add_overlays(editor, trie.iter(), trie.len(), cx);
 
@@ -362,8 +365,13 @@ impl EasyMotion {
         let (selection, res) = selection.record_str(keys);
         match res {
             TrimResult::Found(overlay) => {
+                let snapshot = editor.snapshot(cx);
+                let point = overlay.offset.to_point(&snapshot.buffer_snapshot);
+                let point = snapshot
+                    .display_snapshot
+                    .point_to_display_point(point, Bias::Right);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |selection| {
-                    selection.move_cursors_with(|_, _, _| (overlay.point, SelectionGoal::None))
+                    selection.move_cursors_with(|_, _, _| (point, SelectionGoal::None))
                 });
                 editor.clear_overlays::<Self>(cx);
                 editor.clear_highlights::<Self>(cx);
@@ -407,8 +415,7 @@ impl EasyMotion {
             Overlay {
                 text: seq,
                 highlights,
-                point: overlay.point,
-                offset: 0.0,
+                buffer_offset: overlay.offset,
             }
         });
         editor.add_overlays_with_reserve::<Self>(overlays, len, cx);

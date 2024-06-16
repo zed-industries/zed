@@ -41,7 +41,7 @@ use language::language_settings::{
     IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings, ShowWhitespaceSetting,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
+use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot};
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -2404,6 +2404,8 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         line_layouts: &[LineWithInvisibles],
         text_style: &TextStyle,
+        buffer_snapshot: &MultiBufferSnapshot,
+        display_snapshot: &DisplaySnapshot,
         cx: &mut WindowContext,
     ) {
         let overlay_map = self
@@ -2412,10 +2414,17 @@ impl EditorElement {
         let overlays = overlay_map
             .iter()
             .flat_map(|(_, list)| list.iter())
-            .filter_map(|overlay| overlay.render(text_style, visible_display_row_range.clone()));
+            .filter_map(|overlay| {
+                overlay.render(
+                    text_style,
+                    visible_display_row_range.clone(),
+                    buffer_snapshot,
+                    display_snapshot,
+                )
+            });
         let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
 
-        for (anchor, offset, mut overlay) in overlays {
+        for (anchor, mut overlay) in overlays {
             let _overlay_size = overlay.layout_as_root(available_space, cx);
 
             let hovered_row_layout =
@@ -2423,7 +2432,7 @@ impl EditorElement {
 
             let x =
                 hovered_row_layout.x_for_index(anchor.column() as usize) - scroll_pixel_position.x;
-            let y = (anchor.row().as_f32() + offset) * line_height - scroll_pixel_position.y;
+            let y = anchor.row().as_f32() * line_height - scroll_pixel_position.y;
             let origin = content_origin + point(x, y);
 
             cx.defer_draw(overlay, origin, 1);
@@ -5005,6 +5014,8 @@ impl Element for EditorElement {
                         scroll_pixel_position,
                         &line_layouts,
                         &style.text,
+                        &snapshot.buffer_snapshot,
+                        &snapshot.display_snapshot,
                         cx,
                     );
 
