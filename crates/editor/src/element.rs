@@ -1,3 +1,4 @@
+use crate::actions::ShowSignatureHelp;
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     display_map::{
@@ -63,7 +64,6 @@ use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
-use crate::actions::ShowSignatureHelp;
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -2607,15 +2607,17 @@ impl EditorElement {
         line_height: Pixels,
         em_width: Pixels,
         display_snapshot: &DisplaySnapshot,
-        cx: &mut WindowContext
+        cx: &mut WindowContext,
     ) {
         let Some(display_point) = display_point else {
             return;
         };
 
         let display_point = display_point.to_point(display_snapshot);
-        let start_x = content_origin.x - scroll_pixel_position.x + Pixels(display_point.column as f32 * em_width.0);
-        let start_y = content_origin.y  - scroll_pixel_position.y + Pixels(line_height.0 * (display_point.row as f32 - 2.5));
+        let start_x = content_origin.x - scroll_pixel_position.x
+            + Pixels(display_point.column as f32 * em_width.0);
+        let start_y = content_origin.y - scroll_pixel_position.y
+            + Pixels(line_height.0 * (display_point.row as f32 - 2.5));
 
         let point = point(start_x, start_y);
 
@@ -2630,10 +2632,14 @@ impl EditorElement {
 
         let maybe_element = self.editor.update(cx, |editor, cx| {
             if let Some(popover) = &mut editor.signature_help_state {
-                let element = popover.render(&self.style, max_size, editor.workspace.as_ref().map(|(w, _)| w.clone()), cx);
+                let element = popover.render(
+                    &self.style,
+                    max_size,
+                    editor.workspace.as_ref().map(|(w, _)| w.clone()),
+                    cx,
+                );
                 Some(element)
-            }
-            else {
+            } else {
                 None
             }
         });
@@ -5009,7 +5015,7 @@ impl Element for EditorElement {
                         line_height,
                         em_width,
                         &snapshot.display_snapshot,
-                        cx
+                        cx,
                     );
 
                     if !cx.has_active_drag() {

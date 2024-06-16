@@ -1,7 +1,12 @@
-use crate::{CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState};
+use crate::{
+    CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
+    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
+    LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState,
+};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
+use clock::Global;
 use futures::future;
 use gpui::{AppContext, AsyncAppContext, Model};
 use language::{
@@ -11,11 +16,14 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
-use lsp::{CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind, DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, ServerCapabilities, SignatureHelp};
-use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
-use clock::Global;
 use lsp::request::Request;
+use lsp::{
+    CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
+    DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
+    OneOf, ServerCapabilities, SignatureHelp,
+};
 use rpc::proto::RequestMessage;
+use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
@@ -1236,7 +1244,7 @@ impl LspCommand for GetSignatureHelp {
         path: &Path,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &AppContext
+        _: &AppContext,
     ) -> <Self::LspRequest as Request>::Params {
         let uri_result = lsp::Uri::from_file_path(path);
         if uri_result.is_err() {
@@ -1246,7 +1254,9 @@ impl LspCommand for GetSignatureHelp {
         lsp::SignatureHelpParams {
             context: None,
             text_document_position_params: lsp::TextDocumentPositionParams {
-                text_document: lsp::TextDocumentIdentifier { uri: uri_result.expect("invalid file path").into() },
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: uri_result.expect("invalid file path").into(),
+                },
                 position: point_to_lsp(self.position),
             },
             work_done_progress_params: Default::default(),
@@ -1259,16 +1269,12 @@ impl LspCommand for GetSignatureHelp {
         _: Model<Project>,
         _: Model<Buffer>,
         _: LanguageServerId,
-        _: AsyncAppContext
+        _: AsyncAppContext,
     ) -> Result<Self::Response> {
         Ok(message)
     }
 
-    fn to_proto(
-        &self,
-        _: u64,
-        _: &Buffer
-    ) -> Self::ProtoRequest {
+    fn to_proto(&self, _: u64, _: &Buffer) -> Self::ProtoRequest {
         // TODO: Handle cases that are not local later
         unimplemented!("GetSignatureHelp::to_proto is unimplemented")
     }
@@ -1277,7 +1283,7 @@ impl LspCommand for GetSignatureHelp {
         _: Self::ProtoRequest,
         _: Model<Project>,
         _: Model<Buffer>,
-        _: AsyncAppContext
+        _: AsyncAppContext,
     ) -> Result<Self> {
         // TODO: Handle cases that are not local later
         anyhow::bail!("GetSignatureHelp::from_proto is unimplemented")
@@ -1288,7 +1294,7 @@ impl LspCommand for GetSignatureHelp {
         _: &mut Project,
         _: PeerId,
         _: &Global,
-        _: &mut AppContext
+        _: &mut AppContext,
     ) -> <Self::ProtoRequest as RequestMessage>::Response {
         // TODO: Handle cases that are not local later
         unimplemented!("GetSignatureHelp::response_to_proto is unimplemented")
@@ -1299,7 +1305,7 @@ impl LspCommand for GetSignatureHelp {
         _: <Self::ProtoRequest as RequestMessage>::Response,
         _: Model<Project>,
         _: Model<Buffer>,
-        _: AsyncAppContext
+        _: AsyncAppContext,
     ) -> Result<Self::Response> {
         // TODO: Handle cases that are not local later
         anyhow::bail!("GetSignatureHelp::response_from_proto is unimplemented")

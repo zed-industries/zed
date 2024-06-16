@@ -39,9 +39,9 @@ pub mod tasks;
 
 #[cfg(test)]
 mod editor_tests;
+mod signature_help_popover;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-mod signature_help_popover;
 
 use ::git::diff::{DiffHunk, DiffHunkStatus};
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
@@ -65,7 +65,15 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::GitBlame;
 use git::diff_hunk_to_display;
-use gpui::{div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext};
+use gpui::{
+    div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
+    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
+    Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
+    FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, ListSizingBehavior, Model,
+    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle,
+    Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle,
+    View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
+};
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 use hunk_diff::ExpandedHunks;
@@ -87,6 +95,7 @@ use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
+use language::markdown::parse_markdown;
 pub use lsp::CompletionContext;
 use lsp::{CompletionTriggerKind, DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
@@ -124,7 +133,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use language::markdown::parse_markdown;
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
@@ -3919,31 +3927,35 @@ impl Editor {
                 let project = editor.project.clone()?;
                 let (maybe_markdown, language_registry) = project.update(cx, |project, mut cx| {
                     let language_registry = project.languages().clone();
-                    let maybe_markdown = project.signature_help(&buffer, buffer_position, &mut cx).map(|signature_help| {
-                        create_signature_help_markdown_string(signature_help?)
-                    });
+                    let maybe_markdown = project
+                        .signature_help(&buffer, buffer_position, &mut cx)
+                        .map(|signature_help| {
+                            create_signature_help_markdown_string(signature_help?)
+                        });
                     (maybe_markdown, language_registry)
                 });
                 Some((maybe_markdown, language_registry))
             });
-            let maybe_signature_help_popover = if let Ok(Some((markdown, language_registry))) = markdown_task_result {
-                let markdown = markdown.await;
-                if let Some(markdown) = markdown {
-                    let parsed_markdown = parse_markdown(markdown.as_str(), &language_registry, None).await;
-                    Some(SignatureHelpPopover { parsed_content: parsed_markdown })
-                }
-                else {
+            let maybe_signature_help_popover =
+                if let Ok(Some((markdown, language_registry))) = markdown_task_result {
+                    let markdown = markdown.await;
+                    if let Some(markdown) = markdown {
+                        let parsed_markdown =
+                            parse_markdown(markdown.as_str(), &language_registry, None).await;
+                        Some(SignatureHelpPopover {
+                            parsed_content: parsed_markdown,
+                        })
+                    } else {
+                        None
+                    }
+                } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
             if let Some(signature_help_popover) = maybe_signature_help_popover {
                 let _ = this.update(&mut cx, |editor, _| {
                     editor.signature_help_state = Some(signature_help_popover);
                 });
-            }
-            else {
+            } else {
                 let _ = this.update(&mut cx, |editor, _| {
                     editor.signature_help_state = None;
                 });

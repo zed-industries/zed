@@ -5739,27 +5739,18 @@ impl Project {
         &self,
         buffer: &Model<Buffer>,
         position: PointUtf16,
-        cx: &mut ModelContext<Self>
+        cx: &mut ModelContext<Self>,
     ) -> Task<Option<lsp::SignatureHelp>> {
         if self.is_local() {
             let all_actions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                |server_capabilities| {
-                    server_capabilities.signature_help_provider.is_some()
-                },
+                |server_capabilities| server_capabilities.signature_help_provider.is_some(),
                 GetSignatureHelp { position },
-                cx
+                cx,
             );
-            cx.spawn(|_, _| async move {
-                all_actions_task
-                    .await
-                    .into_iter()
-                    .flatten()
-                    .next()
-            })
-        }
-        else {
+            cx.spawn(|_, _| async move { all_actions_task.await.into_iter().flatten().next() })
+        } else {
             // TODO: Handle cases that are not local later
             Task::ready(None)
         }
