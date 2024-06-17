@@ -233,6 +233,7 @@ fn collect_files(
         for snapshot in snapshots {
             let mut directory_stack: Vec<(Arc<Path>, String, usize)> = Vec::new();
             let mut folded_directory_names_stack = Vec::new();
+            let mut is_top_level_directory = true;
             for entry in snapshot.entries(false, 0) {
                 let mut path_buf = PathBuf::new();
                 path_buf.push(snapshot.root_name());
@@ -277,7 +278,12 @@ fn collect_files(
                     let prefix_paths = folded_directory_names_stack.drain(..).as_slice().join("/");
                     let entry_start = text.len();
                     if prefix_paths.is_empty() {
-                        text.push_str(&filename);
+                        if is_top_level_directory {
+                            text.push_str(&path_buf.to_string_lossy());
+                            is_top_level_directory = false;
+                        } else {
+                            text.push_str(&filename);
+                        }
                         directory_stack.push((entry.path.clone(), filename, entry_start));
                     } else {
                         let entry_name = format!("{}/{}", prefix_paths, &filename);
