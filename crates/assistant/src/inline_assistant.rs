@@ -861,6 +861,13 @@ impl Render for InlineAssistEditor {
         let buttons = match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
                 vec![
+                    IconButton::new("cancel", IconName::Close)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(InlineAssistEditorEvent::CancelRequested)
+                        })),
                     IconButton::new("start", IconName::Sparkle)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
@@ -871,17 +878,17 @@ impl Render for InlineAssistEditor {
                                 cx.emit(InlineAssistEditorEvent::StartRequested)
                             }),
                         ),
-                    IconButton::new("cancel", IconName::Close)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                        .on_click(cx.listener(|_, _, cx| {
-                            cx.emit(InlineAssistEditorEvent::CancelRequested)
-                        })),
                 ]
             }
             CodegenStatus::Pending => {
                 vec![
+                    IconButton::new("cancel", IconName::Close)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(InlineAssistEditorEvent::CancelRequested)
+                        })),
                     IconButton::new("stop", IconName::Stop)
                         .icon_color(Color::Error)
                         .size(ButtonSize::None)
@@ -897,17 +904,17 @@ impl Render for InlineAssistEditor {
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::StopRequested)),
                         ),
-                    IconButton::new("cancel", IconName::Close)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
-                        .on_click(cx.listener(|_, _, cx| {
-                            cx.emit(InlineAssistEditorEvent::CancelRequested)
-                        })),
                 ]
             }
             CodegenStatus::Error(_) | CodegenStatus::Done => {
                 vec![
+                    IconButton::new("cancel", IconName::Close)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(InlineAssistEditorEvent::CancelRequested)
+                        })),
                     if self.edited_since_done {
                         IconButton::new("restart", IconName::RotateCw)
                             .icon_color(Color::Info)
@@ -933,13 +940,6 @@ impl Render for InlineAssistEditor {
                                 cx.emit(InlineAssistEditorEvent::ConfirmRequested);
                             }))
                     },
-                    IconButton::new("cancel", IconName::Close)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                        .on_click(cx.listener(|_, _, cx| {
-                            cx.emit(InlineAssistEditorEvent::CancelRequested)
-                        })),
                 ]
             }
         };
