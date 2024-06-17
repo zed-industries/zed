@@ -9494,6 +9494,20 @@ impl Editor {
         }
     }
 
+    fn cancel_language_server_work(
+        &mut self,
+        _: &CancelLanguageServerWork,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(project) = self.project.clone() {
+            self.buffer.update(cx, |multi_buffer, cx| {
+                project.update(cx, |project, cx| {
+                    project.cancel_language_server_work_for_buffers(multi_buffer.all_buffers(), cx);
+                });
+            })
+        }
+    }
+
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
         cx.show_character_palette();
     }

@@ -169,6 +169,7 @@ gpui::actions!(
         AddSelectionBelow,
         Backspace,
         Cancel,
+        CancelLanguageServerWork,
         ConfirmRename,
         ContextMenuFirst,
         ContextMenuLast,

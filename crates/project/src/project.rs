@@ -19,7 +19,7 @@ use client::{
     TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
-use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
+use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::{
@@ -416,6 +416,7 @@ pub struct LanguageServerStatus {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerProgress {
+    pub is_disk_based_diagnostics_progress: bool,
     pub message: Option<String>,
     pub percentage: Option<usize>,
     #[serde(skip_serializing)]
@@ -4329,8 +4330,6 @@ impl Project {
             }
         };
 
-        dbg!(&token);
-
         let lsp::ProgressParamsValue::WorkDone(progress) = progress.value;
         let language_server_status =
             if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
@@ -4338,8 +4337,6 @@ impl Project {
             } else {
                 return;
             };
-
-        dbg!(&language_server_status);
 
         if !language_server_status.progress_tokens.contains(&token) {
             return;
@@ -4351,24 +4348,22 @@ impl Project {
                 token.starts_with(disk_based_token)
             });
 
-        dbg!(is_disk_based_diagnostics_progress);
-
         match progress {
             lsp::WorkDoneProgress::Begin(report) => {
                 if is_disk_based_diagnostics_progress {
                     self.disk_based_diagnostics_started(language_server_id, cx);
-                } else {
-                    self.on_lsp_work_start(
-                        language_server_id,
-                        token.clone(),
-                        LanguageServerProgress {
-                            message: report.message.clone(),
-                            percentage: report.percentage.map(|p| p as usize),
-                            last_update_at: Instant::now(),
-                        },
-                        cx,
-                    );
                 }
+                self.on_lsp_work_start(
+                    language_server_id,
+                    token.clone(),
+                    LanguageServerProgress {
+                        is_disk_based_diagnostics_progress,
+                        message: report.message.clone(),
+                        percentage: report.percentage.map(|p| p as usize),
+                        last_update_at: Instant::now(),
+                    },
+                    cx,
+                );
             }
             lsp::WorkDoneProgress::Report(report) => {
                 if !is_disk_based_diagnostics_progress {
@@ -4376,6 +4371,7 @@ impl Project {
                         language_server_id,
                         token.clone(),
                         LanguageServerProgress {
+                            is_disk_based_diagnostics_progress,
                             message: report.message.clone(),
                             percentage: report.percentage.map(|p| p as usize),
                             last_update_at: Instant::now(),
@@ -4402,9 +4398,8 @@ impl Project {
 
                 if is_disk_based_diagnostics_progress {
                     self.disk_based_diagnostics_finished(language_server_id, cx);
-                } else {
-                    self.on_lsp_work_end(language_server_id, token.clone(), cx);
                 }
+                self.on_lsp_work_end(language_server_id, token.clone(), cx);
             }
         }
     }
@@ -4442,21 +4437,23 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            let entry = status
-                .pending_work
-                .entry(token)
-                .or_insert(LanguageServerProgress {
-                    message: Default::default(),
-                    percentage: Default::default(),
-                    last_update_at: progress.last_update_at,
-                });
-            if progress.message.is_some() {
-                entry.message = progress.message;
+            match status.pending_work.entry(token) {
+                btree_map::Entry::Vacant(entry) => {
+                    entry.insert(progress);
+                }
+                btree_map::Entry::Occupied(mut entry) => {
+                    let entry = entry.get_mut();
+                    if progress.message.is_some() {
+                        entry.message = progress.message;
+                    }
+                    if progress.percentage.is_some() {
+                        entry.percentage = progress.percentage;
+                    }
+                    entry.last_update_at = progress.last_update_at;
+                    entry.is_disk_based_diagnostics_progress =
+                        progress.is_disk_based_diagnostics_progress;
+                }
             }
-            if progress.percentage.is_some() {
-                entry.percentage = progress.percentage;
-            }
-            entry.last_update_at = progress.last_update_at;
             cx.notify();
         }
     }
@@ -7460,6 +7457,7 @@ impl Project {
                                     language_server.server_id(),
                                     id.to_string(),
                                     LanguageServerProgress {
+                                        is_disk_based_diagnostics_progress: false,
                                         message: status.clone(),
                                         percentage: None,
                                         last_update_at: Instant::now(),
@@ -9120,6 +9118,7 @@ impl Project {
                         language_server_id,
                         payload.token,
                         LanguageServerProgress {
+                            is_disk_based_diagnostics_progress: false,
                             message: payload.message,
                             percentage: payload.percentage.map(|p| p as usize),
                             last_update_at: Instant::now(),
@@ -9133,6 +9132,7 @@ impl Project {
                         language_server_id,
                         payload.token,
                         LanguageServerProgress {
+                            is_disk_based_diagnostics_progress: false,
                             message: payload.message,
                             percentage: payload.percentage.map(|p| p as usize),
                             last_update_at: Instant::now(),

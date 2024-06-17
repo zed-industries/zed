@@ -158,10 +158,16 @@ impl ActivityIndicator {
                     let mut pending_work = status
                         .pending_work
                         .iter()
-                        .map(|(token, progress)| PendingWork {
-                            language_server_name: status.name.as_str(),
-                            progress_token: token.as_str(),
-                            progress,
+                        .filter_map(|(token, progress)| {
+                            if progress.is_disk_based_diagnostics_progress {
+                                None
+                            } else {
+                                Some(PendingWork {
+                                    language_server_name: status.name.as_str(),
+                                    progress_token: token.as_str(),
+                                    progress,
+                                })
+                            }
                         })
                         .collect::<SmallVec<[_; 4]>>();
                     pending_work.sort_by_key(|work| Reverse(work.progress.last_update_at));
