@@ -27,13 +27,13 @@ use windows::{
 };
 
 use crate::platform::blade::BladeRenderer;
-use crate::{Pixels, *};
+use crate::*;
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
 
 pub struct WindowsWindowState {
     pub origin: Point<Pixels>,
-    pub physical_size: Size<Pixels>,
+    pub logical_size: Size<Pixels>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub scale_factor: f32,
 
@@ -68,15 +68,18 @@ impl WindowsWindowState {
         current_cursor: HCURSOR,
         display: WindowsDisplay,
     ) -> Self {
-        let origin = point(px(cs.x as f32), px(cs.y as f32));
-        let physical_size = size(px(cs.cx as f32), px(cs.cy as f32));
-        let fullscreen_restore_bounds = Bounds {
-            origin,
-            size: physical_size,
-        };
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
+        };
+        let origin = logical_point(cs.x as f32, cs.y as f32, scale_factor);
+        let logical_size = {
+            let physical_size = size(DevicePixels(cs.cx), DevicePixels(cs.cy));
+            physical_size.to_pixels(scale_factor)
+        };
+        let fullscreen_restore_bounds = Bounds {
+            origin,
+            size: logical_size,
         };
         let renderer = windows_renderer::windows_renderer(hwnd, transparent);
         let callbacks = Callbacks::default();
@@ -88,7 +91,7 @@ impl WindowsWindowState {
 
         Self {
             origin,
-            physical_size,
+            logical_size,
             fullscreen_restore_bounds,
             scale_factor,
             callbacks,
@@ -116,7 +119,7 @@ impl WindowsWindowState {
     fn bounds(&self) -> Bounds<Pixels> {
         Bounds {
             origin: self.origin,
-            size: self.physical_size,
+            size: self.logical_size,
         }
     }
 
@@ -129,15 +132,17 @@ impl WindowsWindowState {
             GetWindowPlacement(self.hwnd, &mut placement).log_err();
             placement
         };
+        let physical_size = size(
+            DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
+            DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
+        );
         let bounds = Bounds {
-            origin: point(
-                px(placement.rcNormalPosition.left as f32),
-                px(placement.rcNormalPosition.top as f32),
+            origin: logical_point(
+                placement.rcNormalPosition.left as f32,
+                placement.rcNormalPosition.top as f32,
+                self.scale_factor,
             ),
-            size: size(
-                px((placement.rcNormalPosition.right - placement.rcNormalPosition.left) as f32),
-                px((placement.rcNormalPosition.bottom - placement.rcNormalPosition.top) as f32),
-            ),
+            size: physical_size.to_pixels(self.scale_factor),
         };
 
         if self.is_fullscreen() {
@@ -154,7 +159,7 @@ impl WindowsWindowState {
     /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
-        self.physical_size
+        self.logical_size
     }
 
     fn title_bar_padding(&self) -> Pixels {
@@ -538,7 +543,7 @@ impl PlatformWindow for WindowsWindow {
                 let mut lock = state_ptr.state.borrow_mut();
                 lock.fullscreen_restore_bounds = Bounds {
                     origin: lock.origin,
-                    size: lock.physical_size,
+                    size: lock.logical_size,
                 };
                 let StyleAndBounds {
                     style,
@@ -555,10 +560,10 @@ impl PlatformWindow for WindowsWindow {
                     unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
                     let _ = lock.fullscreen.insert(StyleAndBounds {
                         style,
-                        x: px(rc.left as f32),
-                        y: px(rc.top as f32),
-                        cx: px((rc.right - rc.left) as f32),
-                        cy: px((rc.bottom - rc.top) as f32),
+                        x: rc.left,
+                        y: rc.top,
+                        cx: rc.right - rc.left,
+                        cy: rc.bottom - rc.top,
                     });
                     let style = style
                         & !(WS_THICKFRAME
@@ -566,13 +571,13 @@ impl PlatformWindow for WindowsWindow {
                             | WS_MAXIMIZEBOX
                             | WS_MINIMIZEBOX
                             | WS_CAPTION);
-                    let bounds = lock.display.bounds();
+                    let physical_bounds = lock.display.physical_bounds();
                     StyleAndBounds {
                         style,
-                        x: bounds.left(),
-                        y: bounds.top(),
-                        cx: bounds.size.width,
-                        cy: bounds.size.height,
+                        x: physical_bounds.left().0,
+                        y: physical_bounds.top().0,
+                        cx: physical_bounds.size.width.0,
+                        cy: physical_bounds.size.height.0,
                     }
                 };
                 drop(lock);
@@ -581,10 +586,10 @@ impl PlatformWindow for WindowsWindow {
                     SetWindowPos(
                         state_ptr.hwnd,
                         HWND::default(),
-                        x.0 as i32,
-                        y.0 as i32,
-                        cx.0 as i32,
-                        cy.0 as i32,
+                        x,
+                        y,
+                        cx,
+                        cy,
                         SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
                     )
                 }
@@ -837,10 +842,10 @@ impl ClickState {
 
 struct StyleAndBounds {
     style: WINDOW_STYLE,
-    x: Pixels,
-    y: Pixels,
-    cx: Pixels,
-    cy: Pixels,
+    x: i32,
+    y: i32,
+    cx: i32,
+    cy: i32,
 }
 
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {

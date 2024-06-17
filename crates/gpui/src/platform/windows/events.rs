@@ -98,13 +98,16 @@ fn handle_move_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let x = lparam.signed_loword() as f32;
-    let y = lparam.signed_hiword() as f32;
     let mut lock = state_ptr.state.borrow_mut();
-    lock.origin = point(px(x), px(y));
-    let size = lock.physical_size;
-    let center_x = x + size.width.0 / 2.;
-    let center_y = y + size.height.0 / 2.;
+    let origin = logical_point(
+        lparam.signed_loword() as f32,
+        lparam.signed_hiword() as f32,
+        lock.scale_factor,
+    );
+    lock.origin = origin;
+    let size = lock.logical_size;
+    let center_x = origin.x.0 + size.width.0 / 2.;
+    let center_y = origin.y.0 + size.height.0 / 2.;
     let monitor_bounds = lock.display.bounds();
     if center_x < monitor_bounds.left().0
         || center_x > monitor_bounds.right().0
@@ -135,8 +138,8 @@ fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Opti
     let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
     lock.renderer.update_drawable_size(new_size);
-    let new_size = new_size.to_pixels(lock.scale_factor);
-    lock.physical_size = new_size;
+    let new_size = new_size.to_pixels(scale_factor);
+    lock.logical_size = new_size;
     if let Some(mut callback) = lock.callbacks.resize.take() {
         drop(lock);
         callback(new_size, scale_factor);
