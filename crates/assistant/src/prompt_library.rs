@@ -6,16 +6,16 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandRegistry;
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorEvent};
+use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use futures::{
     future::{self, BoxFuture, Shared},
     FutureExt,
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    actions, percentage, point, size, Animation, AnimationExt, AppContext, BackgroundExecutor,
-    Bounds, EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions,
-    Transformation, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
+    actions, point, size, AppContext, BackgroundExecutor, Bounds, EventEmitter, Global,
+    HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle, TitlebarOptions,
+    UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -109,12 +109,13 @@ pub struct PromptLibrary {
 }
 
 struct PromptEditor {
-    editor: View<Editor>,
+    title_editor: View<Editor>,
+    body_editor: View<Editor>,
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
-    next_body_to_save: Option<Rope>,
+    next_title_and_body_to_save: Option<(String, Rope)>,
     pending_save: Option<Task<Option<()>>>,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 struct PromptPickerDelegate {
@@ -345,7 +346,8 @@ impl PromptLibrary {
 
         let prompt_metadata = self.store.metadata(prompt_id).unwrap();
         let prompt_editor = self.prompt_editors.get_mut(&prompt_id).unwrap();
-        let body = prompt_editor.editor.update(cx, |editor, cx| {
+        let title = prompt_editor.title_editor.read(cx).text(cx);
+        let body = prompt_editor.body_editor.update(cx, |editor, cx| {
             editor
                 .buffer()
                 .read(cx)
@@ -359,20 +361,24 @@ impl PromptLibrary {
         let store = self.store.clone();
         let executor = cx.background_executor().clone();
 
-        prompt_editor.next_body_to_save = Some(body);
+        prompt_editor.next_title_and_body_to_save = Some((title, body));
         if prompt_editor.pending_save.is_none() {
             prompt_editor.pending_save = Some(cx.spawn(|this, mut cx| {
                 async move {
                     loop {
-                        let next_body_to_save = this.update(&mut cx, |this, _| {
+                        let title_and_body = this.update(&mut cx, |this, _| {
                             this.prompt_editors
                                 .get_mut(&prompt_id)?
-                                .next_body_to_save
+                                .next_title_and_body_to_save
                                 .take()
                         })?;
 
-                        if let Some(body) = next_body_to_save {
-                            let title = title_from_body(body.chars_at(0));
+                        if let Some((title, body)) = title_and_body {
+                            let title = if title.trim().is_empty() {
+                                None
+                            } else {
+                                Some(SharedString::from(title))
+                            };
                             store
                                 .save(prompt_id, title, prompt_metadata.default, body)
                                 .await
@@ -425,11 +431,11 @@ impl PromptLibrary {
         if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
             if focus {
                 prompt_editor
-                    .editor
+                    .body_editor
                     .update(cx, |editor, cx| editor.focus(cx));
             }
             self.set_active_prompt(Some(prompt_id), cx);
-        } else {
+        } else if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
             let language_registry = self.language_registry.clone();
             let commands = SlashCommandRegistry::global(cx);
             let prompt = self.store.load(prompt_id);
@@ -438,13 +444,20 @@ impl PromptLibrary {
                 let markdown = language_registry.language_for_name("Markdown").await;
                 this.update(&mut cx, |this, cx| match prompt {
                     Ok(prompt) => {
-                        let buffer = cx.new_model(|cx| {
-                            let mut buffer = Buffer::local(prompt, cx);
-                            buffer.set_language(markdown.log_err(), cx);
-                            buffer.set_language_registry(language_registry);
-                            buffer
+                        let title_editor = cx.new_view(|cx| {
+                            let mut editor = Editor::auto_width(cx);
+                            editor.set_placeholder_text("Untitled", cx);
+                            editor.set_text(prompt_metadata.title.unwrap_or_default(), cx);
+                            editor
                         });
-                        let editor = cx.new_view(|cx| {
+                        let body_editor = cx.new_view(|cx| {
+                            let buffer = cx.new_model(|cx| {
+                                let mut buffer = Buffer::local(prompt, cx);
+                                buffer.set_language(markdown.log_err(), cx);
+                                buffer.set_language_registry(language_registry);
+                                buffer
+                            });
+
                             let mut editor = Editor::for_buffer(buffer, None, cx);
                             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                             editor.set_show_gutter(false, cx);
@@ -460,19 +473,24 @@ impl PromptLibrary {
                             }
                             editor
                         });
-                        let _subscription =
-                            cx.subscribe(&editor, move |this, _editor, event, cx| {
-                                this.handle_prompt_editor_event(prompt_id, event, cx)
-                            });
+                        let _subscriptions = vec![
+                            cx.subscribe(&title_editor, move |this, _editor, event, cx| {
+                                this.handle_prompt_title_editor_event(prompt_id, event, cx)
+                            }),
+                            cx.subscribe(&body_editor, move |this, _editor, event, cx| {
+                                this.handle_prompt_body_editor_event(prompt_id, event, cx)
+                            }),
+                        ];
                         this.prompt_editors.insert(
                             prompt_id,
                             PromptEditor {
-                                editor,
-                                next_body_to_save: None,
+                                title_editor,
+                                body_editor,
+                                next_title_and_body_to_save: None,
                                 pending_save: None,
                                 token_count: None,
                                 pending_token_count: Task::ready(None),
-                                _subscription,
+                                _subscriptions,
                             },
                         );
                         this.set_active_prompt(Some(prompt_id), cx);
@@ -549,7 +567,7 @@ impl PromptLibrary {
     fn focus_active_prompt(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
         if let Some(active_prompt) = self.active_prompt_id {
             self.prompt_editors[&active_prompt]
-                .editor
+                .body_editor
                 .update(cx, |editor, cx| editor.focus(cx));
             cx.stop_propagation();
         }
@@ -565,7 +583,7 @@ impl PromptLibrary {
             return;
         };
 
-        let prompt_editor = &self.prompt_editors[&active_prompt_id].editor;
+        let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
         let provider = CompletionProvider::global(cx);
         if provider.is_authenticated() {
             InlineAssistant::update_global(cx, |assistant, cx| {
@@ -589,42 +607,40 @@ impl PromptLibrary {
         }
     }
 
-    fn handle_prompt_editor_event(
+    fn move_down_from_title(&mut self, _: &editor::actions::MoveDown, cx: &mut ViewContext<Self>) {
+        if let Some(prompt_id) = self.active_prompt_id {
+            if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
+                cx.focus_view(&prompt_editor.body_editor);
+            }
+        }
+    }
+
+    fn move_up_from_body(&mut self, _: &editor::actions::MoveUp, cx: &mut ViewContext<Self>) {
+        if let Some(prompt_id) = self.active_prompt_id {
+            if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
+                cx.focus_view(&prompt_editor.title_editor);
+            }
+        }
+    }
+
+    fn handle_prompt_title_editor_event(
         &mut self,
         prompt_id: PromptId,
         event: &EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
         if let EditorEvent::BufferEdited = event {
-            let prompt_editor = self.prompt_editors.get(&prompt_id).unwrap();
-            let buffer = prompt_editor
-                .editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .as_singleton()
-                .unwrap();
+            self.save_prompt(prompt_id, cx);
+        }
+    }
 
-            buffer.update(cx, |buffer, cx| {
-                let mut chars = buffer.chars_at(0);
-                match chars.next() {
-                    Some('#') => {
-                        if chars.next() != Some(' ') {
-                            drop(chars);
-                            buffer.edit([(1..1, " ")], None, cx);
-                        }
-                    }
-                    Some(' ') => {
-                        drop(chars);
-                        buffer.edit([(0..0, "#")], None, cx);
-                    }
-                    _ => {
-                        drop(chars);
-                        buffer.edit([(0..0, "# ")], None, cx);
-                    }
-                }
-            });
-
+    fn handle_prompt_body_editor_event(
+        &mut self,
+        prompt_id: PromptId,
+        event: &EditorEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let EditorEvent::BufferEdited = event {
             self.save_prompt(prompt_id, cx);
             self.count_tokens(prompt_id, cx);
         }
@@ -632,7 +648,7 @@ impl PromptLibrary {
 
     fn count_tokens(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
         if let Some(prompt) = self.prompt_editors.get_mut(&prompt_id) {
-            let editor = &prompt.editor.read(cx);
+            let editor = &prompt.body_editor.read(cx);
             let buffer = &editor.buffer().read(cx).as_singleton().unwrap().read(cx);
             let body = buffer.as_rope().clone();
             prompt.pending_token_count = cx.spawn(|this, mut cx| {
@@ -708,11 +724,11 @@ impl PromptLibrary {
             .flex_none()
             .min_w_64()
             .children(self.active_prompt_id.and_then(|prompt_id| {
-                let buffer_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
                 let prompt_metadata = self.store.metadata(prompt_id)?;
                 let prompt_editor = &self.prompt_editors[&prompt_id];
-                let focus_handle = prompt_editor.editor.focus_handle(cx);
+                let focus_handle = prompt_editor.body_editor.focus_handle(cx);
                 let current_model = CompletionProvider::global(cx).model();
+                let settings = ThemeSettings::get_global(cx);
 
                 Some(
                     v_flex()
@@ -730,26 +746,53 @@ impl PromptLibrary {
                                 .justify_between()
                                 .child(
                                     h_flex()
-                                        .gap_2()
+                                        .gap_1()
                                         .child(
                                             div()
-                                                .cursor_text()
-                                                .hover(|style| {
-                                                    style
-                                                        .border_1()
-                                                        .border_color(
-                                                            cx.theme().colors().border_selected,
-                                                        )
-                                                        .rounded_sm()
-                                                })
-                                                .child(
-                                                    Label::new(
-                                                        prompt_metadata
-                                                            .title
-                                                            .unwrap_or("Untitled".into()),
-                                                    )
-                                                    .size(LabelSize::Large),
-                                                ),
+                                                .max_w_80()
+                                                .on_action(cx.listener(Self::move_down_from_title))
+                                                .child(EditorElement::new(
+                                                    &prompt_editor.title_editor,
+                                                    EditorStyle {
+                                                        background: cx.theme().system().transparent,
+                                                        local_player: cx.theme().players().local(),
+                                                        text: TextStyle {
+                                                            color: cx
+                                                                .theme()
+                                                                .colors()
+                                                                .editor_foreground,
+                                                            font_family: settings
+                                                                .ui_font
+                                                                .family
+                                                                .clone(),
+                                                            font_features: settings
+                                                                .ui_font
+                                                                .features
+                                                                .clone(),
+                                                            font_size: HeadlineSize::Large
+                                                                .size()
+                                                                .into(),
+                                                            font_weight: settings.ui_font.weight,
+                                                            line_height: relative(
+                                                                settings.buffer_line_height.value(),
+                                                            ),
+                                                            ..Default::default()
+                                                        },
+                                                        scrollbar_width: Pixels::ZERO,
+                                                        syntax: cx.theme().syntax().clone(),
+                                                        status: cx.theme().status().clone(),
+                                                        inlay_hints_style: HighlightStyle {
+                                                            color: Some(cx.theme().status().hint),
+                                                            ..HighlightStyle::default()
+                                                        },
+                                                        suggestions_style: HighlightStyle {
+                                                            color: Some(
+                                                                cx.theme().status().predictive,
+                                                            ),
+                                                            ..HighlightStyle::default()
+                                                        },
+                                                    },
+                                                )),
                                         )
                                         .children(prompt_editor.token_count.map(|token_count| {
                                             let token_count = token_count.to_string();
@@ -833,9 +876,10 @@ impl PromptLibrary {
                             div()
                                 .on_action(cx.listener(Self::focus_picker))
                                 .on_action(cx.listener(Self::inline_assist))
+                                .on_action(cx.listener(Self::move_up_from_body))
                                 .flex_grow()
                                 .h_full()
-                                .child(prompt_editor.editor.clone()),
+                                .child(prompt_editor.body_editor.clone()),
                         ),
                 )
             }))
@@ -1132,24 +1176,3 @@ pub struct GlobalPromptStore(
 );
 
 impl Global for GlobalPromptStore {}
-
-fn title_from_body(body: impl IntoIterator<Item = char>) -> Option<SharedString> {
-    let mut chars = body.into_iter().take_while(|c| *c != '\n').peekable();
-
-    let mut level = 0;
-    while let Some('#') = chars.peek() {
-        level += 1;
-        chars.next();
-    }
-
-    if level > 0 {
-        let title = chars.collect::<String>().trim().to_string();
-        if title.is_empty() {
-            None
-        } else {
-            Some(title.into())
-        }
-    } else {
-        None
-    }
-}
