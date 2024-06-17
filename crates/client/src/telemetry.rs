@@ -486,7 +486,7 @@ impl Telemetry {
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
     ) {
-        let project_events: Vec<String> = {
+        let project_names: Vec<String> = {
             let mut state = self.state.lock();
             state
                 .worktree_id_map
@@ -522,7 +522,7 @@ impl Telemetry {
         };
 
         // Done on purpose to avoid calling `self.state.lock()` multiple times
-        for project_name in project_events {
+        for project_name in project_names {
             self.report_app_event(format!("open {} project", project_name));
         }
     }
