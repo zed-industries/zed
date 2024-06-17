@@ -301,7 +301,7 @@ fork = "0.1.23"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-git2 = { version = "0.18", default-features = false }
+git2 = { version = "0.19", default-features = false }
 globset = "0.4"
 heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
