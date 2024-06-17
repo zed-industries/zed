@@ -523,6 +523,7 @@ impl Telemetry {
                 .collect();
         }
 
+        // I'm doing this as a hack to avoid calling `self.state.lock()` multiple times
         for project_name in project_events {
             self.report_app_event(format!("open {} project", project_name));
         }
