@@ -25,6 +25,7 @@ def get_file_contents(file):
 
 
 def main():
+    MAX_PAYLOAD_SIZE = 1024 * 1024 
     GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
     # Your prompt
@@ -45,6 +46,10 @@ def main():
             }]
         }]
     })
+
+    if len(payload.encode('utf-8')) > MAX_PAYLOAD_SIZE:
+        print("Payload size exceeds the limit.")
+        return
 
     # Prepare the HTTP connection
     conn = http.client.HTTPSConnection("generativelanguage.googleapis.com")
