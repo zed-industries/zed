@@ -1,5 +1,6 @@
 use serde_json::json;
 use std::fs;
+use std::path::PathBuf;
 use zed::lsp::CompletionKind;
 use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
@@ -100,13 +101,28 @@ impl zed::Extension for SnippetExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
+        let home_dir = worktree
+            .shell_env()
+            .into_iter()
+            .find(|(k, _)| k == "HOME")
+            .ok_or_else(|| format!("HOME is not in path"))
+            .unwrap()
+            .1;
+        let abs_config_path = PathBuf::from(home_dir).join(".config/zed/snippets");
         Ok(zed::Command {
             command: self.language_server_binary_path(language_server_id, worktree)?,
             args: vec![],
-            env: vec![(
-                "SNIPPETS_PATH".to_owned(),
-                "~/.config/zed/snippets".to_owned(),
-            )],
+            env: vec![
+                (
+                    "SNIPPETS_PATH".to_owned(),
+                    abs_config_path.to_string_lossy().into_owned(),
+                ),
+                (
+                    "RUST_LOG".to_owned(),
+                    "info,simple-completion-language-server=info".to_owned(),
+                ),
+                ("LOG_FILE".to_owned(), "/tmp/completion1.log".to_owned()),
+            ],
         })
     }
 
@@ -126,7 +142,7 @@ impl zed::Extension for SnippetExtension {
         Ok(Some(json!({
             "max_completion_items": 20,
             "snippets_first": true,
-            "feature_words": true,
+            "feature_words": false,
             "feature_snippets": true,
             "feature_paths": true
         })))
@@ -140,7 +156,7 @@ impl zed::Extension for SnippetExtension {
         Ok(Some(json!({
             "max_completion_items": 20,
             "snippets_first": true,
-            "feature_words": true,
+            "feature_words": false,
             "feature_snippets": true,
             "feature_paths": true
         })))
