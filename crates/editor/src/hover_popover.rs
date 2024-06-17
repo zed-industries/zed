@@ -447,6 +447,7 @@ async fn parse_blocks(
                 inline_code: gpui::TextStyleRefinement {
                     font_family: Some(buffer_font_family.clone()),
                     color: Some(cx.theme().colors().editor_foreground),
+                    background_color: Some(cx.theme().colors().background),
                     ..Default::default()
                 },
                 rule_color: Color::Muted.color(cx),
@@ -457,10 +458,10 @@ async fn parse_blocks(
                     ..Default::default()
                 },
                 link: gpui::TextStyleRefinement {
-                    color: Some(Color::Accent.color(cx)),
+                    color: Some(cx.theme().colors().editor_foreground),
                     underline: Some(gpui::UnderlineStyle {
                         thickness: px(1.),
-                        color: Some(Color::Accent.color(cx)),
+                        color: Some(cx.theme().colors().editor_foreground),
                         wavy: false,
                     }),
                     ..Default::default()
