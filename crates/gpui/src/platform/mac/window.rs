@@ -662,6 +662,11 @@ impl MacWindow {
 
             native_window.setMovable_(is_movable as BOOL);
 
+            native_window.setContentMinSize_(NSSize {
+                width: (360f64),
+                height: (240f64),
+            });
+
             if titlebar.map_or(true, |titlebar| titlebar.appears_transparent) {
                 native_window.setTitlebarAppearsTransparent_(YES);
                 native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
