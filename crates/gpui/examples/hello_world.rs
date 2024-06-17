@@ -23,7 +23,7 @@ impl Render for HelloWorld {
 
 fn main() {
     App::new().run(|cx: &mut AppContext| {
-        let bounds = Bounds::new(Point::new(px(14.0), px(49.0)), size(px(300.0), px(300.0)));
+        let bounds = Bounds::centered(None, size(px(600.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),

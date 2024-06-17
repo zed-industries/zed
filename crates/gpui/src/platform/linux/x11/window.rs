@@ -267,7 +267,6 @@ impl X11WindowState {
                     | xproto::EventMask::KEY_RELEASE,
             );
 
-        dbg!(params.bounds);
         xcb_connection
             .create_window(
                 visual.depth,
@@ -359,31 +358,10 @@ impl X11WindowState {
             .map_err(|e| anyhow::anyhow!("{:?}", e))?,
         );
 
-        let message = ClientMessageEvent::new(
-            32,
-            x_window,
-            atoms._NET_WM_STATE,
-            [
-                1,
-                atoms._NET_WM_STATE_MAXIMIZED_VERT,
-                atoms._NET_WM_STATE_MAXIMIZED_HORZ,
-                atoms._NET_WM_STATE_FULLSCREEN,
-                0,
-            ],
-        );
-        xcb_connection
-            .send_event(
-                false,
-                visual_set.root,
-                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-                message,
-            )
-            .unwrap();
-
         let config = BladeSurfaceConfig {
             // Note: this has to be done after the GPU init, or otherwise
             // the sizes are immediately invalidated.
-            size: dbg!(query_render_extent(xcb_connection, x_window)),
+            size: query_render_extent(xcb_connection, x_window),
             transparent: params.window_background != WindowBackgroundAppearance::Opaque,
         };
         xcb_connection.map_window(x_window).unwrap();
@@ -448,8 +426,8 @@ impl Drop for X11Window {
 }
 
 enum WmHintPropertyState {
-    Remove = 0,
-    Add = 1,
+    // Remove = 0,
+    // Add = 1,
     Toggle = 2,
 }
 
@@ -953,7 +931,6 @@ impl PlatformWindow for X11Window {
     fn show_window_menu(&self, position: Point<Pixels>) {
         let state = self.0.state.borrow();
         let coords = self.get_root_position(position);
-        dbg!(coords.dst_x, coords.dst_y);
         let message = ClientMessageEvent::new(
             32,
             self.0.x_window,
