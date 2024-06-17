@@ -1136,7 +1136,7 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn prepaint_flap_trailers(
+    fn prepaint_crease_trailers(
         &self,
         trailers: Vec<Option<AnyElement>>,
         lines: &[LineWithInvisibles],
@@ -1145,7 +1145,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         em_width: Pixels,
         cx: &mut WindowContext,
-    ) -> Vec<Option<FlapTrailerLayout>> {
+    ) -> Vec<Option<CreaseTrailerLayout>> {
         trailers
             .into_iter()
             .enumerate()
@@ -1170,7 +1170,7 @@ impl EditorElement {
                 let centering_offset = point(px(0.), (line_height - size.height) / 2.);
                 let origin = content_origin + position + centering_offset;
                 element.prepaint_as_root(origin, available_space, cx);
-                Some(FlapTrailerLayout {
+                Some(CreaseTrailerLayout {
                     element,
                     bounds: Bounds::new(origin, size),
                 })
@@ -1266,7 +1266,7 @@ impl EditorElement {
         display_row: DisplayRow,
         display_snapshot: &DisplaySnapshot,
         line_layout: &LineWithInvisibles,
-        flap_trailer: Option<&FlapTrailerLayout>,
+        crease_trailer: Option<&CreaseTrailerLayout>,
         em_width: Pixels,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
@@ -1306,8 +1306,8 @@ impl EditorElement {
         let start_x = {
             const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
 
-            let line_end = if let Some(flap_trailer) = flap_trailer {
-                flap_trailer.bounds.right()
+            let line_end = if let Some(crease_trailer) = crease_trailer {
+                crease_trailer.bounds.right()
             } else {
                 content_origin.x - scroll_pixel_position.x + line_layout.width
             };
@@ -1779,7 +1779,7 @@ impl EditorElement {
         }
     }
 
-    fn layout_flap_trailers(
+    fn layout_crease_trailers(
         &self,
         buffer_rows: impl IntoIterator<Item = Option<MultiBufferRow>>,
         snapshot: &EditorSnapshot,
@@ -1789,7 +1789,7 @@ impl EditorElement {
             .into_iter()
             .map(|row| {
                 if let Some(multibuffer_row) = row {
-                    snapshot.render_flap_trailer(multibuffer_row, cx)
+                    snapshot.render_crease_trailer(multibuffer_row, cx)
                 } else {
                     None
                 }
@@ -3067,8 +3067,8 @@ impl EditorElement {
                 self.paint_redactions(layout, cx);
                 self.paint_cursors(layout, cx);
                 self.paint_inline_blame(layout, cx);
-                cx.with_element_namespace("flap_trailers", |cx| {
-                    for trailer in layout.flap_trailers.iter_mut().flatten() {
+                cx.with_element_namespace("crease_trailers", |cx| {
+                    for trailer in layout.crease_trailers.iter_mut().flatten() {
                         trailer.element.paint(cx);
                     }
                 });
@@ -4697,8 +4697,8 @@ impl Element for EditorElement {
                                 cx,
                             )
                         });
-                    let flap_trailers = cx.with_element_namespace("flap_trailers", |cx| {
-                        self.layout_flap_trailers(buffer_rows.iter().copied(), &snapshot, cx)
+                    let crease_trailers = cx.with_element_namespace("crease_trailers", |cx| {
+                        self.layout_crease_trailers(buffer_rows.iter().copied(), &snapshot, cx)
                     });
 
                     let display_hunks = self.layout_git_gutters(
@@ -4759,9 +4759,9 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let flap_trailers = cx.with_element_namespace("flap_trailers", |cx| {
-                        self.prepaint_flap_trailers(
-                            flap_trailers,
+                    let crease_trailers = cx.with_element_namespace("crease_trailers", |cx| {
+                        self.prepaint_crease_trailers(
+                            crease_trailers,
                             &line_layouts,
                             line_height,
                             content_origin,
@@ -4777,12 +4777,12 @@ impl Element for EditorElement {
                         if (start_row..end_row).contains(&display_row) {
                             let line_ix = display_row.minus(start_row) as usize;
                             let line_layout = &line_layouts[line_ix];
-                            let flap_trailer_layout = flap_trailers[line_ix].as_ref();
+                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
                             inline_blame = self.layout_inline_blame(
                                 display_row,
                                 &snapshot.display_snapshot,
                                 line_layout,
-                                flap_trailer_layout,
+                                crease_trailer_layout,
                                 em_width,
                                 content_origin,
                                 scroll_pixel_position,
@@ -5037,7 +5037,7 @@ impl Element for EditorElement {
                         test_indicators,
                         code_actions_indicator,
                         gutter_fold_toggles,
-                        flap_trailers,
+                        crease_trailers,
                         tab_invisible,
                         space_invisible,
                     }
@@ -5168,7 +5168,7 @@ pub struct EditorLayout {
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
     gutter_fold_toggles: Vec<Option<AnyElement>>,
-    flap_trailers: Vec<Option<FlapTrailerLayout>>,
+    crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
@@ -5292,7 +5292,7 @@ impl ScrollbarLayout {
     }
 }
 
-struct FlapTrailerLayout {
+struct CreaseTrailerLayout {
     element: AnyElement,
     bounds: Bounds<Pixels>,
 }

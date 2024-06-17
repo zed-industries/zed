@@ -18,11 +18,11 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::actions::ShowCompletions;
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, UnfoldAt},
-    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, Flap, ToDisplayPoint},
+    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, ToDisplayPoint},
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorEvent, RowExt, ToOffset as _, ToPoint,
 };
-use editor::{display_map::FlapId, FoldPlaceholder};
+use editor::{display_map::CreaseId, FoldPlaceholder};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::future::Shared;
@@ -2158,7 +2158,7 @@ pub struct ContextEditor {
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
-    pending_slash_command_flaps: HashMap<Range<language::Anchor>, FlapId>,
+    pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2230,7 +2230,7 @@ impl ContextEditor {
             scroll_position: None,
             fs,
             workspace: workspace.downgrade(),
-            pending_slash_command_flaps: HashMap::default(),
+            pending_slash_command_creases: HashMap::default(),
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -2493,14 +2493,14 @@ impl ContextEditor {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let excerpt_id = *buffer.as_singleton().unwrap().0;
 
-                    editor.remove_flaps(
+                    editor.remove_creases(
                         removed
                             .iter()
-                            .filter_map(|range| self.pending_slash_command_flaps.remove(range)),
+                            .filter_map(|range| self.pending_slash_command_creases.remove(range)),
                         cx,
                     );
 
-                    let flap_ids = editor.insert_flaps(
+                    let crease_ids = editor.insert_creases(
                         updated.iter().map(|command| {
                             let workspace = self.workspace.clone();
                             let confirm_command = Arc::new({
@@ -2546,16 +2546,16 @@ impl ContextEditor {
                             let end = buffer
                                 .anchor_in_excerpt(excerpt_id, command.source_range.end)
                                 .unwrap();
-                            Flap::new(start..end, placeholder, render_toggle, render_trailer)
+                            Crease::new(start..end, placeholder, render_toggle, render_trailer)
                         }),
                         cx,
                     );
 
-                    self.pending_slash_command_flaps.extend(
+                    self.pending_slash_command_creases.extend(
                         updated
                             .iter()
                             .map(|command| command.source_range.clone())
-                            .zip(flap_ids),
+                            .zip(crease_ids),
                     );
                 })
             }
@@ -2598,7 +2598,7 @@ impl ContextEditor {
             let buffer = editor.buffer().read(cx).snapshot(cx);
             let excerpt_id = *buffer.as_singleton().unwrap().0;
             let mut buffer_rows_to_fold = BTreeSet::new();
-            let mut flaps = Vec::new();
+            let mut creases = Vec::new();
             for section in sections {
                 let start = buffer
                     .anchor_in_excerpt(excerpt_id, section.range.start)
@@ -2608,7 +2608,7 @@ impl ContextEditor {
                     .unwrap();
                 let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
-                flaps.push(Flap::new(
+                creases.push(Crease::new(
                     start..end,
                     FoldPlaceholder {
                         render: Arc::new({
@@ -2638,7 +2638,7 @@ impl ContextEditor {
                 ));
             }
 
-            editor.insert_flaps(flaps, cx);
+            editor.insert_creases(creases, cx);
 
             for buffer_row in buffer_rows_to_fold.into_iter().rev() {
                 editor.fold_at(&FoldAt { buffer_row }, cx);

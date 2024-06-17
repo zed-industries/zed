@@ -9909,22 +9909,22 @@ impl Editor {
         }
     }
 
-    pub fn insert_flaps(
+    pub fn insert_creases(
         &mut self,
-        flaps: impl IntoIterator<Item = Flap>,
+        creases: impl IntoIterator<Item = Crease>,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<FlapId> {
+    ) -> Vec<CreaseId> {
         self.display_map
-            .update(cx, |map, cx| map.insert_flaps(flaps, cx))
+            .update(cx, |map, cx| map.insert_creases(creases, cx))
     }
 
-    pub fn remove_flaps(
+    pub fn remove_creases(
         &mut self,
-        ids: impl IntoIterator<Item = FlapId>,
+        ids: impl IntoIterator<Item = CreaseId>,
         cx: &mut ViewContext<Self>,
     ) {
         self.display_map
-            .update(cx, |map, cx| map.remove_flaps(ids, cx));
+            .update(cx, |map, cx| map.remove_creases(ids, cx));
     }
 
     pub fn longest_row(&self, cx: &mut AppContext) -> DisplayRow {
@@ -11759,8 +11759,8 @@ impl EditorSnapshot {
     ) -> Option<AnyElement> {
         let folded = self.is_line_folded(buffer_row);
 
-        if let Some(flap) = self
-            .flap_snapshot
+        if let Some(crease) = self
+            .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
         {
             let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
@@ -11775,7 +11775,7 @@ impl EditorSnapshot {
                 }
             });
 
-            Some((flap.render_toggle)(
+            Some((crease.render_toggle)(
                 buffer_row,
                 folded,
                 toggle_callback,
@@ -11801,16 +11801,16 @@ impl EditorSnapshot {
         }
     }
 
-    pub fn render_flap_trailer(
+    pub fn render_crease_trailer(
         &self,
         buffer_row: MultiBufferRow,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         let folded = self.is_line_folded(buffer_row);
-        let flap = self
-            .flap_snapshot
+        let crease = self
+            .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)?;
-        Some((flap.render_trailer)(buffer_row, folded, cx))
+        Some((crease.render_trailer)(buffer_row, folded, cx))
     }
 }
 
