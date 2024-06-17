@@ -51,6 +51,7 @@ time.workspace = true
 tiny_http = "0.8"
 url.workspace = true
 util.workspace = true
+worktree.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

@@ -168,6 +168,9 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     SystemAppearance::init(cx);
     load_embedded_fonts(cx);
 
+    #[cfg(target_os = "linux")]
+    crate::zed::linux_prompts::init(cx);
+
     theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
     app_state.languages.set_theme(cx.theme().clone());
     command_palette::init(cx);
@@ -217,6 +220,8 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
 
     assistant::init(app_state.client.clone(), cx);
+
+    repl::init(app_state.fs.clone(), cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -321,13 +326,14 @@ fn main() {
     }
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
-        app.path_for_auxiliary_executable("git")
-            .context("could not find git binary path")
-            .log_err()
-    } else {
-        None
-    };
+    let git_binary_path =
+        if cfg!(target_os = "macos") && option_env!("ZED_BUNDLE").as_deref() == Some("true") {
+            app.path_for_auxiliary_executable("git")
+                .context("could not find git binary path")
+                .log_err()
+        } else {
+            None
+        };
     log::info!("Using git binary path: {:?}", git_binary_path);
 
     let fs = Arc::new(RealFs::new(

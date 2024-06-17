@@ -347,7 +347,7 @@ The argument to `SendKeystrokes` is a space-separated list of keystrokes (using 
 | Close all items               | Pane           | `⌘ + K, ⌘ + W`          |
 | Close clean items             | Pane           | `⌘ + K, U`              |
 | Close inactive items          | Pane           | `Alt + ⌘ + T`           |
-| Go back                       | Pane           | `Control + `            |
+| Go back                       | Pane           | `Control + -`           |
 | Go forward                    | Pane           | `Control + _`           |
 | Reopen closed item            | Pane           | `⌘ + Shift + T`         |
 | Split down                    | Pane           | `⌘ + K, Down`           |

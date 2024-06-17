@@ -479,6 +479,7 @@ impl AppContext {
                 Ok(mut window) => {
                     let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
                     window.root_view.replace(root_view.into());
+                    WindowContext::new(cx, &mut window).defer(|cx| cx.appearance_changed());
                     cx.window_handles.insert(id, window.handle);
                     cx.windows.get_mut(id).unwrap().replace(window);
                     Ok(handle)

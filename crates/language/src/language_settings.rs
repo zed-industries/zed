@@ -194,13 +194,13 @@ pub struct AllLanguageSettingsContent {
     #[serde(default)]
     pub features: Option<FeaturesContent>,
     /// The inline completion settings.
-    #[serde(default, alias = "copilot")]
+    #[serde(default)]
     pub inline_completions: Option<InlineCompletionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
-    #[serde(default, alias = "language_overrides")]
+    #[serde(default)]
     pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
     /// Settings for associating file extensions and filenames
     /// with languages.
@@ -297,7 +297,7 @@ pub struct LanguageSettingsContent {
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     ///
     /// Default: true
-    #[serde(default, alias = "show_copilot_suggestions")]
+    #[serde(default)]
     pub show_inline_completions: Option<bool>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
@@ -754,17 +754,10 @@ impl settings::Settings for AllLanguageSettings {
             .as_mut()
             .unwrap()
             .properties
-            .extend([
-                (
-                    "languages".to_owned(),
-                    Schema::new_ref("#/definitions/Languages".into()),
-                ),
-                // For backward compatibility
-                (
-                    "language_overrides".to_owned(),
-                    Schema::new_ref("#/definitions/Languages".into()),
-                ),
-            ]);
+            .extend([(
+                "languages".to_owned(),
+                Schema::new_ref("#/definitions/Languages".into()),
+            )]);
 
         root_schema
     }

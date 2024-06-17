@@ -12,12 +12,12 @@ use anyhow::Context;
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
+    display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::ScrollAnchor,
-    Editor, EditorEvent, ExcerptId, ExcerptRange,
+    DisplayPoint, Editor, EditorEvent, ExcerptId, ExcerptRange,
 };
 use file_icons::FileIcons;
-use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, div, px, uniform_list, Action, AnyElement, AppContext,
     AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId,
@@ -31,10 +31,10 @@ use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
-use project::{File, Fs, Project};
+use project::{File, Fs, Item, Project};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use util::{ResultExt, TryFutureExt};
+use util::{RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
@@ -77,7 +77,7 @@ pub struct OutlinePanel {
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
     pending_serialization: Task<Option<()>>,
-    fs_entries_depth: HashMap<(WorktreeId, ProjectEntryId), (bool, usize)>,
+    fs_entries_depth: HashMap<(WorktreeId, ProjectEntryId), usize>,
     fs_entries: Vec<FsEntry>,
     collapsed_entries: HashSet<CollapsedEntry>,
     unfolded_dirs: HashMap<WorktreeId, BTreeSet<ProjectEntryId>>,
@@ -86,7 +86,7 @@ pub struct OutlinePanel {
     active_item: Option<ActiveItem>,
     _subscriptions: Vec<Subscription>,
     update_task: Task<()>,
-    outline_fetch_tasks: Vec<Task<()>>,
+    outline_fetch_tasks: HashMap<(BufferId, ExcerptId), Task<()>>,
     excerpts: HashMap<BufferId, HashMap<ExcerptId, Excerpt>>,
     cached_entries_with_depth: Option<Vec<(usize, EntryOwned)>>,
 }
@@ -382,7 +382,7 @@ impl OutlinePanel {
                 active_item: None,
                 pending_serialization: Task::ready(None),
                 update_task: Task::ready(()),
-                outline_fetch_tasks: Vec::new(),
+                outline_fetch_tasks: HashMap::default(),
                 excerpts: HashMap::default(),
                 last_visible_range: 0..0,
                 cached_entries_with_depth: None,
@@ -1009,12 +1009,23 @@ impl OutlinePanel {
             return;
         };
 
-        self.collapsed_entries.extend(
-            self.fs_entries_depth
-                .iter()
-                .filter(|(_, &(is_dir, depth))| is_dir && depth == 0)
-                .map(|(&(worktree_id, entry_id), _)| CollapsedEntry::Dir(worktree_id, entry_id)),
-        );
+        let new_entries = self
+            .entries_with_depths(cx)
+            .iter()
+            .flat_map(|(_, entry)| match entry {
+                EntryOwned::Entry(FsEntry::Directory(worktree_id, entry)) => {
+                    Some(CollapsedEntry::Dir(*worktree_id, entry.id))
+                }
+                EntryOwned::FoldedDirs(worktree_id, entries) => {
+                    Some(CollapsedEntry::Dir(*worktree_id, entries.last()?.id))
+                }
+                EntryOwned::Excerpt(buffer_id, excerpt_id, _) => {
+                    Some(CollapsedEntry::Excerpt(*buffer_id, *excerpt_id))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        self.collapsed_entries.extend(new_entries);
         self.update_fs_entries(&editor, HashSet::default(), None, None, false, cx);
     }
 
@@ -1138,55 +1149,80 @@ impl OutlinePanel {
         if !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
             return;
         }
-        let Some((buffer_id, excerpt_id, outline)) = self.location_for_editor_selection(editor, cx)
-        else {
+        let Some(entry_with_selection) = self.location_for_editor_selection(editor, cx) else {
+            self.selected_entry = None;
+            cx.notify();
             return;
         };
-        let Some((file_entry_with_selection, entry_with_selection)) =
-            self.entry_for_selection(buffer_id, excerpt_id, outline)
-        else {
-            return;
+        let related_buffer_entry = match entry_with_selection {
+            EntryOwned::Entry(FsEntry::File(worktree_id, _, buffer_id, _)) => {
+                let project = self.project.read(cx);
+                let entry_id = project
+                    .buffer_for_id(buffer_id)
+                    .and_then(|buffer| buffer.read(cx).entry_id(cx));
+                project
+                    .worktree_for_id(worktree_id, cx)
+                    .zip(entry_id)
+                    .and_then(|(worktree, entry_id)| {
+                        let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
+                        Some((worktree, entry))
+                    })
+            }
+            EntryOwned::Outline(buffer_id, excerpt_id, _)
+            | EntryOwned::Excerpt(buffer_id, excerpt_id, _) => {
+                self.collapsed_entries
+                    .remove(&CollapsedEntry::Excerpt(buffer_id, excerpt_id));
+                let project = self.project.read(cx);
+                let entry_id = project
+                    .buffer_for_id(buffer_id)
+                    .and_then(|buffer| buffer.read(cx).entry_id(cx));
+                entry_id.and_then(|entry_id| {
+                    let worktree = project.worktree_for_entry(entry_id, cx)?;
+                    let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
+                    Some((worktree, entry))
+                })
+            }
+            EntryOwned::Entry(FsEntry::ExternalFile(..)) => None,
+            _ => return,
         };
-        if self.selected_entry.as_ref() == Some(&entry_with_selection) {
-            return;
-        }
+        if let Some((worktree, buffer_entry)) = related_buffer_entry {
+            let worktree_id = worktree.read(cx).id();
+            let mut dirs_to_expand = Vec::new();
+            {
+                let mut traversal = worktree.read(cx).traverse_from_path(
+                    true,
+                    true,
+                    true,
+                    buffer_entry.path.as_ref(),
+                );
+                let mut current_entry = buffer_entry;
+                loop {
+                    if current_entry.is_dir() {
+                        if self
+                            .collapsed_entries
+                            .remove(&CollapsedEntry::Dir(worktree_id, current_entry.id))
+                        {
+                            dirs_to_expand.push(current_entry.id);
+                        }
+                    }
 
-        if let FsEntry::File(file_worktree_id, file_entry, ..) = file_entry_with_selection {
-            if let Some(worktree) = self.project.read(cx).worktree_for_id(file_worktree_id, cx) {
-                let parent_entry = {
-                    let mut traversal = worktree.read(cx).traverse_from_path(
-                        true,
-                        true,
-                        true,
-                        file_entry.path.as_ref(),
-                    );
                     if traversal.back_to_parent() {
-                        traversal.entry()
-                    } else {
-                        None
+                        if let Some(parent_entry) = traversal.entry() {
+                            current_entry = parent_entry.clone();
+                            continue;
+                        }
                     }
-                    .cloned()
-                };
-                if let Some(directory_entry) = parent_entry {
-                    let worktree_id = worktree.read(cx).id();
-                    let entry_id = directory_entry.id;
-                    if self
-                        .collapsed_entries
-                        .remove(&CollapsedEntry::Dir(worktree_id, entry_id))
-                    {
-                        self.project
-                            .update(cx, |project, cx| {
-                                project.expand_entry(worktree_id, entry_id, cx)
-                            })
-                            .unwrap_or_else(|| Task::ready(Ok(())))
-                            .detach_and_log_err(cx)
-                    }
+                    break;
                 }
             }
-        }
-        if let EntryOwned::Outline(buffer_id, excerpt_id, _) = &entry_with_selection {
-            self.collapsed_entries
-                .remove(&CollapsedEntry::Excerpt(*buffer_id, *excerpt_id));
+            for dir_to_expand in dirs_to_expand {
+                self.project
+                    .update(cx, |project, cx| {
+                        project.expand_entry(worktree_id, dir_to_expand, cx)
+                    })
+                    .unwrap_or_else(|| Task::ready(Ok(())))
+                    .detach_and_log_err(cx)
+            }
         }
 
         self.update_fs_entries(
@@ -1197,26 +1233,6 @@ impl OutlinePanel {
             false,
             cx,
         );
-    }
-
-    fn entry_for_selection(
-        &mut self,
-        buffer_id: BufferId,
-        excerpt_id: ExcerptId,
-        outline: Option<OutlineItem<language::Anchor>>,
-    ) -> Option<(FsEntry, EntryOwned)> {
-        let fs_entry_with_selection = self.fs_entries.iter().find(|entry| match entry {
-            FsEntry::File(_, _, file_buffer_id, excerpts)
-            | FsEntry::ExternalFile(file_buffer_id, excerpts) => {
-                file_buffer_id == &buffer_id && excerpts.contains(&excerpt_id)
-            }
-            _ => false,
-        });
-        let entry_with_selection = outline
-            .map(|outline| EntryOwned::Outline(buffer_id, excerpt_id, outline))
-            .or_else(|| Some(EntryOwned::Entry(fs_entry_with_selection.cloned()?)));
-
-        fs_entry_with_selection.cloned().zip(entry_with_selection)
     }
 
     fn render_excerpt(
@@ -1753,8 +1769,10 @@ impl OutlinePanel {
                             .into_iter()
                             .map(|(worktree_id, (worktree_snapshot, entries))| {
                                 let mut entries = entries.into_iter().collect::<Vec<_>>();
-                                project::sort_worktree_entries(&mut entries);
+                                // For a proper git status propagation, we have to keep the entries sorted lexicographically.
+                                entries.sort_by(|a, b| a.path.as_ref().cmp(b.path.as_ref()));
                                 worktree_snapshot.propagate_git_statuses(&mut entries);
+                                project::sort_worktree_entries(&mut entries);
                                 (worktree_id, entries)
                             })
                             .flat_map(|(worktree_id, entries)| {
@@ -1828,7 +1846,7 @@ impl OutlinePanel {
                                                     ),
                                                     new_depth_map
                                                         .get(&(worktree_id, id))
-                                                        .map(|&(_, depth)| depth)
+                                                        .copied()
                                                         .unwrap_or(0),
                                                 ),
 
@@ -1875,15 +1893,12 @@ impl OutlinePanel {
                                         } else {
                                             parent_id
                                                 .and_then(|(worktree_id, id)| {
-                                                    new_depth_map
-                                                        .get(&(worktree_id, id))
-                                                        .map(|&(_, depth)| depth)
+                                                    new_depth_map.get(&(worktree_id, id)).copied()
                                                 })
                                                 .unwrap_or(0)
                                                 + 1
                                         };
-                                        new_depth_map
-                                            .insert((*worktree_id, dir_entry.id), (true, depth));
+                                        new_depth_map.insert((*worktree_id, dir_entry.id), depth);
                                     }
                                     FsEntry::File(worktree_id, file_entry, ..) => {
                                         let parent_id = back_to_common_visited_parent(
@@ -1896,15 +1911,12 @@ impl OutlinePanel {
                                         } else {
                                             parent_id
                                                 .and_then(|(worktree_id, id)| {
-                                                    new_depth_map
-                                                        .get(&(worktree_id, id))
-                                                        .map(|&(_, depth)| depth)
+                                                    new_depth_map.get(&(worktree_id, id)).copied()
                                                 })
                                                 .unwrap_or(0)
                                                 + 1
                                         };
-                                        new_depth_map
-                                            .insert((*worktree_id, file_entry.id), (false, depth));
+                                        new_depth_map.insert((*worktree_id, file_entry.id), depth);
                                     }
                                     FsEntry::ExternalFile(..) => {
                                         visited_dirs.clear();
@@ -1960,18 +1972,13 @@ impl OutlinePanel {
         new_active_editor: View<Editor>,
         cx: &mut ViewContext<Self>,
     ) {
+        let new_selected_entry = self.location_for_editor_selection(&new_active_editor, cx);
         self.clear_previous();
         self.active_item = Some(ActiveItem {
             item_id: new_active_editor.item_id(),
             _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
             active_editor: new_active_editor.downgrade(),
         });
-        let new_selected_entry = self
-            .location_for_editor_selection(&new_active_editor, cx)
-            .and_then(|(buffer_id, excerpt_id, outline)| {
-                let (_, entry) = self.entry_for_selection(buffer_id, excerpt_id, outline)?;
-                Some(entry)
-            });
         let new_entries =
             HashSet::from_iter(new_active_editor.read(cx).buffer().read(cx).excerpt_ids());
         self.update_fs_entries(
@@ -2002,172 +2009,192 @@ impl OutlinePanel {
         &self,
         editor: &View<Editor>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<(BufferId, ExcerptId, Option<Outline>)> {
+    ) -> Option<EntryOwned> {
         let selection = editor
             .read(cx)
             .selections
             .newest::<language::Point>(cx)
             .head();
+        let editor_snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx));
         let multi_buffer = editor.read(cx).buffer();
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-        let selection = multi_buffer_snapshot.anchor_before(selection);
-        let excerpt_id = selection.excerpt_id;
-        let buffer_snapshot = multi_buffer_snapshot.buffer_for_excerpt(selection.excerpt_id)?;
-        let buffer_id = buffer_snapshot.remote_id();
+        let (excerpt_id, buffer, _) = editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .excerpt_containing(selection, cx)?;
+        let buffer_id = buffer.read(cx).remote_id();
+        let selection_display_point = selection.to_display_point(&editor_snapshot);
 
-        let outline_item = self
+        let excerpt_outlines = self
             .excerpts
             .get(&buffer_id)
             .and_then(|excerpts| excerpts.get(&excerpt_id))
             .into_iter()
             .flat_map(|excerpt| excerpt.iter_outlines())
-            .filter(|outline_item| {
-                range_contains(&outline_item.range, selection.text_anchor, buffer_snapshot)
+            .flat_map(|outline| {
+                let start = multi_buffer_snapshot
+                    .anchor_in_excerpt(excerpt_id, outline.range.start)?
+                    .to_display_point(&editor_snapshot);
+                let end = multi_buffer_snapshot
+                    .anchor_in_excerpt(excerpt_id, outline.range.end)?
+                    .to_display_point(&editor_snapshot);
+                Some((start..end, outline))
             })
-            .min_by_key(|outline| {
-                let range = outline.range.start.offset..outline.range.end.offset;
-                let cursor_offset = selection.text_anchor.offset as isize;
-                let distance_to_closest_endpoint = cmp::min(
-                    (range.start as isize - cursor_offset).abs(),
-                    (range.end as isize - cursor_offset).abs(),
-                );
-                distance_to_closest_endpoint
+            .collect::<Vec<_>>();
+
+        let mut matching_outline_indices = Vec::new();
+        let mut children = HashMap::default();
+        let mut parents_stack = Vec::<(&Range<DisplayPoint>, &&Outline, usize)>::new();
+
+        for (i, (outline_range, outline)) in excerpt_outlines.iter().enumerate() {
+            if outline_range
+                .to_inclusive()
+                .contains(&selection_display_point)
+            {
+                matching_outline_indices.push(i);
+            } else if (outline_range.start.row()..outline_range.end.row())
+                .to_inclusive()
+                .contains(&selection_display_point.row())
+            {
+                matching_outline_indices.push(i);
+            }
+
+            while let Some((parent_range, parent_outline, _)) = parents_stack.last() {
+                if parent_outline.depth >= outline.depth
+                    || !parent_range.contains(&outline_range.start)
+                {
+                    parents_stack.pop();
+                } else {
+                    break;
+                }
+            }
+            if let Some((_, _, parent_index)) = parents_stack.last_mut() {
+                children
+                    .entry(*parent_index)
+                    .or_insert_with(Vec::new)
+                    .push(i);
+            }
+            parents_stack.push((outline_range, outline, i));
+        }
+
+        let outline_item = matching_outline_indices
+            .into_iter()
+            .flat_map(|i| Some((i, excerpt_outlines.get(i)?)))
+            .filter(|(i, _)| {
+                children
+                    .get(i)
+                    .map(|children| {
+                        children.iter().all(|child_index| {
+                            excerpt_outlines
+                                .get(*child_index)
+                                .map(|(child_range, _)| child_range.start > selection_display_point)
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(true)
             })
+            .min_by_key(|(_, (outline_range, outline))| {
+                let distance_from_start = if outline_range.start > selection_display_point {
+                    outline_range.start - selection_display_point
+                } else {
+                    selection_display_point - outline_range.start
+                };
+                let distance_from_end = if outline_range.end > selection_display_point {
+                    outline_range.end - selection_display_point
+                } else {
+                    selection_display_point - outline_range.end
+                };
+
+                (
+                    cmp::Reverse(outline.depth),
+                    distance_from_start + distance_from_end,
+                )
+            })
+            .map(|(_, (_, outline))| *outline)
             .cloned();
 
-        Some((buffer_id, excerpt_id, outline_item))
+        let closest_container = match outline_item {
+            Some(outline) => EntryOwned::Outline(buffer_id, excerpt_id, outline),
+            None => self
+                .cached_entries_with_depth
+                .iter()
+                .flatten()
+                .rev()
+                .find_map(|(_, entry)| match entry {
+                    EntryOwned::Excerpt(entry_buffer_id, entry_excerpt_id, _) => {
+                        if entry_buffer_id == &buffer_id && entry_excerpt_id == &excerpt_id {
+                            Some(entry.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    EntryOwned::Entry(
+                        FsEntry::ExternalFile(file_buffer_id, file_excerpts)
+                        | FsEntry::File(_, _, file_buffer_id, file_excerpts),
+                    ) => {
+                        if file_buffer_id == &buffer_id && file_excerpts.contains(&excerpt_id) {
+                            Some(entry.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                })?,
+        };
+        Some(closest_container)
     }
 
     fn fetch_outlines(&mut self, range: &Range<usize>, cx: &mut ViewContext<Self>) {
-        let project = self.project.clone();
         let range_len = range.len();
         let half_range = range_len / 2;
         let entries = self.entries_with_depths(cx);
         let expanded_range =
             range.start.saturating_sub(half_range)..(range.end + half_range).min(entries.len());
 
-        let entries = entries
-            .get(expanded_range)
-            .map(|slice| slice.to_vec())
-            .unwrap_or_default();
-        let excerpt_fetch_ranges = entries.into_iter().fold(
-            HashMap::<
-                BufferId,
-                (
-                    BufferSnapshot,
-                    HashMap<ExcerptId, ExcerptRange<language::Anchor>>,
-                ),
-            >::default(),
-            |mut excerpts_to_fetch, (_, entry)| {
-                match entry {
-                    EntryOwned::Entry(FsEntry::File(_, _, buffer_id, file_excerpts))
-                    | EntryOwned::Entry(FsEntry::ExternalFile(buffer_id, file_excerpts)) => {
-                        let excerpts = self.excerpts.get(&buffer_id);
-                        for file_excerpt in file_excerpts {
-                            if let Some(excerpt) = excerpts
-                                .and_then(|excerpts| excerpts.get(&file_excerpt))
-                                .filter(|excerpt| excerpt.should_fetch_outlines())
-                            {
-                                match excerpts_to_fetch.entry(buffer_id) {
-                                    hash_map::Entry::Occupied(mut o) => {
-                                        o.get_mut().1.insert(file_excerpt, excerpt.range.clone());
-                                    }
-                                    hash_map::Entry::Vacant(v) => {
-                                        if let Some(buffer_snapshot) = project
-                                            .read(cx)
-                                            .buffer_for_id(buffer_id)
-                                            .map(|buffer| buffer.read(cx).snapshot())
-                                        {
-                                            v.insert((buffer_snapshot, HashMap::default()))
-                                                .1
-                                                .insert(file_excerpt, excerpt.range.clone());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    EntryOwned::Excerpt(buffer_id, excerpt_id, _) => {
-                        if let Some(excerpt) = self
-                            .excerpts
-                            .get(&buffer_id)
-                            .and_then(|excerpts| excerpts.get(&excerpt_id))
-                            .filter(|excerpt| excerpt.should_fetch_outlines())
-                        {
-                            match excerpts_to_fetch.entry(buffer_id) {
-                                hash_map::Entry::Occupied(mut o) => {
-                                    o.get_mut().1.insert(excerpt_id, excerpt.range.clone());
-                                }
-                                hash_map::Entry::Vacant(v) => {
-                                    if let Some(buffer_snapshot) = project
-                                        .read(cx)
-                                        .buffer_for_id(buffer_id)
-                                        .map(|buffer| buffer.read(cx).snapshot())
-                                    {
-                                        v.insert((buffer_snapshot, HashMap::default()))
-                                            .1
-                                            .insert(excerpt_id, excerpt.range.clone());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-                excerpts_to_fetch
-            },
-        );
-
+        let excerpt_fetch_ranges = self.excerpt_fetch_ranges(expanded_range, cx);
         if excerpt_fetch_ranges.is_empty() {
             return;
         }
 
         let syntax_theme = cx.theme().syntax().clone();
-        self.outline_fetch_tasks
-            .push(cx.spawn(|outline_panel, mut cx| async move {
-                let mut fetch_tasks = excerpt_fetch_ranges
-                    .into_iter()
-                    .map(|(buffer_id, (buffer_snapshot, excerpt_ranges))| {
-                        let syntax_theme = syntax_theme.clone();
-                        cx.background_executor().spawn(async move {
-                            let new_outlines = excerpt_ranges
-                                .into_iter()
-                                .map(|(excerpt_id, excerpt_range)| {
-                                    let outlines = buffer_snapshot
-                                        .outline_items_containing(
-                                            excerpt_range.context,
-                                            false,
-                                            Some(&syntax_theme),
-                                        )
-                                        .unwrap_or_default();
-                                    (excerpt_id, outlines)
-                                })
-                                .collect::<HashMap<_, _>>();
-                            (buffer_id, new_outlines)
-                        })
-                    })
-                    .collect::<FuturesUnordered<_>>();
-
-                while let Some((buffer_id, fetched_outlines)) = fetch_tasks.next().await {
-                    outline_panel
-                        .update(&mut cx, |outline_panel, cx| {
-                            for (excerpt_id, fetched_outlines) in fetched_outlines {
+        for (buffer_id, (buffer_snapshot, excerpt_ranges)) in excerpt_fetch_ranges {
+            for (excerpt_id, excerpt_range) in excerpt_ranges {
+                let syntax_theme = syntax_theme.clone();
+                let buffer_snapshot = buffer_snapshot.clone();
+                self.outline_fetch_tasks.insert(
+                    (buffer_id, excerpt_id),
+                    cx.spawn(|outline_panel, mut cx| async move {
+                        let fetched_outlines = cx
+                            .background_executor()
+                            .spawn(async move {
+                                buffer_snapshot
+                                    .outline_items_containing(
+                                        excerpt_range.context,
+                                        false,
+                                        Some(&syntax_theme),
+                                    )
+                                    .unwrap_or_default()
+                            })
+                            .await;
+                        outline_panel
+                            .update(&mut cx, |outline_panel, cx| {
                                 if let Some(excerpt) = outline_panel
                                     .excerpts
                                     .entry(buffer_id)
                                     .or_default()
                                     .get_mut(&excerpt_id)
-                                    .filter(|excerpt| excerpt.should_fetch_outlines())
                                 {
                                     excerpt.outlines = ExcerptOutlines::Outlines(fetched_outlines);
                                 }
-                            }
-                            outline_panel.cached_entries_with_depth = None;
-                            cx.notify();
-                        })
-                        .ok();
-                }
-            }));
+                                outline_panel.cached_entries_with_depth = None;
+                                cx.notify();
+                            })
+                            .ok();
+                    }),
+                );
+            }
+        }
     }
 
     fn entries_with_depths(&mut self, cx: &AppContext) -> &[(usize, EntryOwned)] {
@@ -2183,7 +2210,7 @@ impl OutlinePanel {
                         let depth = self
                             .fs_entries_depth
                             .get(&(*worktree_id, dir_entry.id))
-                            .map(|&(_, depth)| depth)
+                            .copied()
                             .unwrap_or(0);
                         if auto_fold_dirs {
                             let folded = self
@@ -2225,7 +2252,7 @@ impl OutlinePanel {
                     FsEntry::File(worktree_id, file_entry, ..) => self
                         .fs_entries_depth
                         .get(&(*worktree_id, file_entry.id))
-                        .map(|&(_, depth)| depth)
+                        .copied()
                         .unwrap_or(0),
                 };
                 if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take() {
@@ -2320,6 +2347,87 @@ impl OutlinePanel {
             if ids.is_empty() {
                 break;
             }
+        }
+    }
+
+    fn excerpt_fetch_ranges(
+        &self,
+        entry_range: Range<usize>,
+        cx: &AppContext,
+    ) -> HashMap<
+        BufferId,
+        (
+            BufferSnapshot,
+            HashMap<ExcerptId, ExcerptRange<language::Anchor>>,
+        ),
+    > {
+        match self.cached_entries_with_depth.as_ref() {
+            Some(entries) => entries.get(entry_range).into_iter().flatten().fold(
+                HashMap::default(),
+                |mut excerpts_to_fetch, (_, entry)| {
+                    match entry {
+                        EntryOwned::Entry(FsEntry::File(_, _, buffer_id, file_excerpts))
+                        | EntryOwned::Entry(FsEntry::ExternalFile(buffer_id, file_excerpts)) => {
+                            let excerpts = self.excerpts.get(&buffer_id);
+                            for &file_excerpt in file_excerpts {
+                                if let Some(excerpt) = excerpts
+                                    .and_then(|excerpts| excerpts.get(&file_excerpt))
+                                    .filter(|excerpt| excerpt.should_fetch_outlines())
+                                {
+                                    match excerpts_to_fetch.entry(*buffer_id) {
+                                        hash_map::Entry::Occupied(mut o) => {
+                                            o.get_mut()
+                                                .1
+                                                .insert(file_excerpt, excerpt.range.clone());
+                                        }
+                                        hash_map::Entry::Vacant(v) => {
+                                            if let Some(buffer_snapshot) = self
+                                                .project
+                                                .read(cx)
+                                                .buffer_for_id(*buffer_id)
+                                                .map(|buffer| buffer.read(cx).snapshot())
+                                            {
+                                                v.insert((buffer_snapshot, HashMap::default()))
+                                                    .1
+                                                    .insert(file_excerpt, excerpt.range.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        EntryOwned::Excerpt(buffer_id, excerpt_id, _) => {
+                            if let Some(excerpt) = self
+                                .excerpts
+                                .get(&buffer_id)
+                                .and_then(|excerpts| excerpts.get(&excerpt_id))
+                                .filter(|excerpt| excerpt.should_fetch_outlines())
+                            {
+                                match excerpts_to_fetch.entry(*buffer_id) {
+                                    hash_map::Entry::Occupied(mut o) => {
+                                        o.get_mut().1.insert(*excerpt_id, excerpt.range.clone());
+                                    }
+                                    hash_map::Entry::Vacant(v) => {
+                                        if let Some(buffer_snapshot) = self
+                                            .project
+                                            .read(cx)
+                                            .buffer_for_id(*buffer_id)
+                                            .map(|buffer| buffer.read(cx).snapshot())
+                                        {
+                                            v.insert((buffer_snapshot, HashMap::default()))
+                                                .1
+                                                .insert(*excerpt_id, excerpt.range.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    excerpts_to_fetch
+                },
+            ),
+            None => HashMap::default(),
         }
     }
 }
@@ -2429,13 +2537,7 @@ impl Panel for OutlinePanel {
                 if self.active_item.as_ref().map(|item| item.item_id)
                     == Some(active_editor.item_id())
                 {
-                    let new_selected_entry = self
-                        .location_for_editor_selection(&active_editor, cx)
-                        .and_then(|(buffer_id, excerpt_id, outline)| {
-                            let (_, entry) =
-                                self.entry_for_selection(buffer_id, excerpt_id, outline)?;
-                            Some(entry)
-                        });
+                    let new_selected_entry = self.location_for_editor_selection(&active_editor, cx);
                     self.update_fs_entries(
                         &active_editor,
                         HashSet::default(),
@@ -2520,12 +2622,11 @@ impl Render for OutlinePanel {
                         move |outline_panel, range, cx| {
                             outline_panel.last_visible_range = range.clone();
                             outline_panel.fetch_outlines(&range, cx);
-                            outline_panel
-                                .entries_with_depths(cx)
-                                .get(range)
+                            let entries = outline_panel.entries_with_depths(cx).get(range);
+                            entries
                                 .map(|entries| entries.to_vec())
+                                .unwrap_or_default()
                                 .into_iter()
-                                .flatten()
                                 .filter_map(|(depth, entry)| match entry {
                                     EntryOwned::Entry(entry) => {
                                         Some(outline_panel.render_entry(&entry, depth, cx))
@@ -2647,15 +2748,6 @@ fn subscribe_for_editor_events(
             _ => {}
         },
     )
-}
-
-fn range_contains(
-    range: &Range<language::Anchor>,
-    anchor: language::Anchor,
-    buffer_snapshot: &language::BufferSnapshot,
-) -> bool {
-    range.start.cmp(&anchor, buffer_snapshot).is_le()
-        && range.end.cmp(&anchor, buffer_snapshot).is_ge()
 }
 
 fn empty_icon() -> AnyElement {
