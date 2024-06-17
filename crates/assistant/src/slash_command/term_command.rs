@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use gpui::{AppContext, Task, WeakView};
-use language::LspAdapterDelegate;
+use language::{CodeLabel, HighlightId, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use workspace::Workspace;
@@ -16,6 +16,17 @@ const LINE_COUNT_ARG: &str = "--line-count";
 impl SlashCommand for TermSlashCommand {
     fn name(&self) -> String {
         "term".into()
+    }
+
+    fn label(&self, cx: &AppContext) -> CodeLabel {
+        let mut label = CodeLabel::default();
+        label.push_str("term ", None);
+        label.push_str(
+            LINE_COUNT_ARG,
+            cx.theme().syntax().highlight_id("comment").map(HighlightId),
+        );
+        label.filter_range = 0.."term".len();
+        label
     }
 
     fn description(&self) -> String {
