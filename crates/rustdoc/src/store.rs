@@ -71,6 +71,11 @@ impl RustdocStore {
         }
     }
 
+    /// Returns whether the crate with the given name is currently being indexed.
+    pub fn is_indexing(&self, crate_name: &CrateName) -> bool {
+        self.indexing_tasks_by_crate.read().contains_key(crate_name)
+    }
+
     pub async fn load(
         &self,
         crate_name: CrateName,

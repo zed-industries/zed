@@ -28,11 +28,12 @@ use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    div, point, rems, Action, AnyElement, AnyView, AppContext, AsyncAppContext, AsyncWindowContext,
-    ClipboardItem, Context as _, Empty, EventEmitter, FocusHandle, FocusOutEvent, FocusableView,
-    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, UpdateGlobal, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    div, percentage, point, rems, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
+    AsyncAppContext, AsyncWindowContext, ClipboardItem, Context as _, Empty, EventEmitter,
+    FocusHandle, FocusOutEvent, FocusableView, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use language::{
     language_settings::SoftWrap, AnchorRangeExt, AutoindentMode, Buffer, LanguageRegistry,
@@ -41,6 +42,7 @@ use language::{
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
+use rustdoc::{CrateName, RustdocStore};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
@@ -2537,8 +2539,23 @@ impl ContextEditor {
                                     )
                                 }
                             };
-                            let render_trailer =
-                                |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+                            let render_trailer = {
+                                let command = command.clone();
+                                move |row, _unfold, cx: &mut WindowContext| {
+                                    // TODO: In the future we should investigate how we can expose
+                                    // this as a hook on the `SlashCommand` trait so that we don't
+                                    // need to special-case it here.
+                                    if command.name == "rustdoc" {
+                                        return render_rustdoc_slash_command_trailer(
+                                            row,
+                                            command.clone(),
+                                            cx,
+                                        );
+                                    }
+
+                                    Empty.into_any()
+                                }
+                            };
 
                             let start = buffer
                                 .anchor_in_excerpt(excerpt_id, command.source_range.start)
@@ -3166,6 +3183,37 @@ fn render_pending_slash_command_gutter_decoration(
     }
 
     icon.into_any_element()
+}
+
+fn render_rustdoc_slash_command_trailer(
+    row: MultiBufferRow,
+    command: PendingSlashCommand,
+    cx: &mut WindowContext,
+) -> AnyElement {
+    let rustdoc_store = RustdocStore::global(cx);
+
+    let Some((crate_name, _)) = command
+        .argument
+        .as_ref()
+        .and_then(|arg| arg.split_once(':'))
+    else {
+        return Empty.into_any();
+    };
+
+    let crate_name = CrateName::from(crate_name);
+    if !rustdoc_store.is_indexing(&crate_name) {
+        return Empty.into_any();
+    }
+
+    div()
+        .id(("crates-being-indexed", row.0))
+        .child(Icon::new(IconName::ArrowCircle).with_animation(
+            "arrow-circle",
+            Animation::new(Duration::from_secs(4)).repeat(),
+            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+        ))
+        .tooltip(move |cx| Tooltip::text(format!("Indexing {crate_name}…"), cx))
+        .into_any_element()
 }
 
 fn make_lsp_adapter_delegate(
