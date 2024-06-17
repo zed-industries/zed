@@ -230,40 +230,6 @@ pub struct Project {
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
-    telemetry_worktree_id_map: TelemetryWorktreeIdMap,
-}
-
-#[derive(Debug)]
-struct TelemetryWorktreeIdMap(HashMap<String, ProjectTypeTelemetry>);
-
-impl Default for TelemetryWorktreeIdMap {
-    fn default() -> Self {
-        Self(HashMap::from_iter([
-            (
-                "yarn.lock".to_string(),
-                ProjectTypeTelemetry::new("yarn".to_string()),
-            ),
-            (
-                "package.json".to_string(),
-                ProjectTypeTelemetry::new("node".to_string()),
-            ),
-        ]))
-    }
-}
-
-#[derive(Debug)]
-struct ProjectTypeTelemetry {
-    name: String,
-    worktree_ids_reported: HashSet<WorktreeId>,
-}
-
-impl ProjectTypeTelemetry {
-    fn new(name: String) -> Self {
-        Self {
-            name,
-            worktree_ids_reported: HashSet::default(),
-        }
-    }
 }
 
 pub enum LanguageServerToQuery {
@@ -823,7 +789,6 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
-                telemetry_worktree_id_map: TelemetryWorktreeIdMap::default(),
             }
         })
     }
@@ -988,7 +953,6 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
-                telemetry_worktree_id_map: TelemetryWorktreeIdMap::default(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -7791,7 +7755,10 @@ impl Project {
                         changes.clone(),
                     ));
 
-                    this.report_project_events(&worktree, changes, cx);
+                    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+                    this.client()
+                        .telemetry()
+                        .report_discovered_project_events(worktree_id, changes);
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
                     if is_local {
@@ -7842,48 +7809,6 @@ impl Project {
 
         cx.emit(Event::WorktreeAdded);
         self.metadata_changed(cx);
-    }
-
-    fn report_project_events(
-        &mut self,
-        worktree: &Model<Worktree>,
-        updated_entries_set: &UpdatedEntriesSet,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
-
-        let client = self.client();
-
-        for (project_file_name, project_type_telemetry) in
-            self.telemetry_worktree_id_map.0.iter_mut()
-        {
-            if project_type_telemetry
-                .worktree_ids_reported
-                .contains(&worktree_id)
-            {
-                continue;
-            }
-
-            let project_file_found = updated_entries_set.iter().any(|(path, _, _)| {
-                path.as_ref()
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .map(|name_str| name_str == project_file_name)
-                    .unwrap_or(false)
-            });
-
-            if !project_file_found {
-                continue;
-            }
-
-            client
-                .telemetry()
-                .report_app_event(format!("open {} project", project_type_telemetry.name));
-
-            project_type_telemetry
-                .worktree_ids_reported
-                .insert(worktree_id);
-        }
     }
 
     fn update_local_worktree_buffers(

@@ -3,6 +3,7 @@ mod event_coalescer;
 use crate::{ChannelId, TelemetrySettings};
 use chrono::{DateTime, Utc};
 use clock::SystemClock;
+use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, BackgroundExecutor, Task};
 use http::{self, HttpClient, HttpClientWithUrl, Method};
@@ -23,6 +24,7 @@ use tempfile::NamedTempFile;
 #[cfg(not(debug_assertions))]
 use util::ResultExt;
 use util::TryFutureExt;
+use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
 
@@ -47,10 +49,29 @@ struct TelemetryState {
     first_event_date_time: Option<DateTime<Utc>>,
     event_coalescer: EventCoalescer,
     max_queue_size: usize,
+    worktree_id_map: WorktreeIdMap,
 
     os_name: String,
     app_version: String,
     os_version: Option<String>,
+}
+
+#[derive(Debug)]
+struct WorktreeIdMap(HashMap<String, ProjectCache>);
+
+#[derive(Debug)]
+struct ProjectCache {
+    name: String,
+    worktree_ids_reported: HashSet<WorktreeId>,
+}
+
+impl ProjectCache {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            worktree_ids_reported: HashSet::default(),
+        }
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -180,6 +201,16 @@ impl Telemetry {
             first_event_date_time: None,
             event_coalescer: EventCoalescer::new(clock.clone()),
             max_queue_size: MAX_QUEUE_LEN,
+            worktree_id_map: WorktreeIdMap(HashMap::from_iter([
+                (
+                    "yarn.lock".to_string(),
+                    ProjectCache::new("yarn".to_string()),
+                ),
+                (
+                    "package.json".to_string(),
+                    ProjectCache::new("node".to_string()),
+                ),
+            ])),
 
             os_version: None,
             os_name: os_name(),
@@ -448,6 +479,52 @@ impl Telemetry {
         });
 
         self.report_event(event)
+    }
+
+    pub fn report_discovered_project_events(
+        self: &Arc<Self>,
+        worktree_id: WorktreeId,
+        updated_entries_set: &UpdatedEntriesSet,
+    ) {
+        let project_names: Vec<String> = {
+            let mut state = self.state.lock();
+            state
+                .worktree_id_map
+                .0
+                .iter_mut()
+                .filter_map(|(project_file_name, project_type_telemetry)| {
+                    if project_type_telemetry
+                        .worktree_ids_reported
+                        .contains(&worktree_id)
+                    {
+                        return None;
+                    }
+
+                    let project_file_found = updated_entries_set.iter().any(|(path, _, _)| {
+                        path.as_ref()
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .map(|name_str| name_str == project_file_name)
+                            .unwrap_or(false)
+                    });
+
+                    if !project_file_found {
+                        return None;
+                    }
+
+                    project_type_telemetry
+                        .worktree_ids_reported
+                        .insert(worktree_id);
+
+                    Some(project_type_telemetry.name.clone())
+                })
+                .collect()
+        };
+
+        // Done on purpose to avoid calling `self.state.lock()` multiple times
+        for project_name in project_names {
+            self.report_app_event(format!("open {} project", project_name));
+        }
     }
 
     fn report_event(self: &Arc<Self>, event: Event) {
