@@ -34,7 +34,6 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::platform::linux::wayland::WaylandClient;
-use crate::platform::linux::xdg_desktop_portal::{should_auto_hide_scrollbars, window_appearance};
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
@@ -105,18 +104,13 @@ impl LinuxCommon {
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
 
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let appearance = window_appearance(&background_executor)
-            .log_err()
-            .unwrap_or(WindowAppearance::Light);
-        let auto_hide_scrollbars =
-            should_auto_hide_scrollbars(&background_executor).unwrap_or(false);
 
         let common = LinuxCommon {
             background_executor,
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
-            appearance,
-            auto_hide_scrollbars,
+            appearance: WindowAppearance::Light,
+            auto_hide_scrollbars: false,
             callbacks,
             signal,
             menus: Vec::new(),

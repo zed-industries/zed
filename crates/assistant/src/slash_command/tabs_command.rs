@@ -1,11 +1,14 @@
-use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
+use super::{
+    file_command::{codeblock_fence_for_path, EntryPlaceholder},
+    SlashCommand, SlashCommandOutput,
+};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
 use collections::HashMap;
 use editor::Editor;
 use gpui::{AppContext, Entity, Task, WeakView};
 use language::LspAdapterDelegate;
-use std::{fmt::Write, path::Path, sync::Arc};
+use std::{fmt::Write, sync::Arc};
 use ui::{IntoElement, WindowContext};
 use workspace::Workspace;
 
@@ -77,15 +80,7 @@ impl SlashCommand for TabsSlashCommand {
                 let mut text = String::new();
                 for (full_path, buffer, _) in open_buffers {
                     let section_start_ix = text.len();
-                    writeln!(
-                        text,
-                        "```{}\n",
-                        full_path
-                            .as_deref()
-                            .unwrap_or(Path::new("untitled"))
-                            .display()
-                    )
-                    .unwrap();
+                    text.push_str(&codeblock_fence_for_path(full_path.as_deref(), None));
                     for chunk in buffer.as_rope().chunks() {
                         text.push_str(chunk);
                     }
@@ -98,9 +93,10 @@ impl SlashCommand for TabsSlashCommand {
                     sections.push(SlashCommandOutputSection {
                         range: section_start_ix..section_end_ix,
                         render_placeholder: Arc::new(move |id, unfold, _| {
-                            FilePlaceholder {
+                            EntryPlaceholder {
                                 id,
                                 path: full_path.clone(),
+                                is_directory: false,
                                 line_range: None,
                                 unfold,
                             }

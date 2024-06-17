@@ -40,7 +40,12 @@ impl OllamaCompletionProvider {
             let client = http_client.clone();
             let model = model.name.clone();
 
-            |_| async move { preload_model(client.as_ref(), &api_url, &model).await }
+            |_| async move {
+                if model.is_empty() {
+                    return Ok(());
+                }
+                preload_model(client.as_ref(), &api_url, &model).await
+            }
         })
         .detach_and_log_err(cx);
 
@@ -71,7 +76,12 @@ impl OllamaCompletionProvider {
         })
         .detach_and_log_err(cx);
 
-        self.model = model;
+        if model.name.is_empty() {
+            self.select_first_available_model()
+        } else {
+            self.model = model;
+        }
+
         self.api_url = api_url;
         self.low_speed_timeout = low_speed_timeout;
         self.settings_version = settings_version;
@@ -79,6 +89,12 @@ impl OllamaCompletionProvider {
 
     pub fn available_models(&self) -> impl Iterator<Item = &OllamaModel> {
         self.available_models.iter()
+    }
+
+    pub fn select_first_available_model(&mut self) {
+        if let Some(model) = self.available_models.first() {
+            self.model = model.clone();
+        }
     }
 
     pub fn settings_version(&self) -> usize {
@@ -123,6 +139,10 @@ impl OllamaCompletionProvider {
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
                 if let CompletionProvider::Ollama(provider) = provider {
                     provider.available_models = models;
+
+                    if !provider.available_models.is_empty() && provider.model.name.is_empty() {
+                        provider.select_first_available_model()
+                    }
                 }
             })
         })
@@ -220,7 +240,7 @@ impl OllamaCompletionProvider {
                     },
                 })
                 .collect(),
-            keep_alive: model.keep_alive,
+            keep_alive: model.keep_alive.unwrap_or_default(),
             stream: true,
             options: Some(ChatOptions {
                 num_ctx: Some(model.max_tokens),

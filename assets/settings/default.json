@@ -145,9 +145,9 @@
   // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
   // no matter how they were inserted.
   "always_treat_brackets_as_autoclosed": false,
-  // Controls whether copilot provides suggestion immediately
-  // or waits for a `copilot::Toggle`
-  "show_copilot_suggestions": true,
+  // Controls whether inline completions are shown immediately (true)
+  // or manually by triggering `editor::ShowInlineCompletion` (false).
+  "show_inline_completions": true,
   // Whether to show tabs and spaces in the editor.
   // This setting can take three values:
   //
@@ -516,9 +516,8 @@
       // "delay_ms": 600
     }
   },
-  "copilot": {
-    // The set of glob patterns for which copilot should be disabled
-    // in any matching file.
+  "inline_completions": {
+    // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
   },
   // Settings specific to journaling

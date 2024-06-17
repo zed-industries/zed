@@ -85,11 +85,18 @@ impl DispatchPhase {
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 
-type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
+type AnyWindowFocusListener =
+    Box<dyn FnMut(&WindowFocusEvent, &mut WindowContext) -> bool + 'static>;
 
-struct FocusEvent {
+struct WindowFocusEvent {
     previous_focus_path: SmallVec<[FocusId; 8]>,
     current_focus_path: SmallVec<[FocusId; 8]>,
+}
+
+/// This is provided when subscribing for `ViewContext::on_focus_out` events.
+pub struct FocusOutEvent {
+    /// A weak focus handle representing what was blurred.
+    pub blurred: WeakFocusHandle,
 }
 
 slotmap::new_key_type! {
@@ -1151,7 +1158,7 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_fullscreen()
     }
 
-    fn appearance_changed(&mut self) {
+    pub(crate) fn appearance_changed(&mut self) {
         self.window.appearance = self.window.platform_window.appearance();
 
         self.window
@@ -1397,7 +1404,7 @@ impl<'a> WindowContext<'a> {
                     .retain(&(), |listener| listener(self));
             }
 
-            let event = FocusEvent {
+            let event = WindowFocusEvent {
                 previous_focus_path: if previous_window_active {
                     previous_focus_path
                 } else {
@@ -4055,6 +4062,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
+    /// This does not fire if the given focus handle - or one of its descendants - was previously focused.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus_in(
         &mut self,
@@ -4124,17 +4132,25 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn on_focus_out(
         &mut self,
         handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut listener: impl FnMut(&mut V, FocusOutEvent, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
         let (subscription, activate) =
             self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if event.previous_focus_path.contains(&focus_id)
-                        && !event.current_focus_path.contains(&focus_id)
-                    {
-                        listener(view, cx)
+                    if let Some(blurred_id) = event.previous_focus_path.last().copied() {
+                        if event.previous_focus_path.contains(&focus_id)
+                            && !event.current_focus_path.contains(&focus_id)
+                        {
+                            let event = FocusOutEvent {
+                                blurred: WeakFocusHandle {
+                                    id: blurred_id,
+                                    handles: Arc::downgrade(&cx.window.focus_handles),
+                                },
+                            };
+                            listener(view, event, cx)
+                        }
                     }
                 })
                 .is_ok()
@@ -4193,7 +4209,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             });
     }
 
-    /// Emit an event to be handled any other views that have subscribed via [ViewContext::subscribe].
+    /// Emit an event to be handled by any other views that have subscribed via [ViewContext::subscribe].
     pub fn emit<Evt>(&mut self, event: Evt)
     where
         Evt: 'static,

@@ -6,7 +6,7 @@ use anyhow::Result;
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
-    actions::{MoveDown, MoveUp},
+    actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
     },
@@ -186,7 +186,7 @@ impl InlineAssistant {
                         editor.register_action(
                             move |_: &editor::actions::Newline, cx: &mut WindowContext| {
                                 InlineAssistant::update_global(cx, |this, cx| {
-                                    this.handle_editor_action(assist_id, false, cx)
+                                    this.handle_editor_newline(assist_id, cx)
                                 })
                             },
                         )
@@ -195,7 +195,7 @@ impl InlineAssistant {
                         editor.register_action(
                             move |_: &editor::actions::Cancel, cx: &mut WindowContext| {
                                 InlineAssistant::update_global(cx, |this, cx| {
-                                    this.handle_editor_action(assist_id, true, cx)
+                                    this.handle_editor_cancel(assist_id, cx)
                                 })
                             },
                         )
@@ -277,19 +277,19 @@ impl InlineAssistant {
     ) {
         let assist_id = inline_assist_editor.read(cx).id;
         match event {
-            InlineAssistEditorEvent::Started => {
+            InlineAssistEditorEvent::StartRequested => {
                 self.start_inline_assist(assist_id, cx);
             }
-            InlineAssistEditorEvent::Stopped => {
+            InlineAssistEditorEvent::StopRequested => {
                 self.stop_inline_assist(assist_id, cx);
             }
-            InlineAssistEditorEvent::Confirmed => {
+            InlineAssistEditorEvent::ConfirmRequested => {
                 self.finish_inline_assist(assist_id, false, cx);
             }
-            InlineAssistEditorEvent::Canceled => {
+            InlineAssistEditorEvent::CancelRequested => {
                 self.finish_inline_assist(assist_id, true, cx);
             }
-            InlineAssistEditorEvent::Dismissed => {
+            InlineAssistEditorEvent::DismissRequested => {
                 self.dismiss_inline_assist(assist_id, cx);
             }
             InlineAssistEditorEvent::Resized { height_in_lines } => {
@@ -298,12 +298,7 @@ impl InlineAssistant {
         }
     }
 
-    fn handle_editor_action(
-        &mut self,
-        assist_id: InlineAssistId,
-        undo: bool,
-        cx: &mut WindowContext,
-    ) {
+    fn handle_editor_newline(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
         let Some(assist) = self.pending_assists.get(&assist_id) else {
             return;
         };
@@ -317,9 +312,7 @@ impl InlineAssistant {
         if editor.selections.count() == 1 {
             let selection = editor.selections.newest::<usize>(cx);
             if assist_range.contains(&selection.start) && assist_range.contains(&selection.end) {
-                if undo {
-                    self.finish_inline_assist(assist_id, true, cx);
-                } else if matches!(assist.codegen.read(cx).status, CodegenStatus::Pending) {
+                if matches!(assist.codegen.read(cx).status, CodegenStatus::Pending) {
                     self.dismiss_inline_assist(assist_id, cx);
                 } else {
                     self.finish_inline_assist(assist_id, false, cx);
@@ -330,6 +323,44 @@ impl InlineAssistant {
         }
 
         cx.propagate();
+    }
+
+    fn handle_editor_cancel(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+        let Some(assist) = self.pending_assists.get(&assist_id) else {
+            return;
+        };
+        let Some(editor) = assist.editor.upgrade() else {
+            return;
+        };
+
+        let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let assist_range = assist.codegen.read(cx).range().to_offset(&buffer);
+        let propagate = editor.update(cx, |editor, cx| {
+            if let Some(decorations) = assist.editor_decorations.as_ref() {
+                if editor.selections.count() == 1 {
+                    let selection = editor.selections.newest::<usize>(cx);
+                    if assist_range.contains(&selection.start)
+                        && assist_range.contains(&selection.end)
+                    {
+                        editor.change_selections(Some(Autoscroll::newest()), cx, |selections| {
+                            selections.select_ranges([assist_range.start..assist_range.start]);
+                        });
+                        decorations.prompt_editor.update(cx, |prompt_editor, cx| {
+                            prompt_editor.editor.update(cx, |prompt_editor, cx| {
+                                prompt_editor.select_all(&SelectAll, cx);
+                                prompt_editor.focus(cx);
+                            });
+                        });
+                        return false;
+                    }
+                }
+            }
+            true
+        });
+
+        if propagate {
+            cx.propagate();
+        }
     }
 
     fn handle_editor_event(
@@ -345,14 +376,8 @@ impl InlineAssistant {
 
         match event {
             EditorEvent::SelectionsChanged { local } if *local => {
-                if let Some(decorations) = assist.editor_decorations.as_ref() {
-                    if decorations
-                        .prompt_editor
-                        .focus_handle(cx)
-                        .contains_focused(cx)
-                    {
-                        cx.focus_view(&editor);
-                    }
+                if let CodegenStatus::Idle = &assist.codegen.read(cx).status {
+                    self.finish_inline_assist(assist_id, true, cx);
                 }
             }
             EditorEvent::Saved => {
@@ -813,18 +838,18 @@ impl InlineAssistId {
 }
 
 enum InlineAssistEditorEvent {
-    Started,
-    Stopped,
-    Confirmed,
-    Canceled,
-    Dismissed,
+    StartRequested,
+    StopRequested,
+    ConfirmRequested,
+    CancelRequested,
+    DismissRequested,
     Resized { height_in_lines: u8 },
 }
 
 struct InlineAssistEditor {
     id: InlineAssistId,
     height_in_lines: u8,
-    prompt_editor: View<Editor>,
+    editor: View<Editor>,
     edited_since_done: bool,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     prompt_history: VecDeque<String>,
@@ -844,25 +869,34 @@ impl Render for InlineAssistEditor {
         let buttons = match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
                 vec![
+                    IconButton::new("cancel", IconName::Close)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(InlineAssistEditorEvent::CancelRequested)
+                        })),
                     IconButton::new("start", IconName::Sparkle)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
                         .icon_size(IconSize::XSmall)
                         .tooltip(|cx| Tooltip::for_action("Transform", &menu::Confirm, cx))
                         .on_click(
-                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Started)),
-                        ),
-                    IconButton::new("cancel", IconName::Close)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Canceled)),
+                            cx.listener(|_, _, cx| {
+                                cx.emit(InlineAssistEditorEvent::StartRequested)
+                            }),
                         ),
                 ]
             }
             CodegenStatus::Pending => {
                 vec![
+                    IconButton::new("cancel", IconName::Close)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(InlineAssistEditorEvent::CancelRequested)
+                        })),
                     IconButton::new("stop", IconName::Stop)
                         .icon_color(Color::Error)
                         .size(ButtonSize::None)
@@ -876,19 +910,19 @@ impl Render for InlineAssistEditor {
                             )
                         })
                         .on_click(
-                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Stopped)),
-                        ),
-                    IconButton::new("cancel", IconName::Close)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Canceled)),
+                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::StopRequested)),
                         ),
                 ]
             }
             CodegenStatus::Error(_) | CodegenStatus::Done => {
                 vec![
+                    IconButton::new("cancel", IconName::Close)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(InlineAssistEditorEvent::CancelRequested)
+                        })),
                     if self.edited_since_done {
                         IconButton::new("restart", IconName::RotateCw)
                             .icon_color(Color::Info)
@@ -903,7 +937,7 @@ impl Render for InlineAssistEditor {
                                 )
                             })
                             .on_click(cx.listener(|_, _, cx| {
-                                cx.emit(InlineAssistEditorEvent::Started);
+                                cx.emit(InlineAssistEditorEvent::StartRequested);
                             }))
                     } else {
                         IconButton::new("confirm", IconName::Check)
@@ -911,16 +945,9 @@ impl Render for InlineAssistEditor {
                             .size(ButtonSize::None)
                             .tooltip(|cx| Tooltip::for_action("Confirm Assist", &menu::Confirm, cx))
                             .on_click(cx.listener(|_, _, cx| {
-                                cx.emit(InlineAssistEditorEvent::Confirmed);
+                                cx.emit(InlineAssistEditorEvent::ConfirmRequested);
                             }))
                     },
-                    IconButton::new("cancel", IconName::Close)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Canceled)),
-                        ),
                 ]
             }
         };
@@ -1009,7 +1036,7 @@ impl Render for InlineAssistEditor {
 
 impl FocusableView for InlineAssistEditor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.prompt_editor.focus_handle(cx)
+        self.editor.focus_handle(cx)
     }
 }
 
@@ -1042,7 +1069,7 @@ impl InlineAssistEditor {
         let mut this = Self {
             id,
             height_in_lines: 1,
-            prompt_editor,
+            editor: prompt_editor,
             edited_since_done: false,
             gutter_dimensions,
             prompt_history,
@@ -1057,14 +1084,14 @@ impl InlineAssistEditor {
     }
 
     fn prompt(&self, cx: &AppContext) -> String {
-        self.prompt_editor.read(cx).text(cx)
+        self.editor.read(cx).text(cx)
     }
 
     fn count_lines(&mut self, cx: &mut ViewContext<Self>) {
         let height_in_lines = cmp::max(
             2, // Make the editor at least two lines tall, to account for padding and buttons.
             cmp::min(
-                self.prompt_editor
+                self.editor
                     .update(cx, |editor, cx| editor.max_point(cx).row().0 + 1),
                 Self::MAX_LINES as u32,
             ),
@@ -1088,7 +1115,7 @@ impl InlineAssistEditor {
     ) {
         match event {
             EditorEvent::Edited { .. } => {
-                let prompt = self.prompt_editor.read(cx).text(cx);
+                let prompt = self.editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix
                     .map_or(true, |ix| self.prompt_history[ix] != prompt)
@@ -1100,23 +1127,6 @@ impl InlineAssistEditor {
                 self.edited_since_done = true;
                 cx.notify();
             }
-            EditorEvent::Blurred => {
-                if let CodegenStatus::Idle = &self.codegen.read(cx).status {
-                    let assistant_panel_is_focused = self
-                        .workspace
-                        .as_ref()
-                        .and_then(|workspace| {
-                            let panel =
-                                workspace.upgrade()?.read(cx).panel::<AssistantPanel>(cx)?;
-                            Some(panel.focus_handle(cx).contains_focused(cx))
-                        })
-                        .unwrap_or(false);
-
-                    if !assistant_panel_is_focused {
-                        cx.emit(InlineAssistEditorEvent::Canceled);
-                    }
-                }
-            }
             _ => {}
         }
     }
@@ -1124,16 +1134,16 @@ impl InlineAssistEditor {
     fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
-                self.prompt_editor
+                self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
             CodegenStatus::Pending => {
-                self.prompt_editor
+                self.editor
                     .update(cx, |editor, _| editor.set_read_only(true));
             }
             CodegenStatus::Done | CodegenStatus::Error(_) => {
                 self.edited_since_done = false;
-                self.prompt_editor
+                self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
         }
@@ -1142,10 +1152,10 @@ impl InlineAssistEditor {
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
-                cx.emit(InlineAssistEditorEvent::Canceled);
+                cx.emit(InlineAssistEditorEvent::CancelRequested);
             }
             CodegenStatus::Pending => {
-                cx.emit(InlineAssistEditorEvent::Stopped);
+                cx.emit(InlineAssistEditorEvent::StopRequested);
             }
         }
     }
@@ -1153,16 +1163,16 @@ impl InlineAssistEditor {
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
-                cx.emit(InlineAssistEditorEvent::Started);
+                cx.emit(InlineAssistEditorEvent::StartRequested);
             }
             CodegenStatus::Pending => {
-                cx.emit(InlineAssistEditorEvent::Dismissed);
+                cx.emit(InlineAssistEditorEvent::DismissRequested);
             }
             CodegenStatus::Done | CodegenStatus::Error(_) => {
                 if self.edited_since_done {
-                    cx.emit(InlineAssistEditorEvent::Started);
+                    cx.emit(InlineAssistEditorEvent::StartRequested);
                 } else {
-                    cx.emit(InlineAssistEditorEvent::Confirmed);
+                    cx.emit(InlineAssistEditorEvent::ConfirmRequested);
                 }
             }
         }
@@ -1173,7 +1183,7 @@ impl InlineAssistEditor {
             if ix > 0 {
                 self.prompt_history_ix = Some(ix - 1);
                 let prompt = self.prompt_history[ix - 1].as_str();
-                self.prompt_editor.update(cx, |editor, cx| {
+                self.editor.update(cx, |editor, cx| {
                     editor.set_text(prompt, cx);
                     editor.move_to_beginning(&Default::default(), cx);
                 });
@@ -1181,7 +1191,7 @@ impl InlineAssistEditor {
         } else if !self.prompt_history.is_empty() {
             self.prompt_history_ix = Some(self.prompt_history.len() - 1);
             let prompt = self.prompt_history[self.prompt_history.len() - 1].as_str();
-            self.prompt_editor.update(cx, |editor, cx| {
+            self.editor.update(cx, |editor, cx| {
                 editor.set_text(prompt, cx);
                 editor.move_to_beginning(&Default::default(), cx);
             });
@@ -1193,14 +1203,14 @@ impl InlineAssistEditor {
             if ix < self.prompt_history.len() - 1 {
                 self.prompt_history_ix = Some(ix + 1);
                 let prompt = self.prompt_history[ix + 1].as_str();
-                self.prompt_editor.update(cx, |editor, cx| {
+                self.editor.update(cx, |editor, cx| {
                     editor.set_text(prompt, cx);
                     editor.move_to_end(&Default::default(), cx)
                 });
             } else {
                 self.prompt_history_ix = None;
                 let prompt = self.pending_prompt.as_str();
-                self.prompt_editor.update(cx, |editor, cx| {
+                self.editor.update(cx, |editor, cx| {
                     editor.set_text(prompt, cx);
                     editor.move_to_end(&Default::default(), cx)
                 });
@@ -1211,7 +1221,7 @@ impl InlineAssistEditor {
     fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
-            color: if self.prompt_editor.read(cx).read_only(cx) {
+            color: if self.editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
                 cx.theme().colors().text
@@ -1228,7 +1238,7 @@ impl InlineAssistEditor {
             white_space: WhiteSpace::Normal,
         };
         EditorElement::new(
-            &self.prompt_editor,
+            &self.editor,
             EditorStyle {
                 background: cx.theme().colors().editor_background,
                 local_player: cx.theme().players().local(),

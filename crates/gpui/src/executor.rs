@@ -25,14 +25,16 @@ use rand::rngs::StdRng;
 /// for spawning background tasks.
 #[derive(Clone)]
 pub struct BackgroundExecutor {
-    dispatcher: Arc<dyn PlatformDispatcher>,
+    #[doc(hidden)]
+    pub dispatcher: Arc<dyn PlatformDispatcher>,
 }
 
 /// A pointer to the executor that is currently running,
 /// for spawning tasks on the main thread.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
-    dispatcher: Arc<dyn PlatformDispatcher>,
+    #[doc(hidden)]
+    pub dispatcher: Arc<dyn PlatformDispatcher>,
     not_send: PhantomData<Rc<()>>,
 }
 

@@ -9,36 +9,36 @@ use ui::WindowContext;
 use crate::FoldPlaceholder;
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
-pub struct FlapId(usize);
+pub struct CreaseId(usize);
 
 #[derive(Default)]
-pub struct FlapMap {
-    snapshot: FlapSnapshot,
-    next_id: FlapId,
-    id_to_range: HashMap<FlapId, Range<Anchor>>,
+pub struct CreaseMap {
+    snapshot: CreaseSnapshot,
+    next_id: CreaseId,
+    id_to_range: HashMap<CreaseId, Range<Anchor>>,
 }
 
 #[derive(Clone, Default)]
-pub struct FlapSnapshot {
-    flaps: SumTree<FlapItem>,
+pub struct CreaseSnapshot {
+    creases: SumTree<CreaseItem>,
 }
 
-impl FlapSnapshot {
-    /// Returns the first Flap starting on the specified buffer row.
+impl CreaseSnapshot {
+    /// Returns the first Crease starting on the specified buffer row.
     pub fn query_row<'a>(
         &'a self,
         row: MultiBufferRow,
         snapshot: &'a MultiBufferSnapshot,
-    ) -> Option<&'a Flap> {
+    ) -> Option<&'a Crease> {
         let start = snapshot.anchor_before(Point::new(row.0, 0));
-        let mut cursor = self.flaps.cursor::<ItemSummary>();
+        let mut cursor = self.creases.cursor::<ItemSummary>();
         cursor.seek(&start, Bias::Left, snapshot);
         while let Some(item) = cursor.item() {
-            match Ord::cmp(&item.flap.range.start.to_point(snapshot).row, &row.0) {
+            match Ord::cmp(&item.crease.range.start.to_point(snapshot).row, &row.0) {
                 Ordering::Less => cursor.next(snapshot),
                 Ordering::Equal => {
-                    if item.flap.range.start.is_valid(snapshot) {
-                        return Some(&item.flap);
+                    if item.crease.range.start.is_valid(snapshot) {
+                        return Some(&item.crease);
                     } else {
                         cursor.next(snapshot);
                     }
@@ -49,17 +49,17 @@ impl FlapSnapshot {
         return None;
     }
 
-    pub fn flap_items_with_offsets(
+    pub fn crease_items_with_offsets(
         &self,
         snapshot: &MultiBufferSnapshot,
-    ) -> Vec<(FlapId, Range<Point>)> {
-        let mut cursor = self.flaps.cursor::<ItemSummary>();
+    ) -> Vec<(CreaseId, Range<Point>)> {
+        let mut cursor = self.creases.cursor::<ItemSummary>();
         let mut results = Vec::new();
 
         cursor.next(snapshot);
         while let Some(item) = cursor.item() {
-            let start_point = item.flap.range.start.to_point(snapshot);
-            let end_point = item.flap.range.end.to_point(snapshot);
+            let start_point = item.crease.range.start.to_point(snapshot);
+            let end_point = item.crease.range.end.to_point(snapshot);
             results.push((item.id, start_point..end_point));
             cursor.next(snapshot);
         }
@@ -82,14 +82,14 @@ type RenderTrailerFn =
     Arc<dyn Send + Sync + Fn(MultiBufferRow, bool, &mut WindowContext) -> AnyElement>;
 
 #[derive(Clone)]
-pub struct Flap {
+pub struct Crease {
     pub range: Range<Anchor>,
     pub placeholder: FoldPlaceholder,
     pub render_toggle: RenderToggleFn,
     pub render_trailer: RenderTrailerFn,
 }
 
-impl Flap {
+impl Crease {
     pub fn new<RenderToggle, ToggleElement, RenderTrailer, TrailerElement>(
         range: Range<Anchor>,
         placeholder: FoldPlaceholder,
@@ -115,7 +115,7 @@ impl Flap {
             + 'static,
         TrailerElement: IntoElement,
     {
-        Flap {
+        Crease {
             range,
             placeholder,
             render_toggle: Arc::new(move |row, folded, toggle, cx| {
@@ -128,50 +128,52 @@ impl Flap {
     }
 }
 
-impl std::fmt::Debug for Flap {
+impl std::fmt::Debug for Crease {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Flap").field("range", &self.range).finish()
+        f.debug_struct("Crease")
+            .field("range", &self.range)
+            .finish()
     }
 }
 
 #[derive(Clone, Debug)]
-struct FlapItem {
-    id: FlapId,
-    flap: Flap,
+struct CreaseItem {
+    id: CreaseId,
+    crease: Crease,
 }
 
-impl FlapMap {
-    pub fn snapshot(&self) -> FlapSnapshot {
+impl CreaseMap {
+    pub fn snapshot(&self) -> CreaseSnapshot {
         self.snapshot.clone()
     }
 
     pub fn insert(
         &mut self,
-        flaps: impl IntoIterator<Item = Flap>,
+        creases: impl IntoIterator<Item = Crease>,
         snapshot: &MultiBufferSnapshot,
-    ) -> Vec<FlapId> {
+    ) -> Vec<CreaseId> {
         let mut new_ids = Vec::new();
-        self.snapshot.flaps = {
-            let mut new_flaps = SumTree::new();
-            let mut cursor = self.snapshot.flaps.cursor::<ItemSummary>();
-            for flap in flaps {
-                new_flaps.append(cursor.slice(&flap.range, Bias::Left, snapshot), snapshot);
+        self.snapshot.creases = {
+            let mut new_creases = SumTree::new();
+            let mut cursor = self.snapshot.creases.cursor::<ItemSummary>();
+            for crease in creases {
+                new_creases.append(cursor.slice(&crease.range, Bias::Left, snapshot), snapshot);
 
                 let id = self.next_id;
                 self.next_id.0 += 1;
-                self.id_to_range.insert(id, flap.range.clone());
-                new_flaps.push(FlapItem { flap, id }, snapshot);
+                self.id_to_range.insert(id, crease.range.clone());
+                new_creases.push(CreaseItem { crease, id }, snapshot);
                 new_ids.push(id);
             }
-            new_flaps.append(cursor.suffix(snapshot), snapshot);
-            new_flaps
+            new_creases.append(cursor.suffix(snapshot), snapshot);
+            new_creases
         };
         new_ids
     }
 
     pub fn remove(
         &mut self,
-        ids: impl IntoIterator<Item = FlapId>,
+        ids: impl IntoIterator<Item = CreaseId>,
         snapshot: &MultiBufferSnapshot,
     ) {
         let mut removals = Vec::new();
@@ -184,24 +186,24 @@ impl FlapMap {
             AnchorRangeExt::cmp(a_range, b_range, snapshot).then(b_id.cmp(&a_id))
         });
 
-        self.snapshot.flaps = {
-            let mut new_flaps = SumTree::new();
-            let mut cursor = self.snapshot.flaps.cursor::<ItemSummary>();
+        self.snapshot.creases = {
+            let mut new_creases = SumTree::new();
+            let mut cursor = self.snapshot.creases.cursor::<ItemSummary>();
 
             for (id, range) in removals {
-                new_flaps.append(cursor.slice(&range, Bias::Left, snapshot), snapshot);
+                new_creases.append(cursor.slice(&range, Bias::Left, snapshot), snapshot);
                 while let Some(item) = cursor.item() {
                     cursor.next(snapshot);
                     if item.id == id {
                         break;
                     } else {
-                        new_flaps.push(item.clone(), snapshot);
+                        new_creases.push(item.clone(), snapshot);
                     }
                 }
             }
 
-            new_flaps.append(cursor.suffix(snapshot), snapshot);
-            new_flaps
+            new_creases.append(cursor.suffix(snapshot), snapshot);
+            new_creases
         };
     }
 }
@@ -227,17 +229,17 @@ impl sum_tree::Summary for ItemSummary {
     }
 }
 
-impl sum_tree::Item for FlapItem {
+impl sum_tree::Item for CreaseItem {
     type Summary = ItemSummary;
 
     fn summary(&self) -> Self::Summary {
         ItemSummary {
-            range: self.flap.range.clone(),
+            range: self.crease.range.clone(),
         }
     }
 }
 
-/// Implements `SeekTarget` for `Range<Anchor>` to enable seeking within a `SumTree` of `FlapItem`s.
+/// Implements `SeekTarget` for `Range<Anchor>` to enable seeking within a `SumTree` of `CreaseItem`s.
 impl SeekTarget<'_, ItemSummary, ItemSummary> for Range<Anchor> {
     fn cmp(&self, cursor_location: &ItemSummary, snapshot: &MultiBufferSnapshot) -> Ordering {
         AnchorRangeExt::cmp(self, &cursor_location.range, snapshot)
@@ -257,48 +259,48 @@ mod test {
     use multi_buffer::MultiBuffer;
 
     #[gpui::test]
-    fn test_insert_and_remove_flaps(cx: &mut AppContext) {
+    fn test_insert_and_remove_creases(cx: &mut AppContext) {
         let text = "line1\nline2\nline3\nline4\nline5";
         let buffer = MultiBuffer::build_simple(text, cx);
         let snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-        let mut flap_map = FlapMap::default();
+        let mut crease_map = CreaseMap::default();
 
-        // Insert flaps
-        let flaps = [
-            Flap::new(
+        // Insert creases
+        let creases = [
+            Crease::new(
                 snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 5)),
                 FoldPlaceholder::test(),
                 |_row, _folded, _toggle, _cx| div(),
                 |_row, _folded, _cx| div(),
             ),
-            Flap::new(
+            Crease::new(
                 snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 5)),
                 FoldPlaceholder::test(),
                 |_row, _folded, _toggle, _cx| div(),
                 |_row, _folded, _cx| div(),
             ),
         ];
-        let flap_ids = flap_map.insert(flaps, &snapshot);
-        assert_eq!(flap_ids.len(), 2);
+        let crease_ids = crease_map.insert(creases, &snapshot);
+        assert_eq!(crease_ids.len(), 2);
 
-        // Verify flaps are inserted
-        let flap_snapshot = flap_map.snapshot();
-        assert!(flap_snapshot
+        // Verify creases are inserted
+        let crease_snapshot = crease_map.snapshot();
+        assert!(crease_snapshot
             .query_row(MultiBufferRow(1), &snapshot)
             .is_some());
-        assert!(flap_snapshot
+        assert!(crease_snapshot
             .query_row(MultiBufferRow(3), &snapshot)
             .is_some());
 
-        // Remove flaps
-        flap_map.remove(flap_ids, &snapshot);
+        // Remove creases
+        crease_map.remove(crease_ids, &snapshot);
 
-        // Verify flaps are removed
-        let flap_snapshot = flap_map.snapshot();
-        assert!(flap_snapshot
+        // Verify creases are removed
+        let crease_snapshot = crease_map.snapshot();
+        assert!(crease_snapshot
             .query_row(MultiBufferRow(1), &snapshot)
             .is_none());
-        assert!(flap_snapshot
+        assert!(crease_snapshot
             .query_row(MultiBufferRow(3), &snapshot)
             .is_none());
     }

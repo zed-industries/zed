@@ -873,18 +873,20 @@ impl Motion {
                 // becomes inclusive. Example: "}" moves to the first line after a paragraph,
                 // but "d}" will not include that line.
                 let mut inclusive = self.inclusive();
+                let start_point = selection.start.to_point(&map);
+                let mut end_point = selection.end.to_point(&map);
+
+                // DisplayPoint
+
                 if !inclusive
                     && self != &Motion::Backspace
-                    && selection.end.row() > selection.start.row()
-                    && selection.end.column() == 0
+                    && end_point.row > start_point.row
+                    && end_point.column == 0
                 {
                     inclusive = true;
-                    *selection.end.row_mut() -= 1;
-                    *selection.end.column_mut() = 0;
-                    selection.end = map.clip_point(
-                        map.next_line_boundary(selection.end.to_point(map)).1,
-                        Bias::Left,
-                    );
+                    end_point.row -= 1;
+                    end_point.column = 0;
+                    selection.end = map.clip_point(map.next_line_boundary(end_point).1, Bias::Left);
                 }
 
                 if inclusive && selection.end.column() < map.line_len(selection.end.row()) {

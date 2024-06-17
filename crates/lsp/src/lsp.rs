@@ -704,10 +704,6 @@ impl LanguageServer {
                     on_type_formatting: Some(DynamicRegistrationClientCapabilities {
                         dynamic_registration: None,
                     }),
-                    diagnostic: Some(DiagnosticClientCapabilities {
-                        related_document_support: Some(true),
-                        dynamic_registration: None,
-                    }),
                     ..Default::default()
                 }),
                 experimental: Some(json!({

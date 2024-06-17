@@ -1,10 +1,13 @@
-use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
+use super::{
+    file_command::{codeblock_fence_for_path, EntryPlaceholder},
+    SlashCommand, SlashCommandOutput,
+};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
 use editor::Editor;
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 use ui::{IntoElement, WindowContext};
 use workspace::Workspace;
 
@@ -60,14 +63,8 @@ impl SlashCommand for ActiveSlashCommand {
             let text = cx.background_executor().spawn({
                 let path = path.clone();
                 async move {
-                    let path = path
-                        .as_ref()
-                        .map(|path| path.to_string_lossy())
-                        .unwrap_or_else(|| Cow::Borrowed("untitled"));
-
-                    let mut output = String::with_capacity(path.len() + snapshot.len() + 9);
-                    output.push_str("```");
-                    output.push_str(&path);
+                    let mut output = String::new();
+                    output.push_str(&codeblock_fence_for_path(path.as_deref(), None));
                     output.push('\n');
                     for chunk in snapshot.as_rope().chunks() {
                         output.push_str(chunk);
@@ -87,9 +84,10 @@ impl SlashCommand for ActiveSlashCommand {
                     sections: vec![SlashCommandOutputSection {
                         range,
                         render_placeholder: Arc::new(move |id, unfold, _| {
-                            FilePlaceholder {
+                            EntryPlaceholder {
                                 id,
                                 path: path.clone(),
+                                is_directory: false,
                                 line_range: None,
                                 unfold,
                             }

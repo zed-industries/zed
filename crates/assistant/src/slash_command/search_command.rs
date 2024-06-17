@@ -1,4 +1,7 @@
-use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
+use super::{
+    file_command::{codeblock_fence_for_path, EntryPlaceholder},
+    SlashCommand, SlashCommandOutput,
+};
 use anyhow::Result;
 use assistant_slash_command::SlashCommandOutputSection;
 use gpui::{AppContext, Task, WeakView};
@@ -125,9 +128,8 @@ impl SlashCommand for SearchSlashCommand {
                         let range_start = result.range.start.min(file_content.len());
                         let range_end = result.range.end.min(file_content.len());
 
-                        let start_line =
-                            file_content[0..range_start].matches('\n').count() as u32 + 1;
-                        let end_line = file_content[0..range_end].matches('\n').count() as u32 + 1;
+                        let start_row = file_content[0..range_start].matches('\n').count() as u32;
+                        let end_row = file_content[0..range_end].matches('\n').count() as u32;
                         let start_line_byte_offset = file_content[0..range_start]
                             .rfind('\n')
                             .map(|pos| pos + 1)
@@ -138,14 +140,11 @@ impl SlashCommand for SearchSlashCommand {
                             .unwrap_or_else(|| file_content.len());
 
                         let section_start_ix = text.len();
-                        writeln!(
-                            text,
-                            "```{}:{}-{}",
-                            result.path.display(),
-                            start_line,
-                            end_line,
-                        )
-                        .unwrap();
+                        text.push_str(&codeblock_fence_for_path(
+                            Some(&result.path),
+                            Some(start_row..end_row),
+                        ));
+
                         let mut excerpt =
                             file_content[start_line_byte_offset..end_line_byte_offset].to_string();
                         LineEnding::normalize(&mut excerpt);
@@ -156,10 +155,11 @@ impl SlashCommand for SearchSlashCommand {
                         sections.push(SlashCommandOutputSection {
                             range: section_start_ix..section_end_ix,
                             render_placeholder: Arc::new(move |id, unfold, _| {
-                                FilePlaceholder {
+                                EntryPlaceholder {
                                     id,
                                     path: Some(full_path.clone()),
-                                    line_range: Some(start_line..end_line),
+                                    is_directory: false,
+                                    line_range: Some(start_row + 1..end_row + 1),
                                     unfold,
                                 }
                                 .into_any_element()
