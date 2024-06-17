@@ -23,7 +23,7 @@ use outputs::{ExecutionStatus, ExecutionView, LineHeight as _};
 use project::Fs;
 use runtime_settings::JupyterSettings;
 use runtimelib::JupyterMessageContent;
-use settings::Settings as _;
+use settings::{Settings as _, SettingsStore};
 use std::{ops::Range, time::Instant};
 use std::{sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
@@ -70,15 +70,28 @@ pub fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
 }
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    set_dispatcher(zed_dispatcher(cx));
     JupyterSettings::register(cx);
+
+    observe_jupyter_settings_changes(fs.clone(), cx);
+
+    cx.observe_new_views(
+        |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
+            workspace.register_action(run);
+        },
+    )
+    .detach();
+
     let settings = JupyterSettings::get_global(cx);
 
     if !settings.enabled {
         return;
     }
 
-    set_dispatcher(zed_dispatcher(cx));
+    initialize_runtime_manager(fs, cx);
+}
 
+fn initialize_runtime_manager(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let runtime_manager = cx.new_model(|cx| RuntimeManager::new(fs.clone(), cx));
     RuntimeManager::set_global(runtime_manager.clone(), cx);
 
@@ -94,19 +107,20 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
-
-    cx.observe_new_views(
-        |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
-            // Note: this will have to both start a kernel if not already running, and run code selections
-            workspace.register_action(run);
-        },
-    )
-    .detach();
 }
 
-// Next steps:
-//
-// Instances will carry EntityId => KernelEnum
+fn observe_jupyter_settings_changes(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let settings = JupyterSettings::get_global(cx);
+        if settings.enabled && RuntimeManager::global(cx).is_none() {
+            initialize_runtime_manager(fs.clone(), cx);
+        } else {
+            RuntimeManager::remove_global(cx);
+            // todo!(): Remove action from workspace(s)
+        }
+    })
+    .detach();
+}
 
 #[derive(Debug)]
 pub enum Kernel {
@@ -337,6 +351,12 @@ impl RuntimeManager {
 
     pub fn set_global(runtime_manager: Model<Self>, cx: &mut AppContext) {
         cx.set_global(RuntimeManagerGlobal(runtime_manager));
+    }
+
+    pub fn remove_global(cx: &mut AppContext) {
+        if RuntimeManager::global(cx).is_some() {
+            cx.remove_global::<RuntimeManagerGlobal>();
+        }
     }
 }
 
