@@ -31,6 +31,7 @@ http.workspace = true
 lazy_static.workspace = true
 log.workspace = true
 once_cell.workspace = true
+paths.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true

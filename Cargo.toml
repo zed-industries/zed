@@ -65,6 +65,7 @@ members = [
     "crates/open_ai",
     "crates/outline",
     "crates/outline_panel",
+    "crates/paths",
     "crates/picker",
     "crates/prettier",
     "crates/project",
@@ -215,6 +216,7 @@ ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
+paths = { path = "crates/paths" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
@@ -288,10 +290,10 @@ clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
 cocoa = "0.25"
 ctor = "0.2.6"
-signal-hook = "0.3.17"
 core-foundation = { version = "0.9.3" }
 core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
+dirs = "4.0"
 emojis = "0.6.1"
 env_logger = "0.9"
 exec = "0.3.1"
@@ -354,6 +356,7 @@ serde_repr = "0.1"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
+signal-hook = "0.3.17"
 similar = "1.3"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"

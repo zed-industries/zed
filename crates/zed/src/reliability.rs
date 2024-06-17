@@ -22,7 +22,7 @@ use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
 use telemetry_events::LocationData;
 use telemetry_events::Panic;
 use telemetry_events::PanicRequest;
-use util::{paths, ResultExt};
+use util::ResultExt;
 
 use crate::stdout_is_a_pty;
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);

@@ -20,6 +20,7 @@ use gpui::{
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
 use parking_lot::RwLock;
+use paths::PROMPTS_DIR;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
@@ -36,7 +37,7 @@ use ui::{
     div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
     SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
 };
-use util::{paths::PROMPTS_DIR, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::Workspace;
 

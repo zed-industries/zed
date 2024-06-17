@@ -33,7 +33,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{fs::remove_matching, maybe, paths, ResultExt};
+use util::{fs::remove_matching, maybe, ResultExt};
 
 pub use copilot_completion_provider::CopilotCompletionProvider;
 pub use sign_in::CopilotCodeVerification;

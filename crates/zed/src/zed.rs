@@ -36,12 +36,9 @@ use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
 
+use paths::{LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH};
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use util::{
-    asset_str,
-    paths::{self, LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH},
-    ResultExt,
-};
+use util::{asset_str, ResultExt};
 use uuid::Uuid;
 use vim::VimModeSetting;
 use welcome::BaseKeymap;
