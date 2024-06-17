@@ -7162,7 +7162,6 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
- "futures 0.3.28",
  "gpui",
  "itertools 0.11.0",
  "language",
