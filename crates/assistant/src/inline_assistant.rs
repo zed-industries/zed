@@ -6,7 +6,7 @@ use anyhow::Result;
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
-    actions::{MoveDown, MoveUp},
+    actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
     },
@@ -186,7 +186,7 @@ impl InlineAssistant {
                         editor.register_action(
                             move |_: &editor::actions::Newline, cx: &mut WindowContext| {
                                 InlineAssistant::update_global(cx, |this, cx| {
-                                    this.handle_editor_action(assist_id, false, cx)
+                                    this.handle_editor_newline(assist_id, cx)
                                 })
                             },
                         )
@@ -195,7 +195,7 @@ impl InlineAssistant {
                         editor.register_action(
                             move |_: &editor::actions::Cancel, cx: &mut WindowContext| {
                                 InlineAssistant::update_global(cx, |this, cx| {
-                                    this.handle_editor_action(assist_id, true, cx)
+                                    this.handle_editor_cancel(assist_id, cx)
                                 })
                             },
                         )
@@ -298,12 +298,7 @@ impl InlineAssistant {
         }
     }
 
-    fn handle_editor_action(
-        &mut self,
-        assist_id: InlineAssistId,
-        undo: bool,
-        cx: &mut WindowContext,
-    ) {
+    fn handle_editor_newline(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
         let Some(assist) = self.pending_assists.get(&assist_id) else {
             return;
         };
@@ -317,15 +312,43 @@ impl InlineAssistant {
         if editor.selections.count() == 1 {
             let selection = editor.selections.newest::<usize>(cx);
             if assist_range.contains(&selection.start) && assist_range.contains(&selection.end) {
-                if undo {
-                    self.finish_inline_assist(assist_id, true, cx);
-                } else if matches!(assist.codegen.read(cx).status, CodegenStatus::Pending) {
+                if matches!(assist.codegen.read(cx).status, CodegenStatus::Pending) {
                     self.dismiss_inline_assist(assist_id, cx);
                 } else {
                     self.finish_inline_assist(assist_id, false, cx);
                 }
 
                 return;
+            }
+        }
+
+        cx.propagate();
+    }
+
+    fn handle_editor_cancel(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+        let Some(assist) = self.pending_assists.get(&assist_id) else {
+            return;
+        };
+        let Some(editor) = assist.editor.upgrade() else {
+            return;
+        };
+
+        let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let assist_range = assist.codegen.read(cx).range().to_offset(&buffer);
+        let editor = editor.read(cx);
+        if let Some(decorations) = assist.editor_decorations.as_ref() {
+            if editor.selections.count() == 1 {
+                let selection = editor.selections.newest::<usize>(cx);
+                if assist_range.contains(&selection.start) && assist_range.contains(&selection.end)
+                {
+                    decorations.prompt_editor.update(cx, |prompt_editor, cx| {
+                        prompt_editor.editor.update(cx, |editor, cx| {
+                            editor.select_all(&SelectAll, cx);
+                            editor.focus(cx);
+                        });
+                    });
+                    return;
+                }
             }
         }
 
@@ -818,7 +841,7 @@ enum InlineAssistEditorEvent {
 struct InlineAssistEditor {
     id: InlineAssistId,
     height_in_lines: u8,
-    prompt_editor: View<Editor>,
+    editor: View<Editor>,
     edited_since_done: bool,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     prompt_history: VecDeque<String>,
@@ -1005,7 +1028,7 @@ impl Render for InlineAssistEditor {
 
 impl FocusableView for InlineAssistEditor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.prompt_editor.focus_handle(cx)
+        self.editor.focus_handle(cx)
     }
 }
 
@@ -1038,7 +1061,7 @@ impl InlineAssistEditor {
         let mut this = Self {
             id,
             height_in_lines: 1,
-            prompt_editor,
+            editor: prompt_editor,
             edited_since_done: false,
             gutter_dimensions,
             prompt_history,
@@ -1053,14 +1076,14 @@ impl InlineAssistEditor {
     }
 
     fn prompt(&self, cx: &AppContext) -> String {
-        self.prompt_editor.read(cx).text(cx)
+        self.editor.read(cx).text(cx)
     }
 
     fn count_lines(&mut self, cx: &mut ViewContext<Self>) {
         let height_in_lines = cmp::max(
             2, // Make the editor at least two lines tall, to account for padding and buttons.
             cmp::min(
-                self.prompt_editor
+                self.editor
                     .update(cx, |editor, cx| editor.max_point(cx).row().0 + 1),
                 Self::MAX_LINES as u32,
             ),
@@ -1084,7 +1107,7 @@ impl InlineAssistEditor {
     ) {
         match event {
             EditorEvent::Edited { .. } => {
-                let prompt = self.prompt_editor.read(cx).text(cx);
+                let prompt = self.editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix
                     .map_or(true, |ix| self.prompt_history[ix] != prompt)
@@ -1103,16 +1126,16 @@ impl InlineAssistEditor {
     fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
-                self.prompt_editor
+                self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
             CodegenStatus::Pending => {
-                self.prompt_editor
+                self.editor
                     .update(cx, |editor, _| editor.set_read_only(true));
             }
             CodegenStatus::Done | CodegenStatus::Error(_) => {
                 self.edited_since_done = false;
-                self.prompt_editor
+                self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
         }
@@ -1152,7 +1175,7 @@ impl InlineAssistEditor {
             if ix > 0 {
                 self.prompt_history_ix = Some(ix - 1);
                 let prompt = self.prompt_history[ix - 1].as_str();
-                self.prompt_editor.update(cx, |editor, cx| {
+                self.editor.update(cx, |editor, cx| {
                     editor.set_text(prompt, cx);
                     editor.move_to_beginning(&Default::default(), cx);
                 });
@@ -1160,7 +1183,7 @@ impl InlineAssistEditor {
         } else if !self.prompt_history.is_empty() {
             self.prompt_history_ix = Some(self.prompt_history.len() - 1);
             let prompt = self.prompt_history[self.prompt_history.len() - 1].as_str();
-            self.prompt_editor.update(cx, |editor, cx| {
+            self.editor.update(cx, |editor, cx| {
                 editor.set_text(prompt, cx);
                 editor.move_to_beginning(&Default::default(), cx);
             });
@@ -1172,14 +1195,14 @@ impl InlineAssistEditor {
             if ix < self.prompt_history.len() - 1 {
                 self.prompt_history_ix = Some(ix + 1);
                 let prompt = self.prompt_history[ix + 1].as_str();
-                self.prompt_editor.update(cx, |editor, cx| {
+                self.editor.update(cx, |editor, cx| {
                     editor.set_text(prompt, cx);
                     editor.move_to_end(&Default::default(), cx)
                 });
             } else {
                 self.prompt_history_ix = None;
                 let prompt = self.pending_prompt.as_str();
-                self.prompt_editor.update(cx, |editor, cx| {
+                self.editor.update(cx, |editor, cx| {
                     editor.set_text(prompt, cx);
                     editor.move_to_end(&Default::default(), cx)
                 });
@@ -1190,7 +1213,7 @@ impl InlineAssistEditor {
     fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
-            color: if self.prompt_editor.read(cx).read_only(cx) {
+            color: if self.editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
                 cx.theme().colors().text
@@ -1207,7 +1230,7 @@ impl InlineAssistEditor {
             white_space: WhiteSpace::Normal,
         };
         EditorElement::new(
-            &self.prompt_editor,
+            &self.editor,
             EditorStyle {
                 background: cx.theme().colors().editor_background,
                 local_player: cx.theme().players().local(),
