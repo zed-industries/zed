@@ -154,12 +154,21 @@ impl EasyMotion {
 
         if !settings.enabled {
             if was_enabled {
+                // TODO: there also must be a better way to do this
+                let _ = cx.active_window().map(|window| {
+                    window.update(cx, |_, cx| {
+                        Vim::update(cx, |vim, cx| {
+                            if vim.mode() == Mode::EasyMotion {
+                                vim.switch_mode(Mode::Normal, false, cx);
+                            }
+                        });
+                    })
+                });
                 cx.remove_global::<GlobalEasyMotion>();
             }
             return;
         }
 
-        // TODO: there's a bug where t/f motions break after changing the easy motion keys
         if was_enabled {
             let keys = settings.keys.clone();
             EasyMotion::update(cx, |easy, _cx| easy.keys = keys);
@@ -332,6 +341,8 @@ impl EasyMotion {
     }
 
     fn row(editor: View<Editor>, action: &Row, cx: &mut WindowContext) {
+        Vim::update(cx, |vim, cx| vim.switch_mode(Mode::Normal, false, cx));
+
         let Row(direction) = *action;
         let entity_id = editor.entity_id();
 
@@ -349,6 +360,9 @@ impl EasyMotion {
     }
 
     fn cancel(editor: View<Editor>, cx: &mut WindowContext) {
+        let id = editor.entity_id();
+        Self::update(cx, |easy, _| easy.editor_states.remove(&id));
+        Vim::update(cx, |vim, cx| vim.switch_mode(Mode::Normal, false, cx));
         editor.update(cx, |editor, cx| {
             editor.clear_overlays::<Self>(cx);
             editor.clear_highlights::<Self>(cx);

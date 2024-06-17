@@ -502,6 +502,10 @@ impl Vim {
         });
     }
 
+    fn mode(&self) -> Mode {
+        self.state().mode
+    }
+
     fn push_count_digit(&mut self, number: usize, cx: &mut WindowContext) {
         if self.active_operator().is_some() {
             self.update_state(|state| {
