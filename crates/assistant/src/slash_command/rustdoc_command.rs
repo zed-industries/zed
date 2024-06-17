@@ -10,19 +10,10 @@ use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
-use rustdoc::{convert_rustdoc_to_markdown, RustdocStore};
-use rustdoc::{CrateName, LocalProvider};
+use rustdoc::{convert_rustdoc_to_markdown, CrateName, LocalProvider, RustdocSource, RustdocStore};
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 use util::{maybe, ResultExt};
 use workspace::Workspace;
-
-#[derive(Debug, Clone, Copy)]
-enum RustdocSource {
-    /// The docs were sourced from local `cargo doc` output.
-    Local,
-    /// The docs were sourced from `docs.rs`.
-    DocsDotRs,
-}
 
 pub(crate) struct RustdocSlashCommand;
 
@@ -193,7 +184,7 @@ impl SlashCommand for RustdocSlashCommand {
                     .await;
 
                 if let Ok(item_docs) = item_docs {
-                    anyhow::Ok((RustdocSource::Local, item_docs.docs().to_owned()))
+                    anyhow::Ok((RustdocSource::Index, item_docs.docs().to_owned()))
                 } else {
                     Self::build_message(
                         fs,
@@ -261,6 +252,7 @@ impl RenderOnce for RustdocPlaceholder {
             .child(Label::new(format!(
                 "rustdoc ({source}): {crate_path}",
                 source = match self.source {
+                    RustdocSource::Index => "index",
                     RustdocSource::Local => "local",
                     RustdocSource::DocsDotRs => "docs.rs",
                 }
