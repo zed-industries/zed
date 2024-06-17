@@ -62,6 +62,7 @@ use lsp::{
     DocumentHighlightKind, Edit, FileSystemWatcher, InsertTextFormat, LanguageServer,
     LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, OneOf,
     ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit, Uri,
+    WorkDoneProgressCancelParams,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -4178,6 +4179,38 @@ impl Project {
         .detach();
     }
 
+    pub fn cancel_language_server_work_for_buffers(
+        &mut self,
+        buffers: impl IntoIterator<Item = Model<Buffer>>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let servers = buffers
+            .into_iter()
+            .flat_map(|buffer| {
+                self.language_server_ids_for_buffer(buffer.read(cx), cx)
+                    .into_iter()
+            })
+            .collect::<HashSet<_>>();
+
+        for server_id in servers {
+            let status = self.language_server_statuses.get(&server_id);
+            let server = self.language_servers.get(&server_id);
+            if let Some((server, status)) = server.zip(status) {
+                if let LanguageServerState::Running { server, .. } = server {
+                    for token in status.pending_work.keys() {
+                        server
+                            .notify::<lsp::notification::WorkDoneProgressCancel>(
+                                WorkDoneProgressCancelParams {
+                                    token: lsp::NumberOrString::String(token.clone()),
+                                },
+                            )
+                            .ok();
+                    }
+                }
+            }
+        }
+    }
+
     fn check_errored_server(
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
@@ -4295,6 +4328,9 @@ impl Project {
                 return;
             }
         };
+
+        dbg!(&token);
+
         let lsp::ProgressParamsValue::WorkDone(progress) = progress.value;
         let language_server_status =
             if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
@@ -4302,6 +4338,8 @@ impl Project {
             } else {
                 return;
             };
+
+        dbg!(&language_server_status);
 
         if !language_server_status.progress_tokens.contains(&token) {
             return;
@@ -4312,6 +4350,8 @@ impl Project {
             .map_or(false, |disk_based_token| {
                 token.starts_with(disk_based_token)
             });
+
+        dbg!(is_disk_based_diagnostics_progress);
 
         match progress {
             lsp::WorkDoneProgress::Begin(report) => {
