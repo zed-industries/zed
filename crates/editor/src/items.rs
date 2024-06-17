@@ -903,7 +903,7 @@ impl Item for Editor {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::Reparsed => {
+            EditorEvent::Reparsed(_) => {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 

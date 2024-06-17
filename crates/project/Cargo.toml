@@ -65,6 +65,7 @@ snippet.workspace = true
 terminal.workspace = true
 text.workspace = true
 util.workspace = true
+unicase.workspace = true
 which.workspace = true
 
 [dev-dependencies]

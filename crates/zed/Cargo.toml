@@ -94,6 +94,7 @@ terminal_view.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
 urlencoding = "2.1.2"
+ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 vim.workspace = true
@@ -113,6 +114,7 @@ editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+tree-sitter-markdown.workspace = true
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 

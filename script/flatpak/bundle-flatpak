@@ -11,7 +11,6 @@ channel=$(<crates/zed/RELEASE_CHANNEL)
 
 export CHANNEL="$channel"
 export ARCHIVE="$archive"
-export APP_CLI="zed"
 if [[ "$channel" == "dev" ]]; then
     export APP_ID="dev.zed.Zed-Dev"
     export APP_NAME="Zed Devel"

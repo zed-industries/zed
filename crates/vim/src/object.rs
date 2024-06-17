@@ -1,8 +1,11 @@
 use std::ops::Range;
 
 use crate::{
-    motion::right, normal::normal_object, state::Mode, utils::coerce_punctuation,
-    visual::visual_object, Vim,
+    motion::{coerce_punctuation, right},
+    normal::normal_object,
+    state::Mode,
+    visual::visual_object,
+    Vim,
 };
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},

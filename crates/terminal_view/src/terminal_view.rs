@@ -152,7 +152,7 @@ impl TerminalView {
         let focus_in = cx.on_focus_in(&focus_handle, |terminal_view, cx| {
             terminal_view.focus_in(cx);
         });
-        let focus_out = cx.on_focus_out(&focus_handle, |terminal_view, cx| {
+        let focus_out = cx.on_focus_out(&focus_handle, |terminal_view, _event, cx| {
             terminal_view.focus_out(cx);
         });
 

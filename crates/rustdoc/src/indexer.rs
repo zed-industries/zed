@@ -7,9 +7,10 @@ use collections::{HashSet, VecDeque};
 use fs::Fs;
 use futures::AsyncReadExt;
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
-use indexmap::IndexMap;
 
-use crate::{convert_rustdoc_to_markdown, RustdocItem, RustdocItemKind};
+use crate::{
+    convert_rustdoc_to_markdown, CrateName, RustdocDatabase, RustdocItem, RustdocItemKind,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RustdocSource {
@@ -23,7 +24,7 @@ pub enum RustdocSource {
 pub trait RustdocProvider {
     async fn fetch_page(
         &self,
-        crate_name: &str,
+        crate_name: &CrateName,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>>;
 }
@@ -46,18 +47,16 @@ impl LocalProvider {
 impl RustdocProvider for LocalProvider {
     async fn fetch_page(
         &self,
-        crate_name: &str,
+        crate_name: &CrateName,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>> {
         let mut local_cargo_doc_path = self.cargo_workspace_root.join("target/doc");
-        local_cargo_doc_path.push(&crate_name);
+        local_cargo_doc_path.push(crate_name.as_ref());
         if let Some(item) = item {
             local_cargo_doc_path.push(item.url_path());
         } else {
             local_cargo_doc_path.push("index.html");
         }
-
-        println!("Fetching {}", local_cargo_doc_path.display());
 
         let Ok(contents) = self.fs.load(&local_cargo_doc_path).await else {
             return Ok(None);
@@ -81,7 +80,7 @@ impl DocsDotRsProvider {
 impl RustdocProvider for DocsDotRsProvider {
     async fn fetch_page(
         &self,
-        crate_name: &str,
+        crate_name: &CrateName,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>> {
         let version = "latest";
@@ -91,8 +90,6 @@ impl RustdocProvider for DocsDotRsProvider {
                 .map(|item| format!("/{}", item.url_path()))
                 .unwrap_or_default()
         );
-
-        println!("Fetching {}", &format!("https://docs.rs/{path}"));
 
         let mut response = self
             .http_client
@@ -129,29 +126,32 @@ struct RustdocItemWithHistory {
     pub history: Vec<String>,
 }
 
-pub struct CrateDocs {
-    pub crate_root_markdown: String,
-    pub items: IndexMap<RustdocItem, String>,
-}
-
-pub struct RustdocCrawler {
+pub(crate) struct RustdocIndexer {
+    database: Arc<RustdocDatabase>,
     provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
 }
 
-impl RustdocCrawler {
-    pub fn new(provider: Box<dyn RustdocProvider + Send + Sync + 'static>) -> Self {
-        Self { provider }
+impl RustdocIndexer {
+    pub fn new(
+        database: Arc<RustdocDatabase>,
+        provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
+    ) -> Self {
+        Self { database, provider }
     }
 
-    pub async fn crawl(&self, crate_name: String) -> Result<Option<CrateDocs>> {
+    /// Indexes the crate with the given name.
+    pub async fn index(&self, crate_name: CrateName) -> Result<()> {
         let Some(crate_root_content) = self.provider.fetch_page(&crate_name, None).await? else {
-            return Ok(None);
+            return Ok(());
         };
 
         let (crate_root_markdown, items) =
             convert_rustdoc_to_markdown(crate_root_content.as_bytes())?;
 
-        let mut docs_by_item = IndexMap::new();
+        self.database
+            .insert(crate_name.clone(), None, crate_root_markdown)
+            .await?;
+
         let mut seen_items = HashSet::from_iter(items.clone());
         let mut items_to_visit: VecDeque<RustdocItemWithHistory> =
             VecDeque::from_iter(items.into_iter().map(|item| RustdocItemWithHistory {
@@ -162,8 +162,6 @@ impl RustdocCrawler {
 
         while let Some(item_with_history) = items_to_visit.pop_front() {
             let item = &item_with_history.item;
-
-            println!("Visiting {:?} {:?} {}", &item.kind, &item.path, &item.name);
 
             let Some(result) = self
                 .provider
@@ -189,7 +187,9 @@ impl RustdocCrawler {
 
             let (markdown, referenced_items) = convert_rustdoc_to_markdown(result.as_bytes())?;
 
-            docs_by_item.insert(item.clone(), markdown);
+            self.database
+                .insert(crate_name.clone(), Some(item), markdown)
+                .await?;
 
             let parent_item = item;
             for mut item in referenced_items {
@@ -219,9 +219,6 @@ impl RustdocCrawler {
             }
         }
 
-        Ok(Some(CrateDocs {
-            crate_root_markdown,
-            items: docs_by_item,
-        }))
+        Ok(())
     }
 }

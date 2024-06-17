@@ -277,19 +277,19 @@ impl InlineAssistant {
     ) {
         let assist_id = inline_assist_editor.read(cx).id;
         match event {
-            InlineAssistEditorEvent::Started => {
+            InlineAssistEditorEvent::StartRequested => {
                 self.start_inline_assist(assist_id, cx);
             }
-            InlineAssistEditorEvent::Stopped => {
+            InlineAssistEditorEvent::StopRequested => {
                 self.stop_inline_assist(assist_id, cx);
             }
-            InlineAssistEditorEvent::Confirmed => {
+            InlineAssistEditorEvent::ConfirmRequested => {
                 self.finish_inline_assist(assist_id, false, cx);
             }
-            InlineAssistEditorEvent::Canceled => {
+            InlineAssistEditorEvent::CancelRequested => {
                 self.finish_inline_assist(assist_id, true, cx);
             }
-            InlineAssistEditorEvent::Dismissed => {
+            InlineAssistEditorEvent::DismissRequested => {
                 self.dismiss_inline_assist(assist_id, cx);
             }
             InlineAssistEditorEvent::Resized { height_in_lines } => {
@@ -345,14 +345,8 @@ impl InlineAssistant {
 
         match event {
             EditorEvent::SelectionsChanged { local } if *local => {
-                if let Some(decorations) = assist.editor_decorations.as_ref() {
-                    if decorations
-                        .prompt_editor
-                        .focus_handle(cx)
-                        .contains_focused(cx)
-                    {
-                        cx.focus_view(&editor);
-                    }
+                if let CodegenStatus::Idle = &assist.codegen.read(cx).status {
+                    self.finish_inline_assist(assist_id, true, cx);
                 }
             }
             EditorEvent::Saved => {
@@ -813,11 +807,11 @@ impl InlineAssistId {
 }
 
 enum InlineAssistEditorEvent {
-    Started,
-    Stopped,
-    Confirmed,
-    Canceled,
-    Dismissed,
+    StartRequested,
+    StopRequested,
+    ConfirmRequested,
+    CancelRequested,
+    DismissRequested,
     Resized { height_in_lines: u8 },
 }
 
@@ -850,15 +844,17 @@ impl Render for InlineAssistEditor {
                         .icon_size(IconSize::XSmall)
                         .tooltip(|cx| Tooltip::for_action("Transform", &menu::Confirm, cx))
                         .on_click(
-                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Started)),
+                            cx.listener(|_, _, cx| {
+                                cx.emit(InlineAssistEditorEvent::StartRequested)
+                            }),
                         ),
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
                         .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Canceled)),
-                        ),
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(InlineAssistEditorEvent::CancelRequested)
+                        })),
                 ]
             }
             CodegenStatus::Pending => {
@@ -876,15 +872,15 @@ impl Render for InlineAssistEditor {
                             )
                         })
                         .on_click(
-                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Stopped)),
+                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::StopRequested)),
                         ),
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
                         .tooltip(|cx| Tooltip::text("Cancel Assist", cx))
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Canceled)),
-                        ),
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(InlineAssistEditorEvent::CancelRequested)
+                        })),
                 ]
             }
             CodegenStatus::Error(_) | CodegenStatus::Done => {
@@ -903,7 +899,7 @@ impl Render for InlineAssistEditor {
                                 )
                             })
                             .on_click(cx.listener(|_, _, cx| {
-                                cx.emit(InlineAssistEditorEvent::Started);
+                                cx.emit(InlineAssistEditorEvent::StartRequested);
                             }))
                     } else {
                         IconButton::new("confirm", IconName::Check)
@@ -911,16 +907,16 @@ impl Render for InlineAssistEditor {
                             .size(ButtonSize::None)
                             .tooltip(|cx| Tooltip::for_action("Confirm Assist", &menu::Confirm, cx))
                             .on_click(cx.listener(|_, _, cx| {
-                                cx.emit(InlineAssistEditorEvent::Confirmed);
+                                cx.emit(InlineAssistEditorEvent::ConfirmRequested);
                             }))
                     },
                     IconButton::new("cancel", IconName::Close)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
                         .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
-                        .on_click(
-                            cx.listener(|_, _, cx| cx.emit(InlineAssistEditorEvent::Canceled)),
-                        ),
+                        .on_click(cx.listener(|_, _, cx| {
+                            cx.emit(InlineAssistEditorEvent::CancelRequested)
+                        })),
                 ]
             }
         };
@@ -1100,23 +1096,6 @@ impl InlineAssistEditor {
                 self.edited_since_done = true;
                 cx.notify();
             }
-            EditorEvent::Blurred => {
-                if let CodegenStatus::Idle = &self.codegen.read(cx).status {
-                    let assistant_panel_is_focused = self
-                        .workspace
-                        .as_ref()
-                        .and_then(|workspace| {
-                            let panel =
-                                workspace.upgrade()?.read(cx).panel::<AssistantPanel>(cx)?;
-                            Some(panel.focus_handle(cx).contains_focused(cx))
-                        })
-                        .unwrap_or(false);
-
-                    if !assistant_panel_is_focused {
-                        cx.emit(InlineAssistEditorEvent::Canceled);
-                    }
-                }
-            }
             _ => {}
         }
     }
@@ -1142,10 +1121,10 @@ impl InlineAssistEditor {
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
-                cx.emit(InlineAssistEditorEvent::Canceled);
+                cx.emit(InlineAssistEditorEvent::CancelRequested);
             }
             CodegenStatus::Pending => {
-                cx.emit(InlineAssistEditorEvent::Stopped);
+                cx.emit(InlineAssistEditorEvent::StopRequested);
             }
         }
     }
@@ -1153,16 +1132,16 @@ impl InlineAssistEditor {
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
-                cx.emit(InlineAssistEditorEvent::Started);
+                cx.emit(InlineAssistEditorEvent::StartRequested);
             }
             CodegenStatus::Pending => {
-                cx.emit(InlineAssistEditorEvent::Dismissed);
+                cx.emit(InlineAssistEditorEvent::DismissRequested);
             }
             CodegenStatus::Done | CodegenStatus::Error(_) => {
                 if self.edited_since_done {
-                    cx.emit(InlineAssistEditorEvent::Started);
+                    cx.emit(InlineAssistEditorEvent::StartRequested);
                 } else {
-                    cx.emit(InlineAssistEditorEvent::Confirmed);
+                    cx.emit(InlineAssistEditorEvent::ConfirmRequested);
                 }
             }
         }

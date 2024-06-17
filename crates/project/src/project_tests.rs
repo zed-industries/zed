@@ -16,7 +16,6 @@ use std::task::Poll;
 use task::{ResolvedTask, TaskContext, TaskTemplate, TaskTemplates};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
-use worktree::WorktreeModelHandle as _;
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -24,7 +23,7 @@ async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
 
     let (tx, mut rx) = futures::channel::mpsc::unbounded();
     let _thread = std::thread::spawn(move || {
-        std::fs::metadata("/Users").unwrap();
+        std::fs::metadata("/tmp").unwrap();
         std::thread::sleep(Duration::from_millis(1000));
         tx.unbounded_send(1).unwrap();
     });
@@ -765,7 +764,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             worktree
                 .read(cx)
                 .snapshot()
-                .entries(true)
+                .entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
@@ -839,7 +838,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             worktree
                 .read(cx)
                 .snapshot()
-                .entries(true)
+                .entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
@@ -2980,6 +2979,8 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test(retries = 5)]
 async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
+    use worktree::WorktreeModelHandle as _;
+
     init_test(cx);
     cx.executor().allow_parking();
 

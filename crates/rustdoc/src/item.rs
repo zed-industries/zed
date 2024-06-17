@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize, EnumIter,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum RustdocItemKind {
     Mod,
     Macro,

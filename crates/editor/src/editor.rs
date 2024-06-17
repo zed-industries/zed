@@ -66,11 +66,12 @@ use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
-    Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, ListSizingBehavior, Model,
-    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle,
-    Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle,
-    View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
+    Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusOutEvent, FocusableView,
+    FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext,
+    ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString,
+    Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle,
+    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle,
+    WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -138,8 +139,8 @@ use theme::{
     ThemeColors, ThemeSettings,
 };
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
-    Tooltip,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
+    ListItem, Popover, Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
@@ -448,6 +449,7 @@ struct BufferOffset(usize);
 /// See the [module level documentation](self) for more information.
 pub struct Editor {
     focus_handle: FocusHandle,
+    last_focused: Option<WeakFocusHandle>,
     /// The text buffer being edited
     buffer: Model<MultiBuffer>,
     /// Map of how text in the buffer should be displayed.
@@ -1522,7 +1524,7 @@ struct ActiveDiagnosticGroup {
     is_valid: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ClipboardSelection {
     pub len: usize,
     pub is_entire_line: bool,
@@ -1735,6 +1737,8 @@ impl Editor {
         );
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
+        cx.on_focus_out(&focus_handle, Self::handle_focus_out)
+            .detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
         let show_indent_guides = if mode == EditorMode::SingleLine {
@@ -1745,6 +1749,7 @@ impl Editor {
 
         let mut this = Self {
             focus_handle,
+            last_focused: None,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
             selections,
@@ -2746,7 +2751,9 @@ impl Editor {
             Some(Selection { start, end, .. }) => start != end,
             None => false,
         };
-        pending_nonempty_selection || self.columnar_selection_tail.is_some()
+
+        pending_nonempty_selection
+            || (self.columnar_selection_tail.is_some() && self.selections.disjoint.len() > 1)
     }
 
     pub fn has_pending_selection(&self) -> bool {
@@ -4913,8 +4920,8 @@ impl Editor {
         if self.available_code_actions.is_some() {
             Some(
                 IconButton::new("code_actions_indicator", ui::IconName::Bolt)
+                    .shape(ui::IconButtonShape::Square)
                     .icon_size(IconSize::XSmall)
-                    .size(ui::ButtonSize::None)
                     .icon_color(Color::Muted)
                     .selected(is_active)
                     .on_click(cx.listener(move |editor, _e, cx| {
@@ -4951,8 +4958,8 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
         IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
+            .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::XSmall)
-            .size(ui::ButtonSize::None)
             .icon_color(Color::Muted)
             .selected(is_active)
             .on_click(cx.listener(move |editor, _e, cx| {
@@ -6411,80 +6418,94 @@ impl Editor {
         cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
     }
 
-    pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+    pub fn do_paste(
+        &mut self,
+        text: &String,
+        clipboard_selections: Option<Vec<ClipboardSelection>>,
+        handle_entire_lines: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         if self.read_only(cx) {
             return;
         }
 
+        let clipboard_text = Cow::Borrowed(text);
+
         self.transact(cx, |this, cx| {
-            if let Some(item) = cx.read_from_clipboard() {
-                let clipboard_text = Cow::Borrowed(item.text());
-                if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
-                    let old_selections = this.selections.all::<usize>(cx);
-                    let all_selections_were_entire_line =
-                        clipboard_selections.iter().all(|s| s.is_entire_line);
-                    let first_selection_indent_column =
-                        clipboard_selections.first().map(|s| s.first_line_indent);
-                    if clipboard_selections.len() != old_selections.len() {
-                        clipboard_selections.drain(..);
-                    }
-
-                    this.buffer.update(cx, |buffer, cx| {
-                        let snapshot = buffer.read(cx);
-                        let mut start_offset = 0;
-                        let mut edits = Vec::new();
-                        let mut original_indent_columns = Vec::new();
-                        let line_mode = this.selections.line_mode;
-                        for (ix, selection) in old_selections.iter().enumerate() {
-                            let to_insert;
-                            let entire_line;
-                            let original_indent_column;
-                            if let Some(clipboard_selection) = clipboard_selections.get(ix) {
-                                let end_offset = start_offset + clipboard_selection.len;
-                                to_insert = &clipboard_text[start_offset..end_offset];
-                                entire_line = clipboard_selection.is_entire_line;
-                                start_offset = end_offset + 1;
-                                original_indent_column =
-                                    Some(clipboard_selection.first_line_indent);
-                            } else {
-                                to_insert = clipboard_text.as_str();
-                                entire_line = all_selections_were_entire_line;
-                                original_indent_column = first_selection_indent_column
-                            }
-
-                            // If the corresponding selection was empty when this slice of the
-                            // clipboard text was written, then the entire line containing the
-                            // selection was copied. If this selection is also currently empty,
-                            // then paste the line before the current line of the buffer.
-                            let range = if selection.is_empty() && !line_mode && entire_line {
-                                let column = selection.start.to_point(&snapshot).column as usize;
-                                let line_start = selection.start - column;
-                                line_start..line_start
-                            } else {
-                                selection.range()
-                            };
-
-                            edits.push((range, to_insert));
-                            original_indent_columns.extend(original_indent_column);
-                        }
-                        drop(snapshot);
-
-                        buffer.edit(
-                            edits,
-                            Some(AutoindentMode::Block {
-                                original_indent_columns,
-                            }),
-                            cx,
-                        );
-                    });
-
-                    let selections = this.selections.all::<usize>(cx);
-                    this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
-                } else {
-                    this.insert(&clipboard_text, cx);
+            if let Some(mut clipboard_selections) = clipboard_selections {
+                let old_selections = this.selections.all::<usize>(cx);
+                let all_selections_were_entire_line =
+                    clipboard_selections.iter().all(|s| s.is_entire_line);
+                let first_selection_indent_column =
+                    clipboard_selections.first().map(|s| s.first_line_indent);
+                if clipboard_selections.len() != old_selections.len() {
+                    clipboard_selections.drain(..);
                 }
+
+                this.buffer.update(cx, |buffer, cx| {
+                    let snapshot = buffer.read(cx);
+                    let mut start_offset = 0;
+                    let mut edits = Vec::new();
+                    let mut original_indent_columns = Vec::new();
+                    for (ix, selection) in old_selections.iter().enumerate() {
+                        let to_insert;
+                        let entire_line;
+                        let original_indent_column;
+                        if let Some(clipboard_selection) = clipboard_selections.get(ix) {
+                            let end_offset = start_offset + clipboard_selection.len;
+                            to_insert = &clipboard_text[start_offset..end_offset];
+                            entire_line = clipboard_selection.is_entire_line;
+                            start_offset = end_offset + 1;
+                            original_indent_column = Some(clipboard_selection.first_line_indent);
+                        } else {
+                            to_insert = clipboard_text.as_str();
+                            entire_line = all_selections_were_entire_line;
+                            original_indent_column = first_selection_indent_column
+                        }
+
+                        // If the corresponding selection was empty when this slice of the
+                        // clipboard text was written, then the entire line containing the
+                        // selection was copied. If this selection is also currently empty,
+                        // then paste the line before the current line of the buffer.
+                        let range = if selection.is_empty() && handle_entire_lines && entire_line {
+                            let column = selection.start.to_point(&snapshot).column as usize;
+                            let line_start = selection.start - column;
+                            line_start..line_start
+                        } else {
+                            selection.range()
+                        };
+
+                        edits.push((range, to_insert));
+                        original_indent_columns.extend(original_indent_column);
+                    }
+                    drop(snapshot);
+
+                    buffer.edit(
+                        edits,
+                        Some(AutoindentMode::Block {
+                            original_indent_columns,
+                        }),
+                        cx,
+                    );
+                });
+
+                let selections = this.selections.all::<usize>(cx);
+                this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+            } else {
+                this.insert(&clipboard_text, cx);
             }
         });
+    }
+
+    pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        if let Some(item) = cx.read_from_clipboard() {
+            self.do_paste(
+                item.text(),
+                item.metadata::<Vec<ClipboardSelection>>(),
+                true,
+                cx,
+            )
+        };
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
@@ -10886,14 +10907,14 @@ impl Editor {
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
-            multi_buffer::Event::Reparsed => {
+            multi_buffer::Event::Reparsed(buffer_id) => {
                 self.tasks_update_task = Some(self.refresh_runnables(cx));
 
-                cx.emit(EditorEvent::Reparsed);
+                cx.emit(EditorEvent::Reparsed(*buffer_id));
             }
-            multi_buffer::Event::LanguageChanged => {
+            multi_buffer::Event::LanguageChanged(buffer_id) => {
                 linked_editing_ranges::refresh_linked_ranges(self, cx);
-                cx.emit(EditorEvent::Reparsed);
+                cx.emit(EditorEvent::Reparsed(*buffer_id));
                 cx.notify();
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
@@ -11299,9 +11320,13 @@ impl Editor {
 
     fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(EditorEvent::Focused);
-        if let Some(rename) = self.pending_rename.as_ref() {
-            let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
-            cx.focus(&rename_editor_focus_handle);
+
+        if let Some(last_focused) = self
+            .last_focused
+            .take()
+            .and_then(|last_focused| last_focused.upgrade())
+        {
+            cx.focus(&last_focused);
         } else {
             if let Some(blame) = self.blame.as_ref() {
                 blame.update(cx, GitBlame::focus)
@@ -11321,6 +11346,10 @@ impl Editor {
                 }
             });
         }
+    }
+
+    fn handle_focus_out(&mut self, event: FocusOutEvent, _cx: &mut ViewContext<Self>) {
+        self.last_focused = Some(event.blurred);
     }
 
     pub fn handle_blur(&mut self, cx: &mut ViewContext<Self>) {
@@ -11752,23 +11781,16 @@ impl EditorSnapshot {
             || (self.starts_indent(buffer_row) && (row_contains_cursor || self.gutter_hovered))
         {
             Some(
-                IconButton::new(
-                    ("indent-fold-indicator", buffer_row.0),
-                    ui::IconName::ChevronDown,
-                )
-                .on_click(cx.listener_for(&editor, move |this, _e, cx| {
-                    if folded {
-                        this.unfold_at(&UnfoldAt { buffer_row }, cx);
-                    } else {
-                        this.fold_at(&FoldAt { buffer_row }, cx);
-                    }
-                }))
-                .icon_color(ui::Color::Muted)
-                .icon_size(ui::IconSize::Small)
-                .selected(folded)
-                .selected_icon(ui::IconName::ChevronRight)
-                .size(ui::ButtonSize::None)
-                .into_any_element(),
+                Disclosure::new(("indent-fold-indicator", buffer_row.0), !folded)
+                    .selected(folded)
+                    .on_click(cx.listener_for(&editor, move |this, _e, cx| {
+                        if folded {
+                            this.unfold_at(&UnfoldAt { buffer_row }, cx);
+                        } else {
+                            this.fold_at(&FoldAt { buffer_row }, cx);
+                        }
+                    }))
+                    .into_any_element(),
             )
         } else {
             None
@@ -11823,7 +11845,7 @@ pub enum EditorEvent {
     Edited {
         transaction_id: clock::Lamport,
     },
-    Reparsed,
+    Reparsed(BufferId),
     Focused,
     Blurred,
     DirtyChanged,
