@@ -466,6 +466,7 @@ fn restore_selection_cursors(
 
 pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
+        let count = vim.take_count(cx).unwrap_or(1);
         vim.stop_recording();
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -488,13 +489,14 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
                     .into_iter()
                     .map(|selection| {
                         let mut range = selection.range();
-                        *range.end.column_mut() += 1;
+                        *range.end.column_mut() += count as u32;
                         range.end = map.clip_point(range.end, Bias::Right);
+                        let repeated_text = text.repeat(count);
 
                         (
                             range.start.to_offset(&map, Bias::Left)
                                 ..range.end.to_offset(&map, Bias::Left),
-                            text.clone(),
+                            repeated_text,
                         )
                     })
                     .collect::<Vec<_>>();
@@ -505,6 +507,12 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(None, cx, |s| {
                     s.select_anchor_ranges(stable_anchors);
+                    if count > 1 {
+                        s.move_cursors_with(|_, mut point, goal| {
+                            *point.column_mut() += (count - 1) as u32;
+                            (point, goal)
+                        });
+                    }
                 });
             });
         });
@@ -1396,5 +1404,26 @@ mod test {
             indoc! {"assert_bindinˇg"},
             indoc! {"asserˇt_binding"},
         );
+    }
+
+    #[gpui::test]
+    async fn test_r(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("r -").await;
+        cx.shared_state().await.assert_eq("ˇ-ello\n");
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("3 r -").await;
+        cx.shared_state().await.assert_eq("--ˇ-lo\n");
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("r - 2 l .").await;
+        cx.shared_state().await.assert_eq("-eˇ-lo\n");
+
+        cx.set_shared_state("ˇhello world\n").await;
+        cx.simulate_shared_keystrokes("2 r - f w .").await;
+        cx.shared_state().await.assert_eq("--llo -ˇ-rld\n");
     }
 }
