@@ -230,7 +230,7 @@ fn collect_files(
         let mut text = String::new();
         let mut ranges = Vec::new();
         for snapshot in snapshots {
-            let mut directory_stack: Vec<(Arc<Path>, usize)> = Vec::new();
+            let mut directory_stack: Vec<(Arc<Path>, String, usize)> = Vec::new();
             let mut folded_directory_names_stack = Vec::new();
             for entry in snapshot.entries(false, 0) {
                 let mut path_buf = PathBuf::new();
@@ -240,14 +240,14 @@ fn collect_files(
                     continue;
                 }
 
-                while let Some((dir, _)) = directory_stack.last() {
+                while let Some((dir, _, _)) = directory_stack.last() {
                     if entry.path.starts_with(dir) {
                         break;
                     }
-                    let (dir, start) = directory_stack.pop().unwrap();
+                    let (_, entry_name, start) = directory_stack.pop().unwrap();
                     ranges.push((
                         start..text.len().saturating_sub(1),
-                        dir.to_path_buf(),
+                        PathBuf::from(entry_name),
                         EntryType::Directory,
                     ));
                 }
@@ -257,7 +257,8 @@ fn collect_files(
                     .file_name()
                     .unwrap_or_default()
                     .to_str()
-                    .unwrap_or_default();
+                    .unwrap_or_default()
+                    .to_string();
 
                 if entry.is_dir() {
                     // Auto-fold directories that contain no files
@@ -269,11 +270,14 @@ fn collect_files(
                         }
                     }
                     let prefix_paths = folded_directory_names_stack.drain(..).as_slice().join("/");
-                    directory_stack.push((entry.path.clone(), text.len()));
+                    let entry_start = text.len();
                     if prefix_paths.is_empty() {
-                        text.push_str(filename);
+                        text.push_str(&filename);
+                        directory_stack.push((entry.path.clone(), filename, entry_start));
                     } else {
-                        text.push_str(format!("{}/{}", prefix_paths, filename).as_str());
+                        let entry_name = format!("{}/{}", prefix_paths, &filename);
+                        text.push_str(&entry_name);
+                        directory_stack.push((entry.path.clone(), entry_name, entry_start));
                     }
                     text.push('\n');
                 } else if entry.is_file() {
@@ -282,7 +286,7 @@ fn collect_files(
                         collect_file_content(
                             &mut text,
                             fs.clone(),
-                            filename.to_string(),
+                            filename.clone(),
                             abs_path.into(),
                         )
                         .await?;
@@ -296,7 +300,7 @@ fn collect_files(
                 }
             }
 
-            while let Some((dir, start)) = directory_stack.pop() {
+            while let Some((dir, _, start)) = directory_stack.pop() {
                 let mut root_path = PathBuf::new();
                 root_path.push(snapshot.root_name());
                 root_path.push(&dir);
