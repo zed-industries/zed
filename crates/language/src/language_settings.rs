@@ -194,7 +194,7 @@ pub struct AllLanguageSettingsContent {
     #[serde(default)]
     pub features: Option<FeaturesContent>,
     /// The inline completion settings.
-    #[serde(default, alias = "copilot")]
+    #[serde(default)]
     pub inline_completions: Option<InlineCompletionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
@@ -297,7 +297,7 @@ pub struct LanguageSettingsContent {
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     ///
     /// Default: true
-    #[serde(default, alias = "show_copilot_suggestions")]
+    #[serde(default)]
     pub show_inline_completions: Option<bool>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
