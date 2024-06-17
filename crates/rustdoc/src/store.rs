@@ -72,7 +72,7 @@ impl RustdocStore {
     }
 
     /// Returns the list of crate names currently being indexed.
-    pub fn crates_being_indexed(&self) -> Vec<String> {
+    pub fn crates_being_indexed(&self) -> Vec<CrateName> {
         self.indexing_tasks_by_crate
             .read()
             .keys()
