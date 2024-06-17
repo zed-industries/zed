@@ -13,9 +13,9 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    actions, point, size, AppContext, BackgroundExecutor, Bounds, EventEmitter, Global,
-    HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle, TitlebarOptions,
-    UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
+    actions, point, size, transparent_black, AppContext, BackgroundExecutor, Bounds, EventEmitter,
+    Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
+    TitlebarOptions, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -741,8 +741,10 @@ impl PromptLibrary {
                         }))
                         .child(
                             h_flex()
-                                .pr(Spacing::Large.rems(cx))
-                                .py(Spacing::Large.rems(cx))
+                                .group("active-editor-header")
+                                .pr(Spacing::Large.rems(cx) + Spacing::Large.rems(cx))
+                                .pt(Spacing::Large.rems(cx))
+                                .pb(Spacing::Large.rems(cx) + Spacing::Large.rems(cx))
                                 .justify_between()
                                 .child(
                                     h_flex()
@@ -751,6 +753,14 @@ impl PromptLibrary {
                                             div()
                                                 .max_w_80()
                                                 .on_action(cx.listener(Self::move_down_from_title))
+                                                .border_1()
+                                                .border_color(transparent_black())
+                                                .rounded_md()
+                                                .group_hover("active-editor-header", |this| {
+                                                    this.border_color(
+                                                        cx.theme().colors().border_variant,
+                                                    )
+                                                })
                                                 .child(EditorElement::new(
                                                     &prompt_editor.title_editor,
                                                     EditorStyle {
@@ -820,8 +830,9 @@ impl PromptLibrary {
                                         })),
                                 )
                                 .child(
-                                    h_flex().gap_12().child(
+                                    h_flex().h_full().gap_12().child(
                                         h_flex()
+                                            .h_full()
                                             .gap_3()
                                             .child(
                                                 IconButton::new(
