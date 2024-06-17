@@ -159,7 +159,7 @@ impl SlashCommand for SearchSlashCommand {
                                     id,
                                     path: Some(full_path.clone()),
                                     is_directory: false,
-                                    line_range: Some(start_row..end_row),
+                                    line_range: Some(start_row + 1..end_row + 1),
                                     unfold,
                                 }
                                 .into_any_element()
