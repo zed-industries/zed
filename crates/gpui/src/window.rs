@@ -1158,7 +1158,7 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_fullscreen()
     }
 
-    fn appearance_changed(&mut self) {
+    pub(crate) fn appearance_changed(&mut self) {
         self.window.appearance = self.window.platform_window.appearance();
 
         self.window
