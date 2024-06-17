@@ -9737,7 +9737,7 @@ impl Editor {
                 end.column = buffer.line_len(MultiBufferRow(end.row));
                 start..end
             })
-            .collect::<Vec<_>>();
+            .collect_vec();
 
         self.unfold_ranges(ranges, true, true, cx);
     }
@@ -9812,6 +9812,7 @@ impl Editor {
             }
 
             cx.notify();
+            cx.emit(EditorEvent::Fold);
 
             if let Some(active_diagnostics) = self.active_diagnostics.take() {
                 // Clear diagnostics block when folding a range that contains it.
@@ -9859,6 +9860,8 @@ impl Editor {
             }
 
             cx.notify();
+            cx.emit(EditorEvent::UnFold);
+
             self.scrollbar_marker_state.dirty = true;
             self.active_indent_guides_state.dirty = true;
         }
@@ -11897,6 +11900,8 @@ pub enum EditorEvent {
     TransactionBegun {
         transaction_id: clock::Lamport,
     },
+    Fold,
+    UnFold,
 }
 
 impl EventEmitter<EditorEvent> for Editor {}

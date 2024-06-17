@@ -41,7 +41,7 @@ use language::language_settings::{
     IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings, ShowWhitespaceSetting,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot};
+use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -2404,8 +2404,6 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         line_layouts: &[LineWithInvisibles],
         text_style: &TextStyle,
-        buffer_snapshot: &MultiBufferSnapshot,
-        display_snapshot: &DisplaySnapshot,
         cx: &mut WindowContext,
     ) {
         let overlay_map = self
@@ -2414,14 +2412,7 @@ impl EditorElement {
         let overlays = overlay_map
             .iter()
             .flat_map(|(_, list)| list.iter())
-            .filter_map(|overlay| {
-                overlay.render(
-                    text_style,
-                    visible_display_row_range.clone(),
-                    buffer_snapshot,
-                    display_snapshot,
-                )
-            });
+            .filter_map(|overlay| overlay.render(text_style, visible_display_row_range.clone()));
         let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
 
         for (anchor, mut overlay) in overlays {
@@ -5006,8 +4997,6 @@ impl Element for EditorElement {
                         scroll_pixel_position,
                         &line_layouts,
                         &style.text,
-                        &snapshot.buffer_snapshot,
-                        &snapshot.display_snapshot,
                         cx,
                     );
 

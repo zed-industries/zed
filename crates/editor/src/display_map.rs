@@ -881,6 +881,10 @@ impl DisplaySnapshot {
         self.fold_snapshot.is_line_folded(buffer_row)
     }
 
+    pub fn is_point_folded(&self, point: Point) -> bool {
+        self.fold_snapshot.is_point_folded(point)
+    }
+
     pub fn is_block_line(&self, display_row: DisplayRow) -> bool {
         self.block_snapshot.is_block_line(BlockRow(display_row.0))
     }

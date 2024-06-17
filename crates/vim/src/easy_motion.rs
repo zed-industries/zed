@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use workspace::Workspace;
 
-use editor::{overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor, ToPoint};
+use editor::{
+    display_map::DisplaySnapshot, overlay::Overlay, scroll::Autoscroll, DisplayPoint, Editor,
+    EditorEvent, MultiBufferSnapshot, ToPoint,
+};
 use gpui::{
     actions, impl_actions, saturate, AppContext, Entity, EntityId, Global, HighlightStyle,
     KeystrokeEvent, Model, ModelContext, Subscription, View, ViewContext,
@@ -216,6 +219,9 @@ fn register_actions(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> Vec<Su
         EasyMotion::observe_keystrokes(editor, event, cx);
     }));
 
+    let entity = cx.view().clone();
+    subs.push(cx.subscribe(&entity, EasyMotion::update_overlays));
+
     let entity_id = cx.view().entity_id();
     subs.push(cx.on_release(move |_, _, cx| {
         EasyMotion::update(cx, |easy, _cx| easy.editor_states.remove(&entity_id));
@@ -285,7 +291,14 @@ impl EasyMotion {
                 offset: point.to_offset(map, Bias::Right),
             }
         });
-        Self::add_overlays(editor, trie.iter(), trie.len(), cx);
+        Self::add_overlays(
+            editor,
+            trie.iter(),
+            trie.len(),
+            &snapshot.buffer_snapshot,
+            &snapshot.display_snapshot,
+            cx,
+        );
 
         let start = match direction {
             Direction::Both | Direction::Backwards => DisplayPoint::zero(),
@@ -428,7 +441,15 @@ impl EasyMotion {
                 let trie = selection.trie();
                 let len = trie.len();
                 editor.clear_overlays::<Self>(cx);
-                Self::add_overlays(editor, trie.iter(), len, cx);
+                let snapshot = editor.snapshot(cx);
+                Self::add_overlays(
+                    editor,
+                    trie.iter(),
+                    len,
+                    &snapshot.buffer_snapshot,
+                    &snapshot.display_snapshot,
+                    cx,
+                );
                 Some(selection)
             }
             TrimResult::Err => {
@@ -445,9 +466,11 @@ impl EasyMotion {
         editor: &mut Editor,
         trie_iter: impl Iterator<Item = (String, &'a OverlayState)>,
         len: usize,
+        buffer_snapshot: &MultiBufferSnapshot,
+        display_snapshot: &DisplaySnapshot,
         cx: &mut ViewContext<Editor>,
     ) {
-        let overlays = trie_iter.map(|(seq, overlay)| {
+        let overlays = trie_iter.filter_map(|(seq, overlay)| {
             let mut highlights = vec![(0..1, overlay.style)];
             if seq.len() > 1 {
                 highlights.push((
@@ -458,13 +481,50 @@ impl EasyMotion {
                     },
                 ));
             }
-            Overlay {
-                text: seq,
-                highlights,
-                buffer_offset: overlay.offset,
+            let point = buffer_snapshot.offset_to_point(overlay.offset);
+            if display_snapshot.is_point_folded(point) {
+                None
+            } else {
+                Some(Overlay {
+                    text: seq,
+                    highlights,
+                    point: display_snapshot.point_to_display_point(point, text::Bias::Left),
+                })
             }
         });
         editor.add_overlays_with_reserve::<Self>(overlays, len, cx);
+    }
+
+    // TODO: there is a bug with a single match appearing after a folded block
+    // TODO: overlays which are folded should probably not be selectable.
+    // Probably will need to add an "active" field to the overlay state struct.
+    fn update_overlays(
+        editor: &mut Editor,
+        view: View<Editor>,
+        event: &EditorEvent,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        if !matches!(event, EditorEvent::Fold | EditorEvent::UnFold) {
+            return;
+        }
+        let entity_id = view.entity_id();
+        let Some(state) =
+            Self::update(cx, |easy, _cx| easy.editor_states.remove(&entity_id)).flatten()
+        else {
+            return;
+        };
+
+        let snapshot = editor.snapshot(cx);
+        editor.clear_overlays::<Self>(cx);
+        Self::add_overlays(
+            editor,
+            state.trie().iter(),
+            state.trie().len(),
+            &snapshot.buffer_snapshot,
+            &snapshot.display_snapshot,
+            cx,
+        );
+        Self::update(cx, |easy, _cx| easy.editor_states.insert(entity_id, state));
     }
 
     fn get_highlights(cx: &AppContext) -> (HighlightStyle, HighlightStyle, HighlightStyle) {
