@@ -5,6 +5,7 @@ use zbus::object_server::InterfaceRef;
 use zbus::zvariant::{OwnedObjectPath, Structure, StructureBuilder};
 use zbus::{interface, object_server::SignalContext, zvariant::Type};
 
+use super::dbusmenu::{DBusMenuInterface, Menu, DBUS_MENU_PATH};
 use super::watcher::StatusNotifierWatcher;
 
 const STATUS_NOTIFIER_ITEM_PATH: &str = "/StatusNotifierItem";
@@ -142,11 +143,11 @@ pub struct StatusNotifierItemOptions {
     pub(crate) title: String,
     pub(crate) status: Status,
     pub(crate) window_id: u32,
+    pub(crate) icon_theme_path: String,
     pub(crate) icon: Icon,
     pub(crate) overlay: Icon,
     pub(crate) attention: Attention,
     pub(crate) is_menu: bool,
-    pub(crate) menu: OwnedObjectPath,
     pub(crate) tooltip: ToolTip,
 }
 
@@ -190,6 +191,11 @@ impl StatusNotifierItemInterface {
     #[zbus(property, name = "WindowId")]
     pub async fn window_id(&self) -> u32 {
         self.options.window_id
+    }
+
+    #[zbus(property, name = "IconThemePath")]
+    pub async fn icon_theme_path(&self) -> String {
+        self.options.icon_theme_path.clone()
     }
 
     #[zbus(property, name = "IconName")]
@@ -239,12 +245,14 @@ impl StatusNotifierItemInterface {
 
     #[zbus(property, name = "Menu")]
     pub async fn menu(&self) -> OwnedObjectPath {
-        self.options.menu.clone()
+        OwnedObjectPath::try_from(DBUS_MENU_PATH).unwrap()
     }
 
-    #[zbus(property, name = "Category")]
-    pub async fn set_title(&mut self, title: String) {
-        self.options.title = title;
+    pub async fn provide_xdg_activation_token(&self, token: String) {
+        self.callbacks
+            .on_provide_xdg_activation_token
+            .as_ref()
+            .map(move |xdg_activation_token| xdg_activation_token(token));
     }
 
     pub async fn context_menu(&self, x: i32, y: i32) {
@@ -275,13 +283,6 @@ impl StatusNotifierItemInterface {
             .map(move |scroll| scroll(delta, orientation));
     }
 
-    pub async fn provide_xdg_activation_token(&self, token: String) {
-        self.callbacks
-            .on_provide_xdg_activation_token
-            .as_ref()
-            .map(move |xdg_activation_token| xdg_activation_token(token));
-    }
-
     #[zbus(signal, name = "NewTitle")]
     pub async fn new_title(&self, cx: &SignalContext<'_>) -> zbus::Result<()>;
 
@@ -294,6 +295,9 @@ impl StatusNotifierItemInterface {
     #[zbus(signal, name = "NewOverlayIcon")]
     pub async fn new_overlay_icon(&self, cx: &SignalContext<'_>) -> zbus::Result<()>;
 
+    #[zbus(signal, name = "NewMenu")]
+    pub async fn new_menu(&self, cx: &SignalContext<'_>) -> zbus::Result<()>;
+
     #[zbus(signal, name = "NewToolTip")]
     pub async fn new_tooltip(&self, cx: &SignalContext<'_>) -> zbus::Result<()>;
 
@@ -301,16 +305,21 @@ impl StatusNotifierItemInterface {
     pub async fn new_status(&self, cx: &SignalContext<'_>, status: String) -> zbus::Result<()>;
 }
 
-pub struct StatusNotifierItem(zbus::Connection, InterfaceRef<StatusNotifierItemInterface>);
+pub struct StatusNotifierItem(
+    zbus::Connection,
+    InterfaceRef<StatusNotifierItemInterface>,
+    InterfaceRef<DBusMenuInterface>,
+);
 
 impl StatusNotifierItem {
     pub async fn new(id: i32, options: StatusNotifierItemOptions) -> zbus::Result<Self> {
         let watcher = StatusNotifierWatcher::new().await?;
-        let iface = StatusNotifierItemInterface {
+        let item_iface = StatusNotifierItemInterface {
             id: id.to_string(),
             options,
             callbacks: Default::default(),
         };
+        let menu_iface = DBusMenuInterface::default();
         let name = format!(
             "org.freedesktop.StatusNotifierItem-{}-{}",
             std::process::id(),
@@ -319,7 +328,8 @@ impl StatusNotifierItem {
 
         let conn = zbus::connection::Builder::session()?
             .name(name.clone())?
-            .serve_at(STATUS_NOTIFIER_ITEM_PATH, iface)?
+            .serve_at(STATUS_NOTIFIER_ITEM_PATH, item_iface)?
+            .serve_at(DBUS_MENU_PATH, menu_iface)?
             .build()
             .await?;
         watcher.register_status_notifier_item(name).await?;
@@ -327,7 +337,11 @@ impl StatusNotifierItem {
             .object_server()
             .interface::<_, StatusNotifierItemInterface>(STATUS_NOTIFIER_ITEM_PATH)
             .await?;
-        Ok(Self(conn, iface_ref))
+        let menu_ref = conn
+            .object_server()
+            .interface::<_, DBusMenuInterface>(DBUS_MENU_PATH)
+            .await?;
+        Ok(Self(conn, iface_ref, menu_ref))
     }
 
     pub async fn on_context_menu(&self, fun: Box<dyn Fn(i32, i32) + Sync + Send>) {
@@ -375,7 +389,7 @@ impl StatusNotifierItem {
         let cx = self.1.signal_context();
         let mut iface = self.1.get_mut().await;
         iface.options.overlay = overlay;
-        iface.new_icon(cx).await?;
+        iface.new_overlay_icon(cx).await?;
         Ok(())
     }
 
@@ -383,7 +397,7 @@ impl StatusNotifierItem {
         let cx = self.1.signal_context();
         let mut iface = self.1.get_mut().await;
         iface.options.attention = attention;
-        iface.new_icon(cx).await?;
+        iface.new_attention_icon(cx).await?;
         Ok(())
     }
 
@@ -421,11 +435,18 @@ impl StatusNotifierItem {
     }
 
     pub async fn set_category(&self, category: Category) -> zbus::Result<()> {
-        let cx = self.1.signal_context();
         let mut iface = self.1.get_mut().await;
-        let category_str = category.to_string();
         iface.options.category = category;
-        iface.new_status(cx, category_str).await?;
+        Ok(())
+    }
+
+    pub async fn set_menu(&self, menu: Menu) -> zbus::Result<()> {
+        let mut iface = self.2.get_mut().await;
+        iface.menu = menu;
+        drop(iface);
+        let cx = self.1.signal_context();
+        let iface = self.1.get().await;
+        iface.new_menu(cx).await?;
         Ok(())
     }
 }

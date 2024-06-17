@@ -95,6 +95,12 @@ impl<'a> StatusNotifierWatcher<'a> {
         self.receive_signal("StatusNotifierHostRegistered").await
     }
 
+    pub async fn receive_status_notifier_host_unregistered(
+        &self,
+    ) -> zbus::Result<impl Stream<Item = bool>> {
+        self.receive_signal("StatusNotifierHostUnregistered").await
+    }
+
     async fn receive_signal<R>(&self, name: &'static str) -> zbus::Result<impl Stream<Item = R>>
     where
         R: for<'de> Deserialize<'de> + Type + Debug,
