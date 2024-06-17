@@ -70,9 +70,14 @@ pub fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
 }
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    set_dispatcher(zed_dispatcher(cx));
-
     JupyterSettings::register(cx);
+    let settings = JupyterSettings::get_global(cx);
+
+    if !settings.enabled {
+        return;
+    }
+
+    set_dispatcher(zed_dispatcher(cx));
 
     let runtime_manager = cx.new_model(|cx| RuntimeManager::new(fs.clone(), cx));
     RuntimeManager::set_global(runtime_manager.clone(), cx);
