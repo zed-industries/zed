@@ -12,9 +12,10 @@ use anyhow::Context;
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
+    display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::ScrollAnchor,
-    Editor, EditorEvent, ExcerptId, ExcerptRange,
+    DisplayPoint, Editor, EditorEvent, ExcerptId, ExcerptRange,
 };
 use file_icons::FileIcons;
 use gpui::{
@@ -33,7 +34,7 @@ use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
 use project::{File, Fs, Item, Project};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use util::{ResultExt, TryFutureExt};
+use util::{RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
@@ -1149,6 +1150,8 @@ impl OutlinePanel {
             return;
         }
         let Some(entry_with_selection) = self.location_for_editor_selection(editor, cx) else {
+            self.selected_entry = None;
+            cx.notify();
             return;
         };
         let related_buffer_entry = match entry_with_selection {
@@ -2010,32 +2013,105 @@ impl OutlinePanel {
             .selections
             .newest::<language::Point>(cx)
             .head();
+        let editor_snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx));
         let multi_buffer = editor.read(cx).buffer();
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-        let selection = multi_buffer_snapshot.anchor_before(selection);
-        let excerpt_id = selection.excerpt_id;
-        let buffer_snapshot = multi_buffer_snapshot.buffer_for_excerpt(selection.excerpt_id)?;
-        let buffer_id = buffer_snapshot.remote_id();
+        let (excerpt_id, buffer, _) = editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .excerpt_containing(selection, cx)?;
+        let buffer_id = buffer.read(cx).remote_id();
+        let selection_display_point = selection.to_display_point(&editor_snapshot);
 
-        let outline_item = self
+        let excerpt_outlines = self
             .excerpts
             .get(&buffer_id)
             .and_then(|excerpts| excerpts.get(&excerpt_id))
             .into_iter()
             .flat_map(|excerpt| excerpt.iter_outlines())
-            .filter(|outline_item| {
-                range_contains(&outline_item.range, selection.text_anchor, buffer_snapshot)
+            .flat_map(|outline| {
+                let start = multi_buffer_snapshot
+                    .anchor_in_excerpt(excerpt_id, outline.range.start)?
+                    .to_display_point(&editor_snapshot);
+                let end = multi_buffer_snapshot
+                    .anchor_in_excerpt(excerpt_id, outline.range.end)?
+                    .to_display_point(&editor_snapshot);
+                Some((start..end, outline))
             })
-            .min_by_key(|outline| {
-                let range = outline.range.start.offset..outline.range.end.offset;
-                let cursor_offset = selection.text_anchor.offset as isize;
-                let distance_to_closest_endpoint = cmp::min(
-                    (range.start as isize - cursor_offset).abs(),
-                    (range.end as isize - cursor_offset).abs(),
-                );
-                distance_to_closest_endpoint
+            .collect::<Vec<_>>();
+
+        let mut matching_outline_indices = Vec::new();
+        let mut children = HashMap::default();
+        let mut parents_stack = Vec::<(&Range<DisplayPoint>, &&Outline, usize)>::new();
+
+        for (i, (outline_range, outline)) in excerpt_outlines.iter().enumerate() {
+            if outline_range
+                .to_inclusive()
+                .contains(&selection_display_point)
+            {
+                matching_outline_indices.push(i);
+            } else if (outline_range.start.row()..outline_range.end.row())
+                .to_inclusive()
+                .contains(&selection_display_point.row())
+            {
+                matching_outline_indices.push(i);
+            }
+
+            while let Some((parent_range, parent_outline, _)) = parents_stack.last() {
+                if parent_outline.depth >= outline.depth
+                    || !parent_range.contains(&outline_range.start)
+                {
+                    parents_stack.pop();
+                } else {
+                    break;
+                }
+            }
+            if let Some((_, _, parent_index)) = parents_stack.last_mut() {
+                children
+                    .entry(*parent_index)
+                    .or_insert_with(Vec::new)
+                    .push(i);
+            }
+            parents_stack.push((outline_range, outline, i));
+        }
+
+        let outline_item = matching_outline_indices
+            .into_iter()
+            .flat_map(|i| Some((i, excerpt_outlines.get(i)?)))
+            .filter(|(i, _)| {
+                children
+                    .get(i)
+                    .map(|children| {
+                        children.iter().all(|child_index| {
+                            excerpt_outlines
+                                .get(*child_index)
+                                .map(|(child_range, _)| child_range.start > selection_display_point)
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(true)
             })
+            .min_by_key(|(_, (outline_range, outline))| {
+                let distance_from_start = if outline_range.start > selection_display_point {
+                    outline_range.start - selection_display_point
+                } else {
+                    selection_display_point - outline_range.start
+                };
+                let distance_from_end = if outline_range.end > selection_display_point {
+                    outline_range.end - selection_display_point
+                } else {
+                    selection_display_point - outline_range.end
+                };
+
+                (
+                    cmp::Reverse(outline.depth),
+                    distance_from_start + distance_from_end,
+                )
+            })
+            .map(|(_, (_, outline))| *outline)
             .cloned();
+
         let closest_container = match outline_item {
             Some(outline) => EntryOwned::Outline(buffer_id, excerpt_id, outline),
             None => self
@@ -2670,15 +2746,6 @@ fn subscribe_for_editor_events(
             _ => {}
         },
     )
-}
-
-fn range_contains(
-    range: &Range<language::Anchor>,
-    anchor: language::Anchor,
-    buffer_snapshot: &language::BufferSnapshot,
-) -> bool {
-    range.start.cmp(&anchor, buffer_snapshot).is_le()
-        && range.end.cmp(&anchor, buffer_snapshot).is_ge()
 }
 
 fn empty_icon() -> AnyElement {

@@ -1021,6 +1021,22 @@ impl Debug for DisplayPoint {
     }
 }
 
+impl Add for DisplayPoint {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self::Output {
+        DisplayPoint(BlockPoint(self.0 .0 + other.0 .0))
+    }
+}
+
+impl Sub for DisplayPoint {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self::Output {
+        DisplayPoint(BlockPoint(self.0 .0 - other.0 .0))
+    }
+}
+
 #[derive(Debug, Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq, Deserialize, Hash)]
 #[serde(transparent)]
 pub struct DisplayRow(pub u32);
