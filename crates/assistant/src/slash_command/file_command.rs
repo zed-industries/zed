@@ -1,16 +1,18 @@
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
+use fs::Fs;
 use fuzzy::PathMatch;
-use gpui::{AppContext, RenderOnce, SharedString, Task, View, WeakView};
+use gpui::{AppContext, Model, RenderOnce, SharedString, Task, View, WeakView};
 use language::{LineEnding, LspAdapterDelegate};
-use project::PathMatchCandidateSet;
+use project::{PathMatchCandidateSet, Worktree};
 use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
 use ui::{prelude::*, ButtonLike, ElevationIndex};
+use util::{paths::PathMatcher, ResultExt};
 use workspace::Workspace;
 
 pub(crate) struct FileSlashCommand;
@@ -58,7 +60,7 @@ impl FileSlashCommand {
                             .root_entry()
                             .map_or(false, |entry| entry.is_ignored),
                         include_root_name: true,
-                        candidates: project::Candidates::Files,
+                        candidates: project::Candidates::Entries,
                     }
                 })
                 .collect::<Vec<_>>();
@@ -139,58 +141,119 @@ impl SlashCommand for FileSlashCommand {
             return Task::ready(Err(anyhow!("missing path")));
         };
 
-        let path = PathBuf::from(argument);
-        let abs_path = workspace
-            .read(cx)
-            .visible_worktrees(cx)
-            .find_map(|worktree| {
-                let worktree = worktree.read(cx);
-                let worktree_root_path = Path::new(worktree.root_name());
-                let relative_path = path.strip_prefix(worktree_root_path).ok()?;
-                worktree.absolutize(&relative_path).ok()
-            });
-
-        let Some(abs_path) = abs_path else {
-            return Task::ready(Err(anyhow!("missing path")));
-        };
-
         let fs = workspace.read(cx).app_state().fs.clone();
-        let argument = argument.to_string();
-        let text = cx.background_executor().spawn(async move {
-            let mut content = fs.load(&abs_path).await?;
-            LineEnding::normalize(&mut content);
-            let mut output = String::with_capacity(argument.len() + content.len() + 9);
-            output.push_str("```");
-            output.push_str(&argument);
-            output.push('\n');
-            output.push_str(&content);
-            if !output.ends_with('\n') {
-                output.push('\n');
-            }
-            output.push_str("```");
-            anyhow::Ok(output)
-        });
+        let task = collect_files(
+            workspace.read(cx).visible_worktrees(cx).collect(),
+            argument,
+            fs,
+            cx,
+        );
+
         cx.foreground_executor().spawn(async move {
-            let text = text.await?;
-            let range = 0..text.len();
+            let (text, ranges) = task.await?;
             Ok(SlashCommandOutput {
                 text,
-                sections: vec![SlashCommandOutputSection {
-                    range,
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        FilePlaceholder {
-                            path: Some(path.clone()),
-                            line_range: None,
-                            id,
-                            unfold,
-                        }
-                        .into_any_element()
-                    }),
-                }],
+                sections: ranges
+                    .into_iter()
+                    .map(|(range, path)| SlashCommandOutputSection {
+                        range,
+                        render_placeholder: Arc::new(move |id, unfold, _cx| {
+                            FilePlaceholder {
+                                path: Some(path.clone()),
+                                line_range: None,
+                                id,
+                                unfold,
+                            }
+                            .into_any_element()
+                        }),
+                    })
+                    .collect(),
                 run_commands_in_text: false,
             })
         })
     }
+}
+
+fn collect_files(
+    worktrees: Vec<Model<Worktree>>,
+    glob_input: &str,
+    fs: Arc<dyn Fs>,
+    cx: &mut AppContext,
+) -> Task<Result<(String, Vec<(Range<usize>, PathBuf)>)>> {
+    let Ok(matcher) = PathMatcher::new(glob_input) else {
+        return Task::ready(Err(anyhow!("invalid path")));
+    };
+
+    let path = PathBuf::try_from(glob_input).ok();
+    let file_path = if let Some(path) = path {
+        worktrees.iter().find_map(|worktree| {
+            let worktree = worktree.read(cx);
+            let worktree_root_path = Path::new(worktree.root_name());
+            let relative_path = path.strip_prefix(worktree_root_path).ok()?;
+            worktree.absolutize(&relative_path).ok()
+        })
+    } else {
+        None
+    };
+
+    if let Some(abs_path) = file_path {
+        if abs_path.is_file() {
+            let filename = abs_path.to_string_lossy().to_string();
+            return cx.background_executor().spawn(async move {
+                let text =
+                    collect_file_content(fs, filename.clone(), abs_path.clone().into()).await?;
+                let text_range = 0..text.len();
+                Ok((text, vec![(text_range, abs_path)]))
+            });
+        }
+    }
+
+    let snapshots = worktrees
+        .iter()
+        .map(|worktree| worktree.read(cx).snapshot())
+        .collect::<Vec<_>>();
+    cx.background_executor().spawn(async move {
+        let mut text = String::new();
+        let mut ranges = Vec::new();
+        for snapshot in snapshots {
+            for entry in snapshot.entries(false, 0) {
+                if !matcher.is_match(&entry.path) {
+                    continue;
+                }
+                if entry.is_file() {
+                    if let Some(abs_path) = snapshot.absolutize(&entry.path).log_err() {
+                        let prev_len = text.len();
+                        let filename = entry.path.to_string_lossy().to_string();
+                        let file_contents =
+                            collect_file_content(fs.clone(), filename, abs_path.into()).await?;
+                        text.push_str(&file_contents);
+                        ranges.push((prev_len..text.len(), entry.path.to_path_buf()));
+                        text.push('\n');
+                    }
+                }
+            }
+        }
+        Ok((text, ranges))
+    })
+}
+
+async fn collect_file_content(
+    fs: Arc<dyn Fs>,
+    filename: String,
+    abs_path: Arc<Path>,
+) -> Result<String> {
+    let mut content = fs.load(&abs_path).await?;
+    LineEnding::normalize(&mut content);
+    let mut output = String::with_capacity(filename.len() + content.len() + 9);
+    output.push_str("```");
+    output.push_str(&filename);
+    output.push('\n');
+    output.push_str(&content);
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output.push_str("```");
+    anyhow::Ok(output)
 }
 
 #[derive(IntoElement)]
