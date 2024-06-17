@@ -57,6 +57,8 @@ fn main() {
 
         let mut res = winresource::WindowsResource::new();
         res.set_icon(icon.to_str().unwrap());
+        res.set("FileDescription", "Zed");
+        res.set("ProductName", "Zed");
 
         if let Err(e) = res.compile() {
             eprintln!("{}", e);
