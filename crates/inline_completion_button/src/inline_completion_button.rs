@@ -15,7 +15,7 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use supermaven::{AccountStatus, Supermaven};
-use util::{paths, ResultExt};
+use util::ResultExt;
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,

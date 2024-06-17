@@ -387,6 +387,7 @@ dependencies = [
  "open_ai",
  "ordered-float 2.10.0",
  "parking_lot",
+ "paths",
  "picker",
  "project",
  "rand 0.8.5",
@@ -2280,6 +2281,7 @@ dependencies = [
  "log",
  "once_cell",
  "parking_lot",
+ "paths",
  "postage",
  "rand 0.8.5",
  "release_channel",
@@ -2669,6 +2671,7 @@ dependencies = [
  "menu",
  "node_runtime",
  "parking_lot",
+ "paths",
  "project",
  "rpc",
  "serde",
@@ -3223,6 +3226,7 @@ dependencies = [
  "indoc",
  "lazy_static",
  "log",
+ "paths",
  "release_channel",
  "smol",
  "sqlez",
@@ -3391,15 +3395,6 @@ dependencies = [
  "const-oid",
  "crypto-common",
  "subtle",
-]
-
-[[package]]
-name = "dirs"
-version = "3.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30baa043103c9d0c2a57cf537cc2f35623889dc0d405e6c3cccfadbc81c71309"
-dependencies = [
- "dirs-sys 0.3.7",
 ]
 
 [[package]]
@@ -3856,6 +3851,7 @@ dependencies = [
  "lsp",
  "node_runtime",
  "parking_lot",
+ "paths",
  "project",
  "release_channel",
  "schemars",
@@ -4312,6 +4308,7 @@ dependencies = [
  "notify",
  "objc",
  "parking_lot",
+ "paths",
  "rope",
  "serde",
  "serde_json",
@@ -5445,6 +5442,7 @@ dependencies = [
  "indoc",
  "language",
  "lsp",
+ "paths",
  "project",
  "serde_json",
  "settings",
@@ -5898,6 +5896,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "paths",
  "project",
  "regex",
  "rope",
@@ -6667,6 +6666,7 @@ dependencies = [
  "futures 0.3.28",
  "http 0.1.0",
  "log",
+ "paths",
  "semver",
  "serde",
  "serde_json",
@@ -7403,6 +7403,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "paths"
+version = "0.1.0"
+dependencies = [
+ "dirs 4.0.0",
+ "lazy_static",
+ "util",
+]
+
+[[package]]
 name = "pbkdf2"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7797,6 +7806,7 @@ dependencies = [
  "lsp",
  "node_runtime",
  "parking_lot",
+ "paths",
  "serde",
  "serde_json",
  "util",
@@ -7929,6 +7939,7 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "pathdiff",
+ "paths",
  "postage",
  "prettier",
  "pretty_assertions",
@@ -8871,6 +8882,7 @@ dependencies = [
  "indexmap 1.9.3",
  "indoc",
  "parking_lot",
+ "paths",
  "pretty_assertions",
  "serde",
  "strum",
@@ -9431,6 +9443,7 @@ dependencies = [
  "gpui",
  "indoc",
  "lazy_static",
+ "paths",
  "pretty_assertions",
  "release_channel",
  "rust-embed",
@@ -10266,6 +10279,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.28",
  "http 0.1.0",
+ "paths",
  "serde",
  "serde_json",
  "smol",
@@ -11709,7 +11723,7 @@ dependencies = [
  "anyhow",
  "async-fs 1.6.0",
  "collections",
- "dirs 3.0.2",
+ "dirs 4.0.0",
  "futures 0.3.28",
  "futures-lite 1.13.0",
  "git2",
@@ -13480,6 +13494,7 @@ dependencies = [
  "outline",
  "outline_panel",
  "parking_lot",
+ "paths",
  "profiling",
  "project",
  "project_panel",

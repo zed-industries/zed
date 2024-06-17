@@ -40,7 +40,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
-use util::{maybe, parse_env_output, paths, with_clone, ResultExt, TryFutureExt};
+use util::{maybe, parse_env_output, with_clone, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
@@ -668,12 +668,12 @@ async fn restore_or_create_workspace(
 
 fn init_paths() -> anyhow::Result<()> {
     for path in [
-        &*util::paths::CONFIG_DIR,
-        &*util::paths::EXTENSIONS_DIR,
-        &*util::paths::LANGUAGES_DIR,
-        &*util::paths::DB_DIR,
-        &*util::paths::LOGS_DIR,
-        &*util::paths::TEMP_DIR,
+        &*paths::CONFIG_DIR,
+        &*paths::EXTENSIONS_DIR,
+        &*paths::LANGUAGES_DIR,
+        &*paths::DB_DIR,
+        &*paths::LOGS_DIR,
+        &*paths::TEMP_DIR,
     ]
     .iter()
     {

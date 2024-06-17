@@ -5,11 +5,12 @@ use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, Model, ModelContext, Task};
+use paths::CONTEXTS_DIR;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{cmp::Reverse, ffi::OsStr, path::PathBuf, sync::Arc, time::Duration};
 use ui::Context;
-use util::{paths::CONTEXTS_DIR, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt};
 
 #[derive(Serialize, Deserialize)]
 pub struct SavedMessage {

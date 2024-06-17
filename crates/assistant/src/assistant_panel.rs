@@ -40,6 +40,7 @@ use language::{
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
+use paths::CONTEXTS_DIR;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
 use rustdoc::{CrateName, RustdocStore};
@@ -59,7 +60,7 @@ use ui::{
     prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tab, TabBar, Tooltip,
 };
-use util::{paths::CONTEXTS_DIR, post_inc, ResultExt, TryFutureExt};
+use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::NewFile;
 use workspace::{

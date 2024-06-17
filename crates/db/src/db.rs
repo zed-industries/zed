@@ -10,7 +10,7 @@ pub use lazy_static;
 pub use smol;
 pub use sqlez;
 pub use sqlez_macros;
-pub use util::paths::DB_DIR;
+pub use paths::DB_DIR;
 
 use release_channel::ReleaseChannel;
 pub use release_channel::RELEASE_CHANNEL;

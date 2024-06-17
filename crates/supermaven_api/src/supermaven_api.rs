@@ -2,12 +2,12 @@ use anyhow::{anyhow, Context, Result};
 use futures::io::BufReader;
 use futures::{AsyncReadExt, Future};
 use http::{AsyncBody, HttpClient, Request as HttpRequest};
+use paths::SUPERMAVEN_DIR;
 use serde::{Deserialize, Serialize};
 use smol::fs::{self, File};
 use smol::stream::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use util::paths::SUPERMAVEN_DIR;
 
 #[derive(Serialize)]
 pub struct GetExternalUserRequest {

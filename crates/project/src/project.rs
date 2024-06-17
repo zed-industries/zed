@@ -66,6 +66,9 @@ use lsp::{
 use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
+use paths::{
+    LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
+};
 use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
@@ -107,11 +110,8 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
 use unicase::UniCase;
 use util::{
-    debug_panic, defer, maybe, merge_json_value_into, parse_env_output,
-    paths::{
-        LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
-    },
-    post_inc, NumericPrefixWithSuffix, ResultExt, TryFutureExt as _,
+    debug_panic, defer, maybe, merge_json_value_into, parse_env_output, post_inc,
+    NumericPrefixWithSuffix, ResultExt, TryFutureExt as _,
 };
 use worktree::{CreatedEntry, RemoteWorktreeClient, Snapshot, Traversal};
 

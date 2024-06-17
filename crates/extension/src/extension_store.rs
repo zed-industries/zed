@@ -36,6 +36,7 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
+use paths::EXTENSIONS_DIR;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
@@ -51,7 +52,7 @@ use std::{
 };
 use theme::{ThemeRegistry, ThemeSettings};
 use url::Url;
-use util::{maybe, paths::EXTENSIONS_DIR, ResultExt};
+use util::{maybe, ResultExt};
 use wasm_host::{
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
     WasmExtension, WasmHost,

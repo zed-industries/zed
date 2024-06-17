@@ -12,8 +12,8 @@ use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, Task, UpdateGloba
 use heed::types::SerdeBincode;
 use heed::Database;
 use parking_lot::RwLock;
+use paths::SUPPORT_DIR;
 use serde::{Deserialize, Serialize};
-use util::paths::SUPPORT_DIR;
 use util::ResultExt;
 
 use crate::indexer::{RustdocIndexer, RustdocProvider};
