@@ -12049,7 +12049,7 @@ async fn test_active_indent_guide_non_matching_indent(cx: &mut gpui::TestAppCont
 }
 
 #[gpui::test]
-fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
+fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|cx| {
@@ -12070,7 +12070,7 @@ fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
                 callback: Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
             }
 
-            let flap = Flap::new(
+            let crease = Crease::new(
                 range,
                 FoldPlaceholder::test(),
                 {
@@ -12087,7 +12087,7 @@ fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
                 |_row, _folded, _cx| div(),
             );
 
-            editor.insert_flaps(Some(flap), cx);
+            editor.insert_creases(Some(crease), cx);
             let snapshot = editor.snapshot(cx);
             let _div = snapshot.render_fold_toggle(MultiBufferRow(1), false, cx.view().clone(), cx);
             snapshot
