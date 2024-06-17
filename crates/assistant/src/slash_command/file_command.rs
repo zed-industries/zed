@@ -192,7 +192,7 @@ fn collect_files(
     };
 
     let path = PathBuf::try_from(glob_input).ok();
-    let file_path = if let Some(path) = path {
+    let file_path = if let Some(path) = &path {
         worktrees.iter().find_map(|worktree| {
             let worktree = worktree.read(cx);
             let worktree_root_path = Path::new(worktree.root_name());
@@ -205,13 +205,19 @@ fn collect_files(
 
     if let Some(abs_path) = file_path {
         if abs_path.is_file() {
-            let filename = abs_path.to_string_lossy().to_string();
+            let filename = path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
             return cx.background_executor().spawn(async move {
                 let mut text = String::new();
                 collect_file_content(&mut text, fs, filename.clone(), abs_path.clone().into())
                     .await?;
                 let text_range = 0..text.len();
-                Ok((text, vec![(text_range, abs_path, EntryType::File)]))
+                Ok((
+                    text,
+                    vec![(text_range, path.unwrap_or_default(), EntryType::File)],
+                ))
             });
         }
     }
@@ -225,6 +231,7 @@ fn collect_files(
         let mut ranges = Vec::new();
         for snapshot in snapshots {
             let mut directory_stack: Vec<(Arc<Path>, usize)> = Vec::new();
+            let mut folded_directory_names_stack = Vec::new();
             for entry in snapshot.entries(false, 0) {
                 let mut path_buf = PathBuf::new();
                 path_buf.push(snapshot.root_name());
@@ -253,8 +260,21 @@ fn collect_files(
                     .unwrap_or_default();
 
                 if entry.is_dir() {
+                    // Auto-fold directories that contain no files
+                    let mut child_entries = snapshot.child_entries(&entry.path);
+                    if let Some(child) = child_entries.next() {
+                        if child_entries.next().is_none() && child.kind.is_dir() {
+                            folded_directory_names_stack.push(filename.to_string());
+                            continue;
+                        }
+                    }
+                    let prefix_paths = folded_directory_names_stack.drain(..).as_slice().join("/");
                     directory_stack.push((entry.path.clone(), text.len()));
-                    text.push_str(filename);
+                    if prefix_paths.is_empty() {
+                        text.push_str(filename);
+                    } else {
+                        text.push_str(format!("{}/{}", prefix_paths, filename).as_str());
+                    }
                     text.push('\n');
                 } else if entry.is_file() {
                     if let Some(abs_path) = snapshot.absolutize(&entry.path).log_err() {
@@ -268,7 +288,7 @@ fn collect_files(
                         .await?;
                         ranges.push((
                             prev_len..text.len(),
-                            entry.path.to_path_buf(),
+                            PathBuf::from(filename),
                             EntryType::File,
                         ));
                         text.push('\n');
@@ -277,7 +297,10 @@ fn collect_files(
             }
 
             while let Some((dir, start)) = directory_stack.pop() {
-                ranges.push((start..text.len(), dir.to_path_buf(), EntryType::Directory));
+                let mut root_path = PathBuf::new();
+                root_path.push(snapshot.root_name());
+                root_path.push(&dir);
+                ranges.push((start..text.len(), root_path, EntryType::Directory));
             }
         }
         Ok((text, ranges))
@@ -290,7 +313,6 @@ async fn collect_file_content(
     filename: String,
     abs_path: Arc<Path>,
 ) -> Result<()> {
-    dbg!(&abs_path);
     let mut content = fs.load(&abs_path).await?;
     LineEnding::normalize(&mut content);
     buffer.reserve(filename.len() + content.len() + 9);
