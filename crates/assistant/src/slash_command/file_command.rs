@@ -267,7 +267,13 @@ fn collect_files(
                     let mut child_entries = snapshot.child_entries(&entry.path);
                     if let Some(child) = child_entries.next() {
                         if child_entries.next().is_none() && child.kind.is_dir() {
-                            folded_directory_names_stack.push(filename.to_string());
+                            if is_top_level_directory {
+                                is_top_level_directory = false;
+                                folded_directory_names_stack
+                                    .push(path_buf.to_string_lossy().to_string());
+                            } else {
+                                folded_directory_names_stack.push(filename.to_string());
+                            }
                             continue;
                         }
                     } else {
