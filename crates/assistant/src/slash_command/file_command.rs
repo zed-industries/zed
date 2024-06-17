@@ -269,6 +269,10 @@ fn collect_files(
                             folded_directory_names_stack.push(filename.to_string());
                             continue;
                         }
+                    } else {
+                        // Skip empty directories
+                        folded_directory_names_stack.clear();
+                        continue;
                     }
                     let prefix_paths = folded_directory_names_stack.drain(..).as_slice().join("/");
                     let entry_start = text.len();
