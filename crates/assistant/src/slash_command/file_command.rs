@@ -155,11 +155,12 @@ impl SlashCommand for FileSlashCommand {
                 text,
                 sections: ranges
                     .into_iter()
-                    .map(|(range, path)| SlashCommandOutputSection {
+                    .map(|(range, path, entry_type)| SlashCommandOutputSection {
                         range,
                         render_placeholder: Arc::new(move |id, unfold, _cx| {
-                            FilePlaceholder {
+                            EntryPlaceholder {
                                 path: Some(path.clone()),
+                                is_directory: entry_type == EntryType::Directory,
                                 line_range: None,
                                 id,
                                 unfold,
@@ -174,12 +175,18 @@ impl SlashCommand for FileSlashCommand {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum EntryType {
+    File,
+    Directory,
+}
+
 fn collect_files(
     worktrees: Vec<Model<Worktree>>,
     glob_input: &str,
     fs: Arc<dyn Fs>,
     cx: &mut AppContext,
-) -> Task<Result<(String, Vec<(Range<usize>, PathBuf)>)>> {
+) -> Task<Result<(String, Vec<(Range<usize>, PathBuf, EntryType)>)>> {
     let Ok(matcher) = PathMatcher::new(glob_input) else {
         return Task::ready(Err(anyhow!("invalid path")));
     };
@@ -200,10 +207,11 @@ fn collect_files(
         if abs_path.is_file() {
             let filename = abs_path.to_string_lossy().to_string();
             return cx.background_executor().spawn(async move {
-                let text =
-                    collect_file_content(fs, filename.clone(), abs_path.clone().into()).await?;
+                let mut text = String::new();
+                collect_file_content(&mut text, fs, filename.clone(), abs_path.clone().into())
+                    .await?;
                 let text_range = 0..text.len();
-                Ok((text, vec![(text_range, abs_path)]))
+                Ok((text, vec![(text_range, abs_path, EntryType::File)]))
             });
         }
     }
@@ -216,21 +224,60 @@ fn collect_files(
         let mut text = String::new();
         let mut ranges = Vec::new();
         for snapshot in snapshots {
+            let mut directory_stack: Vec<(Arc<Path>, usize)> = Vec::new();
             for entry in snapshot.entries(false, 0) {
-                if !matcher.is_match(&entry.path) {
+                let mut path_buf = PathBuf::new();
+                path_buf.push(snapshot.root_name());
+                path_buf.push(&entry.path);
+                if !matcher.is_match(&path_buf) {
                     continue;
                 }
-                if entry.is_file() {
+
+                while let Some((dir, _)) = directory_stack.last() {
+                    if entry.path.starts_with(dir) {
+                        break;
+                    }
+                    let (dir, start) = directory_stack.pop().unwrap();
+                    ranges.push((
+                        start..text.len().saturating_sub(1),
+                        dir.to_path_buf(),
+                        EntryType::Directory,
+                    ));
+                }
+
+                let filename = entry
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap_or_default();
+
+                if entry.is_dir() {
+                    directory_stack.push((entry.path.clone(), text.len()));
+                    text.push_str(filename);
+                    text.push('\n');
+                } else if entry.is_file() {
                     if let Some(abs_path) = snapshot.absolutize(&entry.path).log_err() {
                         let prev_len = text.len();
-                        let filename = entry.path.to_string_lossy().to_string();
-                        let file_contents =
-                            collect_file_content(fs.clone(), filename, abs_path.into()).await?;
-                        text.push_str(&file_contents);
-                        ranges.push((prev_len..text.len(), entry.path.to_path_buf()));
+                        collect_file_content(
+                            &mut text,
+                            fs.clone(),
+                            filename.to_string(),
+                            abs_path.into(),
+                        )
+                        .await?;
+                        ranges.push((
+                            prev_len..text.len(),
+                            entry.path.to_path_buf(),
+                            EntryType::File,
+                        ));
                         text.push('\n');
                     }
                 }
+            }
+
+            while let Some((dir, start)) = directory_stack.pop() {
+                ranges.push((start..text.len(), dir.to_path_buf(), EntryType::Directory));
             }
         }
         Ok((text, ranges))
@@ -238,33 +285,36 @@ fn collect_files(
 }
 
 async fn collect_file_content(
+    buffer: &mut String,
     fs: Arc<dyn Fs>,
     filename: String,
     abs_path: Arc<Path>,
-) -> Result<String> {
+) -> Result<()> {
+    dbg!(&abs_path);
     let mut content = fs.load(&abs_path).await?;
     LineEnding::normalize(&mut content);
-    let mut output = String::with_capacity(filename.len() + content.len() + 9);
-    output.push_str("```");
-    output.push_str(&filename);
-    output.push('\n');
-    output.push_str(&content);
-    if !output.ends_with('\n') {
-        output.push('\n');
+    buffer.reserve(filename.len() + content.len() + 9);
+    buffer.push_str("```");
+    buffer.push_str(&filename);
+    buffer.push('\n');
+    buffer.push_str(&content);
+    if !buffer.ends_with('\n') {
+        buffer.push('\n');
     }
-    output.push_str("```");
-    anyhow::Ok(output)
+    buffer.push_str("```");
+    anyhow::Ok(())
 }
 
 #[derive(IntoElement)]
-pub struct FilePlaceholder {
+pub struct EntryPlaceholder {
     pub path: Option<PathBuf>,
+    pub is_directory: bool,
     pub line_range: Option<Range<u32>>,
     pub id: ElementId,
     pub unfold: Arc<dyn Fn(&mut WindowContext)>,
 }
 
-impl RenderOnce for FilePlaceholder {
+impl RenderOnce for EntryPlaceholder {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         let unfold = self.unfold;
         let title = if let Some(path) = self.path.as_ref() {
@@ -272,11 +322,16 @@ impl RenderOnce for FilePlaceholder {
         } else {
             SharedString::from("untitled")
         };
+        let icon = if self.is_directory {
+            IconName::Folder
+        } else {
+            IconName::File
+        };
 
         ButtonLike::new(self.id)
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::File))
+            .child(Icon::new(icon))
             .child(Label::new(title))
             .when_some(self.line_range, |button, line_range| {
                 button.child(Label::new(":")).child(Label::new(format!(

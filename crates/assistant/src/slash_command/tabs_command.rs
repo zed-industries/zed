@@ -1,4 +1,4 @@
-use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
+use super::{file_command::EntryPlaceholder, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
 use collections::HashMap;
@@ -98,9 +98,10 @@ impl SlashCommand for TabsSlashCommand {
                     sections.push(SlashCommandOutputSection {
                         range: section_start_ix..section_end_ix,
                         render_placeholder: Arc::new(move |id, unfold, _| {
-                            FilePlaceholder {
+                            EntryPlaceholder {
                                 id,
                                 path: full_path.clone(),
+                                is_directory: false,
                                 line_range: None,
                                 unfold,
                             }

@@ -1,4 +1,4 @@
-use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
+use super::{file_command::EntryPlaceholder, SlashCommand, SlashCommandOutput};
 use anyhow::Result;
 use assistant_slash_command::SlashCommandOutputSection;
 use gpui::{AppContext, Task, WeakView};
@@ -156,9 +156,10 @@ impl SlashCommand for SearchSlashCommand {
                         sections.push(SlashCommandOutputSection {
                             range: section_start_ix..section_end_ix,
                             render_placeholder: Arc::new(move |id, unfold, _| {
-                                FilePlaceholder {
+                                EntryPlaceholder {
                                     id,
                                     path: Some(full_path.clone()),
+                                    is_directory: false,
                                     line_range: Some(start_line..end_line),
                                     unfold,
                                 }

@@ -1,4 +1,4 @@
-use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
+use super::{file_command::EntryPlaceholder, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
 use editor::Editor;
@@ -87,9 +87,10 @@ impl SlashCommand for ActiveSlashCommand {
                     sections: vec![SlashCommandOutputSection {
                         range,
                         render_placeholder: Arc::new(move |id, unfold, _| {
-                            FilePlaceholder {
+                            EntryPlaceholder {
                                 id,
                                 path: path.clone(),
+                                is_directory: false,
                                 line_range: None,
                                 unfold,
                             }
