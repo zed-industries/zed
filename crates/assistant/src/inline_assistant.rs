@@ -335,24 +335,32 @@ impl InlineAssistant {
 
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
         let assist_range = assist.codegen.read(cx).range().to_offset(&buffer);
-        let editor = editor.read(cx);
-        if let Some(decorations) = assist.editor_decorations.as_ref() {
-            if editor.selections.count() == 1 {
-                let selection = editor.selections.newest::<usize>(cx);
-                if assist_range.contains(&selection.start) && assist_range.contains(&selection.end)
-                {
-                    decorations.prompt_editor.update(cx, |prompt_editor, cx| {
-                        prompt_editor.editor.update(cx, |editor, cx| {
-                            editor.select_all(&SelectAll, cx);
-                            editor.focus(cx);
+        let propagate = editor.update(cx, |editor, cx| {
+            if let Some(decorations) = assist.editor_decorations.as_ref() {
+                if editor.selections.count() == 1 {
+                    let selection = editor.selections.newest::<usize>(cx);
+                    if assist_range.contains(&selection.start)
+                        && assist_range.contains(&selection.end)
+                    {
+                        editor.change_selections(Some(Autoscroll::newest()), cx, |selections| {
+                            selections.select_ranges([assist_range.start..assist_range.start]);
                         });
-                    });
-                    return;
+                        decorations.prompt_editor.update(cx, |prompt_editor, cx| {
+                            prompt_editor.editor.update(cx, |prompt_editor, cx| {
+                                prompt_editor.select_all(&SelectAll, cx);
+                                prompt_editor.focus(cx);
+                            });
+                        });
+                        return false;
+                    }
                 }
             }
-        }
+            true
+        });
 
-        cx.propagate();
+        if propagate {
+            cx.propagate();
+        }
     }
 
     fn handle_editor_event(
