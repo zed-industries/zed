@@ -86,7 +86,9 @@ pub struct EasyMotion {
 impl fmt::Debug for EasyMotion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EasyMotion")
-            .field("editor_states(members)", &self.editor_states)
+            .field("keys", &self.keys)
+            .field("editor_states", &self.editor_states)
+            .field("subscriptions_count", &self.subscriptions.len())
             .finish()
     }
 }
