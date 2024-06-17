@@ -2541,45 +2541,16 @@ impl ContextEditor {
                             };
                             let render_trailer = {
                                 let command = command.clone();
-                                move |row: MultiBufferRow, _unfold, cx: &mut WindowContext| {
+                                move |row, _unfold, cx: &mut WindowContext| {
+                                    // TODO: In the future we should investigate how we can expose
+                                    // this as a hook on the `SlashCommand` trait so that we don't
+                                    // need to special-case it here.
                                     if command.name == "rustdoc" {
-                                        let rustdoc_store = RustdocStore::global(cx);
-
-                                        if let Some((crate_name, _)) = command
-                                            .argument
-                                            .as_ref()
-                                            .and_then(|arg| arg.split_once(':'))
-                                        {
-                                            let crate_name = CrateName::from(crate_name);
-                                            if rustdoc_store.is_indexing(&crate_name) {
-                                                return div()
-                                                    .id(("crates-being-indexed", row.0))
-                                                    .child(
-                                                        Icon::new(IconName::ArrowCircle)
-                                                            .with_animation(
-                                                                "arrow-circle",
-                                                                Animation::new(
-                                                                    Duration::from_secs(4),
-                                                                )
-                                                                .repeat(),
-                                                                |icon, delta| {
-                                                                    icon.transform(
-                                                                        Transformation::rotate(
-                                                                            percentage(delta),
-                                                                        ),
-                                                                    )
-                                                                },
-                                                            ),
-                                                    )
-                                                    .tooltip(move |cx| {
-                                                        Tooltip::text(
-                                                            format!("Indexing {crate_name}…"),
-                                                            cx,
-                                                        )
-                                                    })
-                                                    .into_any_element();
-                                            }
-                                        }
+                                        return render_rustdoc_slash_command_trailer(
+                                            row,
+                                            command.clone(),
+                                            cx,
+                                        );
                                     }
 
                                     Empty.into_any()
@@ -3212,6 +3183,37 @@ fn render_pending_slash_command_gutter_decoration(
     }
 
     icon.into_any_element()
+}
+
+fn render_rustdoc_slash_command_trailer(
+    row: MultiBufferRow,
+    command: PendingSlashCommand,
+    cx: &mut WindowContext,
+) -> AnyElement {
+    let rustdoc_store = RustdocStore::global(cx);
+
+    let Some((crate_name, _)) = command
+        .argument
+        .as_ref()
+        .and_then(|arg| arg.split_once(':'))
+    else {
+        return Empty.into_any();
+    };
+
+    let crate_name = CrateName::from(crate_name);
+    if !rustdoc_store.is_indexing(&crate_name) {
+        return Empty.into_any();
+    }
+
+    div()
+        .id(("crates-being-indexed", row.0))
+        .child(Icon::new(IconName::ArrowCircle).with_animation(
+            "arrow-circle",
+            Animation::new(Duration::from_secs(4)).repeat(),
+            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+        ))
+        .tooltip(move |cx| Tooltip::text(format!("Indexing {crate_name}…"), cx))
+        .into_any_element()
 }
 
 fn make_lsp_adapter_delegate(
