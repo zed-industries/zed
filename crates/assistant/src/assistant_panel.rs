@@ -56,8 +56,8 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use ui::{
-    popover_menu, prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding,
-    ListItem, ListItemSpacing, PopoverMenuHandle, Tab, TabBar, Tooltip,
+    prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tab, TabBar, Tooltip,
 };
 use util::{paths::CONTEXTS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -578,7 +578,7 @@ impl AssistantPanel {
     fn render_popover_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let assistant = cx.view().clone();
         let zoomed = self.zoomed;
-        popover_menu("assistant-popover")
+        PopoverMenu::new("assistant-popover")
             .trigger(IconButton::new("trigger", IconName::Menu))
             .menu(move |cx| {
                 let assistant = assistant.clone();
@@ -620,7 +620,7 @@ impl AssistantPanel {
             )
         });
 
-        popover_menu("inject-context-menu")
+        PopoverMenu::new("inject-context-menu")
             .trigger(IconButton::new("trigger", IconName::Quote).tooltip(|cx| {
                 Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
             }))
