@@ -417,6 +417,7 @@ pub struct LanguageServerStatus {
 #[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerProgress {
     pub is_disk_based_diagnostics_progress: bool,
+    pub is_cancellable: bool,
     pub message: Option<String>,
     pub percentage: Option<usize>,
     #[serde(skip_serializing)]
@@ -4198,14 +4199,16 @@ impl Project {
             let server = self.language_servers.get(&server_id);
             if let Some((server, status)) = server.zip(status) {
                 if let LanguageServerState::Running { server, .. } = server {
-                    for token in status.pending_work.keys() {
-                        server
-                            .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                WorkDoneProgressCancelParams {
-                                    token: lsp::NumberOrString::String(token.clone()),
-                                },
-                            )
-                            .ok();
+                    for (token, progress) in &status.pending_work {
+                        if progress.is_cancellable {
+                            server
+                                .notify::<lsp::notification::WorkDoneProgressCancel>(
+                                    WorkDoneProgressCancelParams {
+                                        token: lsp::NumberOrString::String(token.clone()),
+                                    },
+                                )
+                                .ok();
+                        }
                     }
                 }
             }
@@ -4358,6 +4361,7 @@ impl Project {
                     token.clone(),
                     LanguageServerProgress {
                         is_disk_based_diagnostics_progress,
+                        is_cancellable: report.cancellable.unwrap_or(false),
                         message: report.message.clone(),
                         percentage: report.percentage.map(|p| p as usize),
                         last_update_at: Instant::now(),
@@ -4372,6 +4376,7 @@ impl Project {
                         token.clone(),
                         LanguageServerProgress {
                             is_disk_based_diagnostics_progress,
+                            is_cancellable: report.cancellable.unwrap_or(false),
                             message: report.message.clone(),
                             percentage: report.percentage.map(|p| p as usize),
                             last_update_at: Instant::now(),
@@ -7458,6 +7463,7 @@ impl Project {
                                     id.to_string(),
                                     LanguageServerProgress {
                                         is_disk_based_diagnostics_progress: false,
+                                        is_cancellable: false,
                                         message: status.clone(),
                                         percentage: None,
                                         last_update_at: Instant::now(),
@@ -9119,6 +9125,7 @@ impl Project {
                         payload.token,
                         LanguageServerProgress {
                             is_disk_based_diagnostics_progress: false,
+                            is_cancellable: false,
                             message: payload.message,
                             percentage: payload.percentage.map(|p| p as usize),
                             last_update_at: Instant::now(),
@@ -9133,6 +9140,7 @@ impl Project {
                         payload.token,
                         LanguageServerProgress {
                             is_disk_based_diagnostics_progress: false,
+                            is_cancellable: false,
                             message: payload.message,
                             percentage: payload.percentage.map(|p| p as usize),
                             last_update_at: Instant::now(),

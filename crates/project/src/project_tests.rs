@@ -1492,10 +1492,26 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
 
     // Simulate diagnostics starting to update.
     let mut fake_server = fake_servers.next().await.unwrap();
-    fake_server.start_progress(progress_token).await;
+    fake_server
+        .start_progress_with(
+            "another-token",
+            lsp::WorkDoneProgressBegin {
+                cancellable: Some(false),
+                ..Default::default()
+            },
+        )
+        .await;
+    fake_server
+        .start_progress_with(
+            progress_token,
+            lsp::WorkDoneProgressBegin {
+                cancellable: Some(true),
+                ..Default::default()
+            },
+        )
+        .await;
     cx.executor().run_until_parked();
 
-    // Cancel language server work
     project.update(cx, |project, cx| {
         project.cancel_language_server_work_for_buffers([buffer.clone()], cx)
     });
