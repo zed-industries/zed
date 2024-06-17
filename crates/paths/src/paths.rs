@@ -1,4 +1,7 @@
+//! Paths to locations used by Zed.
+
 use std::path::{Path, PathBuf};
+
 use util::paths::HOME;
 
 lazy_static::lazy_static! {
