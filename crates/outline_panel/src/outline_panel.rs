@@ -1769,8 +1769,10 @@ impl OutlinePanel {
                             .into_iter()
                             .map(|(worktree_id, (worktree_snapshot, entries))| {
                                 let mut entries = entries.into_iter().collect::<Vec<_>>();
-                                project::sort_worktree_entries(&mut entries);
+                                // For a proper git status propagation, we have to keep the entries sorted lexicographically.
+                                entries.sort_by(|a, b| a.path.as_ref().cmp(b.path.as_ref()));
                                 worktree_snapshot.propagate_git_statuses(&mut entries);
+                                project::sort_worktree_entries(&mut entries);
                                 (worktree_id, entries)
                             })
                             .flat_map(|(worktree_id, entries)| {
