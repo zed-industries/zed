@@ -2,7 +2,7 @@ use anyhow::Result;
 use collections::HashMap;
 use itertools::Itertools;
 use schemars::JsonSchema;
-use search::word_starts_fold;
+use search::word_starts;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use workspace::Workspace;
@@ -106,7 +106,7 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-fn active_editor_views(workspace: &Workspace, cx: &AppContext) -> Vec<View<Editor>> {
+fn editor_views(workspace: &Workspace, cx: &AppContext) -> Vec<View<Editor>> {
     let panes = workspace.panes();
     panes
         .iter()
@@ -153,11 +153,11 @@ fn sync(init: bool, cx: &mut AppContext) {
                 .downcast::<Workspace>()
                 .unwrap()
                 .update(cx, |workspace, cx| {
-                    active_editor_views(workspace, cx)
+                    editor_views(workspace, cx)
                         .into_iter()
                         .flat_map(|editor| {
                             editor
-                                .update(cx, |editor, cx| register(editor, cx))
+                                .update(cx, |editor, cx| register_actions(editor, cx))
                                 .into_iter()
                         })
                         .collect_vec()
@@ -165,7 +165,7 @@ fn sync(init: bool, cx: &mut AppContext) {
                 .unwrap()
         };
         subs.push(cx.observe_new_views(|editor: &mut Editor, cx| {
-            let mut hi = register(editor, cx);
+            let mut hi = register_actions(editor, cx);
             EasyMotion::update(cx, |easy, _cx| easy.subscriptions.append(&mut hi));
         }));
 
@@ -174,7 +174,7 @@ fn sync(init: bool, cx: &mut AppContext) {
     }
 }
 
-fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> Vec<Subscription> {
+fn register_actions(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> Vec<Subscription> {
     let view = cx.view().downgrade();
     let mut subs = Vec::new();
     subs.push(editor.register_action(move |action: &Word, cx| {
@@ -311,15 +311,15 @@ impl EasyMotion {
 
     fn word(editor: View<Editor>, action: &Word, cx: &mut WindowContext) {
         let Word(direction) = *action;
-        EasyMotion::word_single_pane(editor, WordType::Word, direction, cx);
+        EasyMotion::word_impl(editor, WordType::Word, direction, cx);
     }
 
     fn full_word(editor: View<Editor>, action: &FullWord, cx: &mut WindowContext) {
         let FullWord(direction) = *action;
-        EasyMotion::word_single_pane(editor, WordType::FullWord, direction, cx);
+        EasyMotion::word_impl(editor, WordType::FullWord, direction, cx);
     }
 
-    fn word_single_pane(
+    fn word_impl(
         editor: View<Editor>,
         word_type: WordType,
         direction: Direction,
@@ -330,7 +330,7 @@ impl EasyMotion {
         let entity_id = editor.entity_id();
 
         let new_state = editor.update(cx, |editor, cx| {
-            let word_starts = word_starts_fold(word_type, direction, editor, cx);
+            let word_starts = word_starts(word_type, direction, editor, cx);
             Self::handle_new_matches(word_starts, direction, editor, cx)
         });
 

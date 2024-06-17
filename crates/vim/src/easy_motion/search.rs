@@ -21,17 +21,18 @@ pub fn manh_distance(point_1: &DisplayPoint, point_2: &DisplayPoint, x_bias: f32
         + (point_1.column() as i32 - point_2.column() as i32).abs() as f32
 }
 
-fn is_boundary(scope: &Option<LanguageScope>, full_word: bool, left: char, right: char) -> bool {
-    let left_kind = char_kind(&scope, left);
-    let right_kind = char_kind(&scope, right);
-
-    let found = if full_word {
-        left_kind == CharKind::Whitespace && right_kind == CharKind::Word
-    } else {
-        left_kind != right_kind && right_kind == CharKind::Word
-    };
-
-    found
+pub fn sort_matches_display(matches: &mut [DisplayPoint], cursor: &DisplayPoint) {
+    matches.sort_unstable_by(|a, b| {
+        let a_distance = manh_distance(a, cursor, 2.5);
+        let b_distance = manh_distance(b, cursor, 2.5);
+        if a_distance == b_distance {
+            Ordering::Equal
+        } else if a_distance < b_distance {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    });
 }
 
 // returns a display point range from the current selection to the start/end
@@ -92,22 +93,8 @@ pub fn row_starts(
         .collect_vec()
 }
 
-pub fn sort_matches_display(matches: &mut [DisplayPoint], cursor: &DisplayPoint) {
-    matches.sort_unstable_by(|a, b| {
-        let a_distance = manh_distance(a, cursor, 2.5);
-        let b_distance = manh_distance(b, cursor, 2.5);
-        if a_distance == b_distance {
-            Ordering::Equal
-        } else if a_distance < b_distance {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
-    });
-}
-
 // TODO investigate interaction with inlay hints
-pub fn word_starts_fold(
+pub fn word_starts(
     word_type: WordType,
     direction: Direction,
     editor: &Editor,
@@ -125,10 +112,23 @@ pub fn word_starts_fold(
         WordType::FullWord => true,
     };
 
-    word_starts_in_range_fold(map, start, end, full_word)
+    word_starts_in_range(map, start, end, full_word)
 }
 
-pub fn word_starts_in_range_fold(
+fn is_boundary(scope: &Option<LanguageScope>, full_word: bool, left: char, right: char) -> bool {
+    let left_kind = char_kind(&scope, left);
+    let right_kind = char_kind(&scope, right);
+
+    let found = if full_word {
+        left_kind == CharKind::Whitespace && right_kind == CharKind::Word
+    } else {
+        left_kind != right_kind && right_kind == CharKind::Word
+    };
+
+    found
+}
+
+pub fn word_starts_in_range(
     map: &DisplaySnapshot,
     from: DisplayPoint,
     to: DisplayPoint,
@@ -191,7 +191,7 @@ mod tests {
         let (snapshot, display_points) = marked_display_snapshot(text, cx);
         let point = *display_points.first().unwrap();
         let end = *display_points.last().unwrap();
-        let starts = word_starts_in_range_fold(&snapshot, point, end, full_word);
+        let starts = word_starts_in_range(&snapshot, point, end, full_word);
         assert_eq!(starts, list, "full_word: {:?}, text: {}", full_word, text);
     }
 
@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(snapshot.fold_snapshot.text(), "lo⋯sum⋯ello");
 
         let starts =
-            word_starts_in_range_fold(&snapshot, DisplayPoint::zero(), snapshot.max_point(), false);
+            word_starts_in_range(&snapshot, DisplayPoint::zero(), snapshot.max_point(), false);
         assert_eq!(
             starts,
             [
