@@ -47,11 +47,27 @@ impl<'a> From<DBusMenuLayoutItem<'a>> for Structure<'a> {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
+pub enum DBusMenuProperties {
+    // "standard" | "separator"
+    Type(String),
+    Label(String),
+    Enabled(bool),
+    Visible(bool),
+    IconName(String),
+    // PNG data of the icon
+    IconData(Vec<u8>),
+    Shortcut(Vec<Vec<String>>),
+    // "checkmark" | "radio"
+    ToggleType(String),
+    // 0 = off | 1 = on | x = indeterminate
+    ToggleState(i32),
+}
+
+#[derive(Clone)]
 pub struct Submenu {
     pub id: i32,
-    pub icon_name: Option<String>,
-    pub label: Option<String>,
+    pub properties: Vec<DBusMenuProperties>,
     pub children: Vec<Submenu>,
 }
 
@@ -61,12 +77,45 @@ impl<'a> From<Submenu> for DBusMenuLayoutItem<'a> {
             id: value.id,
             ..Default::default()
         };
-        if let Some(icon) = value.icon_name {
-            menu.properties
-                .insert("icon-name".into(), Value::from(icon));
-        }
-        if let Some(label) = value.label {
-            menu.properties.insert("label".into(), Value::from(label));
+        for property in value.properties {
+            match property {
+                DBusMenuProperties::Type(menu_type) => {
+                    menu.properties
+                        .insert("type".into(), Value::from(menu_type));
+                }
+                DBusMenuProperties::Label(label) => {
+                    menu.properties.insert("label".into(), Value::from(label));
+                }
+                DBusMenuProperties::Enabled(enabled) => {
+                    menu.properties
+                        .insert("enabled".into(), Value::from(enabled));
+                }
+                DBusMenuProperties::Visible(visible) => {
+                    menu.properties
+                        .insert("visible".into(), Value::from(visible));
+                }
+                DBusMenuProperties::IconName(name) => {
+                    menu.properties
+                        .insert("icon-name".into(), Value::from(name));
+                }
+                DBusMenuProperties::IconData(data) => {
+                    menu.properties
+                        .insert("icon-data".into(), Value::from(data));
+                }
+                DBusMenuProperties::Shortcut(shortcut) => {
+                    menu.properties
+                        .insert("shortcut".into(), Value::from(shortcut));
+                }
+                DBusMenuProperties::ToggleType(toggle) => {
+                    menu.properties
+                        .insert("toggle-type".into(), Value::from(toggle));
+                }
+                DBusMenuProperties::ToggleState(state) => {
+                    menu.properties
+                        .insert("toggle-state".into(), Value::from(state));
+                }
+                _ => {}
+            }
         }
         if !value.children.is_empty() {
             menu.properties

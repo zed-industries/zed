@@ -1,5 +1,4 @@
 use std::fmt::Display;
-use std::str::FromStr;
 
 use zbus::object_server::InterfaceRef;
 use zbus::zvariant::{OwnedObjectPath, Structure, StructureBuilder};
@@ -44,19 +43,6 @@ pub enum Status {
     Active,
     Passive,
     NeedsAttention,
-}
-
-impl FromStr for Status {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "Active" => Ok(Self::Active),
-            "Passive" => Ok(Self::Passive),
-            "NeedsAttention" => Ok(Self::NeedsAttention),
-            _ => Err(()),
-        }
-    }
 }
 
 impl Display for Status {
