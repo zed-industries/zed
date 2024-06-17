@@ -10284,7 +10284,6 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "util",
 ]
 
 [[package]]
