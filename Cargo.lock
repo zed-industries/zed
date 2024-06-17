@@ -346,6 +346,7 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
+ "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.28",

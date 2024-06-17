@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use futures::AsyncReadExt;
 use gpui::{AppContext, Model, Task, WeakView};
@@ -137,14 +138,17 @@ impl SlashCommand for RustdocSlashCommand {
         });
 
         let store = RustdocStore::global(cx);
+        let is_staff = cx.is_staff();
         cx.background_executor().spawn(async move {
-            if let Some((crate_name, rest)) = query.split_once(':') {
-                if rest.is_empty() {
-                    if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
-                        let provider = Box::new(LocalProvider::new(fs, cargo_workspace_root));
-                        // We don't need to hold onto this task, as the `RustdocStore` will hold it
-                        // until it completes.
-                        let _ = store.clone().index(crate_name.into(), provider);
+            if is_staff {
+                if let Some((crate_name, rest)) = query.split_once(':') {
+                    if rest.is_empty() {
+                        if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
+                            let provider = Box::new(LocalProvider::new(fs, cargo_workspace_root));
+                            // We don't need to hold onto this task, as the `RustdocStore` will hold it
+                            // until it completes.
+                            let _ = store.clone().index(crate_name.into(), provider);
+                        }
                     }
                 }
             }
