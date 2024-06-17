@@ -988,6 +988,17 @@ impl Workspace {
                         (None, None)
                     }
                 };
+                dbg!(window_bounds, display);
+                let window_bounds = Some(WindowBounds::Windowed(Bounds {
+                    origin: Point {
+                        x: px(14.),
+                        y: px(49.),
+                    },
+                    size: Size {
+                        width: px(1717.),
+                        height: px(928.),
+                    },
+                }));
 
                 // Use the serialized workspace to construct the new window
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
@@ -3721,7 +3732,7 @@ impl Workspace {
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
-            let window_bounds = Some(SerializedWindowBounds(cx.window_bounds()));
+            let window_bounds = Some(SerializedWindowBounds(dbg!(cx.window_bounds())));
             let serialized_workspace = SerializedWorkspace {
                 id: database_id,
                 location,

@@ -467,6 +467,17 @@ impl X11Client {
 
     fn handle_event(&self, event: Event) -> Option<()> {
         match event {
+            Event::XinputMotion(_) => {}
+            Event::Expose(_) | Event::XkbStateNotify(_) => {}
+            Event::MapNotify(map_notify) => {
+                println!("MapNotify: {:?}", map_notify);
+            }
+            Event::ConfigureNotify(configure_notify) => {
+                println!("ConfigureNotify: {:?}", configure_notify);
+            }
+            _ => println!("{:?}", event),
+        }
+        match event {
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
                 let [atom, ..] = event.data.as_data32();
@@ -481,6 +492,9 @@ impl X11Client {
                     }
                 }
             }
+            Event::ReparentNotify(event) => {
+                dbg!(event.x, event.y);
+            }
             Event::ConfigureNotify(event) => {
                 let bounds = Bounds {
                     origin: Point {
@@ -492,6 +506,7 @@ impl X11Client {
                         height: event.height.into(),
                     },
                 };
+                dbg!(bounds);
                 let window = self.get_window(event.window)?;
                 window.configure(bounds);
             }
