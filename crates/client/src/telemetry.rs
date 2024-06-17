@@ -486,11 +486,9 @@ impl Telemetry {
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
     ) {
-        let project_events: Vec<String>;
-
-        {
+        let project_events: Vec<String> = {
             let mut state = self.state.lock();
-            project_events = state
+            state
                 .worktree_id_map
                 .0
                 .iter_mut()
@@ -520,8 +518,8 @@ impl Telemetry {
 
                     Some(project_type_telemetry.name.clone())
                 })
-                .collect();
-        }
+                .collect()
+        };
 
         // Done on purpose to avoid calling `self.state.lock()` multiple times
         for project_name in project_events {
