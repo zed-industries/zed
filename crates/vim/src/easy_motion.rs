@@ -97,15 +97,133 @@ impl Global for GlobalEasyMotion {}
 
 pub fn init(cx: &mut AppContext) {
     EasyMotionSettings::register(cx);
-    EasyMotion::sync(true, cx);
+    sync(true, cx);
     cx.observe_global::<SettingsStore>(|cx| {
-        EasyMotion::sync(false, cx);
+        sync(false, cx);
     })
     .detach();
 }
 
+fn active_editor_views(workspace: &Workspace, cx: &AppContext) -> Vec<View<Editor>> {
+    let panes = workspace.panes();
+    panes
+        .iter()
+        .flat_map(|pane| {
+            pane.read(cx)
+                .items()
+                .filter_map(|item| item.downcast::<Editor>())
+        })
+        .collect()
+}
+
+fn sync(init: bool, cx: &mut AppContext) {
+    let settings = EasyMotionSettings::get_global(cx);
+    let was_enabled = cx.has_global::<GlobalEasyMotion>();
+
+    if !settings.enabled {
+        if was_enabled {
+            // TODO: there also must be a better way to do this
+            let _ = cx.active_window().map(|window| {
+                window.update(cx, |_, cx| {
+                    Vim::update(cx, |vim, cx| {
+                        if vim.mode() == Mode::EasyMotion {
+                            vim.switch_mode(Mode::Normal, false, cx);
+                        }
+                    });
+                })
+            });
+            cx.remove_global::<GlobalEasyMotion>();
+        }
+        return;
+    }
+
+    if was_enabled {
+        let keys = settings.keys.clone();
+        EasyMotion::update(cx, |easy, _cx| easy.keys = keys);
+    } else {
+        let keys = settings.keys.clone();
+        let mut subs = if init {
+            Vec::new()
+        } else {
+            // if the application is already open then we need to add listeners to all the open editors
+            // TODO: there must be a better way to do this
+            cx.windows()[0]
+                .downcast::<Workspace>()
+                .unwrap()
+                .update(cx, |workspace, cx| {
+                    active_editor_views(workspace, cx)
+                        .into_iter()
+                        .flat_map(|editor| {
+                            editor
+                                .update(cx, |editor, cx| register(editor, cx))
+                                .into_iter()
+                        })
+                        .collect_vec()
+                })
+                .unwrap()
+        };
+        subs.push(cx.observe_new_views(|editor: &mut Editor, cx| {
+            let mut hi = register(editor, cx);
+            EasyMotion::update(cx, |easy, _cx| easy.subscriptions.append(&mut hi));
+        }));
+
+        let easy = cx.new_model(move |_| EasyMotion::new(keys, subs));
+        EasyMotion::set_global(easy.clone(), cx);
+    }
+}
+
+fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> Vec<Subscription> {
+    let view = cx.view().downgrade();
+    let mut subs = Vec::new();
+    subs.push(editor.register_action(move |action: &Word, cx| {
+        let Some(editor) = view.upgrade() else {
+            return;
+        };
+        EasyMotion::word(editor, action, cx);
+    }));
+
+    let view = cx.view().downgrade();
+    subs.push(editor.register_action(move |action: &FullWord, cx| {
+        let Some(editor) = view.upgrade() else {
+            return;
+        };
+        EasyMotion::full_word(editor, action, cx);
+    }));
+
+    let view = cx.view().downgrade();
+    subs.push(editor.register_action(move |action: &Row, cx| {
+        let Some(editor) = view.upgrade() else {
+            return;
+        };
+        EasyMotion::row(editor, action, cx);
+    }));
+
+    let view = cx.view().downgrade();
+    subs.push(editor.register_action(move |_: &Cancel, cx| {
+        let Some(editor) = view.upgrade() else {
+            return;
+        };
+        EasyMotion::cancel(editor, cx);
+    }));
+
+    let view = cx.view().downgrade();
+    subs.push(cx.observe_keystrokes(move |event, cx| {
+        let Some(editor) = view.clone().upgrade() else {
+            return;
+        };
+        EasyMotion::observe_keystrokes(editor, event, cx);
+    }));
+
+    let entity_id = cx.view().entity_id();
+    subs.push(cx.on_release(move |_, _, cx| {
+        EasyMotion::update(cx, |easy, _cx| easy.editor_states.remove(&entity_id));
+    }));
+
+    subs
+}
+
 impl EasyMotion {
-    pub fn new(keys: String, subscriptions: Vec<Subscription>) -> Self {
+    fn new(keys: String, subscriptions: Vec<Subscription>) -> Self {
         Self {
             editor_states: HashMap::default(),
             keys,
@@ -113,145 +231,27 @@ impl EasyMotion {
         }
     }
 
-    pub fn update<F, S>(cx: &mut AppContext, f: F) -> Option<S>
+    fn update<F, S>(cx: &mut AppContext, f: F) -> Option<S>
     where
         F: FnOnce(&mut EasyMotion, &mut ModelContext<EasyMotion>) -> S,
     {
         EasyMotion::global(cx).map(|easy| easy.update(cx, f))
     }
 
-    pub fn global(cx: &AppContext) -> Option<Model<Self>> {
+    fn global(cx: &AppContext) -> Option<Model<Self>> {
         cx.try_global::<GlobalEasyMotion>()
             .map(|model| model.0.clone())
     }
 
-    pub fn set_global(easy: Model<Self>, cx: &mut AppContext) {
+    fn set_global(easy: Model<Self>, cx: &mut AppContext) {
         cx.set_global(GlobalEasyMotion(easy));
     }
 
-    pub fn read_with<S>(
+    fn read_with<S>(
         cx: &WindowContext,
         f: impl FnOnce(&EasyMotion, &AppContext) -> S,
     ) -> Option<S> {
         EasyMotion::global(cx).map(|easy| easy.read_with(cx, f))
-    }
-
-    fn active_editor_views(workspace: &Workspace, cx: &AppContext) -> Vec<View<Editor>> {
-        let panes = workspace.panes();
-        panes
-            .iter()
-            .flat_map(|pane| {
-                pane.read(cx)
-                    .items()
-                    .filter_map(|item| item.downcast::<Editor>())
-            })
-            .collect()
-    }
-
-    fn sync(init: bool, cx: &mut AppContext) {
-        let settings = EasyMotionSettings::get_global(cx);
-        let was_enabled = cx.has_global::<GlobalEasyMotion>();
-
-        if !settings.enabled {
-            if was_enabled {
-                // TODO: there also must be a better way to do this
-                let _ = cx.active_window().map(|window| {
-                    window.update(cx, |_, cx| {
-                        Vim::update(cx, |vim, cx| {
-                            if vim.mode() == Mode::EasyMotion {
-                                vim.switch_mode(Mode::Normal, false, cx);
-                            }
-                        });
-                    })
-                });
-                cx.remove_global::<GlobalEasyMotion>();
-            }
-            return;
-        }
-
-        if was_enabled {
-            let keys = settings.keys.clone();
-            EasyMotion::update(cx, |easy, _cx| easy.keys = keys);
-        } else {
-            let keys = settings.keys.clone();
-            let mut subs = if init {
-                Vec::new()
-            } else {
-                // if the application is already open then we need to add listeners to all the open editors
-                // TODO: there must be a better way to do this
-                cx.windows()[0]
-                    .downcast::<Workspace>()
-                    .unwrap()
-                    .update(cx, |workspace, cx| {
-                        Self::active_editor_views(workspace, cx)
-                            .into_iter()
-                            .flat_map(|editor| {
-                                editor
-                                    .update(cx, |editor, cx| Self::register(editor, cx))
-                                    .into_iter()
-                            })
-                            .collect_vec()
-                    })
-                    .unwrap()
-            };
-            subs.push(cx.observe_new_views(|editor: &mut Editor, cx| {
-                let mut hi = EasyMotion::register(editor, cx);
-                Self::update(cx, |easy, _cx| easy.subscriptions.append(&mut hi));
-            }));
-
-            let easy = cx.new_model(move |_| EasyMotion::new(keys, subs));
-            Self::set_global(easy.clone(), cx);
-        }
-    }
-
-    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> Vec<Subscription> {
-        let view = cx.view().downgrade();
-        let mut subs = Vec::new();
-        subs.push(editor.register_action(move |action: &Word, cx| {
-            let Some(editor) = view.upgrade() else {
-                return;
-            };
-            EasyMotion::word(editor, action, cx);
-        }));
-
-        let view = cx.view().downgrade();
-        subs.push(editor.register_action(move |action: &FullWord, cx| {
-            let Some(editor) = view.upgrade() else {
-                return;
-            };
-            EasyMotion::full_word(editor, action, cx);
-        }));
-
-        let view = cx.view().downgrade();
-        subs.push(editor.register_action(move |action: &Row, cx| {
-            let Some(editor) = view.upgrade() else {
-                return;
-            };
-            EasyMotion::row(editor, action, cx);
-        }));
-
-        let view = cx.view().downgrade();
-        subs.push(editor.register_action(move |_: &Cancel, cx| {
-            let Some(editor) = view.upgrade() else {
-                return;
-            };
-            EasyMotion::cancel(editor, cx);
-        }));
-
-        let view = cx.view().downgrade();
-        subs.push(cx.observe_keystrokes(move |event, cx| {
-            let Some(editor) = view.clone().upgrade() else {
-                return;
-            };
-            EasyMotion::observe_keystrokes(editor, event, cx);
-        }));
-
-        let entity_id = cx.view().entity_id();
-        subs.push(cx.on_release(move |_, _, cx| {
-            EasyMotion::update(cx, |easy, _cx| easy.editor_states.remove(&entity_id));
-        }));
-
-        subs
     }
 
     fn handle_new_matches(
