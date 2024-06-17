@@ -395,9 +395,14 @@ pub async fn post_events(
         ))?
     };
 
-    let checksum_matched = calculate_json_checksum(app.clone(), &body)
-        .map(|expected| expected == checksum)
-        .unwrap_or(false);
+    let Some(expected) = calculate_json_checksum(app.clone(), &body) else {
+        return Err(Error::Http(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "events not enabled".into(),
+        ))?;
+    };
+
+    let checksum_matched = checksum == expected;
 
     let request_body: telemetry_events::EventRequestBody =
         serde_json::from_slice(&body).map_err(|err| {
