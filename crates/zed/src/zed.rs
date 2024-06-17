@@ -2214,7 +2214,7 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         window
-            .read_with(cx, |workspace, cx| {
+            .update(cx, |workspace, cx| {
                 assert_eq!(workspace.panes().len(), 1);
                 assert!(workspace.active_item(cx).is_none());
             })
