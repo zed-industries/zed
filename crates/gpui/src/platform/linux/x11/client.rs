@@ -492,6 +492,7 @@ impl X11Client {
                         height: event.height.into(),
                     },
                 };
+                dbg!(&bounds);
                 let window = self.get_window(event.window)?;
                 window.configure(bounds);
             }
