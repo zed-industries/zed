@@ -303,7 +303,7 @@ struct BackgroundScannerState {
     /// as part of the current update. These entry ids may be re-used
     /// if the same inode is discovered at a new path, or if the given
     /// path is re-created after being deleted.
-    removed_entry_ids: HashMap<u64, ProjectEntryId>,
+    removed_entry_ids: HashMap<(u64, SystemTime), ProjectEntryId>,
     changed_paths: Vec<Arc<Path>>,
     prev_snapshot: Snapshot,
 }
@@ -2638,10 +2638,12 @@ impl BackgroundScannerState {
     }
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
-        if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
-            entry.id = removed_entry_id;
-        } else if let Some(existing_entry) = self.snapshot.entry_for_path(&entry.path) {
-            entry.id = existing_entry.id;
+        if let Some(mtime) = entry.mtime {
+            if let Some(removed_entry_id) = self.removed_entry_ids.remove(&(entry.inode, mtime)) {
+                entry.id = removed_entry_id;
+            } else if let Some(existing_entry) = self.snapshot.entry_for_path(&entry.path) {
+                entry.id = existing_entry.id;
+            }
         }
     }
 
@@ -2732,11 +2734,13 @@ impl BackgroundScannerState {
 
         let mut entries_by_id_edits = Vec::new();
         for entry in removed_entries.cursor::<()>() {
-            let removed_entry_id = self
-                .removed_entry_ids
-                .entry(entry.inode)
-                .or_insert(entry.id);
-            *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
+            if let Some(mtime) = entry.mtime {
+                let removed_entry_id = self
+                    .removed_entry_ids
+                    .entry((entry.inode, mtime))
+                    .or_insert(entry.id);
+                *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
+            }
             entries_by_id_edits.push(Edit::Remove(entry.id));
         }
         self.snapshot.entries_by_id.edit(entries_by_id_edits, &());

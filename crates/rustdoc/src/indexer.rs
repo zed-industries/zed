@@ -8,7 +8,9 @@ use fs::Fs;
 use futures::AsyncReadExt;
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 
-use crate::{convert_rustdoc_to_markdown, RustdocDatabase, RustdocItem, RustdocItemKind};
+use crate::{
+    convert_rustdoc_to_markdown, CrateName, RustdocDatabase, RustdocItem, RustdocItemKind,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RustdocSource {
@@ -22,7 +24,7 @@ pub enum RustdocSource {
 pub trait RustdocProvider {
     async fn fetch_page(
         &self,
-        crate_name: &str,
+        crate_name: &CrateName,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>>;
 }
@@ -45,11 +47,11 @@ impl LocalProvider {
 impl RustdocProvider for LocalProvider {
     async fn fetch_page(
         &self,
-        crate_name: &str,
+        crate_name: &CrateName,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>> {
         let mut local_cargo_doc_path = self.cargo_workspace_root.join("target/doc");
-        local_cargo_doc_path.push(&crate_name);
+        local_cargo_doc_path.push(crate_name.as_ref());
         if let Some(item) = item {
             local_cargo_doc_path.push(item.url_path());
         } else {
@@ -78,7 +80,7 @@ impl DocsDotRsProvider {
 impl RustdocProvider for DocsDotRsProvider {
     async fn fetch_page(
         &self,
-        crate_name: &str,
+        crate_name: &CrateName,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>> {
         let version = "latest";
@@ -138,7 +140,7 @@ impl RustdocIndexer {
     }
 
     /// Indexes the crate with the given name.
-    pub async fn index(&self, crate_name: String) -> Result<()> {
+    pub async fn index(&self, crate_name: CrateName) -> Result<()> {
         let Some(crate_root_content) = self.provider.fetch_page(&crate_name, None).await? else {
             return Ok(());
         };

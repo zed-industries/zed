@@ -7,6 +7,7 @@ use gpui::{AppContext, Model, RenderOnce, SharedString, Task, View, WeakView};
 use language::{LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Worktree};
 use std::{
+    fmt::Write,
     ops::Range,
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
@@ -320,9 +321,10 @@ async fn collect_file_content(
     let mut content = fs.load(&abs_path).await?;
     LineEnding::normalize(&mut content);
     buffer.reserve(filename.len() + content.len() + 9);
-    buffer.push_str("```");
-    buffer.push_str(&filename);
-    buffer.push('\n');
+    buffer.push_str(&codeblock_fence_for_path(
+        Some(&PathBuf::from(filename)),
+        None,
+    ));
     buffer.push_str(&content);
     if !buffer.ends_with('\n') {
         buffer.push('\n');
@@ -367,4 +369,26 @@ impl RenderOnce for EntryPlaceholder {
             })
             .on_click(move |_, cx| unfold(cx))
     }
+}
+
+pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32>>) -> String {
+    let mut text = String::new();
+    write!(text, "```").unwrap();
+
+    if let Some(path) = path {
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            write!(text, "{} ", extension).unwrap();
+        }
+
+        write!(text, "{}", path.display()).unwrap();
+    } else {
+        write!(text, "untitled").unwrap();
+    }
+
+    if let Some(row_range) = row_range {
+        write!(text, ":{}-{}", row_range.start + 1, row_range.end + 1).unwrap();
+    }
+
+    text.push('\n');
+    text
 }

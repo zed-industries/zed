@@ -31,10 +31,7 @@ use gpui::{
 use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
-use normal::{
-    mark::{create_mark, create_mark_after, create_mark_before},
-    normal_replace,
-};
+use normal::{mark::create_visual_marks, normal_replace};
 use replace::multi_replace;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -431,8 +428,8 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
-        if mode != Mode::Insert && last_mode == Mode::Insert {
-            create_mark_after(self, "^".into(), cx)
+        if !mode.is_visual() && last_mode.is_visual() {
+            create_visual_marks(self, last_mode, cx);
         }
 
         if leave_selections {
@@ -627,7 +624,7 @@ impl Vim {
         editor: Option<&mut Editor>,
         cx: &mut WindowContext,
     ) -> Option<Register> {
-        let Some(register) = register else {
+        let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
             return match setting {
                 UseSystemClipboard::Always => cx.read_from_clipboard().map(|item| item.into()),
@@ -790,7 +787,6 @@ impl Vim {
         let is_multicursor = editor.read(cx).selections.count() > 1;
 
         let state = self.state();
-        let mut is_visual = state.mode.is_visual();
         if state.mode == Mode::Insert && state.current_tx.is_some() {
             if state.current_anchor.is_none() {
                 self.update_state(|state| state.current_anchor = Some(newest));
@@ -807,18 +803,11 @@ impl Vim {
             } else {
                 self.switch_mode(Mode::Visual, false, cx)
             }
-            is_visual = true;
         } else if newest.start == newest.end
             && !is_multicursor
             && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&state.mode)
         {
             self.switch_mode(Mode::Normal, true, cx);
-            is_visual = false;
-        }
-
-        if is_visual {
-            create_mark_before(self, ">".into(), cx);
-            create_mark(self, "<".into(), true, cx)
         }
     }
 
@@ -893,8 +882,24 @@ impl Vim {
             Some(Operator::Mark) => Vim::update(cx, |vim, cx| {
                 normal::mark::create_mark(vim, text, false, cx)
             }),
-            Some(Operator::Register) => Vim::update(cx, |vim, cx| {
-                vim.select_register(text, cx);
+            Some(Operator::Register) => Vim::update(cx, |vim, cx| match vim.state().mode {
+                Mode::Insert => {
+                    vim.update_active_editor(cx, |vim, editor, cx| {
+                        if let Some(register) =
+                            vim.read_register(text.chars().next(), Some(editor), cx)
+                        {
+                            editor.do_paste(
+                                &register.text.to_string(),
+                                register.clipboard_selections.clone(),
+                                false,
+                                cx,
+                            )
+                        }
+                    });
+                }
+                _ => {
+                    vim.select_register(text, cx);
+                }
             }),
             Some(Operator::Jump { line }) => normal::mark::jump(text, line, cx),
             _ => match Vim::read(cx).state().mode {
