@@ -481,7 +481,7 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_project_events(
+    pub fn report_discovered_project_events(
         self: &Arc<Self>,
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
