@@ -6,6 +6,7 @@ use gpui::{AppContext, RenderOnce, SharedString, Task, View, WeakView};
 use language::{LineEnding, LspAdapterDelegate};
 use project::PathMatchCandidateSet;
 use std::{
+    fmt::Write,
     ops::Range,
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
@@ -155,20 +156,20 @@ impl SlashCommand for FileSlashCommand {
         };
 
         let fs = workspace.read(cx).app_state().fs.clone();
-        let argument = argument.to_string();
-        let text = cx.background_executor().spawn(async move {
-            let mut content = fs.load(&abs_path).await?;
-            LineEnding::normalize(&mut content);
-            let mut output = String::with_capacity(argument.len() + content.len() + 9);
-            output.push_str("```");
-            output.push_str(&argument);
-            output.push('\n');
-            output.push_str(&content);
-            if !output.ends_with('\n') {
-                output.push('\n');
+        let text = cx.background_executor().spawn({
+            let path = path.clone();
+            async move {
+                let mut content = fs.load(&abs_path).await?;
+                LineEnding::normalize(&mut content);
+                let mut output = String::new();
+                output.push_str(&codeblock_fence_for_path(Some(&path), None));
+                output.push_str(&content);
+                if !output.ends_with('\n') {
+                    output.push('\n');
+                }
+                output.push_str("```");
+                anyhow::Ok(output)
             }
-            output.push_str("```");
-            anyhow::Ok(output)
         });
         cx.foreground_executor().spawn(async move {
             let text = text.await?;
@@ -223,4 +224,26 @@ impl RenderOnce for FilePlaceholder {
             })
             .on_click(move |_, cx| unfold(cx))
     }
+}
+
+pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32>>) -> String {
+    let mut text = String::new();
+    write!(text, "```").unwrap();
+
+    if let Some(path) = path {
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            write!(text, "{} ", extension).unwrap();
+        }
+
+        write!(text, "{}", path.display()).unwrap();
+    } else {
+        write!(text, "untitled").unwrap();
+    }
+
+    if let Some(row_range) = row_range {
+        write!(text, ":{}-{}", row_range.start + 1, row_range.end + 1).unwrap();
+    }
+
+    text.push('\n');
+    text
 }
