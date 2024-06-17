@@ -117,6 +117,7 @@ impl ToPoint for Anchor {
 
 pub trait AnchorRangeExt {
     fn cmp(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Ordering;
+    fn overlaps(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize>;
     fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point>;
 }
@@ -127,6 +128,14 @@ impl AnchorRangeExt for Range<Anchor> {
             Ordering::Equal => other.end.cmp(&self.end, buffer),
             ord => ord,
         }
+    }
+
+    fn overlaps(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool {
+        let start_cmp = self.start.cmp(&other.start, buffer);
+        let end_cmp = self.end.cmp(&other.end, buffer);
+
+        (start_cmp == Ordering::Less || start_cmp == Ordering::Equal)
+            && (end_cmp == Ordering::Greater || end_cmp == Ordering::Equal)
     }
 
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize> {

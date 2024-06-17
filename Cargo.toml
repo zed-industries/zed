@@ -77,6 +77,7 @@ members = [
     "crates/refineable/derive_refineable",
     "crates/release_channel",
     "crates/dev_server_projects",
+    "crates/repl",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
@@ -227,6 +228,7 @@ quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
 dev_server_projects = { path = "crates/dev_server_projects" }
+repl = { path = "crates/repl" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
@@ -264,10 +266,12 @@ workspace = { path = "crates/workspace" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
+alacritty_terminal = "0.23"
 anyhow = "1.0.57"
 any_vec = "0.13"
 ashpd = "0.8.0"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-dispatcher = { version = "0.1"}
 async-fs = "1.6"
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
@@ -301,6 +305,7 @@ heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 ignore = "0.4.22"
+image = "0.23"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "1"
 # We explicitly disable http2 support in isahc.
@@ -333,6 +338,7 @@ rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
 regex = "1.5"
 repair_json = "0.1.0"
+runtimelib = { version="0.12", default-features = false, features = ["async-dispatcher-runtime"] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
 schemars = "0.8"

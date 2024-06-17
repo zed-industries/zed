@@ -221,6 +221,8 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
 
     assistant::init(app_state.client.clone(), cx);
 
+    repl::init(app_state.fs.clone(), cx);
+
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
         let http = app_state.client.http_client();
