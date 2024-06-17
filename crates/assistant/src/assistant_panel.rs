@@ -28,11 +28,12 @@ use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    div, point, rems, Action, AnyElement, AnyView, AppContext, AsyncAppContext, AsyncWindowContext,
-    ClipboardItem, Context as _, Empty, EventEmitter, FocusHandle, FocusOutEvent, FocusableView,
-    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, UpdateGlobal, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    div, percentage, point, rems, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
+    AsyncAppContext, AsyncWindowContext, ClipboardItem, Context as _, Empty, EventEmitter,
+    FocusHandle, FocusOutEvent, FocusableView, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use language::{
     language_settings::SoftWrap, AnchorRangeExt, AutoindentMode, Buffer, LanguageRegistry,
@@ -41,6 +42,7 @@ use language::{
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
+use rustdoc::{CrateName, RustdocStore};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
@@ -2537,8 +2539,52 @@ impl ContextEditor {
                                     )
                                 }
                             };
-                            let render_trailer =
-                                |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+                            let render_trailer = {
+                                let command = command.clone();
+                                move |row: MultiBufferRow, _unfold, cx: &mut WindowContext| {
+                                    if command.name == "rustdoc" {
+                                        let rustdoc_store = RustdocStore::global(cx);
+
+                                        if let Some((crate_name, _)) = command
+                                            .argument
+                                            .as_ref()
+                                            .and_then(|arg| arg.split_once(':'))
+                                        {
+                                            let crate_name = CrateName::from(crate_name);
+                                            if rustdoc_store.is_indexing(&crate_name) {
+                                                return div()
+                                                    .id(("crates-being-indexed", row.0))
+                                                    .child(
+                                                        Icon::new(IconName::ArrowCircle)
+                                                            .with_animation(
+                                                                "arrow-circle",
+                                                                Animation::new(
+                                                                    Duration::from_secs(4),
+                                                                )
+                                                                .repeat(),
+                                                                |icon, delta| {
+                                                                    icon.transform(
+                                                                        Transformation::rotate(
+                                                                            percentage(delta),
+                                                                        ),
+                                                                    )
+                                                                },
+                                                            ),
+                                                    )
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::text(
+                                                            format!("Indexing {crate_name}…"),
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .into_any_element();
+                                            }
+                                        }
+                                    }
+
+                                    Empty.into_any()
+                                }
+                            };
 
                             let start = buffer
                                 .anchor_in_excerpt(excerpt_id, command.source_range.start)
