@@ -2497,6 +2497,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.focus_handle.is_focused(cx) {
+            self.last_focused_descendant = None;
             cx.focus(&self.focus_handle);
         }
 
@@ -2564,6 +2565,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.focus_handle.is_focused(cx) {
+            self.last_focused_descendant = None;
             cx.focus(&self.focus_handle);
         }
 
