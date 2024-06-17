@@ -89,6 +89,10 @@ impl RustdocStore {
         crate_name: CrateName,
         provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
     ) -> Shared<Task<Result<(), Arc<anyhow::Error>>>> {
+        if let Some(existing_task) = self.indexing_tasks_by_crate.read().get(&crate_name) {
+            return existing_task.clone();
+        }
+
         let indexing_task = self
             .executor
             .spawn({
