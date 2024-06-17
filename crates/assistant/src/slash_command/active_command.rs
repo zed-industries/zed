@@ -1,5 +1,5 @@
 use super::{
-    file_command::{codeblock_fence_for_path, FilePlaceholder},
+    file_command::{codeblock_fence_for_path, EntryPlaceholder},
     SlashCommand, SlashCommandOutput,
 };
 use anyhow::{anyhow, Result};
@@ -84,9 +84,10 @@ impl SlashCommand for ActiveSlashCommand {
                     sections: vec![SlashCommandOutputSection {
                         range,
                         render_placeholder: Arc::new(move |id, unfold, _| {
-                            FilePlaceholder {
+                            EntryPlaceholder {
                                 id,
                                 path: path.clone(),
+                                is_directory: false,
                                 line_range: None,
                                 unfold,
                             }

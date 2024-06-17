@@ -1,5 +1,5 @@
 use super::{
-    file_command::{codeblock_fence_for_path, FilePlaceholder},
+    file_command::{codeblock_fence_for_path, EntryPlaceholder},
     SlashCommand, SlashCommandOutput,
 };
 use anyhow::{anyhow, Result};
@@ -93,9 +93,10 @@ impl SlashCommand for TabsSlashCommand {
                     sections.push(SlashCommandOutputSection {
                         range: section_start_ix..section_end_ix,
                         render_placeholder: Arc::new(move |id, unfold, _| {
-                            FilePlaceholder {
+                            EntryPlaceholder {
                                 id,
                                 path: full_path.clone(),
+                                is_directory: false,
                                 line_range: None,
                                 unfold,
                             }

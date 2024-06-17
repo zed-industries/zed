@@ -1,5 +1,5 @@
 use super::{
-    file_command::{codeblock_fence_for_path, FilePlaceholder},
+    file_command::{codeblock_fence_for_path, EntryPlaceholder},
     SlashCommand, SlashCommandOutput,
 };
 use anyhow::Result;
@@ -155,9 +155,10 @@ impl SlashCommand for SearchSlashCommand {
                         sections.push(SlashCommandOutputSection {
                             range: section_start_ix..section_end_ix,
                             render_placeholder: Arc::new(move |id, unfold, _| {
-                                FilePlaceholder {
+                                EntryPlaceholder {
                                     id,
                                     path: Some(full_path.clone()),
+                                    is_directory: false,
                                     line_range: Some(start_row..end_row),
                                     unfold,
                                 }
