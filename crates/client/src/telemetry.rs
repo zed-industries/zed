@@ -223,7 +223,7 @@ impl Telemetry {
                 let state = state.clone();
                 async move {
                     if let Some(tempfile) =
-                        NamedTempFile::new_in(util::paths::CONFIG_DIR.as_path()).log_err()
+                        NamedTempFile::new_in(paths::CONFIG_DIR.as_path()).log_err()
                     {
                         state.lock().log_file = Some(tempfile);
                     }

@@ -2211,6 +2211,7 @@ dependencies = [
  "fork",
  "ipc-channel",
  "once_cell",
+ "paths",
  "plist",
  "release_channel",
  "serde",
