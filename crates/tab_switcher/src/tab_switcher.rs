@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tab_switcher_tests;
 
+use postage::{sink::Sink, stream::Stream};
 use collections::HashMap;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -182,39 +183,74 @@ impl TabSwitcherDelegate {
         .detach();
     }
 
-    fn update_matches_by_query(&mut self, raw_query: String, cx: &mut WindowContext) {
-      let raw_query = raw_query.replace(' ', "");
-      let query = raw_query.trim();
-
+    fn update_matches_by_query(&mut self, raw_query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
       let Some(items) = self.fetch_item_candidates(cx) else {
-        return;
+        return Task::ready(());
       };
 
-      let executor = cx.background_executor().clone();
+      let tab_details = tab_details(&items, cx);
 
-      async move {
-      let candidates = items
-          .iter()
-          .enumerate()
-          .map(|(ix, item)| StringMatchCandidate {
-              id: ix,
-              string: item.tab_tooltip_text(cx).unwrap().to_string(),
-              char_bag: item.tab_tooltip_text(cx).unwrap().chars().collect(),
-          })
-          .collect::<Vec<_>>();
-
-          let ret = fuzzy::match_strings(
-              &candidates,
-              &query,
-              true,
-              10000,
-              &Default::default(),
-              executor,
-          )
-          .await;
-          println!("{:?}", ret);
-          ret
+      let Some(pane) = self.pane.upgrade() else {
+        return Task::ready(());
       };
+      let pane = pane.read(cx);
+
+let (mut tx, mut rx) = postage::dispatch::channel(1);
+        let raw_query = raw_query.replace(' ', "");
+        let query = raw_query.trim();
+        let executor = cx.background_executor().clone();
+      let task = cx.background_executor().spawn(async move {
+        let candidates = items
+            .iter()
+            .enumerate()
+            .map(|(ix, item)| StringMatchCandidate {
+                id: ix,
+                string: item.tab_tooltip_text(cx).unwrap().to_string(),
+                char_bag: item.tab_tooltip_text(cx).unwrap().chars().collect(),
+            })
+            .collect::<Vec<_>>();
+
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                true,
+                10000,
+                &Default::default(),
+                executor,
+            )
+            .await;
+            println!("{:?}", matches);
+            // ret
+        tx.send(matches).await;
+      });
+
+      Some((task, rx.clone()));
+
+      // Need reference between item inde and queried values
+      cx.spawn(move |picker, mut cx| async move {
+          let Some(matches) = rx.recv().await else {
+              return;
+          };
+          matches
+                    .iter()
+                    .zip(tab_details)
+                    .enumerate()
+                    .map(|(_index, (string_match, detail))| TabMatch {
+                        item_index: string_match.candidate_id,
+                        item: pane.item_for_index(string_match.candidate_id).unwrap().boxed_clone(),
+                        detail,
+                        preview: pane.is_active_preview_item(pane.item_for_index(string_match.candidate_id).unwrap().item_id()),
+                    })
+                    .for_each(|tab_match| self.matches.push(tab_match));
+
+          // picker
+          //     .update(&mut cx, |picker, cx| {
+          //         picker
+          //             .delegate
+          //             .matches_updated(query, commands, matches, cx)
+          //     })
+          //     .log_err();
+      })
     }
 
     fn fetch_item_candidates(&self, cx: &mut WindowContext) -> Option<Vec<Box<dyn ItemHandle>>> {
@@ -230,6 +266,17 @@ impl TabSwitcherDelegate {
       );
 
       Some(pane.items().map(|item| item.boxed_clone()).collect())
+    }
+
+    fn fetch_item_for_index(&self, index: usize, cx: &mut WindowContext) -> Option<Box<dyn ItemHandle>> {
+      let Some(pane) = self.pane.upgrade() else {
+          return None;
+      };
+      let pane = pane.read(cx);
+      let Some(item) = pane.item_for_index(index) else {
+        return None;
+      };
+      Some(item.boxed_clone())
     }
 
     fn update_matches_a(&mut self, cx: &mut WindowContext) {
@@ -352,10 +399,10 @@ impl PickerDelegate for TabSwitcherDelegate {
     ) -> Task<()> {
         if raw_query.is_empty() {
           self.update_matches_a(cx);
+          Task::ready(())
         } else {
-          self.update_matches_by_query(raw_query, cx);
+          self.update_matches_by_query(raw_query, cx)
         }
-        Task::ready(())
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<TabSwitcherDelegate>>) {

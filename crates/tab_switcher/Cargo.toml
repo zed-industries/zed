@@ -16,6 +16,7 @@ menu.workspace = true
 picker.workspace = true
 serde.workspace = true
 fuzzy.workspace = true
+postage.workspace = true
 terminal_view.workspace = true
 ui.workspace = true
 util.workspace = true
