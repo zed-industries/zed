@@ -200,7 +200,7 @@ pub struct AllLanguageSettingsContent {
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
-    #[serde(default, alias = "language_overrides")]
+    #[serde(default)]
     pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
     /// Settings for associating file extensions and filenames
     /// with languages.
@@ -754,17 +754,10 @@ impl settings::Settings for AllLanguageSettings {
             .as_mut()
             .unwrap()
             .properties
-            .extend([
-                (
-                    "languages".to_owned(),
-                    Schema::new_ref("#/definitions/Languages".into()),
-                ),
-                // For backward compatibility
-                (
-                    "language_overrides".to_owned(),
-                    Schema::new_ref("#/definitions/Languages".into()),
-                ),
-            ]);
+            .extend([(
+                "languages".to_owned(),
+                Schema::new_ref("#/definitions/Languages".into()),
+            )]);
 
         root_schema
     }
