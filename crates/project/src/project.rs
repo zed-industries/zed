@@ -132,7 +132,7 @@ pub use worktree::{
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
 const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
-pub const SERVER_PROGRESS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
+pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 
@@ -4331,7 +4331,7 @@ impl Project {
                         is_cancellable: report.cancellable.unwrap_or(false),
                         message: report.message.clone(),
                         percentage: report.percentage.map(|p| p as usize),
-                        last_update_at: Instant::now(),
+                        last_update_at: cx.background_executor().now(),
                     },
                     cx,
                 );
@@ -4346,7 +4346,7 @@ impl Project {
                         is_cancellable: report.cancellable.unwrap_or(false),
                         message: report.message.clone(),
                         percentage: report.percentage.map(|p| p as usize),
-                        last_update_at: Instant::now(),
+                        last_update_at: cx.background_executor().now(),
                     },
                     cx,
                 ) {
@@ -4408,8 +4408,6 @@ impl Project {
         progress: LanguageServerProgress,
         cx: &mut ModelContext<Self>,
     ) -> bool {
-        const MIN_LSP_WORK_PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
-
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             match status.pending_work.entry(token) {
                 btree_map::Entry::Vacant(entry) => {
@@ -4420,7 +4418,7 @@ impl Project {
                 btree_map::Entry::Occupied(mut entry) => {
                     let entry = entry.get_mut();
                     if (progress.last_update_at - entry.last_update_at)
-                        > MIN_LSP_WORK_PROGRESS_INTERVAL
+                        >= SERVER_PROGRESS_THROTTLE_TIMEOUT
                     {
                         entry.last_update_at = progress.last_update_at;
                         if progress.message.is_some() {
@@ -7446,7 +7444,7 @@ impl Project {
                                         title: None,
                                         message: status.clone(),
                                         percentage: None,
-                                        last_update_at: Instant::now(),
+                                        last_update_at: cx.background_executor().now(),
                                     },
                                     cx,
                                 );
@@ -9109,7 +9107,7 @@ impl Project {
                             is_cancellable: false,
                             message: payload.message,
                             percentage: payload.percentage.map(|p| p as usize),
-                            last_update_at: Instant::now(),
+                            last_update_at: cx.background_executor().now(),
                         },
                         cx,
                     );
@@ -9125,7 +9123,7 @@ impl Project {
                             is_cancellable: false,
                             message: payload.message,
                             percentage: payload.percentage.map(|p| p as usize),
-                            last_update_at: Instant::now(),
+                            last_update_at: cx.background_executor().now(),
                         },
                         cx,
                     );
