@@ -87,7 +87,7 @@ jobs:
           clean: false
 
       - name: cargo clippy
-        run: cargo xtask clippy
+        run: ./script/clippy
 
       - name: Run tests
         uses: ./.github/actions/run_tests
@@ -114,7 +114,7 @@ jobs:
           clean: false
 
       - name: cargo clippy
-        run: cargo xtask clippy
+        run: ./script/clippy
 
       - name: Run tests
         uses: ./.github/actions/run_tests
@@ -139,7 +139,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo clippy
-        run: cargo xtask clippy
+        run: ./script/clippy
 
       - name: Build Zed
         run: cargo build -p zed
