@@ -10184,7 +10184,7 @@ impl Editor {
         self.git_blame_inline_enabled
     }
 
-    pub fn toggle_slection_menu(&mut self, _: &ToggleSelectionMenu, cx: &mut ViewContext<Self>) {
+    pub fn toggle_selection_menu(&mut self, _: &ToggleSelectionMenu, cx: &mut ViewContext<Self>) {
         self.show_selection_menu = self
             .show_selection_menu
             .map(|show_selections_menu| !show_selections_menu)

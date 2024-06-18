@@ -252,7 +252,7 @@ impl Render for QuickActionBar {
                                     let editor = editor.clone();
                                     move |cx| {
                                         editor.update(cx, |editor, cx| {
-                                            editor.toggle_slection_menu(
+                                            editor.toggle_selection_menu(
                                                 &editor::actions::ToggleSelectionMenu,
                                                 cx,
                                             )
