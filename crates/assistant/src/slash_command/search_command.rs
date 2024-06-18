@@ -163,7 +163,7 @@ impl SlashCommand for SearchSlashCommand {
                     sections.push(SlashCommandOutputSection {
                         range: 0..text.len(),
                         icon: IconName::MagnifyingGlass,
-                        label: query.into(),
+                        label: query,
                     });
 
                     SlashCommandOutput {
