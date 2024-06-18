@@ -102,6 +102,22 @@ pub fn old_log_file() -> &'static PathBuf {
     OLD_LOG_FILE.get_or_init(|| logs_dir().join("Zed.log.old"))
 }
 
+/// Returns the path to the extensions directory.
+///
+/// This is where installed extensions are stored.
+pub fn extensions_dir() -> &'static PathBuf {
+    static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    EXTENSIONS_DIR.get_or_init(|| support_dir().join("extensions"))
+}
+
+/// Returns the path to the themes directory.
+///
+/// This is where themes that are not provided by extensions are stored.
+pub fn themes_dir() -> &'static PathBuf {
+    static THEMES_DIR: OnceLock<PathBuf> = OnceLock::new();
+    THEMES_DIR.get_or_init(|| config_dir().join("themes"))
+}
+
 /// Returns the path to the contexts directory.
 ///
 /// This is where the saved contexts from the Assistant are stored.
@@ -145,9 +161,6 @@ pub fn embeddings_dir() -> &'static PathBuf {
 }
 
 lazy_static::lazy_static! {
-    pub static ref THEMES_DIR: PathBuf = config_dir().join("themes");
-
-    pub static ref EXTENSIONS_DIR: PathBuf = support_dir().join("extensions");
     pub static ref LANGUAGES_DIR: PathBuf = support_dir().join("languages");
     pub static ref COPILOT_DIR: PathBuf = support_dir().join("copilot");
     pub static ref SUPERMAVEN_DIR: PathBuf = support_dir().join("supermaven");

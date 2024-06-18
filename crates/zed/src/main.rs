@@ -669,7 +669,7 @@ async fn restore_or_create_workspace(
 fn init_paths() -> anyhow::Result<()> {
     for path in [
         paths::config_dir(),
-        &*paths::EXTENSIONS_DIR,
+        paths::extensions_dir(),
         &*paths::LANGUAGES_DIR,
         &*paths::DB_DIR,
         paths::logs_dir(),
@@ -919,7 +919,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             if let Some(theme_registry) =
                 cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
             {
-                let themes_dir = paths::THEMES_DIR.as_ref();
+                let themes_dir = paths::themes_dir().as_ref();
                 match fs
                     .metadata(themes_dir)
                     .await
@@ -950,7 +950,7 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
     cx.spawn(|cx| async move {
         let (mut events, _) = fs
-            .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
+            .watch(paths::themes_dir(), Duration::from_millis(100))
             .await;
 
         while let Some(paths) = events.next().await {
