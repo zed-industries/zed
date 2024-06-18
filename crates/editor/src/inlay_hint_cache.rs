@@ -1307,7 +1307,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Uri::from_file_path(file_with_hints).unwrap().into(),
+                        lsp::Url::from_file_path(file_with_hints).unwrap(),
                     );
                     let current_call_id =
                         Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
@@ -1439,7 +1439,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Uri::from_file_path(file_with_hints).unwrap().into(),
+                        lsp::Url::from_file_path(file_with_hints).unwrap(),
                     );
                     let current_call_id =
                         Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
@@ -1613,7 +1613,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                        lsp::Url::from_file_path("/a/main.rs").unwrap(),
                     );
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
                     Ok(Some(vec![lsp::InlayHint {
@@ -1666,7 +1666,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Uri::from_file_path("/a/other.md").unwrap().into(),
+                        lsp::Url::from_file_path("/a/other.md").unwrap(),
                     );
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
                     Ok(Some(vec![lsp::InlayHint {
@@ -1790,7 +1790,7 @@ pub mod tests {
                     Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Uri::from_file_path(file_with_hints).unwrap().into(),
+                        lsp::Url::from_file_path(file_with_hints).unwrap(),
                     );
                     Ok(Some(vec![
                         lsp::InlayHint {
@@ -2136,7 +2136,7 @@ pub mod tests {
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst) + 1;
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Uri::from_file_path(file_with_hints).unwrap().into(),
+                        lsp::Url::from_file_path(file_with_hints).unwrap(),
                     );
                     Ok(Some(vec![lsp::InlayHint {
                         position: lsp::Position::new(0, i),
@@ -2305,7 +2305,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                        lsp::Url::from_file_path("/a/main.rs").unwrap(),
                     );
 
                     task_lsp_request_ranges.lock().push(params.range);
@@ -2673,11 +2673,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Uri::from_file_path("/a/main.rs").unwrap().into()
+                        == lsp::Url::from_file_path("/a/main.rs").unwrap()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Uri::from_file_path("/a/other.rs").unwrap().into()
+                        == lsp::Url::from_file_path("/a/other.rs").unwrap()
                     {
                         "other hint"
                     } else {
@@ -2981,11 +2981,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Uri::from_file_path("/a/main.rs").unwrap().into()
+                        == lsp::Url::from_file_path("/a/main.rs").unwrap()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Uri::from_file_path("/a/other.rs").unwrap().into()
+                        == lsp::Url::from_file_path("/a/other.rs").unwrap()
                     {
                         "other hint"
                     } else {
@@ -3177,7 +3177,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                        lsp::Url::from_file_path("/a/main.rs").unwrap(),
                     );
                     let query_start = params.range.start;
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::Release) + 1;
@@ -3244,7 +3244,7 @@ pub mod tests {
                 async move {
                     assert_eq!(
                         params.text_document.uri,
-                        lsp::Uri::from_file_path(file_with_hints).unwrap().into(),
+                        lsp::Url::from_file_path(file_with_hints).unwrap(),
                     );
 
                     let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst) + 1;

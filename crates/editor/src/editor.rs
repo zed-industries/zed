@@ -8971,7 +8971,7 @@ impl Editor {
                         });
                     language_server_name.map(|language_server_name| {
                         project.open_local_buffer_via_lsp(
-                            lsp::Uri::from(lsp_location.uri.clone()),
+                            lsp_location.uri.clone(),
                             server_id,
                             language_server_name,
                             cx,
