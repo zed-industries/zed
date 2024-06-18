@@ -5,7 +5,7 @@ use gpui::{AsyncAppContext, Model};
 use language::{language_settings::language_settings, Buffer, Diff};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
-use paths::DEFAULT_PRETTIER_DIR;
+use paths::default_prettier_dir;
 use serde::{Deserialize, Serialize};
 use std::{
     ops::ControlFlow,
@@ -159,7 +159,7 @@ impl Prettier {
         _: AsyncAppContext,
     ) -> anyhow::Result<Self> {
         Ok(Self::Test(TestPrettier {
-            default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
+            default: prettier_dir == default_prettier_dir().as_path(),
             prettier_dir,
         }))
     }
@@ -178,7 +178,7 @@ impl Prettier {
             prettier_dir.is_dir(),
             "Prettier dir {prettier_dir:?} is not a directory"
         );
-        let prettier_server = DEFAULT_PRETTIER_DIR.join(PRETTIER_SERVER_FILE);
+        let prettier_server = default_prettier_dir().join(PRETTIER_SERVER_FILE);
         anyhow::ensure!(
             prettier_server.is_file(),
             "no prettier server package found at {prettier_server:?}"
@@ -206,7 +206,7 @@ impl Prettier {
             .context("prettier server initialization")?;
         Ok(Self::Real(RealPrettier {
             server,
-            default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
+            default: prettier_dir == default_prettier_dir().as_path(),
             prettier_dir,
         }))
     }

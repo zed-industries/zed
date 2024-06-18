@@ -36,7 +36,7 @@ use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
 
-use paths::{LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH};
+use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
@@ -178,11 +178,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
                     let tasks_file_rx =
-                        watch_config_file(&cx.background_executor(), fs, paths::TASKS.clone());
+                        watch_config_file(&cx.background_executor(), fs, paths::tasks_file().clone());
                     inventory.add_source(
                         TaskSourceKind::AbsPath {
                             id_base: "global_tasks".into(),
-                            abs_path: paths::TASKS.clone(),
+                            abs_path: paths::tasks_file().clone(),
                         },
                         |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                         cx,
@@ -341,13 +341,13 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )
             .register_action(
                 move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
-                    open_settings_file(&paths::KEYMAP, Rope::default, cx);
+                    open_settings_file(paths::keymap_file(), Rope::default, cx);
                 },
             )
             .register_action(
                 move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
                     open_settings_file(
-                        &paths::SETTINGS,
+                        paths::settings_file(),
                         || settings::initial_user_settings_content().as_ref().into(),
                         cx,
                     );
@@ -356,7 +356,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             .register_action(
                 move |_: &mut Workspace, _: &OpenTasks, cx: &mut ViewContext<Workspace>| {
                     open_settings_file(
-                        &paths::TASKS,
+                        paths::tasks_file(),
                         || settings::initial_tasks_content().as_ref().into(),
                         cx,
                     );
@@ -566,7 +566,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
             let fs = workspace.app_state().fs.clone();
             cx.spawn(|workspace, mut cx| async move {
                 let (old_log, new_log) =
-                    futures::join!(fs.load(&paths::OLD_LOG), fs.load(&paths::LOG));
+                    futures::join!(fs.load(paths::old_log_file()), fs.load(paths::log_file()));
                 let log = match (old_log, new_log) {
                     (Err(_), Err(_)) => None,
                     (old_log, new_log) => {
@@ -602,7 +602,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                                     cx.new_view(|_| {
                                         MessageNotification::new(format!(
                                             "Unable to access/open log file at path {:?}",
-                                            paths::LOG.as_path()
+                                            paths::log_file().as_path()
                                         ))
                                     })
                                 },
@@ -715,7 +715,7 @@ fn open_local_settings_file(
 ) {
     open_local_file(
         workspace,
-        &LOCAL_SETTINGS_RELATIVE_PATH,
+        local_settings_file_relative_path(),
         initial_local_settings_content(),
         cx,
     )
@@ -728,7 +728,7 @@ fn open_local_tasks_file(
 ) {
     open_local_file(
         workspace,
-        &LOCAL_TASKS_RELATIVE_PATH,
+        local_tasks_file_relative_path(),
         initial_tasks_content(),
         cx,
     )
@@ -904,7 +904,7 @@ fn open_settings_file(
                 let worktree_creation_task = workspace.project().update(cx, |project, cx| {
                     // Set up a dedicated worktree for settings, since otherwise we're dropping and re-starting LSP servers for each file inside on every settings file close/open
                     // TODO: Do note that all other external files (e.g. drag and drop from OS) still have their worktrees released on file close, causing LSP servers' restarts.
-                    project.find_or_create_local_worktree(paths::CONFIG_DIR.as_path(), false, cx)
+                    project.find_or_create_local_worktree(paths::config_dir().as_path(), false, cx)
                 });
                 let settings_open_task = create_and_open_local_file(&abs_path, cx, default_content);
                 (worktree_creation_task, settings_open_task)

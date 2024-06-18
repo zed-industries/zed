@@ -67,7 +67,8 @@ use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use paths::{
-    LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
+    local_settings_file_relative_path, local_tasks_file_relative_path,
+    local_vscode_tasks_file_relative_path,
 };
 use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
@@ -8176,10 +8177,10 @@ impl Project {
                 }
             };
 
-            if abs_path.ends_with(&*LOCAL_SETTINGS_RELATIVE_PATH) {
+            if abs_path.ends_with(local_settings_file_relative_path()) {
                 let settings_dir = Arc::from(
                     path.ancestors()
-                        .nth(LOCAL_SETTINGS_RELATIVE_PATH.components().count())
+                        .nth(local_settings_file_relative_path().components().count())
                         .unwrap(),
                 );
                 let fs = self.fs.clone();
@@ -8193,7 +8194,7 @@ impl Project {
                         },
                     )
                 });
-            } else if abs_path.ends_with(&*LOCAL_TASKS_RELATIVE_PATH) {
+            } else if abs_path.ends_with(local_tasks_file_relative_path()) {
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
@@ -8213,7 +8214,7 @@ impl Project {
                         );
                     }
                 })
-            } else if abs_path.ends_with(&*LOCAL_VSCODE_TASKS_RELATIVE_PATH) {
+            } else if abs_path.ends_with(local_vscode_tasks_file_relative_path()) {
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);

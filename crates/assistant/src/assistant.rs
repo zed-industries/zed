@@ -21,7 +21,6 @@ pub(crate) use context_store::*;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 pub(crate) use inline_assistant::*;
 pub(crate) use model_selector::*;
-use paths::EMBEDDINGS_DIR;
 use rustdoc::RustdocStore;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
@@ -271,7 +270,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         async move {
             let embedding_provider = CloudEmbeddingProvider::new(client.clone());
             let semantic_index = SemanticIndex::new(
-                EMBEDDINGS_DIR.join("semantic-index-db.0.mdb"),
+                paths::embeddings_dir().join("semantic-index-db.0.mdb"),
                 Arc::new(embedding_provider),
                 &mut cx,
             )

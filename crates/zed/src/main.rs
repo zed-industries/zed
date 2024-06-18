@@ -343,12 +343,12 @@ fn main() {
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
-        paths::SETTINGS.clone(),
+        paths::settings_file().clone(),
     );
     let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
-        paths::KEYMAP.clone(),
+        paths::keymap_file().clone(),
     );
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
@@ -399,7 +399,7 @@ fn main() {
         cx.update_http_client(client.http_client().clone());
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
-        languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
+        languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(client.http_client());
 
@@ -668,12 +668,12 @@ async fn restore_or_create_workspace(
 
 fn init_paths() -> anyhow::Result<()> {
     for path in [
-        &*paths::CONFIG_DIR,
-        &*paths::EXTENSIONS_DIR,
-        &*paths::LANGUAGES_DIR,
-        &*paths::DB_DIR,
-        &*paths::LOGS_DIR,
-        &*paths::TEMP_DIR,
+        paths::config_dir(),
+        paths::extensions_dir(),
+        paths::languages_dir(),
+        paths::database_dir(),
+        paths::logs_dir(),
+        paths::temp_dir(),
     ]
     .iter()
     {
@@ -693,15 +693,16 @@ fn init_logger() {
         const KIB: u64 = 1024;
         const MIB: u64 = 1024 * KIB;
         const MAX_LOG_BYTES: u64 = MIB;
-        if std::fs::metadata(&*paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
+        if std::fs::metadata(paths::log_file())
+            .map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
         {
-            let _ = std::fs::rename(&*paths::LOG, &*paths::OLD_LOG);
+            let _ = std::fs::rename(paths::log_file(), paths::old_log_file());
         }
 
         match OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&*paths::LOG)
+            .open(paths::log_file())
         {
             Ok(log_file) => {
                 let config = ConfigBuilder::new()
@@ -918,7 +919,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             if let Some(theme_registry) =
                 cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
             {
-                let themes_dir = paths::THEMES_DIR.as_ref();
+                let themes_dir = paths::themes_dir().as_ref();
                 match fs
                     .metadata(themes_dir)
                     .await
@@ -949,7 +950,7 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
     cx.spawn(|cx| async move {
         let (mut events, _) = fs
-            .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
+            .watch(paths::themes_dir(), Duration::from_millis(100))
             .await;
 
         while let Some(paths) = events.next().await {

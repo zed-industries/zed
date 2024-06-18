@@ -39,7 +39,7 @@ use language::{
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
-use paths::CONTEXTS_DIR;
+use paths::contexts_dir;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
 use rustdoc::{CrateName, RustdocStore};
@@ -2042,7 +2042,7 @@ impl Context {
                     let mut discriminant = 1;
                     let mut new_path;
                     loop {
-                        new_path = CONTEXTS_DIR.join(&format!(
+                        new_path = contexts_dir().join(&format!(
                             "{} - {}.zed.json",
                             summary.trim(),
                             discriminant
@@ -2056,7 +2056,7 @@ impl Context {
                     new_path
                 };
 
-                fs.create_dir(CONTEXTS_DIR.as_ref()).await?;
+                fs.create_dir(contexts_dir().as_ref()).await?;
                 fs.atomic_write(path.clone(), serde_json::to_string(&context).unwrap())
                     .await?;
                 this.update(&mut cx, |this, _| this.path = Some(path))?;

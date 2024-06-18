@@ -36,7 +36,6 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
-use paths::EXTENSIONS_DIR;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
@@ -180,7 +179,7 @@ pub fn init(
 
     let store = cx.new_model(move |cx| {
         ExtensionStore::new(
-            EXTENSIONS_DIR.clone(),
+            paths::extensions_dir().clone(),
             None,
             fs,
             client.http_client().clone(),
