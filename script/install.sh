@@ -18,7 +18,7 @@ main() {
     fi
 
     case "$platform-$arch" in
-        macos-arm64*)
+        macos-arm64* | linux-arm64* | linux-armhf)
             arch="aarch64"
             ;;
         macos-x86* | linux-x86* | linux-i686*)
