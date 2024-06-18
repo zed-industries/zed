@@ -107,7 +107,7 @@ impl SlashCommand for RustdocSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         query: String,
         _cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,

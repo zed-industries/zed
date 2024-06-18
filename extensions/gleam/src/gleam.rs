@@ -146,6 +146,21 @@ impl zed::Extension for GleamExtension {
         })
     }
 
+    fn complete_slash_command_argument(
+        &self,
+        command: SlashCommand,
+        _query: String,
+    ) -> Result<Vec<String>, String> {
+        match command.name.as_str() {
+            "gleam-project" => Ok(vec![
+                "apple".to_string(),
+                "banana".to_string(),
+                "cherry".to_string(),
+            ]),
+            _ => Ok(Vec::new()),
+        }
+    }
+
     fn run_slash_command(
         &self,
         command: SlashCommand,

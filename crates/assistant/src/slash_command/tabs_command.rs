@@ -31,7 +31,7 @@ impl SlashCommand for TabsSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         _query: String,
         _cancel: Arc<std::sync::atomic::AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
