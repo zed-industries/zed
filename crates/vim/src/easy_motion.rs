@@ -300,7 +300,8 @@ impl EasyMotion {
             editor,
             trie.iter(),
             trie.len(),
-            &snapshot.buffer_snapshot,
+            &snapshot.buffer_snapshot, but this fixes the bug with a match
+            appearing at the end of a folded block
             &snapshot.display_snapshot,
             cx,
         );
@@ -503,7 +504,6 @@ impl EasyMotion {
         editor.add_overlays_with_reserve::<Self>(overlays, len, cx);
     }
 
-    // TODO: there is a bug with a single match appearing after a folded block
     // TODO: overlays which are folded should probably not be selectable.
     // Probably will need to add an "active" field to the overlay state struct.
     fn update_overlays(
