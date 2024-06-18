@@ -160,11 +160,11 @@ impl ContextMenu {
             Some(
                 ContextMenuItem::Entry { handler, .. }
                 | ContextMenuItem::CustomEntry { handler, .. },
-            ) => (handler)(cx),
-            _ => {}
+            ) => (handler)(cx), // Default handler is responsible for dismissing on confirmation.
+            _ => {
+                cx.emit(DismissEvent);
+            }
         }
-
-        cx.emit(DismissEvent);
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
