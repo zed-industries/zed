@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use editor::Editor;
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use ui::WindowContext;
 use workspace::Workspace;
@@ -26,9 +27,9 @@ impl SlashCommand for ActiveSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         _query: String,
-        _cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {

@@ -257,6 +257,21 @@ impl Extension {
         }
     }
 
+    pub async fn call_complete_slash_command_argument(
+        &self,
+        store: &mut Store<WasmState>,
+        command: &SlashCommand,
+        query: &str,
+    ) -> Result<Result<Vec<String>, String>> {
+        match self {
+            Extension::V007(ext) => {
+                ext.call_complete_slash_command_argument(store, command, query)
+                    .await
+            }
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(Vec::new())),
+        }
+    }
+
     pub async fn call_run_slash_command(
         &self,
         store: &mut Store<WasmState>,

@@ -122,6 +122,9 @@ world extension {
     export labels-for-completions: func(language-server-id: string, completions: list<completion>) -> result<list<option<code-label>>, string>;
     export labels-for-symbols: func(language-server-id: string, symbols: list<symbol>) -> result<list<option<code-label>>, string>;
 
-    /// Runs the provided slash command.
+    /// Returns the completions that should be shown when completing the provided slash command with the given query.
+    export complete-slash-command-argument: func(command: slash-command, query: string) -> result<list<string>, string>;
+
+    /// Returns the output from running the provided slash command.
     export run-slash-command: func(command: slash-command, argument: option<string>, worktree: borrow<worktree>) -> result<slash-command-output, string>;
 }

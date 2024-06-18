@@ -108,7 +108,16 @@ pub trait Extension: Send + Sync {
         None
     }
 
-    /// Runs the given slash command.
+    /// Returns the completions that should be shown when completing the provided slash command with the given query.
+    fn complete_slash_command_argument(
+        &self,
+        _command: SlashCommand,
+        _query: String,
+    ) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Returns the output from running the provided slash command.
     fn run_slash_command(
         &self,
         _command: SlashCommand,
@@ -223,6 +232,13 @@ impl wit::Guest for Component {
             }
         }
         Ok(labels)
+    }
+
+    fn complete_slash_command_argument(
+        command: SlashCommand,
+        query: String,
+    ) -> Result<Vec<String>, String> {
+        extension().complete_slash_command_argument(command, query)
     }
 
     fn run_slash_command(

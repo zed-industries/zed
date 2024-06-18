@@ -98,7 +98,7 @@ impl SlashCommand for DiagnosticsCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,

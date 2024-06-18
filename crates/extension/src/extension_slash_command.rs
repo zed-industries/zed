@@ -36,13 +36,34 @@ impl SlashCommand for ExtensionSlashCommand {
     }
 
     fn complete_argument(
-        &self,
-        _query: String,
+        self: Arc<Self>,
+        query: String,
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
-        Task::ready(Ok(Vec::new()))
+        cx.background_executor().spawn(async move {
+            self.extension
+                .call({
+                    let this = self.clone();
+                    move |extension, store| {
+                        async move {
+                            let completions = extension
+                                .call_complete_slash_command_argument(
+                                    store,
+                                    &this.command,
+                                    query.as_ref(),
+                                )
+                                .await?
+                                .map_err(|e| anyhow!("{}", e))?;
+
+                            anyhow::Ok(completions)
+                        }
+                        .boxed()
+                    }
+                })
+                .await
+        })
     }
 
     fn run(
