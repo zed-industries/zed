@@ -61,8 +61,7 @@ use lsp::{
     CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, Edit, FileSystemWatcher, InsertTextFormat, LanguageServer,
     LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, OneOf,
-    ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit, Uri,
-    WorkDoneProgressCancelParams,
+    ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -2141,7 +2140,7 @@ impl Project {
     /// LanguageServerName is owned, because it is inserted into a map
     pub fn open_local_buffer_via_lsp(
         &mut self,
-        abs_path: lsp::Uri,
+        abs_path: lsp::Url,
         language_server_id: LanguageServerId,
         language_server_name: LanguageServerName,
         cx: &mut ModelContext<Self>,
@@ -2441,15 +2440,13 @@ impl Project {
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
-                    let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
+                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
                     for server in this.language_servers_for_buffer(buffer, cx) {
                         server
                             .1
                             .notify::<lsp::notification::DidCloseTextDocument>(
                                 lsp::DidCloseTextDocumentParams {
-                                    text_document: lsp::TextDocumentIdentifier::new(
-                                        uri.clone().into(),
-                                    ),
+                                    text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
                                 },
                             )
                             .log_err();
@@ -2481,7 +2478,7 @@ impl Project {
             }
 
             let abs_path = file.abs_path(cx);
-            let Some(uri) = lsp::Uri::from_file_path(&abs_path).log_err() else {
+            let Some(uri) = lsp::Url::from_file_path(&abs_path).log_err() else {
                 return;
             };
             let initial_snapshot = buffer.text_snapshot();
@@ -2519,7 +2516,7 @@ impl Project {
                         .notify::<lsp::notification::DidOpenTextDocument>(
                             lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
-                                    uri.clone().into(),
+                                    uri.clone(),
                                     adapter.language_id(&language),
                                     0,
                                     initial_snapshot.text(),
@@ -2577,14 +2574,12 @@ impl Project {
             }
 
             self.buffer_snapshots.remove(&buffer.remote_id());
-            let file_url = lsp::Uri::from_file_path(old_path).unwrap();
+            let file_url = lsp::Url::from_file_path(old_path).unwrap();
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
                 language_server
                     .notify::<lsp::notification::DidCloseTextDocument>(
                         lsp::DidCloseTextDocumentParams {
-                            text_document: lsp::TextDocumentIdentifier::new(
-                                file_url.clone().into(),
-                            ),
+                            text_document: lsp::TextDocumentIdentifier::new(file_url.clone()),
                         },
                     )
                     .log_err();
@@ -2743,7 +2738,7 @@ impl Project {
                 let buffer = buffer.read(cx);
                 let file = File::from_dyn(buffer.file())?;
                 let abs_path = file.as_local()?.abs_path(cx);
-                let uri = lsp::Uri::from_file_path(abs_path).unwrap();
+                let uri = lsp::Url::from_file_path(abs_path).unwrap();
                 let next_snapshot = buffer.text_snapshot();
 
                 let language_servers: Vec<_> = self
@@ -2824,7 +2819,7 @@ impl Project {
                         .notify::<lsp::notification::DidChangeTextDocument>(
                             lsp::DidChangeTextDocumentParams {
                                 text_document: lsp::VersionedTextDocumentIdentifier::new(
-                                    uri.clone().into(),
+                                    uri.clone(),
                                     next_version,
                                 ),
                                 content_changes,
@@ -2839,7 +2834,7 @@ impl Project {
                 let worktree_id = file.worktree_id(cx);
                 let abs_path = file.as_local()?.abs_path(cx);
                 let text_document = lsp::TextDocumentIdentifier {
-                    uri: lsp::Uri::from_file_path(abs_path).unwrap().into(),
+                    uri: lsp::Url::from_file_path(abs_path).unwrap(),
                 };
 
                 for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
@@ -3879,11 +3874,11 @@ impl Project {
                 let snapshot = versions.last().unwrap();
                 let version = snapshot.version;
                 let initial_snapshot = &snapshot.snapshot;
-                let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
+                let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
                 language_server.notify::<lsp::notification::DidOpenTextDocument>(
                     lsp::DidOpenTextDocumentParams {
                         text_document: lsp::TextDocumentItem::new(
-                            uri.into(),
+                            uri,
                             adapter.language_id(&language),
                             version,
                             initial_snapshot.text(),
@@ -4507,13 +4502,10 @@ impl Project {
                                         lsp::OneOf::Left(workspace_folder) => &workspace_folder.uri,
                                         lsp::OneOf::Right(base_uri) => base_uri,
                                     };
-                                    lsp::Uri::from(base_uri.clone())
-                                        .to_file_path()
-                                        .ok()
-                                        .and_then(|file_path| {
-                                            (file_path.to_str() == Some(abs_path))
-                                                .then_some(rp.pattern.as_str())
-                                        })
+                                    base_uri.to_file_path().ok().and_then(|file_path| {
+                                        (file_path.to_str() == Some(abs_path))
+                                            .then_some(rp.pattern.as_str())
+                                    })
                                 }
                             };
                             if let Some(relative_glob_pattern) = relative_glob_pattern {
@@ -4602,9 +4594,10 @@ impl Project {
         disk_based_sources: &[String],
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let abs_path = Uri::from(params.uri.clone())
+        let abs_path = params
+            .uri
             .to_file_path()
-            .map_err(|_| anyhow!("URI `{}` is not a file", params.uri.as_str()))?;
+            .map_err(|_| anyhow!("URI is not a file"))?;
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
@@ -5285,9 +5278,9 @@ impl Project {
         tab_size: NonZeroU32,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
-        let uri = lsp::Uri::from_file_path(abs_path)
+        let uri = lsp::Url::from_file_path(abs_path)
             .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
-        let text_document = lsp::TextDocumentIdentifier::new(uri.into());
+        let text_document = lsp::TextDocumentIdentifier::new(uri);
         let capabilities = &language_server.capabilities();
 
         let formatting_provider = capabilities.document_formatting_provider.as_ref();
@@ -5592,8 +5585,7 @@ impl Project {
                         lsp_symbols
                             .into_iter()
                             .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
-                                let abs_path: lsp::Uri = symbol_location.uri.into();
-                                let abs_path = abs_path.to_file_path().ok()?;
+                                let abs_path = symbol_location.uri.to_file_path().ok()?;
                                 let source_worktree = source_worktree.upgrade()?;
                                 let source_worktree_id = source_worktree.read(cx).id();
 
@@ -5695,7 +5687,7 @@ impl Project {
             };
 
             let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
-            let symbol_uri = if let Ok(uri) = lsp::Uri::from_file_path(symbol_abs_path) {
+            let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
                 uri
             } else {
                 return Task::ready(Err(anyhow!("invalid symbol path")));
@@ -6628,7 +6620,8 @@ impl Project {
         for operation in operations {
             match operation {
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Create(op)) => {
-                    let abs_path = Uri::from(op.uri)
+                    let abs_path = op
+                        .uri
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
 
@@ -6652,10 +6645,12 @@ impl Project {
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(op)) => {
-                    let source_abs_path = Uri::from(op.old_uri)
+                    let source_abs_path = op
+                        .old_uri
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
-                    let target_abs_path = Uri::from(op.new_uri)
+                    let target_abs_path = op
+                        .new_uri
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
                     fs.rename(
@@ -6672,7 +6667,8 @@ impl Project {
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
-                    let abs_path: PathBuf = Uri::from(op.uri)
+                    let abs_path = op
+                        .uri
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
                     let options = op
@@ -6693,7 +6689,7 @@ impl Project {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
                             this.open_local_buffer_via_lsp(
-                                op.text_document.uri.clone().into(),
+                                op.text_document.uri.clone(),
                                 language_server.server_id(),
                                 lsp_adapter.name.clone(),
                                 cx,
@@ -8008,9 +8004,7 @@ impl Project {
                                     PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                                 };
                                 Some(lsp::FileEvent {
-                                    uri: lsp::Uri::from_file_path(abs_path.join(path))
-                                        .unwrap()
-                                        .into(),
+                                    uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
                                     typ,
                                 })
                             })
