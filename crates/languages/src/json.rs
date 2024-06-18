@@ -203,7 +203,12 @@ impl LspAdapter for JsonLspAdapter {
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
-        [("JSON".into(), "jsonc".into())].into_iter().collect()
+        [
+            ("JSON".into(), "json".into()),
+            ("JSONC".into(), "jsonc".into()),
+        ]
+        .into_iter()
+        .collect()
     }
 }
 
