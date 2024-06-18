@@ -545,7 +545,7 @@ mod tests {
         let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
         assert!(
             path_matcher.is_match(path),
-            "Path matcher {path_matcher} should match {path:?}"
+            "Path matcher should match {path:?}"
         );
     }
 
@@ -555,7 +555,7 @@ mod tests {
         let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
         assert!(
             path_matcher.is_match(path),
-            "Path matcher {path_matcher} should match {path:?}"
+            "Path matcher should match {path:?}"
         );
     }
 }
