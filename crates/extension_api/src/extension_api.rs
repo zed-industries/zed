@@ -66,9 +66,11 @@ pub trait Extension: Send + Sync {
     /// language.
     fn language_server_command(
         &mut self,
-        language_server_id: &LanguageServerId,
-        worktree: &Worktree,
-    ) -> Result<Command>;
+        _language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Result<Command> {
+        Err("`language_server_command` not implemented".to_string())
+    }
 
     /// Returns the initialization options to pass to the specified language server.
     fn language_server_initialization_options(
