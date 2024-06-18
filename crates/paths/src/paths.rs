@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use util::paths::HOME;
+pub use util::paths::home_dir;
 
 /// Returns the path to the configuration directory used by Zed.
 pub fn config_dir() -> &'static PathBuf {
@@ -24,7 +24,7 @@ pub fn config_dir() -> &'static PathBuf {
             .join("zed");
         }
 
-        HOME.join(".config").join("zed")
+        home_dir().join(".config").join("zed")
     })
 }
 
@@ -33,7 +33,7 @@ pub fn support_dir() -> &'static PathBuf {
     static SUPPORT_DIR: OnceLock<PathBuf> = OnceLock::new();
     SUPPORT_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
-            return HOME.join("Library/Application Support/Zed");
+            return home_dir().join("Library/Application Support/Zed");
         }
 
         if cfg!(target_os = "linux") {
@@ -74,7 +74,7 @@ pub fn temp_dir() -> &'static PathBuf {
             .join("zed");
         }
 
-        HOME.join(".cache").join("zed")
+        home_dir().join(".cache").join("zed")
     })
 }
 
@@ -83,7 +83,7 @@ pub fn logs_dir() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
     LOGS_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
-            HOME.join("Library/Logs/Zed")
+            home_dir().join("Library/Logs/Zed")
         } else {
             support_dir().join("logs")
         }
@@ -112,7 +112,7 @@ pub fn database_dir() -> &'static PathBuf {
 pub fn crashes_dir() -> &'static Option<PathBuf> {
     static CRASHES_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
     CRASHES_DIR.get_or_init(|| {
-        cfg!(target_os = "macos").then_some(HOME.join("Library/Logs/DiagnosticReports"))
+        cfg!(target_os = "macos").then_some(home_dir().join("Library/Logs/DiagnosticReports"))
     })
 }
 

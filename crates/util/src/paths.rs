@@ -1,3 +1,4 @@
+use std::sync::OnceLock;
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -6,8 +7,10 @@ use std::{
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 
-lazy_static::lazy_static! {
-    pub static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");
+/// Returns the path to the user's home directory.
+pub fn home_dir() -> &'static PathBuf {
+    static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
+    HOME_DIR.get_or_init(|| dirs::home_dir().expect("failed to determine home directory"))
 }
 
 pub trait PathExt {
@@ -50,7 +53,7 @@ impl<T: AsRef<Path>> PathExt for T {
     ///   Linux or macOS, the original path is returned unchanged.
     fn compact(&self) -> PathBuf {
         if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            match self.as_ref().strip_prefix(HOME.as_path()) {
+            match self.as_ref().strip_prefix(home_dir().as_path()) {
                 Ok(relative_path) => {
                     let mut shortened_path = PathBuf::new();
                     shortened_path.push("~");
@@ -477,7 +480,7 @@ mod tests {
     #[test]
     fn test_path_compact() {
         let path: PathBuf = [
-            HOME.to_string_lossy().to_string(),
+            home_dir().to_string_lossy().to_string(),
             "some_file.txt".to_string(),
         ]
         .iter()

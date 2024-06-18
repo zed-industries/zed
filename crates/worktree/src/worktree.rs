@@ -58,7 +58,7 @@ use std::{
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
-use util::{paths::HOME, ResultExt};
+use util::{paths::home_dir, ResultExt};
 pub use worktree_settings::WorktreeSettings;
 
 #[cfg(feature = "test-support")]
@@ -2968,9 +2968,9 @@ impl language::File for File {
         } else {
             let path = worktree.abs_path();
 
-            if worktree.is_local() && path.starts_with(HOME.as_path()) {
+            if worktree.is_local() && path.starts_with(home_dir().as_path()) {
                 full_path.push("~");
-                full_path.push(path.strip_prefix(HOME.as_path()).unwrap());
+                full_path.push(path.strip_prefix(home_dir().as_path()).unwrap());
             } else {
                 full_path.push(path)
             }
