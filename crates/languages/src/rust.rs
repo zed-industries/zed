@@ -350,10 +350,13 @@ const RUST_PACKAGE_TASK_VARIABLE: VariableName =
 const RUST_BIN_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_BIN_NAME"));
 
+const RUST_MAIN_FUNCTION_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("_rust_main_function_end"));
+
 impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
-        _: &TaskVariables,
+        task_variables: &TaskVariables,
         location: &Location,
         cx: &mut gpui::AppContext,
     ) -> Result<TaskVariables> {
@@ -363,23 +366,34 @@ impl ContextProvider for RustContextProvider {
             .file()
             .and_then(|file| Some(file.as_local()?.abs_path(cx)));
 
-        let mut task_variables = TaskVariables::default();
-
         let local_abs_path = local_abs_path.as_deref();
+
+        let is_main_function = task_variables
+            .get(&RUST_MAIN_FUNCTION_TASK_VARIABLE)
+            .is_some();
+
+        if is_main_function {
+            if let Some((package_name, bin_name)) = local_abs_path
+                .and_then(|local_abs_path| package_name_and_bin_name_from_abs_path(local_abs_path))
+            {
+                return Ok(TaskVariables::from_iter([
+                    (RUST_PACKAGE_TASK_VARIABLE.clone(), package_name),
+                    (RUST_BIN_NAME_TASK_VARIABLE.clone(), bin_name),
+                ]));
+            }
+        }
+
         if let Some(package_name) = local_abs_path
             .and_then(|local_abs_path| local_abs_path.parent())
             .and_then(human_readable_package_name)
         {
-            task_variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
+            return Ok(TaskVariables::from_iter([(
+                RUST_PACKAGE_TASK_VARIABLE.clone(),
+                package_name,
+            )]));
         }
 
-        if let Some(bin_name) =
-            local_abs_path.and_then(|local_abs_path| bin_name_from_abs_path(local_abs_path))
-        {
-            task_variables.insert(RUST_BIN_NAME_TASK_VARIABLE.clone(), bin_name);
-        }
-
-        Ok(task_variables)
+        Ok(TaskVariables::default())
     }
 
     fn associated_tasks(&self) -> Option<TaskTemplates> {
@@ -491,6 +505,7 @@ struct CargoMetadata {
 
 #[derive(serde::Deserialize)]
 struct CargoPackage {
+    id: String,
     targets: Vec<CargoTarget>,
 }
 
@@ -501,7 +516,7 @@ struct CargoTarget {
     src_path: String,
 }
 
-fn bin_name_from_abs_path(abs_path: &Path) -> Option<String> {
+fn package_name_and_bin_name_from_abs_path(abs_path: &Path) -> Option<(String, String)> {
     let output = std::process::Command::new("cargo")
         .current_dir(abs_path.parent()?)
         .arg("metadata")
@@ -514,17 +529,26 @@ fn bin_name_from_abs_path(abs_path: &Path) -> Option<String> {
 
     let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
 
-    find_bin_name_from_metadata(metadata, abs_path)
+    retrieve_package_id_and_bin_name_from_metadata(metadata, abs_path).and_then(
+        |(package_id, bin_name)| {
+            let package_name = package_name_from_pkgid(&package_id);
+
+            package_name.map(|package_name| (package_name.to_owned(), bin_name))
+        },
+    )
 }
 
-fn find_bin_name_from_metadata(metadata: CargoMetadata, abs_path: &Path) -> Option<String> {
+fn retrieve_package_id_and_bin_name_from_metadata(
+    metadata: CargoMetadata,
+    abs_path: &Path,
+) -> Option<(String, String)> {
     let abs_path = abs_path.to_str()?;
 
     for package in metadata.packages {
         for target in package.targets {
             let is_bin = target.kind.iter().any(|kind| kind == "bin");
             if target.src_path == abs_path && is_bin {
-                return Some(target.name);
+                return Some((package.id, target.name));
             }
         }
     }
@@ -894,21 +918,24 @@ mod tests {
     }
 
     #[test]
-    fn test_find_bin_name_from_metadata() {
+    fn test_retrieve_package_id_and_bin_name_from_metadata() {
         for (input, absolute_path, expected) in [
             (
-                r#"{"packages":[{"name":"zed","targets":[{"name":"zed","kind":["bin"],"src_path":"/absolute/path/to/project/zed/src/main.rs"}]}]}"#,
-                "/absolute/path/to/project/zed/src/main.rs",
-                Some("zed"),
+                r#"{"packages":[{"id":"path+file:///path/to/zed/crates/zed#0.131.0","targets":[{"name":"zed","kind":["bin"],"src_path":"/path/to/zed/src/main.rs"}]}]}"#,
+                "/path/to/zed/src/main.rs",
+                Some(("path+file:///path/to/zed/crates/zed#0.131.0", "zed")),
             ),
             (
-                r#"{"packages":[{"name":"custom-package","targets":[{"name":"my-custom-package","kind":["bin"],"src_path":"/absolute/path/to/project/custom-package/src/main.rs"}]}]}"#,
-                "/absolute/path/to/project/custom-package/src/main.rs",
-                Some("my-custom-package"),
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["bin"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                "/path/to/custom-package/src/main.rs",
+                Some((
+                    "path+file:///path/to/custom-package#my-custom-package@0.1.0",
+                    "my-custom-bin",
+                )),
             ),
             (
-                r#"{"packages":[{"name":"custom-package","targets":[{"name":"my-custom-package","kind":["lib"],"src_path":"/absolute/path/to/project/custom-package/src/main.rs"}]}]}"#,
-                "/absolute/path/to/project/custom-package/src/main.rs",
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-package","kind":["lib"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                "/path/to/custom-package/src/main.rs",
                 None,
             ),
         ] {
@@ -917,8 +944,8 @@ mod tests {
             let absolute_path = Path::new(absolute_path);
 
             assert_eq!(
-                find_bin_name_from_metadata(metadata, absolute_path),
-                expected.map(|s| s.to_string())
+                retrieve_package_id_and_bin_name_from_metadata(metadata, absolute_path),
+                expected.map(|(pkgid, bin)| (pkgid.to_owned(), bin.to_owned()))
             );
         }
     }

@@ -32,7 +32,7 @@
         (function_item
             name: (_) @run
             body: _
-        ) @end
+        ) @_rust_main_function_end
         (#eq? @run "main")
     )
     (#set! tag rust-main)
