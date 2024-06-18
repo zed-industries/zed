@@ -3915,12 +3915,11 @@ impl Editor {
         }
 
         let position = self.selections.newest_anchor().head();
-        let (buffer, buffer_position) =
-            if let Some(output) = self.buffer.read(cx).text_anchor_for_position(position, cx) {
-                output
-            } else {
-                return;
-            };
+        let Some((buffer, buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(position, cx)
+        else {
+            return;
+        };
 
         let task = cx.spawn(move |this, mut cx| async move {
             let markdown_task_result = this.update(&mut cx, |editor, cx| {
