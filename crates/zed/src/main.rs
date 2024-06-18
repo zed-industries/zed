@@ -668,7 +668,7 @@ async fn restore_or_create_workspace(
 
 fn init_paths() -> anyhow::Result<()> {
     for path in [
-        &*paths::CONFIG_DIR,
+        paths::config_dir(),
         &*paths::EXTENSIONS_DIR,
         &*paths::LANGUAGES_DIR,
         &*paths::DB_DIR,

@@ -1,39 +1,50 @@
 //! Paths to locations used by Zed.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use util::paths::HOME;
 
-lazy_static::lazy_static! {
-    pub static ref CONFIG_DIR: PathBuf = if cfg!(target_os = "windows") {
-        dirs::config_dir()
-            .expect("failed to determine RoamingAppData directory")
-            .join("Zed")
-    } else if cfg!(target_os = "linux") {
-        if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
-           flatpak_xdg_config.into()
-        } else {
-            dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
-        }.join("zed")
-    } else {
+/// Returns the path to the configuration directory used by Zed.
+pub fn config_dir() -> &'static PathBuf {
+    static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
+    CONFIG_DIR.get_or_init(|| {
+        if cfg!(target_os = "windows") {
+            return dirs::config_dir()
+                .expect("failed to determine RoamingAppData directory")
+                .join("Zed");
+        }
+
+        if cfg!(target_os = "linux") {
+            return if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
+                flatpak_xdg_config.into()
+            } else {
+                dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
+            }
+            .join("zed");
+        }
+
         HOME.join(".config").join("zed")
-    };
+    })
+}
+
+lazy_static::lazy_static! {
     pub static ref CONTEXTS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        CONFIG_DIR.join("conversations")
+        config_dir().join("conversations")
     } else {
         SUPPORT_DIR.join("conversations")
     };
     pub static ref PROMPTS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        CONFIG_DIR.join("prompts")
+        config_dir().join("prompts")
     } else {
         SUPPORT_DIR.join("prompts")
     };
     pub static ref EMBEDDINGS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        CONFIG_DIR.join("embeddings")
+        config_dir().join("embeddings")
     } else {
         SUPPORT_DIR.join("embeddings")
     };
-    pub static ref THEMES_DIR: PathBuf = CONFIG_DIR.join("themes");
+    pub static ref THEMES_DIR: PathBuf = config_dir().join("themes");
 
     pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Application Support/Zed")
@@ -48,7 +59,7 @@ lazy_static::lazy_static! {
             .expect("failed to determine LocalAppData directory")
             .join("Zed")
     } else {
-        CONFIG_DIR.clone()
+        config_dir().clone()
     };
     pub static ref LOGS_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Logs/Zed")
@@ -67,10 +78,10 @@ lazy_static::lazy_static! {
         .as_ref()
         .map(|dir| dir.join("Retired"));
 
-    pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
-    pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
-    pub static ref TASKS: PathBuf = CONFIG_DIR.join("tasks.json");
-    pub static ref LAST_USERNAME: PathBuf = CONFIG_DIR.join("last-username.txt");
+    pub static ref SETTINGS: PathBuf = config_dir().join("settings.json");
+    pub static ref KEYMAP: PathBuf = config_dir().join("keymap.json");
+    pub static ref TASKS: PathBuf = config_dir().join("tasks.json");
+    pub static ref LAST_USERNAME: PathBuf = config_dir().join("last-username.txt");
     pub static ref LOG: PathBuf = LOGS_DIR.join("Zed.log");
     pub static ref OLD_LOG: PathBuf = LOGS_DIR.join("Zed.log.old");
     pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
