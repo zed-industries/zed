@@ -31,7 +31,6 @@ serde_json.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
-unicase.workspace = true
 util.workspace = true
 client.workspace = true
 worktree.workspace = true

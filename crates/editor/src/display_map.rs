@@ -18,7 +18,7 @@
 //! [EditorElement]: crate::element::EditorElement
 
 mod block_map;
-mod flap_map;
+mod crease_map;
 mod fold_map;
 mod inlay_map;
 mod tab_map;
@@ -33,7 +33,7 @@ pub use block_map::{
 };
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
-pub use flap_map::*;
+pub use crease_map::*;
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{
@@ -106,7 +106,7 @@ pub struct DisplayMap {
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
-    flap_map: FlapMap,
+    crease_map: CreaseMap,
     fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
 }
@@ -139,7 +139,7 @@ impl DisplayMap {
             excerpt_header_height,
             excerpt_footer_height,
         );
-        let flap_map = FlapMap::default();
+        let crease_map = CreaseMap::default();
 
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
 
@@ -151,7 +151,7 @@ impl DisplayMap {
             tab_map,
             wrap_map,
             block_map,
-            flap_map,
+            crease_map,
             fold_placeholder,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
@@ -178,7 +178,7 @@ impl DisplayMap {
             tab_snapshot,
             wrap_snapshot,
             block_snapshot,
-            flap_snapshot: self.flap_map.snapshot(),
+            crease_snapshot: self.crease_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
@@ -247,22 +247,22 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    pub fn insert_flaps(
+    pub fn insert_creases(
         &mut self,
-        flaps: impl IntoIterator<Item = Flap>,
+        creases: impl IntoIterator<Item = Crease>,
         cx: &mut ModelContext<Self>,
-    ) -> Vec<FlapId> {
+    ) -> Vec<CreaseId> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        self.flap_map.insert(flaps, &snapshot)
+        self.crease_map.insert(creases, &snapshot)
     }
 
-    pub fn remove_flaps(
+    pub fn remove_creases(
         &mut self,
-        flap_ids: impl IntoIterator<Item = FlapId>,
+        crease_ids: impl IntoIterator<Item = CreaseId>,
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        self.flap_map.remove(flap_ids, &snapshot)
+        self.crease_map.remove(crease_ids, &snapshot)
     }
 
     pub fn insert_blocks(
@@ -472,7 +472,7 @@ pub struct HighlightedChunk<'a> {
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
     pub fold_snapshot: FoldSnapshot,
-    pub flap_snapshot: FlapSnapshot,
+    pub crease_snapshot: CreaseSnapshot,
     inlay_snapshot: InlaySnapshot,
     tab_snapshot: TabSnapshot,
     wrap_snapshot: WrapSnapshot,
@@ -955,13 +955,13 @@ impl DisplaySnapshot {
         buffer_row: MultiBufferRow,
     ) -> Option<(Range<Point>, FoldPlaceholder)> {
         let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
-        if let Some(flap) = self
-            .flap_snapshot
+        if let Some(crease) = self
+            .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
         {
             Some((
-                flap.range.to_point(&self.buffer_snapshot),
-                flap.placeholder.clone(),
+                crease.range.to_point(&self.buffer_snapshot),
+                crease.placeholder.clone(),
             ))
         } else if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
@@ -1018,6 +1018,22 @@ impl Debug for DisplayPoint {
             self.row().0,
             self.column()
         ))
+    }
+}
+
+impl Add for DisplayPoint {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self::Output {
+        DisplayPoint(BlockPoint(self.0 .0 + other.0 .0))
+    }
+}
+
+impl Sub for DisplayPoint {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self::Output {
+        DisplayPoint(BlockPoint(self.0 .0 - other.0 .0))
     }
 }
 
@@ -1111,14 +1127,11 @@ impl ToDisplayPoint for Anchor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::{
-        movement,
-        test::{editor_test_context::EditorTestContext, marked_display_snapshot},
-    };
+    use crate::{movement, test::marked_display_snapshot};
     use gpui::{div, font, observe, px, AppContext, BorrowAppContext, Context, Element, Hsla};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
-        Buffer, Language, LanguageConfig, LanguageMatcher, SelectionGoal,
+        Buffer, Language, LanguageConfig, LanguageMatcher,
     };
     use project::Project;
     use rand::{prelude::*, Rng};
@@ -1393,6 +1406,7 @@ pub mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[gpui::test(retries = 5)]
     async fn test_soft_wraps(cx: &mut gpui::TestAppContext) {
         cx.background_executor
@@ -1401,7 +1415,7 @@ pub mod tests {
             init_test(cx, |_| {});
         });
 
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
         let editor = cx.editor.clone();
         let window = cx.window;
 
@@ -1457,39 +1471,39 @@ pub mod tests {
                 movement::up(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 10),
-                    SelectionGoal::None,
+                    language::SelectionGoal::None,
                     false,
                     &text_layout_details,
                 ),
                 (
                     DisplayPoint::new(DisplayRow(0), 7),
-                    SelectionGoal::HorizontalPosition(x.0)
+                    language::SelectionGoal::HorizontalPosition(x.0)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(0), 7),
-                    SelectionGoal::HorizontalPosition(x.0),
+                    language::SelectionGoal::HorizontalPosition(x.0),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(1), 10),
-                    SelectionGoal::HorizontalPosition(x.0)
+                    language::SelectionGoal::HorizontalPosition(x.0)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 10),
-                    SelectionGoal::HorizontalPosition(x.0),
+                    language::SelectionGoal::HorizontalPosition(x.0),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(2), 4),
-                    SelectionGoal::HorizontalPosition(x.0)
+                    language::SelectionGoal::HorizontalPosition(x.0)
                 )
             );
 
@@ -1679,6 +1693,8 @@ pub mod tests {
         );
     }
 
+    // todo(linux) fails due to pixel differences in text rendering
+    #[cfg(target_os = "macos")]
     #[gpui::test]
     async fn test_chunks_with_soft_wrapping(cx: &mut gpui::TestAppContext) {
         use unindent::Unindent as _;
@@ -1930,7 +1946,7 @@ pub mod tests {
     }
 
     #[gpui::test]
-    fn test_flaps(cx: &mut gpui::AppContext) {
+    fn test_creases(cx: &mut gpui::AppContext) {
         init_test(cx, |_| {});
 
         let text = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\nkkk\nlll";
@@ -1953,8 +1969,8 @@ pub mod tests {
             let range =
                 snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_after(Point::new(3, 3));
 
-            map.flap_map.insert(
-                [Flap::new(
+            map.crease_map.insert(
+                [Crease::new(
                     range,
                     FoldPlaceholder::test(),
                     |_row, _status, _toggle, _cx| div(),

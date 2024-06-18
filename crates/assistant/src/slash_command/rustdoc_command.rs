@@ -10,18 +10,10 @@ use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
-use rustdoc::crawler::LocalProvider;
-use rustdoc::{convert_rustdoc_to_markdown, RustdocStore};
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use rustdoc::{convert_rustdoc_to_markdown, CrateName, LocalProvider, RustdocSource, RustdocStore};
+use ui::prelude::*;
+use util::{maybe, ResultExt};
 use workspace::Workspace;
-
-#[derive(Debug, Clone, Copy)]
-enum RustdocSource {
-    /// The docs were sourced from local `cargo doc` output.
-    Local,
-    /// The docs were sourced from `docs.rs`.
-    DocsDotRs,
-}
 
 pub(crate) struct RustdocSlashCommand;
 
@@ -29,14 +21,14 @@ impl RustdocSlashCommand {
     async fn build_message(
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
-        crate_name: String,
+        crate_name: CrateName,
         module_path: Vec<String>,
         path_to_cargo_toml: Option<&Path>,
     ) -> Result<(RustdocSource, String)> {
         let cargo_workspace_root = path_to_cargo_toml.and_then(|path| path.parent());
         if let Some(cargo_workspace_root) = cargo_workspace_root {
             let mut local_cargo_doc_path = cargo_workspace_root.join("target/doc");
-            local_cargo_doc_path.push(&crate_name);
+            local_cargo_doc_path.push(crate_name.as_ref());
             if !module_path.is_empty() {
                 local_cargo_doc_path.push(module_path.join("/"));
             }
@@ -118,11 +110,36 @@ impl SlashCommand for RustdocSlashCommand {
         &self,
         query: String,
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
+        let index_provider_deps = maybe!({
+            let workspace = workspace.ok_or_else(|| anyhow!("no workspace"))?;
+            let workspace = workspace
+                .upgrade()
+                .ok_or_else(|| anyhow!("workspace was dropped"))?;
+            let project = workspace.read(cx).project().clone();
+            let fs = project.read(cx).fs().clone();
+            let cargo_workspace_root = Self::path_to_cargo_toml(project, cx)
+                .and_then(|path| path.parent().map(|path| path.to_path_buf()))
+                .ok_or_else(|| anyhow!("no Cargo workspace root found"))?;
+
+            anyhow::Ok((fs, cargo_workspace_root))
+        });
+
         let store = RustdocStore::global(cx);
         cx.background_executor().spawn(async move {
+            if let Some((crate_name, rest)) = query.split_once(':') {
+                if rest.is_empty() {
+                    if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
+                        let provider = Box::new(LocalProvider::new(fs, cargo_workspace_root));
+                        // We don't need to hold onto this task, as the `RustdocStore` will hold it
+                        // until it completes.
+                        let _ = store.clone().index(crate_name.into(), provider);
+                    }
+                }
+            }
+
             let items = store.search(query).await;
             Ok(items)
         })
@@ -147,70 +164,12 @@ impl SlashCommand for RustdocSlashCommand {
         let http_client = workspace.read(cx).client().http_client();
         let path_to_cargo_toml = Self::path_to_cargo_toml(project, cx);
 
-        let mut item_path = String::new();
-        let mut crate_name_to_index = None;
-
-        let mut args = argument.split(' ').map(|word| word.trim());
-        while let Some(arg) = args.next() {
-            if arg == "--index" {
-                let Some(crate_name) = args.next() else {
-                    return Task::ready(Err(anyhow!("no crate name provided to --index")));
-                };
-                crate_name_to_index = Some(crate_name.to_string());
-                continue;
-            }
-
-            item_path.push_str(arg);
-        }
-
-        if let Some(crate_name_to_index) = crate_name_to_index {
-            let index_task = cx.background_executor().spawn({
-                let rustdoc_store = RustdocStore::global(cx);
-                let fs = fs.clone();
-                let crate_name_to_index = crate_name_to_index.clone();
-                async move {
-                    let cargo_workspace_root = path_to_cargo_toml
-                        .and_then(|path| path.parent().map(|path| path.to_path_buf()))
-                        .ok_or_else(|| anyhow!("no Cargo workspace root found"))?;
-
-                    let provider = Box::new(LocalProvider::new(fs, cargo_workspace_root));
-
-                    rustdoc_store
-                        .index(crate_name_to_index.clone(), provider)
-                        .await?;
-
-                    anyhow::Ok(format!("Indexed {crate_name_to_index}"))
-                }
-            });
-
-            return cx.foreground_executor().spawn(async move {
-                let text = index_task.await?;
-                let range = 0..text.len();
-                Ok(SlashCommandOutput {
-                    text,
-                    sections: vec![SlashCommandOutputSection {
-                        range,
-                        render_placeholder: Arc::new(move |id, unfold, _cx| {
-                            RustdocIndexPlaceholder {
-                                id,
-                                unfold,
-                                source: RustdocSource::Local,
-                                crate_name: SharedString::from(crate_name_to_index.clone()),
-                            }
-                            .into_any_element()
-                        }),
-                    }],
-                    run_commands_in_text: false,
-                })
-            });
-        }
-
-        let mut path_components = item_path.split("::");
+        let mut path_components = argument.split("::");
         let crate_name = match path_components
             .next()
             .ok_or_else(|| anyhow!("missing crate name"))
         {
-            Ok(crate_name) => crate_name.to_string(),
+            Ok(crate_name) => CrateName::from(crate_name),
             Err(err) => return Task::ready(Err(err)),
         };
         let item_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
@@ -221,11 +180,18 @@ impl SlashCommand for RustdocSlashCommand {
             let item_path = item_path.clone();
             async move {
                 let item_docs = rustdoc_store
-                    .load(crate_name.clone(), Some(item_path.join("::")))
+                    .load(
+                        crate_name.clone(),
+                        if item_path.is_empty() {
+                            None
+                        } else {
+                            Some(item_path.join("::"))
+                        },
+                    )
                     .await;
 
                 if let Ok(item_docs) = item_docs {
-                    anyhow::Ok((RustdocSource::Local, item_docs.docs().to_owned()))
+                    anyhow::Ok((RustdocSource::Index, item_docs.docs().to_owned()))
                 } else {
                     Self::build_message(
                         fs,
@@ -239,7 +205,6 @@ impl SlashCommand for RustdocSlashCommand {
             }
         });
 
-        let crate_name = SharedString::from(crate_name);
         let module_path = if item_path.is_empty() {
             None
         } else {
@@ -248,84 +213,26 @@ impl SlashCommand for RustdocSlashCommand {
         cx.foreground_executor().spawn(async move {
             let (source, text) = text.await?;
             let range = 0..text.len();
+            let crate_path = module_path
+                .map(|module_path| format!("{}::{}", crate_name, module_path))
+                .unwrap_or_else(|| crate_name.to_string());
             Ok(SlashCommandOutput {
                 text,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        RustdocPlaceholder {
-                            id,
-                            unfold,
-                            source,
-                            crate_name: crate_name.clone(),
-                            module_path: module_path.clone(),
+                    icon: IconName::FileRust,
+                    label: format!(
+                        "rustdoc ({source}): {crate_path}",
+                        source = match source {
+                            RustdocSource::Index => "index",
+                            RustdocSource::Local => "local",
+                            RustdocSource::DocsDotRs => "docs.rs",
                         }
-                        .into_any_element()
-                    }),
+                    )
+                    .into(),
                 }],
                 run_commands_in_text: false,
             })
         })
-    }
-}
-
-#[derive(IntoElement)]
-struct RustdocPlaceholder {
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-    pub source: RustdocSource,
-    pub crate_name: SharedString,
-    pub module_path: Option<SharedString>,
-}
-
-impl RenderOnce for RustdocPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-
-        let crate_path = self
-            .module_path
-            .map(|module_path| format!("{crate_name}::{module_path}", crate_name = self.crate_name))
-            .unwrap_or(self.crate_name.to_string());
-
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::FileRust))
-            .child(Label::new(format!(
-                "rustdoc ({source}): {crate_path}",
-                source = match self.source {
-                    RustdocSource::Local => "local",
-                    RustdocSource::DocsDotRs => "docs.rs",
-                }
-            )))
-            .on_click(move |_, cx| unfold(cx))
-    }
-}
-
-#[derive(IntoElement)]
-struct RustdocIndexPlaceholder {
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-    pub source: RustdocSource,
-    pub crate_name: SharedString,
-}
-
-impl RenderOnce for RustdocIndexPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::FileRust))
-            .child(Label::new(format!(
-                "rustdoc index ({source}): {crate_name}",
-                crate_name = self.crate_name,
-                source = match self.source {
-                    RustdocSource::Local => "local",
-                    RustdocSource::DocsDotRs => "docs.rs",
-                }
-            )))
-            .on_click(move |_, cx| unfold(cx))
     }
 }

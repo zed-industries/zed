@@ -14,8 +14,8 @@ use futures::{
 use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, percentage, point, size, Animation, AnimationExt, AppContext, BackgroundExecutor,
-    Bounds, DevicePixels, EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task,
-    TitlebarOptions, Transformation, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
+    Bounds, EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TitlebarOptions,
+    Transformation, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -36,7 +36,7 @@ use ui::{
     div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
     SharedString, Styled, TitleBar, Tooltip, ViewContext, VisualContext,
 };
-use util::{paths::PROMPTS_DIR, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::Workspace;
 
@@ -48,7 +48,7 @@ actions!(
 /// Init starts loading the PromptStore in the background and assigns
 /// a shared future to a global.
 pub fn init(cx: &mut AppContext) {
-    let db_path = PROMPTS_DIR.join("prompts-library-db.0.mdb");
+    let db_path = paths::prompts_dir().join("prompts-library-db.0.mdb");
     let prompt_store_future = PromptStore::new(db_path, cx.background_executor().clone())
         .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
         .boxed()
@@ -80,11 +80,7 @@ pub fn open_prompt_library(
         cx.spawn(|cx| async move {
             let store = store.await?;
             cx.update(|cx| {
-                let bounds = Bounds::centered(
-                    None,
-                    size(DevicePixels::from(1024), DevicePixels::from(768)),
-                    cx,
-                );
+                let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
                 cx.open_window(
                     WindowOptions {
                         titlebar: Some(TitlebarOptions {
@@ -454,6 +450,7 @@ impl PromptLibrary {
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
                             editor.set_show_indent_guides(false, cx);
+                            editor.set_use_modal_editing(false);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Box::new(
                                 SlashCommandCompletionProvider::new(commands, None, None),
@@ -835,13 +832,8 @@ impl PromptLibrary {
 
 impl Render for PromptLibrary {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let (ui_font, ui_font_size) = {
-            let theme_settings = ThemeSettings::get_global(cx);
-            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
-        };
-
+        let ui_font = theme::setup_ui_font(cx);
         let theme = cx.theme().clone();
-        cx.set_rem_size(ui_font_size);
 
         h_flex()
             .id("prompt-manager")

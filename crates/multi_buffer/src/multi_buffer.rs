@@ -94,9 +94,9 @@ pub enum Event {
     DiffUpdated {
         buffer: Model<Buffer>,
     },
-    LanguageChanged,
+    LanguageChanged(BufferId),
     CapabilityChanged,
-    Reparsed,
+    Reparsed(BufferId),
     Saved,
     FileHandleChanged,
     Closed,
@@ -538,9 +538,13 @@ impl MultiBuffer {
         });
 
         if let Some(buffer) = self.as_singleton() {
-            return buffer.update(cx, |buffer, cx| {
+            buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, autoindent_mode, cx);
             });
+            cx.emit(Event::ExcerptsEdited {
+                ids: self.excerpt_ids(),
+            });
+            return;
         }
 
         let original_indent_columns = match &mut autoindent_mode {
@@ -1118,12 +1122,12 @@ impl MultiBuffer {
                     for range in ranges.by_ref().take(range_count) {
                         let start = Anchor {
                             buffer_id: Some(buffer_id),
-                            excerpt_id: excerpt_id,
+                            excerpt_id,
                             text_anchor: range.start,
                         };
                         let end = Anchor {
                             buffer_id: Some(buffer_id),
-                            excerpt_id: excerpt_id,
+                            excerpt_id,
                             text_anchor: range.end,
                         };
                         if tx.send(start..end).await.is_err() {
@@ -1639,8 +1643,8 @@ impl MultiBuffer {
             language::Event::Reloaded => Event::Reloaded,
             language::Event::DiffBaseChanged => Event::DiffBaseChanged,
             language::Event::DiffUpdated => Event::DiffUpdated { buffer },
-            language::Event::LanguageChanged => Event::LanguageChanged,
-            language::Event::Reparsed => Event::Reparsed,
+            language::Event::LanguageChanged => Event::LanguageChanged(buffer.read(cx).remote_id()),
+            language::Event::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
             language::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
             language::Event::Closed => Event::Closed,
             language::Event::CapabilityChanged => {

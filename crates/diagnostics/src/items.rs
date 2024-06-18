@@ -1,9 +1,7 @@
-use std::time::Duration;
-
 use editor::Editor;
 use gpui::{
-    percentage, rems, Animation, AnimationExt, EventEmitter, IntoElement, ParentElement, Render,
-    Styled, Subscription, Transformation, View, ViewContext, WeakView,
+    rems, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View,
+    ViewContext, WeakView,
 };
 use language::Diagnostic;
 use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
@@ -61,42 +59,7 @@ impl Render for DiagnosticIndicator {
                 .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
         };
 
-        let has_in_progress_checks = self
-            .workspace
-            .upgrade()
-            .and_then(|workspace| {
-                workspace
-                    .read(cx)
-                    .project()
-                    .read(cx)
-                    .language_servers_running_disk_based_diagnostics()
-                    .next()
-            })
-            .is_some();
-
-        let status = if has_in_progress_checks {
-            Some(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            ),
-                    )
-                    .child(
-                        Label::new("Checking…")
-                            .size(LabelSize::Small)
-                            .into_any_element(),
-                    )
-                    .into_any_element(),
-            )
-        } else if let Some(diagnostic) = &self.current_diagnostic {
+        let status = if let Some(diagnostic) = &self.current_diagnostic {
             let message = diagnostic.message.split('\n').next().unwrap().to_string();
             Some(
                 Button::new("diagnostic_message", message)

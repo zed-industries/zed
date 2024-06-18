@@ -138,9 +138,16 @@ impl LspAdapter for VtslsLspAdapter {
             _ => None,
         }?;
 
-        let text = match &item.detail {
-            Some(detail) => format!("{} {}", item.label, detail),
-            None => item.label.clone(),
+        let text = if let Some(description) = item
+            .label_details
+            .as_ref()
+            .and_then(|label_details| label_details.description.as_ref())
+        {
+            format!("{} {}", item.label, description)
+        } else if let Some(detail) = &item.detail {
+            format!("{} {}", item.label, detail)
+        } else {
+            item.label.clone()
         };
 
         Some(language::CodeLabel {
@@ -167,8 +174,60 @@ impl LspAdapter for VtslsLspAdapter {
                         "enabled": "all",
                         "suppressWhenArgumentMatchesName": false,
 
-                    }
                     },
+
+                    "parameterTypes":
+                    {
+                        "enabled": true
+                    },
+                    "variableTypes": {
+                        "enabled": true,
+                        "suppressWhenTypeMatchesName": false,
+                    },
+                    "propertyDeclarationTypes":{
+                        "enabled": true,
+                    },
+                    "functionLikeReturnTypes": {
+                        "enabled": true,
+                    },
+                    "enumMemberValues":{
+                        "enabled": true,
+                    }
+                }
+            },
+            "vtsls":
+            {"experimental": {
+                "completion": {
+                    "enableServerSideFuzzyMatch": true,
+                    "entriesLimit": 5000,
+                }
+            }
+            }
+        })))
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        Ok(json!({
+            "typescript": {
+                "suggest": {
+                    "completeFunctionCalls": true
+                },
+                "tsdk": "node_modules/typescript/lib",
+                "format": {
+                    "enable": true
+                },
+                "inlayHints":{
+                    "parameterNames":
+                    {
+                        "enabled": "all",
+                        "suppressWhenArgumentMatchesName": false,
+
+                    },
+
                     "parameterTypes":
                     {
                         "enabled": true
@@ -187,19 +246,14 @@ impl LspAdapter for VtslsLspAdapter {
                         "enabled": true,
                     }
             }
-        })))
-    }
-
-    async fn workspace_configuration(
-        self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
-        _cx: &mut AsyncAppContext,
-    ) -> Result<Value> {
-        Ok(json!({
-            "typescript": {
-                "suggest": {
-                    "completeFunctionCalls": true
+            },
+            "vtsls":
+            {"experimental": {
+                "completion": {
+                    "enableServerSideFuzzyMatch": true,
+                    "entriesLimit": 5000,
                 }
+            }
             }
         }))
     }

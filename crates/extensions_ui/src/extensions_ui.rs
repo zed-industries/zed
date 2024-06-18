@@ -23,7 +23,7 @@ use std::ops::DerefMut;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
-use ui::{popover_menu, prelude::*, ContextMenu, ToggleButton, Tooltip};
+use ui::{prelude::*, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
 use util::ResultExt as _;
 use workspace::item::TabContentParams;
 use workspace::{
@@ -526,23 +526,26 @@ impl ExtensionsPage {
                                 .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx)),
                             )
                             .child(
-                                popover_menu(SharedString::from(format!("more-{}", extension.id)))
-                                    .trigger(
-                                        IconButton::new(
-                                            SharedString::from(format!("more-{}", extension.id)),
-                                            IconName::Ellipsis,
-                                        )
-                                        .icon_color(Color::Accent)
-                                        .icon_size(IconSize::Small)
-                                        .style(ButtonStyle::Filled),
+                                PopoverMenu::new(SharedString::from(format!(
+                                    "more-{}",
+                                    extension.id
+                                )))
+                                .trigger(
+                                    IconButton::new(
+                                        SharedString::from(format!("more-{}", extension.id)),
+                                        IconName::Ellipsis,
                                     )
-                                    .menu(move |cx| {
-                                        Some(Self::render_remote_extension_context_menu(
-                                            &this,
-                                            extension_id.clone(),
-                                            cx,
-                                        ))
-                                    }),
+                                    .icon_color(Color::Accent)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Filled),
+                                )
+                                .menu(move |cx| {
+                                    Some(Self::render_remote_extension_context_menu(
+                                        &this,
+                                        extension_id.clone(),
+                                        cx,
+                                    ))
+                                }),
                             ),
                     ),
             )

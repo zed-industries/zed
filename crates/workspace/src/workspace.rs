@@ -27,11 +27,11 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, impl_actions, point, relative, size, Action, AnyElement, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DevicePixels, DragMoveEvent,
-    Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke,
-    ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render, Size,
-    Subscription, Task, View, WeakView, WindowBounds, WindowHandle, WindowOptions,
+    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size, Action,
+    AnyElement, AnyView, AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds,
+    DragMoveEvent, Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
+    KeyContext, Keystroke, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel,
+    Render, Size, Subscription, Task, View, WeakView, WindowBounds, WindowHandle, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -79,7 +79,7 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{
-    div, h_flex, Context as _, Div, FluentBuilder, InteractiveElement as _, IntoElement,
+    div, h_flex, px, Context as _, Div, FluentBuilder, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
     WindowContext,
 };
@@ -96,11 +96,11 @@ use crate::persistence::{
 use crate::{notifications::NotificationId, persistence::model::LocalPathsOrder};
 
 lazy_static! {
-    static ref ZED_WINDOW_SIZE: Option<Size<DevicePixels>> = env::var("ZED_WINDOW_SIZE")
+    static ref ZED_WINDOW_SIZE: Option<Size<Pixels>> = env::var("ZED_WINDOW_SIZE")
         .ok()
         .as_deref()
         .and_then(parse_pixel_size_env_var);
-    static ref ZED_WINDOW_POSITION: Option<Point<DevicePixels>> = env::var("ZED_WINDOW_POSITION")
+    static ref ZED_WINDOW_POSITION: Option<Point<Pixels>> = env::var("ZED_WINDOW_POSITION")
         .ok()
         .as_deref()
         .and_then(parse_pixel_position_env_var);
@@ -112,30 +112,30 @@ pub struct RemoveWorktreeFromProject(pub WorktreeId);
 actions!(
     workspace,
     [
+        ActivateNextPane,
+        ActivatePreviousPane,
+        AddFolderToProject,
+        CloseAllDocks,
+        CloseWindow,
+        Feedback,
+        FollowNextCollaborator,
+        NewCenterTerminal,
+        NewFile,
+        NewSearch,
+        NewTerminal,
+        NewWindow,
         Open,
         OpenInTerminal,
-        NewFile,
-        NewWindow,
-        CloseWindow,
-        AddFolderToProject,
-        Unfollow,
+        ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
-        ReloadActiveItem,
-        ActivatePreviousPane,
-        ActivateNextPane,
-        FollowNextCollaborator,
-        NewTerminal,
-        NewCenterTerminal,
-        NewSearch,
-        Feedback,
-        Welcome,
-        ToggleZoom,
-        ToggleLeftDock,
-        ToggleRightDock,
         ToggleBottomDock,
         ToggleCenteredLayout,
-        CloseAllDocks,
+        ToggleLeftDock,
+        ToggleRightDock,
+        ToggleZoom,
+        Unfollow,
+        Welcome,
     ]
 );
 
@@ -187,6 +187,16 @@ pub struct SendKeystrokes(pub String);
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
+
+action_as!(project_symbols, ToggleProjectSymbols as Toggle);
+
+#[derive(Default, PartialEq, Eq, Clone, serde::Deserialize)]
+pub struct ToggleFileFinder {
+    #[serde(default)]
+    pub separate_history: bool,
+}
+
+impl_action_as!(file_finder, ToggleFileFinder as Toggle);
 
 impl_actions!(
     workspace,
@@ -3981,7 +3991,7 @@ impl Workspace {
     }
 }
 
-fn window_bounds_env_override() -> Option<Bounds<DevicePixels>> {
+fn window_bounds_env_override() -> Option<Bounds<Pixels>> {
     ZED_WINDOW_POSITION
         .zip(*ZED_WINDOW_SIZE)
         .map(|(position, size)| Bounds {
@@ -4144,14 +4154,10 @@ impl Render for Workspace {
         } else {
             (None, None)
         };
-        let (ui_font, ui_font_size) = {
-            let theme_settings = ThemeSettings::get_global(cx);
-            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
-        };
+        let ui_font = theme::setup_ui_font(cx);
 
         let theme = cx.theme().clone();
         let colors = theme.colors();
-        cx.set_rem_size(ui_font_size);
 
         self.actions(div(), cx)
             .key_context(context)
@@ -5158,18 +5164,18 @@ pub fn reload(reload: &Reload, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
-fn parse_pixel_position_env_var(value: &str) -> Option<Point<DevicePixels>> {
+fn parse_pixel_position_env_var(value: &str) -> Option<Point<Pixels>> {
     let mut parts = value.split(',');
     let x: usize = parts.next()?.parse().ok()?;
     let y: usize = parts.next()?.parse().ok()?;
-    Some(point((x as i32).into(), (y as i32).into()))
+    Some(point(px(x as f32), px(y as f32)))
 }
 
-fn parse_pixel_size_env_var(value: &str) -> Option<Size<DevicePixels>> {
+fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     let mut parts = value.split(',');
     let width: usize = parts.next()?.parse().ok()?;
     let height: usize = parts.next()?.parse().ok()?;
-    Some(size((width as i32).into(), (height as i32).into()))
+    Some(size(px(width as f32), px(height as f32)))
 }
 
 #[cfg(test)]

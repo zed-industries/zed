@@ -172,7 +172,6 @@ mod linux {
     use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
     use fork::Fork;
     use once_cell::sync::Lazy;
-    use util::paths;
 
     use crate::{Detect, InstalledApp};
 
@@ -221,7 +220,7 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let sock_path = paths::SUPPORT_DIR.join(format!("zed-{}.sock", *RELEASE_CHANNEL));
+            let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL));
             let sock = UnixDatagram::unbound()?;
             if sock.connect(&sock_path).is_err() {
                 self.boot_background(ipc_url)?;

@@ -40,7 +40,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
-use util::{maybe, parse_env_output, paths, with_clone, ResultExt, TryFutureExt};
+use util::{maybe, parse_env_output, with_clone, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
@@ -168,6 +168,9 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     SystemAppearance::init(cx);
     load_embedded_fonts(cx);
 
+    #[cfg(target_os = "linux")]
+    crate::zed::linux_prompts::init(cx);
+
     theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
     app_state.languages.set_theme(cx.theme().clone());
     command_palette::init(cx);
@@ -217,6 +220,8 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
 
     assistant::init(app_state.client.clone(), cx);
+
+    repl::init(app_state.fs.clone(), cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -321,13 +326,14 @@ fn main() {
     }
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
-        app.path_for_auxiliary_executable("git")
-            .context("could not find git binary path")
-            .log_err()
-    } else {
-        None
-    };
+    let git_binary_path =
+        if cfg!(target_os = "macos") && option_env!("ZED_BUNDLE").as_deref() == Some("true") {
+            app.path_for_auxiliary_executable("git")
+                .context("could not find git binary path")
+                .log_err()
+        } else {
+            None
+        };
     log::info!("Using git binary path: {:?}", git_binary_path);
 
     let fs = Arc::new(RealFs::new(
@@ -337,12 +343,12 @@ fn main() {
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
-        paths::SETTINGS.clone(),
+        paths::settings_file().clone(),
     );
     let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
-        paths::KEYMAP.clone(),
+        paths::keymap_file().clone(),
     );
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
@@ -393,7 +399,7 @@ fn main() {
         cx.update_http_client(client.http_client().clone());
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
-        languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
+        languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(client.http_client());
 
@@ -662,12 +668,12 @@ async fn restore_or_create_workspace(
 
 fn init_paths() -> anyhow::Result<()> {
     for path in [
-        &*util::paths::CONFIG_DIR,
-        &*util::paths::EXTENSIONS_DIR,
-        &*util::paths::LANGUAGES_DIR,
-        &*util::paths::DB_DIR,
-        &*util::paths::LOGS_DIR,
-        &*util::paths::TEMP_DIR,
+        paths::config_dir(),
+        paths::extensions_dir(),
+        paths::languages_dir(),
+        paths::database_dir(),
+        paths::logs_dir(),
+        paths::temp_dir(),
     ]
     .iter()
     {
@@ -687,15 +693,16 @@ fn init_logger() {
         const KIB: u64 = 1024;
         const MIB: u64 = 1024 * KIB;
         const MAX_LOG_BYTES: u64 = MIB;
-        if std::fs::metadata(&*paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
+        if std::fs::metadata(paths::log_file())
+            .map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
         {
-            let _ = std::fs::rename(&*paths::LOG, &*paths::OLD_LOG);
+            let _ = std::fs::rename(paths::log_file(), paths::old_log_file());
         }
 
         match OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&*paths::LOG)
+            .open(paths::log_file())
         {
             Ok(log_file) => {
                 let config = ConfigBuilder::new()
@@ -857,7 +864,7 @@ struct Args {
     /// Use `path:line:row` syntax to open a file at a specific location.
     /// Non-existing paths and directories will ignore `:line:row` suffix.
     ///
-    /// URLs can either be file:// or zed:// scheme, or relative to https://zed.dev.
+    /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
     paths_or_urls: Vec<String>,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
@@ -912,7 +919,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             if let Some(theme_registry) =
                 cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
             {
-                let themes_dir = paths::THEMES_DIR.as_ref();
+                let themes_dir = paths::themes_dir().as_ref();
                 match fs
                     .metadata(themes_dir)
                     .await
@@ -943,7 +950,7 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
     cx.spawn(|cx| async move {
         let (mut events, _) = fs
-            .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
+            .watch(paths::themes_dir(), Duration::from_millis(100))
             .await;
 
         while let Some(paths) = events.next().await {

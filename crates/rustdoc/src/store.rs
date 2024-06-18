@@ -3,18 +3,30 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use collections::HashMap;
+use derive_more::{Deref, Display};
 use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt;
 use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, Task, UpdateGlobal};
 use heed::types::SerdeBincode;
 use heed::Database;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use util::paths::SUPPORT_DIR;
 use util::ResultExt;
 
-use crate::crawler::{RustdocCrawler, RustdocProvider};
+use crate::indexer::{RustdocIndexer, RustdocProvider};
 use crate::{RustdocItem, RustdocItemKind};
+
+/// The name of a crate.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
+pub struct CrateName(Arc<str>);
+
+impl From<&str> for CrateName {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
 
 struct GlobalRustdocStore(Arc<RustdocStore>);
 
@@ -23,6 +35,8 @@ impl Global for GlobalRustdocStore {}
 pub struct RustdocStore {
     executor: BackgroundExecutor,
     database_future: Shared<BoxFuture<'static, Result<Arc<RustdocDatabase>, Arc<anyhow::Error>>>>,
+    indexing_tasks_by_crate:
+        RwLock<HashMap<CrateName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
 }
 
 impl RustdocStore {
@@ -42,7 +56,10 @@ impl RustdocStore {
             .spawn({
                 let executor = executor.clone();
                 async move {
-                    RustdocDatabase::new(SUPPORT_DIR.join("docs/rust/rustdoc-db.0.mdb"), executor)
+                    RustdocDatabase::new(
+                        paths::support_dir().join("docs/rust/rustdoc-db.0.mdb"),
+                        executor,
+                    )
                 }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
@@ -52,12 +69,18 @@ impl RustdocStore {
         Self {
             executor,
             database_future,
+            indexing_tasks_by_crate: RwLock::new(HashMap::default()),
         }
+    }
+
+    /// Returns whether the crate with the given name is currently being indexed.
+    pub fn is_indexing(&self, crate_name: &CrateName) -> bool {
+        self.indexing_tasks_by_crate.read().contains_key(crate_name)
     }
 
     pub async fn load(
         &self,
-        crate_name: String,
+        crate_name: CrateName,
         item_path: Option<String>,
     ) -> Result<RustdocDatabaseEntry> {
         self.database_future
@@ -69,32 +92,49 @@ impl RustdocStore {
     }
 
     pub fn index(
-        &self,
-        crate_name: String,
+        self: Arc<Self>,
+        crate_name: CrateName,
         provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
-    ) -> Task<Result<()>> {
-        let database_future = self.database_future.clone();
-        self.executor.spawn(async move {
-            let crawler = RustdocCrawler::new(provider);
+    ) -> Shared<Task<Result<(), Arc<anyhow::Error>>>> {
+        if let Some(existing_task) = self.indexing_tasks_by_crate.read().get(&crate_name) {
+            return existing_task.clone();
+        }
 
-            let Some(crate_docs) = crawler.crawl(crate_name.clone()).await? else {
-                return Ok(());
-            };
+        let indexing_task = self
+            .executor
+            .spawn({
+                let this = self.clone();
+                let crate_name = crate_name.clone();
+                async move {
+                    let _finally = util::defer({
+                        let this = this.clone();
+                        let crate_name = crate_name.clone();
+                        move || {
+                            this.indexing_tasks_by_crate.write().remove(&crate_name);
+                        }
+                    });
 
-            let database = database_future.await.map_err(|err| anyhow!(err))?;
+                    let index_task = async {
+                        let database = this
+                            .database_future
+                            .clone()
+                            .await
+                            .map_err(|err| anyhow!(err))?;
+                        let indexer = RustdocIndexer::new(database, provider);
 
-            database
-                .insert(crate_name.clone(), None, crate_docs.crate_root_markdown)
-                .await?;
+                        indexer.index(crate_name.clone()).await
+                    };
 
-            for (item, item_docs) in crate_docs.items {
-                database
-                    .insert(crate_name.clone(), Some(&item), item_docs)
-                    .await?;
-            }
+                    index_task.await.map_err(Arc::new)
+                }
+            })
+            .shared();
 
-            Ok(())
-        })
+        self.indexing_tasks_by_crate
+            .write()
+            .insert(crate_name, indexing_task.clone());
+
+        indexing_task
     }
 
     pub fn search(&self, query: String) -> Task<Vec<String>> {
@@ -151,7 +191,7 @@ impl RustdocDatabaseEntry {
     }
 }
 
-struct RustdocDatabase {
+pub(crate) struct RustdocDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
     entries: Database<SerdeBincode<String>, SerdeBincode<RustdocDatabaseEntry>>,
@@ -198,7 +238,7 @@ impl RustdocDatabase {
 
     pub fn load(
         &self,
-        crate_name: String,
+        crate_name: CrateName,
         item_path: Option<String>,
     ) -> Task<Result<RustdocDatabaseEntry>> {
         let env = self.env.clone();
@@ -206,7 +246,7 @@ impl RustdocDatabase {
         let item_path = if let Some(item_path) = item_path {
             format!("{crate_name}::{item_path}")
         } else {
-            crate_name
+            crate_name.to_string()
         };
 
         self.executor.spawn(async move {
@@ -219,7 +259,7 @@ impl RustdocDatabase {
 
     pub fn insert(
         &self,
-        crate_name: String,
+        crate_name: CrateName,
         item: Option<&RustdocItem>,
         docs: String,
     ) -> Task<Result<()>> {
@@ -234,7 +274,7 @@ impl RustdocDatabase {
                 },
             )
         } else {
-            (crate_name, RustdocDatabaseEntry::Crate { docs })
+            (crate_name.to_string(), RustdocDatabaseEntry::Crate { docs })
         };
 
         self.executor.spawn(async move {
