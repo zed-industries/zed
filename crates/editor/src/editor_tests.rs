@@ -4635,12 +4635,14 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
                             start: "{".to_string(),
                             end: "}".to_string(),
                             close: false,
+                            surround: false,
                             newline: true,
                         },
                         BracketPair {
                             start: "(".to_string(),
                             end: ")".to_string(),
                             close: false,
+                            surround: false,
                             newline: true,
                         },
                     ],
@@ -4684,7 +4686,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
+async fn test_autoclose_and_autosurround_pairs(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -4697,31 +4699,43 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "(".to_string(),
                         end: ")".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "/*".to_string(),
                         end: " */".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "[".to_string(),
                         end: "]".to_string(),
                         close: false,
+                        surround: false,
                         newline: true,
                     },
                     BracketPair {
                         start: "\"".to_string(),
                         end: "\"".to_string(),
                         close: true,
+                        surround: true,
                         newline: false,
+                    },
+                    BracketPair {
+                        start: "<".to_string(),
+                        end: ">".to_string(),
+                        close: false,
+                        surround: true,
+                        newline: true,
                     },
                 ],
                 ..Default::default()
@@ -4839,17 +4853,22 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|view, cx| view.handle_input("[", cx));
     cx.assert_editor_state("[ˇ");
 
-    // Surround with brackets if text is selected
-    cx.set_state("«aˇ» b");
-    cx.update_editor(|view, cx| view.handle_input("{", cx));
-    cx.assert_editor_state("{«aˇ»} b");
-
     // Autclose pair where the start and end characters are the same
     cx.set_state("aˇ");
     cx.update_editor(|view, cx| view.handle_input("\"", cx));
     cx.assert_editor_state("a\"ˇ\"");
     cx.update_editor(|view, cx| view.handle_input("\"", cx));
     cx.assert_editor_state("a\"\"ˇ");
+
+    // Don't autoclose pair if autoclose is disabled
+    cx.set_state("ˇ");
+    cx.update_editor(|view, cx| view.handle_input("<", cx));
+    cx.assert_editor_state("<ˇ");
+
+    // Surround with brackets if text is selected and autosurround is enabled, even if autoclose is disabled
+    cx.set_state("«aˇ» b");
+    cx.update_editor(|view, cx| view.handle_input("<", cx));
+    cx.assert_editor_state("<«aˇ»> b");
 }
 
 #[gpui::test]
@@ -4868,18 +4887,21 @@ async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestA
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "(".to_string(),
                         end: ")".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "[".to_string(),
                         end: "]".to_string(),
                         close: false,
+                        surround: false,
                         newline: true,
                     },
                 ],
@@ -5293,12 +5315,14 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "/* ".to_string(),
                         end: "*/".to_string(),
                         close: true,
+                        surround: true,
                         ..Default::default()
                     },
                 ],
@@ -5447,6 +5471,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
                     start: "{".to_string(),
                     end: "}".to_string(),
                     close: true,
+                    surround: true,
                     newline: true,
                 }],
                 ..Default::default()
@@ -5558,18 +5583,21 @@ async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppC
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "(".to_string(),
                         end: ")".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "[".to_string(),
                         end: "]".to_string(),
                         close: false,
+                        surround: true,
                         newline: true,
                     },
                 ],
@@ -7537,12 +7565,14 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
                             start: "{".to_string(),
                             end: "}".to_string(),
                             close: true,
+                            surround: true,
                             newline: true,
                         },
                         BracketPair {
                             start: "/* ".to_string(),
                             end: " */".to_string(),
                             close: true,
+                            surround: true,
                             newline: true,
                         },
                     ],
@@ -8344,6 +8374,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
                     start: "{".to_string(),
                     end: "}".to_string(),
                     close: true,
+                    surround: true,
                     newline: true,
                 }],
                 disabled_scopes_by_bracket_ix: Vec::new(),
