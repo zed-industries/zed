@@ -4235,8 +4235,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![PathMatcher::new(&["*.odd".to_owned()]).unwrap()],
-                vec![PathMatcher::new(&["*.odd".to_owned()]).unwrap()],
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4255,8 +4255,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![PathMatcher::new(&["*.ts".to_owned()]).unwrap()],
-                vec![PathMatcher::new(&["*.ts".to_owned()]).unwrap()],
+                PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
             ).unwrap(),
             cx
         )
@@ -4274,14 +4274,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
-                    PathMatcher::new(&["*.odd".to_owned()]).unwrap()
-                ],
-                vec![
-                    PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
-                    PathMatcher::new(&["*.odd".to_owned()]).unwrap()
-                ],
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx

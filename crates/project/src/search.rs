@@ -426,7 +426,7 @@ mod tests {
             "dir/[a-z].txt",
             "../dir/filé",
         ] {
-            let path_matcher = PathMatcher::new(valid_path).unwrap_or_else(|e| {
+            let path_matcher = PathMatcher::new(&[valid_path.to_owned()]).unwrap_or_else(|e| {
                 panic!("Valid path {valid_path} should be accepted, but got: {e}")
             });
             assert!(
@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn path_matcher_creation_for_globs() {
         for invalid_glob in ["dir/[].txt", "dir/[a-z.txt", "dir/{file"] {
-            match PathMatcher::new(invalid_glob) {
+            match PathMatcher::new(&[invalid_glob.to_owned()]) {
                 Ok(_) => panic!("Invalid glob {invalid_glob} should not be accepted"),
                 Err(_expected) => {}
             }
@@ -452,9 +452,9 @@ mod tests {
             "dir/[a-z].txt",
             "{dir,file}",
         ] {
-            match PathMatcher::new(valid_glob) {
+            match PathMatcher::new(&[valid_glob.to_owned()]) {
                 Ok(_expected) => {}
-                Err(e) => panic!("Valid glob {valid_glob} should be accepted, but got: {e}"),
+                Err(e) => panic!("Valid glob should be accepted, but got: {e}"),
             }
         }
     }
