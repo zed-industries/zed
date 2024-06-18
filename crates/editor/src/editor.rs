@@ -2210,7 +2210,7 @@ impl Editor {
         // Copy selections to primary selection buffer
         #[cfg(target_os = "linux")]
         if local {
-            let selections = self.selections.all::<usize>(cx);
+            let selections = &self.selections.disjoint;
             let buffer_handle = self.buffer.read(cx).read(cx);
 
             let mut text = String::new();
