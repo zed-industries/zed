@@ -267,15 +267,17 @@ impl X11WindowState {
                     | xproto::EventMask::KEY_RELEASE,
             );
 
+        let mut bounds = params.bounds.to_device_pixels(scale_factor);
+
         xcb_connection
             .create_window(
                 visual.depth,
                 x_window,
                 visual_set.root,
-                (params.bounds.origin.x.0 * scale_factor) as i16,
-                (params.bounds.origin.y.0 * scale_factor) as i16,
-                (params.bounds.size.width.0 * scale_factor) as u16,
-                (params.bounds.size.height.0 * scale_factor) as u16,
+                (bounds.origin.x.0 + 2) as i16,
+                bounds.origin.y.0 as i16,
+                bounds.size.width.0 as u16,
+                bounds.size.height.0 as u16,
                 0,
                 xproto::WindowClass::INPUT_OUTPUT,
                 visual.id,
@@ -284,6 +286,25 @@ impl X11WindowState {
             .unwrap()
             .check()?;
 
+        let reply = xcb_connection
+            .get_geometry(x_window)
+            .unwrap()
+            .reply()
+            .unwrap();
+        if reply.x == 0 && reply.y == 0 {
+            bounds.origin.x.0 += 2;
+            // Work around a bug where our rendered content appears
+            // outside the window bounds when opened at the default position
+            // (14px, 49px on X + Gnome + Ubuntu 22).
+            xcb_connection
+                .configure_window(
+                    x_window,
+                    &xproto::ConfigureWindowAux::new()
+                        .x(bounds.origin.x.0)
+                        .y(bounds.origin.y.0),
+                )
+                .unwrap();
+        }
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
                 xcb_connection
@@ -374,7 +395,7 @@ impl X11WindowState {
             ),
             _raw: raw,
             x_root_window: visual_set.root,
-            bounds: params.bounds,
+            bounds: bounds.to_pixels(scale_factor),
             scale_factor,
             renderer: BladeRenderer::new(gpu, config),
             atoms: *atoms,
@@ -642,7 +663,7 @@ impl X11WindowStatePtr {
             }
 
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
-            if state.renderer.viewport_size() != gpu_size {
+            if true {
                 state.renderer.update_drawable_size(size(
                     DevicePixels(gpu_size.width as i32),
                     DevicePixels(gpu_size.height as i32),
