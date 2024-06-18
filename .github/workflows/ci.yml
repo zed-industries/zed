@@ -51,6 +51,9 @@ jobs:
       - name: Check unused dependencies
         uses: bnjbvr/cargo-machete@main
 
+      - name: Check licenses are present
+        run: script/check-licenses
+
       - name: Check license generation
         run: script/generate-licenses /tmp/zed_licenses_output
 
