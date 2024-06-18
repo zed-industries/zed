@@ -187,7 +187,7 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
         if action.name().starts_with("vim::") {
             return;
         }
-    } else if cx.has_pending_keystrokes() {
+    } else if cx.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress() {
         return;
     }
 
