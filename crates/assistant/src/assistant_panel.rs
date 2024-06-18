@@ -19,7 +19,7 @@ use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, ToDisplayPoint},
     scroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, AnchorRangeExt as _, Editor, EditorEvent, RowExt, ToOffset as _, ToPoint,
+    Anchor, Editor, EditorEvent, RowExt, ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use file_icons::FileIcons;
@@ -1476,14 +1476,13 @@ impl Context {
                             output.text.push('\n');
                         }
 
-                        let mut sections = Vec::new();
                         let event = this.buffer.update(cx, |buffer, cx| {
                             let start = command_range.start.to_offset(buffer);
                             let old_end = command_range.end.to_offset(buffer);
                             let new_end = start + output.text.len();
                             buffer.edit([(start..old_end, output.text)], None, cx);
 
-                            sections = output
+                            let mut sections = output
                                 .sections
                                 .into_iter()
                                 .map(|section| SlashCommandOutputSection {
@@ -1494,16 +1493,20 @@ impl Context {
                                 })
                                 .collect::<Vec<_>>();
                             sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
+
+                            this.slash_command_output_sections
+                                .extend(sections.iter().cloned());
+                            this.slash_command_output_sections
+                                .sort_by(|a, b| a.range.cmp(&b.range, buffer));
+
                             ContextEvent::SlashCommandFinished {
                                 output_range: buffer.anchor_after(start)
                                     ..buffer.anchor_before(new_end),
-                                sections: sections.clone(),
+                                sections,
                                 run_commands_in_output: output.run_commands_in_text,
                             }
                         });
                         cx.emit(event);
-
-                        this.slash_command_output_sections.extend(sections);
                     }
                     Err(error) => {
                         if let Some(pending_command) =
@@ -2699,7 +2702,6 @@ impl ContextEditor {
                 ));
             }
 
-            creases.sort_by(|a, b| a.range.cmp(&b.range, &buffer));
             editor.insert_creases(creases, cx);
 
             for buffer_row in buffer_rows_to_fold.into_iter().rev() {
