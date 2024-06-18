@@ -4,10 +4,11 @@ use zbus::object_server::InterfaceRef;
 use zbus::zvariant::{OwnedObjectPath, Structure, StructureBuilder};
 use zbus::{interface, object_server::SignalContext, zvariant::Type};
 
-use super::dbusmenu::{DBusMenuInterface, Menu, DBUS_MENU_PATH};
+use super::dbusmenu::{DBusMenuInterface, DBUS_MENU_PATH};
+use super::menu::MenuItem;
 use super::watcher::StatusNotifierWatcher;
 
-const STATUS_NOTIFIER_ITEM_PATH: &str = "/StatusNotifierItem";
+pub const STATUS_NOTIFIER_ITEM_PATH: &str = "/StatusNotifierItem";
 
 #[allow(dead_code)]
 #[derive(Default, Debug, Type)]
@@ -291,11 +292,11 @@ impl StatusNotifierItemInterface {
     pub async fn new_status(&self, cx: &SignalContext<'_>, status: String) -> zbus::Result<()>;
 }
 
-pub struct StatusNotifierItem(
-    zbus::Connection,
-    InterfaceRef<StatusNotifierItemInterface>,
-    InterfaceRef<DBusMenuInterface>,
-);
+pub struct StatusNotifierItem {
+    pub conn: zbus::Connection,
+    item_ref: InterfaceRef<StatusNotifierItemInterface>,
+    menu_ref: InterfaceRef<DBusMenuInterface>,
+}
 
 impl StatusNotifierItem {
     pub async fn new(id: i32, options: StatusNotifierItemOptions) -> zbus::Result<Self> {
@@ -319,7 +320,8 @@ impl StatusNotifierItem {
             .build()
             .await?;
         watcher.register_status_notifier_item(name).await?;
-        let iface_ref = conn
+
+        let item_ref = conn
             .object_server()
             .interface::<_, StatusNotifierItemInterface>(STATUS_NOTIFIER_ITEM_PATH)
             .await?;
@@ -327,93 +329,97 @@ impl StatusNotifierItem {
             .object_server()
             .interface::<_, DBusMenuInterface>(DBUS_MENU_PATH)
             .await?;
-        Ok(Self(conn, iface_ref, menu_ref))
+        Ok(Self {
+            conn,
+            item_ref,
+            menu_ref,
+        })
     }
 
     pub async fn on_context_menu(&self, fun: Box<dyn Fn(i32, i32) + Sync + Send>) {
-        let mut iface = self.1.get_mut().await;
+        let mut iface = self.item_ref.get_mut().await;
         iface.callbacks.on_context_menu = Some(fun);
     }
 
     pub async fn on_activate(&self, fun: Box<dyn Fn(i32, i32) + Sync + Send>) {
-        let mut iface = self.1.get_mut().await;
+        let mut iface = self.item_ref.get_mut().await;
         iface.callbacks.on_activate = Some(fun);
     }
 
     pub async fn on_secondary_activate(&self, fun: Box<dyn Fn(i32, i32) + Sync + Send>) {
-        let mut iface = self.1.get_mut().await;
+        let mut iface = self.item_ref.get_mut().await;
         iface.callbacks.on_secondary_activate = Some(fun);
     }
 
     pub async fn on_scroll(&self, fun: Box<dyn Fn(i32, String) + Sync + Send>) {
-        let mut iface = self.1.get_mut().await;
+        let mut iface = self.item_ref.get_mut().await;
         iface.callbacks.on_scroll = Some(fun);
     }
 
     pub async fn on_provide_xdg_activation_token(&self, fun: Box<dyn Fn(String) + Sync + Send>) {
-        let mut iface = self.1.get_mut().await;
+        let mut iface = self.item_ref.get_mut().await;
         iface.callbacks.on_provide_xdg_activation_token = Some(fun);
     }
 
     pub async fn set_title(&self, name: impl Into<String>) -> zbus::Result<()> {
-        let cx = self.1.signal_context();
-        let mut iface = self.1.get_mut().await;
+        let cx = self.item_ref.signal_context();
+        let mut iface = self.item_ref.get_mut().await;
         iface.options.title = name.into();
         iface.new_title(cx).await?;
         Ok(())
     }
 
     pub async fn set_icon(&self, icon: Icon) -> zbus::Result<()> {
-        let cx = self.1.signal_context();
-        let mut iface = self.1.get_mut().await;
+        let cx = self.item_ref.signal_context();
+        let mut iface = self.item_ref.get_mut().await;
         iface.options.icon = icon;
         iface.new_icon(cx).await?;
         Ok(())
     }
 
     pub async fn set_overlay(&self, overlay: Icon) -> zbus::Result<()> {
-        let cx = self.1.signal_context();
-        let mut iface = self.1.get_mut().await;
+        let cx = self.item_ref.signal_context();
+        let mut iface = self.item_ref.get_mut().await;
         iface.options.overlay = overlay;
         iface.new_overlay_icon(cx).await?;
         Ok(())
     }
 
     pub async fn set_attention(&self, attention: Attention) -> zbus::Result<()> {
-        let cx = self.1.signal_context();
-        let mut iface = self.1.get_mut().await;
+        let cx = self.item_ref.signal_context();
+        let mut iface = self.item_ref.get_mut().await;
         iface.options.attention = attention;
         iface.new_attention_icon(cx).await?;
         Ok(())
     }
 
     pub async fn set_tooltip(&self, tooltip: ToolTip) -> zbus::Result<()> {
-        let cx = self.1.signal_context();
-        let mut iface = self.1.get_mut().await;
+        let cx = self.item_ref.signal_context();
+        let mut iface = self.item_ref.get_mut().await;
         iface.options.tooltip = tooltip;
         iface.new_tooltip(cx).await?;
         Ok(())
     }
 
     pub async fn set_tooltip_title(&self, title: String) -> zbus::Result<()> {
-        let cx = self.1.signal_context();
-        let mut iface = self.1.get_mut().await;
+        let cx = self.item_ref.signal_context();
+        let mut iface = self.item_ref.get_mut().await;
         iface.options.tooltip.title = title;
         iface.new_tooltip(cx).await?;
         Ok(())
     }
 
     pub async fn set_tooltip_description(&self, description: String) -> zbus::Result<()> {
-        let cx = self.1.signal_context();
-        let mut iface = self.1.get_mut().await;
+        let cx = self.item_ref.signal_context();
+        let mut iface = self.item_ref.get_mut().await;
         iface.options.tooltip.description = description;
         iface.new_tooltip(cx).await?;
         Ok(())
     }
 
     pub async fn set_status(&self, status: Status) -> zbus::Result<()> {
-        let cx = self.1.signal_context();
-        let mut iface = self.1.get_mut().await;
+        let cx = self.item_ref.signal_context();
+        let mut iface = self.item_ref.get_mut().await;
         let status_str = status.to_string();
         iface.options.status = status;
         iface.new_status(cx, status_str).await?;
@@ -421,17 +427,17 @@ impl StatusNotifierItem {
     }
 
     pub async fn set_category(&self, category: Category) -> zbus::Result<()> {
-        let mut iface = self.1.get_mut().await;
+        let mut iface = self.item_ref.get_mut().await;
         iface.options.category = category;
         Ok(())
     }
 
-    pub async fn set_menu(&self, menu: Menu) -> zbus::Result<()> {
-        let mut iface = self.2.get_mut().await;
+    pub async fn set_menu(&self, menu: MenuItem) -> zbus::Result<()> {
+        let mut iface = self.menu_ref.get_mut().await;
         iface.menu = menu;
         drop(iface);
-        let cx = self.1.signal_context();
-        let iface = self.1.get().await;
+        let cx = self.item_ref.signal_context();
+        let iface = self.item_ref.get().await;
         iface.new_menu(cx).await?;
         Ok(())
     }

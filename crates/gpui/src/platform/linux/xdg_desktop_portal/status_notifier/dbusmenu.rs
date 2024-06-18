@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use super::menu::MenuItem;
 use serde::Serialize;
 use zbus::{
     interface,
@@ -17,26 +18,6 @@ pub struct DBusMenuLayoutItem<'a> {
     pub children: Vec<Value<'a>>,
 }
 
-impl<'a> Clone for DBusMenuLayoutItem<'a> {
-    fn clone(&self) -> Self {
-        let properties: HashMap<String, Value<'a>> = self
-            .properties
-            .iter()
-            .map(|(k, v)| (k.clone(), v.try_clone().unwrap()))
-            .collect();
-        let children: Vec<_> = self
-            .children
-            .iter()
-            .map(|it| it.try_clone().unwrap())
-            .collect();
-        Self {
-            id: self.id.clone(),
-            properties,
-            children,
-        }
-    }
-}
-
 impl<'a> From<DBusMenuLayoutItem<'a>> for Structure<'a> {
     fn from(value: DBusMenuLayoutItem<'a>) -> Self {
         StructureBuilder::new()
@@ -47,95 +28,9 @@ impl<'a> From<DBusMenuLayoutItem<'a>> for Structure<'a> {
     }
 }
 
-#[derive(Clone)]
-pub enum DBusMenuProperties {
-    // "standard" | "separator"
-    Type(String),
-    Label(String),
-    Enabled(bool),
-    Visible(bool),
-    IconName(String),
-    // PNG data of the icon
-    IconData(Vec<u8>),
-    Shortcut(Vec<Vec<String>>),
-    // "checkmark" | "radio"
-    ToggleType(String),
-    // 0 = off | 1 = on | x = indeterminate
-    ToggleState(i32),
-}
-
-#[derive(Clone)]
-pub struct Submenu {
-    pub id: i32,
-    pub properties: Vec<DBusMenuProperties>,
-    pub children: Vec<Submenu>,
-}
-
-impl<'a> From<Submenu> for DBusMenuLayoutItem<'a> {
-    fn from(value: Submenu) -> Self {
-        let mut menu = DBusMenuLayoutItem {
-            id: value.id,
-            ..Default::default()
-        };
-        for property in value.properties {
-            match property {
-                DBusMenuProperties::Type(menu_type) => {
-                    menu.properties
-                        .insert("type".into(), Value::from(menu_type));
-                }
-                DBusMenuProperties::Label(label) => {
-                    menu.properties.insert("label".into(), Value::from(label));
-                }
-                DBusMenuProperties::Enabled(enabled) => {
-                    menu.properties
-                        .insert("enabled".into(), Value::from(enabled));
-                }
-                DBusMenuProperties::Visible(visible) => {
-                    menu.properties
-                        .insert("visible".into(), Value::from(visible));
-                }
-                DBusMenuProperties::IconName(name) => {
-                    menu.properties
-                        .insert("icon-name".into(), Value::from(name));
-                }
-                DBusMenuProperties::IconData(data) => {
-                    menu.properties
-                        .insert("icon-data".into(), Value::from(data));
-                }
-                DBusMenuProperties::Shortcut(shortcut) => {
-                    menu.properties
-                        .insert("shortcut".into(), Value::from(shortcut));
-                }
-                DBusMenuProperties::ToggleType(toggle) => {
-                    menu.properties
-                        .insert("toggle-type".into(), Value::from(toggle));
-                }
-                DBusMenuProperties::ToggleState(state) => {
-                    menu.properties
-                        .insert("toggle-state".into(), Value::from(state));
-                }
-                _ => {}
-            }
-        }
-        if !value.children.is_empty() {
-            menu.properties
-                .insert("children-display".into(), Value::from("submenu"));
-            for child in value.children {
-                menu.children.push(Value::from(Self::from(child)));
-            }
-        }
-        menu
-    }
-}
-
-#[derive(Default)]
-pub struct Menu {
-    pub children: Vec<Submenu>,
-}
-
 #[derive(Default)]
 pub struct DBusMenuInterface {
-    pub menu: Menu,
+    pub menu: MenuItem,
 }
 
 #[interface(name = "com.canonical.dbusmenu")]
@@ -149,12 +44,18 @@ impl DBusMenuInterface {
         property_names: Vec<String>,
     ) -> (u32, DBusMenuLayoutItem) {
         let mut main_menu = DBusMenuLayoutItem::default();
-        if !self.menu.children.is_empty() {
+        let menu = if parent_id == 0 {
+            &self.menu
+        } else {
+            // This is not supposed to panic if we do it correctly
+            self.menu.find_by_id(parent_id).unwrap()
+        };
+        if !menu.children.is_empty() {
             main_menu
                 .properties
                 .insert("children-display".into(), Value::from("submenu"));
-            for child in &self.menu.children {
-                let submenu = DBusMenuLayoutItem::from(child.clone());
+            for child in &menu.children {
+                let submenu = child.clone().to_dbus(recursion_depth);
                 main_menu.children.push(Value::from(submenu));
             }
         }
