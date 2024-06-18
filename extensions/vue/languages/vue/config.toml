@@ -19,4 +19,4 @@ prettier_parser_name = "vue"
 
 [overrides.string]
 word_characters = ["-"]
-opt_into_language_servers = ["tailwindcss-language-server"]
+opt_into_language_servers = ["tailwindcss-language-server", "vscode-html-language-server"]
