@@ -136,8 +136,8 @@ pub fn keymap_file() -> &'static PathBuf {
 
 /// Returns the path to the `tasks.json` file.
 pub fn tasks_file() -> &'static PathBuf {
-    static TASKS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    TASKS_DIR.get_or_init(|| config_dir().join("tasks.json"))
+    static TASKS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    TASKS_FILE.get_or_init(|| config_dir().join("tasks.json"))
 }
 
 /// Returns the path to the extensions directory.
