@@ -10,8 +10,9 @@ use gpui::{
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
 use rpc::proto::{self, DevServerStatus};
+use settings::Settings;
 use std::sync::Arc;
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     h_flex, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike, ButtonStyle,
     ContextMenu, Icon, IconButton, IconName, Indicator, PopoverMenu, TintColor, TitleBar, Tooltip,
@@ -387,14 +388,27 @@ impl CollabTitlebarItem {
         }
     }
 
-    pub fn render_application_menu(&self, _cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+    pub fn render_application_menu(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         cfg!(not(target_os = "macos")).then(|| {
+            let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+            let font = cx.text_style().font();
+            let font_id = cx.text_system().resolve_font(&font);
+            let width = cx
+                .text_system()
+                .typographic_bounds(font_id, ui_font_size, 'm')
+                .unwrap()
+                .size
+                .width
+                * 3.0;
+
             PopoverMenu::new("application-menu")
-                .menu(|cx| {
-                    ContextMenu::build(cx, |menu, _| {
+                .menu(move |cx| {
+                    let width = width;
+                    ContextMenu::build(cx, move |menu, _cx| {
+                        let width = width;
                         menu.header("Workspace")
                             .action("Open Command Palette", Box::new(command_palette::Toggle))
-                            .custom_row(|cx| {
+                            .custom_row(move |cx| {
                                 div()
                                     .w_full()
                                     .flex()
@@ -408,13 +422,15 @@ impl CollabTitlebarItem {
                                             .flex_row()
                                             .child(div().w(px(16.0)))
                                             .child(
-                                                Button::new("reset-buffer-zoom", "Reset").on_click(
-                                                    |_, cx| {
-                                                        cx.dispatch_action(Box::new(
-                                                            zed_actions::ResetBufferFontSize,
-                                                        ))
-                                                    },
-                                                ),
+                                                IconButton::new(
+                                                    "reset-buffer-zoom",
+                                                    IconName::RotateCcw,
+                                                )
+                                                .on_click(|_, cx| {
+                                                    cx.dispatch_action(Box::new(
+                                                        zed_actions::ResetBufferFontSize,
+                                                    ))
+                                                }),
                                             )
                                             .child(
                                                 IconButton::new("--buffer-zoom", IconName::Dash)
@@ -424,9 +440,16 @@ impl CollabTitlebarItem {
                                                         ))
                                                     }),
                                             )
-                                            .child(Label::new(
-                                                theme::get_buffer_font_size(cx).to_string(),
-                                            ))
+                                            .child(
+                                                div()
+                                                    .w(width)
+                                                    .flex()
+                                                    .flex_row()
+                                                    .justify_around()
+                                                    .child(Label::new(
+                                                        theme::get_buffer_font_size(cx).to_string(),
+                                                    )),
+                                            )
                                             .child(
                                                 IconButton::new("+-buffer-zoom", IconName::Plus)
                                                     .on_click(|_, cx| {
@@ -438,7 +461,7 @@ impl CollabTitlebarItem {
                                     )
                                     .into_any_element()
                             })
-                            .custom_row(|cx| {
+                            .custom_row(move |cx| {
                                 div()
                                     .w_full()
                                     .flex()
@@ -450,13 +473,17 @@ impl CollabTitlebarItem {
                                         div()
                                             .flex()
                                             .flex_row()
-                                            .child(Button::new("reset-ui-zoom", "Reset").on_click(
-                                                |_, cx| {
+                                            .child(
+                                                IconButton::new(
+                                                    "reset-ui-zoom",
+                                                    IconName::RotateCcw,
+                                                )
+                                                .on_click(|_, cx| {
                                                     cx.dispatch_action(Box::new(
                                                         zed_actions::ResetUiFontSize,
                                                     ))
-                                                },
-                                            ))
+                                                }),
+                                            )
                                             .child(
                                                 IconButton::new("--ui-zoom", IconName::Dash)
                                                     .on_click(|_, cx| {
@@ -465,9 +492,16 @@ impl CollabTitlebarItem {
                                                         ))
                                                     }),
                                             )
-                                            .child(Label::new(
-                                                theme::get_ui_font_size(cx).to_string(),
-                                            ))
+                                            .child(
+                                                div()
+                                                    .w(width)
+                                                    .flex()
+                                                    .flex_row()
+                                                    .justify_around()
+                                                    .child(Label::new(
+                                                        theme::get_ui_font_size(cx).to_string(),
+                                                    )),
+                                            )
                                             .child(
                                                 IconButton::new("+-ui-zoom", IconName::Plus)
                                                     .on_click(|_, cx| {
