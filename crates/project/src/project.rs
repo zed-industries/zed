@@ -4446,8 +4446,11 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            cx.emit(Event::RefreshInlayHints);
-            status.pending_work.remove(&token);
+            if let Some(work) = status.pending_work.remove(&token) {
+                if !work.is_disk_based_diagnostics_progress {
+                    cx.emit(Event::RefreshInlayHints);
+                }
+            }
             cx.notify();
         }
 
