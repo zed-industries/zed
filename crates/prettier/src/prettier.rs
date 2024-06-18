@@ -113,7 +113,7 @@ impl Prettier {
                                                 None
                                             }
                                         }).any(|workspace_definition| {
-                                            if let Some(path_matcher) = PathMatcher::new(&workspace_definition).ok() {
+                                            if let Some(path_matcher) = PathMatcher::new(&[workspace_definition.clone()]).ok() {
                                                 path_matcher.is_match(subproject_path)
                                             } else {
                                                 workspace_definition == subproject_path.to_string_lossy()

@@ -220,7 +220,7 @@ struct Options {
 const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
 
 impl Options {
-    pub fn parse(arguments_line: Option<&str>) -> Self {
+    fn parse(arguments_line: Option<&str>) -> Self {
         arguments_line
             .map(|arguments_line| {
                 let args = arguments_line.split_whitespace().collect::<Vec<_>>();
@@ -230,7 +230,7 @@ impl Options {
                     if arg == INCLUDE_WARNINGS_ARGUMENT {
                         include_warnings = true;
                     } else {
-                        path_matcher = PathMatcher::new(arg).log_err();
+                        path_matcher = PathMatcher::new(&[arg.to_owned()]).log_err();
                     }
                 }
                 Self {
@@ -255,7 +255,8 @@ fn collect_diagnostics(
     cx: &mut AppContext,
 ) -> Task<Result<(String, Vec<(Range<usize>, PlaceholderType)>)>> {
     let error_source = if let Some(path_matcher) = &options.path_matcher {
-        Some(path_matcher.source().to_string())
+        debug_assert_eq!(path_matcher.sources().len(), 1);
+        Some(path_matcher.sources().first().cloned().unwrap_or_default())
     } else {
         None
     };

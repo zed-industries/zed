@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use globset::{Glob, GlobMatcher};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 
 lazy_static::lazy_static! {
@@ -257,43 +257,51 @@ impl<P> PathLikeWithPosition<P> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PathMatcher {
-    source: String,
-    glob: GlobMatcher,
+    sources: Vec<String>,
+    glob: GlobSet,
 }
 
-impl std::fmt::Display for PathMatcher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.source.fmt(f)
-    }
-}
+// impl std::fmt::Display for PathMatcher {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         self.sources.fmt(f)
+//     }
+// }
 
 impl PartialEq for PathMatcher {
     fn eq(&self, other: &Self) -> bool {
-        self.source.eq(&other.source)
+        self.sources.eq(&other.sources)
     }
 }
 
 impl Eq for PathMatcher {}
 
 impl PathMatcher {
-    pub fn new(source: &str) -> Result<Self, globset::Error> {
-        Ok(PathMatcher {
-            glob: Glob::new(source)?.compile_matcher(),
-            source: String::from(source),
-        })
+    pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
+        let globs = globs
+            .into_iter()
+            .map(|glob| Glob::new(&glob))
+            .collect::<Result<Vec<_>, _>>()?;
+        let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
+        let mut glob_builder = GlobSetBuilder::new();
+        for single_glob in globs {
+            glob_builder.add(single_glob);
+        }
+        let glob = glob_builder.build()?;
+        Ok(PathMatcher { glob, sources })
     }
 
-    pub fn source(&self) -> &str {
-        &self.source
+    pub fn sources(&self) -> &[String] {
+        &self.sources
     }
 
     pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
         let other_path = other.as_ref();
-        other_path.starts_with(Path::new(&self.source))
-            || other_path.ends_with(Path::new(&self.source))
-            || self.glob.is_match(other_path)
+        self.sources.iter().any(|source| {
+            let as_bytes = other_path.as_os_str().as_encoded_bytes();
+            as_bytes.starts_with(source.as_bytes()) || as_bytes.ends_with(source.as_bytes())
+        }) || self.glob.is_match(other_path)
             || self.check_with_end_separator(other_path)
     }
 
@@ -534,20 +542,20 @@ mod tests {
     #[test]
     fn edge_of_glob() {
         let path = Path::new("/work/node_modules");
-        let path_matcher = PathMatcher::new("**/node_modules/**").unwrap();
+        let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
         assert!(
             path_matcher.is_match(path),
-            "Path matcher {path_matcher} should match {path:?}"
+            "Path matcher should match {path:?}"
         );
     }
 
     #[test]
     fn project_search() {
         let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
-        let path_matcher = PathMatcher::new("**/node_modules/**").unwrap();
+        let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
         assert!(
             path_matcher.is_match(path),
-            "Path matcher {path_matcher} should match {path:?}"
+            "Path matcher should match {path:?}"
         );
     }
 }

@@ -1024,8 +1024,8 @@ impl SearchableItem for TerminalView {
                     query.whole_word(),
                     query.case_sensitive(),
                     query.include_ignored(),
-                    query.files_to_include().to_vec(),
-                    query.files_to_exclude().to_vec(),
+                    query.files_to_include().clone(),
+                    query.files_to_exclude().clone(),
                 )
                 .unwrap()),
             ),

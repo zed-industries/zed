@@ -183,7 +183,7 @@ fn collect_files(
     fs: Arc<dyn Fs>,
     cx: &mut AppContext,
 ) -> Task<Result<(String, Vec<(Range<usize>, PathBuf, EntryType)>)>> {
-    let Ok(matcher) = PathMatcher::new(glob_input) else {
+    let Ok(matcher) = PathMatcher::new(&[glob_input.to_owned()]) else {
         return Task::ready(Err(anyhow!("invalid path")));
     };
 
