@@ -3,7 +3,7 @@ use assistant::{AssistantPanel, InlineAssist};
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
     GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,
-    SelectNext, SelectSmallerSyntaxNode,
+    SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine, ToggleOutline,
 };
 use editor::{Editor, EditorSettings};
 
@@ -173,8 +173,8 @@ impl Render for QuickActionBar {
                                 .action("Add Cursor Above", Box::new(AddSelectionAbove))
                                 .action("Add Cursor Below", Box::new(AddSelectionBelow))
                                 .separator()
-                                .action("Go to Symbol", Box::new(SelectAll))
-                                .action("Go to Line/Column", Box::new(SelectLargerSyntaxNode))
+                                .action("Go to Symbol", Box::new(ToggleOutline))
+                                .action("Go to Line/Column", Box::new(ToggleGoToLine))
                                 .separator()
                                 .action("Next Problem", Box::new(GoToDiagnostic))
                                 .action("Previous Problem", Box::new(GoToPrevDiagnostic))
