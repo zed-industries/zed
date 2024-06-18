@@ -2790,6 +2790,8 @@ impl Editor {
         }
 
         if self.hide_context_menu(cx).is_some() {
+            // SignatureHelp is similar to hover, so it should be hidden at the same time
+            self.signature_help_state = None;
             return true;
         }
 
@@ -2798,11 +2800,6 @@ impl Editor {
         }
 
         if self.snippet_stack.pop().is_some() {
-            return true;
-        }
-
-        if self.signature_help_state.is_some() {
-            self.signature_help_state = None;
             return true;
         }
 
