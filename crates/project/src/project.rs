@@ -4149,20 +4149,34 @@ impl Project {
             .collect::<HashSet<_>>();
 
         for server_id in servers {
-            let status = self.language_server_statuses.get(&server_id);
-            let server = self.language_servers.get(&server_id);
-            if let Some((server, status)) = server.zip(status) {
-                if let LanguageServerState::Running { server, .. } = server {
-                    for (token, progress) in &status.pending_work {
-                        if progress.is_cancellable {
-                            server
-                                .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                    WorkDoneProgressCancelParams {
-                                        token: lsp::NumberOrString::String(token.clone()),
-                                    },
-                                )
-                                .ok();
+            self.cancel_language_server_work(server_id, None, cx);
+        }
+    }
+
+    pub fn cancel_language_server_work(
+        &mut self,
+        server_id: LanguageServerId,
+        token_to_cancel: Option<String>,
+        _cx: &mut ModelContext<Self>,
+    ) {
+        let status = self.language_server_statuses.get(&server_id);
+        let server = self.language_servers.get(&server_id);
+        if let Some((server, status)) = server.zip(status) {
+            if let LanguageServerState::Running { server, .. } = server {
+                for (token, progress) in &status.pending_work {
+                    if let Some(token_to_cancel) = token_to_cancel.as_ref() {
+                        if token != token_to_cancel {
+                            continue;
                         }
+                    }
+                    if progress.is_cancellable {
+                        server
+                            .notify::<lsp::notification::WorkDoneProgressCancel>(
+                                WorkDoneProgressCancelParams {
+                                    token: lsp::NumberOrString::String(token.clone()),
+                                },
+                            )
+                            .ok();
                     }
                 }
             }
@@ -4580,8 +4594,10 @@ impl Project {
 
     pub fn language_server_statuses(
         &self,
-    ) -> impl DoubleEndedIterator<Item = &LanguageServerStatus> {
-        self.language_server_statuses.values()
+    ) -> impl DoubleEndedIterator<Item = (LanguageServerId, &LanguageServerStatus)> {
+        self.language_server_statuses
+            .iter()
+            .map(|(key, value)| (*key, value))
     }
 
     pub fn last_formatting_failure(&self) -> Option<&str> {
