@@ -3920,6 +3920,7 @@ dependencies = [
  "theme",
  "theme_selector",
  "ui",
+ "url",
  "util",
  "workspace",
 ]

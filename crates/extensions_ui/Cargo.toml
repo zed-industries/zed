@@ -37,6 +37,7 @@ theme_selector.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

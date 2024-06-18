@@ -24,6 +24,7 @@ use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
 use ui::{prelude::*, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
+use url::{Url, Host};
 use util::ResultExt as _;
 use workspace::item::TabContentParams;
 use workspace::{
@@ -327,6 +328,14 @@ impl ExtensionsPage {
         let status = Self::extension_status(&extension.id, cx);
 
         let repository_url = extension.repository.clone();
+        let parsed_url = Url::parse(repository_url.clone().unwrap().as_str());
+
+        let repository_icon =
+            if parsed_url.unwrap().host() == Some(Host::Domain("gitlab.com")) {
+                IconName::Gitlab
+            } else {
+                IconName::Github
+            };
 
         ExtensionCard::new()
             .child(
@@ -405,7 +414,7 @@ impl ExtensionsPage {
                     .children(repository_url.map(|repository_url| {
                         IconButton::new(
                             SharedString::from(format!("repository-{}", extension.id)),
-                            IconName::Github,
+                            repository_icon,
                         )
                         .icon_color(Color::Accent)
                         .icon_size(IconSize::Small)
@@ -435,6 +444,14 @@ impl ExtensionsPage {
             self.buttons_for_entry(extension, &status, has_dev_extension, cx);
         let version = extension.manifest.version.clone();
         let repository_url = extension.manifest.repository.clone();
+        let parsed_url = Url::parse(repository_url.as_str());
+
+        let repository_icon =
+            if parsed_url.unwrap().host() == Some(Host::Domain("gitlab.com")) {
+                IconName::Gitlab
+            } else {
+                IconName::Github
+            };
 
         let installed_version = match status {
             ExtensionStatus::Installed(installed_version) => Some(installed_version),
@@ -512,7 +529,7 @@ impl ExtensionsPage {
                             .child(
                                 IconButton::new(
                                     SharedString::from(format!("repository-{}", extension.id)),
-                                    IconName::Github,
+                                    repository_icon,
                                 )
                                 .icon_color(Color::Accent)
                                 .icon_size(IconSize::Small)
