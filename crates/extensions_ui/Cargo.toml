@@ -27,6 +27,7 @@ language.workspace = true
 num-format.workspace = true
 picker.workspace = true
 project.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 semantic_version.workspace = true
 serde.workspace = true

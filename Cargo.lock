@@ -3912,6 +3912,7 @@ dependencies = [
  "num-format",
  "picker",
  "project",
+ "regex",
  "release_channel",
  "semantic_version",
  "serde",

@@ -17,6 +17,7 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use num_format::{Locale, ToFormattedString};
+use regex::Regex;
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use std::ops::DerefMut;
@@ -405,7 +406,7 @@ impl ExtensionsPage {
                     .children(repository_url.map(|repository_url| {
                         IconButton::new(
                             SharedString::from(format!("repository-{}", extension.id)),
-                            IconName::Github,
+                            Self::get_repository_host_icon(&repository_url),
                         )
                         .icon_color(Color::Accent)
                         .icon_size(IconSize::Small)
@@ -419,6 +420,17 @@ impl ExtensionsPage {
                         .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx))
                     })),
             )
+    }
+
+    fn get_repository_host_icon(url: &str) -> IconName {
+        if Regex::new(r"(?i)github\.com").unwrap().is_match(&url) {
+            IconName::Github
+        } else if Regex::new(r"(?i)gitlab\.com").unwrap().is_match(&url) {
+            // TODO: Add gitlab icon
+            IconName::Link
+        } else {
+            IconName::Link
+        }
     }
 
     fn render_remote_extension(
@@ -512,7 +524,7 @@ impl ExtensionsPage {
                             .child(
                                 IconButton::new(
                                     SharedString::from(format!("repository-{}", extension.id)),
-                                    IconName::Github,
+                                    Self::get_repository_host_icon(&repository_url),
                                 )
                                 .icon_color(Color::Accent)
                                 .icon_size(IconSize::Small)
