@@ -539,6 +539,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
 }
 
@@ -810,6 +811,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            pending_input_observers: SubscriberSet::new(),
             prompt: None,
         })
     }
@@ -3128,16 +3130,20 @@ impl<'a> WindowContext<'a> {
                         let Some(currently_pending) = cx.window.pending_input.take() else {
                             return;
                         };
-                        cx.replay_pending_input(currently_pending)
+                        cx.pending_input_changed();
+                        cx.replay_pending_input(currently_pending);
                     })
                     .log_err();
                 }));
 
                 self.window.pending_input = Some(currently_pending);
+                self.pending_input_changed();
 
                 self.propagate_event = false;
+
                 return;
             } else if let Some(currently_pending) = self.window.pending_input.take() {
+                self.pending_input_changed();
                 if bindings
                     .iter()
                     .all(|binding| !currently_pending.used_by_binding(binding))
@@ -3171,6 +3177,13 @@ impl<'a> WindowContext<'a> {
         }
 
         self.dispatch_keystroke_observers(event, None);
+    }
+
+    fn pending_input_changed(&mut self) {
+        self.window
+            .pending_input_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
     }
 
     fn dispatch_key_down_up_event(
@@ -3228,6 +3241,14 @@ impl<'a> WindowContext<'a> {
             .rendered_frame
             .dispatch_tree
             .has_pending_keystrokes()
+    }
+
+    /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
+    pub fn pending_input_keystrokes(&self) -> Option<&[Keystroke]> {
+        self.window
+            .pending_input
+            .as_ref()
+            .map(|pending_input| pending_input.keystrokes.as_slice())
     }
 
     fn replay_pending_input(&mut self, currently_pending: PendingInput) {
@@ -4030,6 +4051,20 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let (subscription, activate) = self.window.appearance_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        );
+        activate();
+        subscription
+    }
+
+    /// Register a callback to be invoked when the window's pending input changes.
+    pub fn observe_pending_input(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let (subscription, activate) = self.window.pending_input_observers.insert(
             (),
             Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
         );
