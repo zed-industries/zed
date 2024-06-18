@@ -1,14 +1,14 @@
 mod slash_command_registry;
 
 use anyhow::Result;
-use gpui::{AnyElement, AppContext, ElementId, Task, WeakView, WindowContext};
+use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
 use language::{CodeLabel, LspAdapterDelegate};
 pub use slash_command_registry::*;
 use std::{
     ops::Range,
     sync::{atomic::AtomicBool, Arc},
 };
-use workspace::Workspace;
+use workspace::{ui::IconName, Workspace};
 
 pub fn init(cx: &mut AppContext) {
     SlashCommandRegistry::default_global(cx);
@@ -58,5 +58,6 @@ pub struct SlashCommandOutput {
 #[derive(Clone)]
 pub struct SlashCommandOutputSection<T> {
     pub range: Range<T>,
-    pub render_placeholder: RenderFoldPlaceholder,
+    pub icon: IconName,
+    pub label: SharedString,
 }

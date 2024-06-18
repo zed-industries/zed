@@ -1,14 +1,13 @@
 use super::{
-    file_command::{codeblock_fence_for_path, EntryPlaceholder},
+    file_command::{build_entry_output_section, codeblock_fence_for_path},
     SlashCommand, SlashCommandOutput,
 };
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandOutputSection;
 use editor::Editor;
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
 use std::sync::Arc;
-use ui::{IntoElement, WindowContext};
+use ui::WindowContext;
 use workspace::Workspace;
 
 pub(crate) struct ActiveSlashCommand;
@@ -81,19 +80,12 @@ impl SlashCommand for ActiveSlashCommand {
                 let range = 0..text.len();
                 Ok(SlashCommandOutput {
                     text,
-                    sections: vec![SlashCommandOutputSection {
+                    sections: vec![build_entry_output_section(
                         range,
-                        render_placeholder: Arc::new(move |id, unfold, _| {
-                            EntryPlaceholder {
-                                id,
-                                path: path.clone(),
-                                is_directory: false,
-                                line_range: None,
-                                unfold,
-                            }
-                            .into_any_element()
-                        }),
-                    }],
+                        path.as_deref(),
+                        false,
+                        None,
+                    )],
                     run_commands_in_text: false,
                 })
             })

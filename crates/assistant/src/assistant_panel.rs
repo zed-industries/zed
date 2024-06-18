@@ -1457,7 +1457,8 @@ impl Context {
                                 .map(|section| SlashCommandOutputSection {
                                     range: buffer.anchor_after(start + section.range.start)
                                         ..buffer.anchor_before(start + section.range.end),
-                                    render_placeholder: section.render_placeholder,
+                                    icon: section.icon,
+                                    label: section.label,
                                 })
                                 .collect::<Vec<_>>();
                             sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
@@ -2631,21 +2632,27 @@ impl ContextEditor {
                     FoldPlaceholder {
                         render: Arc::new({
                             let editor = cx.view().downgrade();
-                            let render_placeholder = section.render_placeholder.clone();
-                            move |fold_id, fold_range, cx| {
+                            let icon = section.icon;
+                            let label = section.label.clone();
+                            move |fold_id, fold_range, _cx| {
                                 let editor = editor.clone();
-                                let unfold = Arc::new(move |cx: &mut WindowContext| {
-                                    editor
-                                        .update(cx, |editor, cx| {
-                                            let buffer_start = fold_range
-                                                .start
-                                                .to_point(&editor.buffer().read(cx).read(cx));
-                                            let buffer_row = MultiBufferRow(buffer_start.row);
-                                            editor.unfold_at(&UnfoldAt { buffer_row }, cx);
-                                        })
-                                        .ok();
-                                });
-                                render_placeholder(fold_id.into(), unfold, cx)
+                                ButtonLike::new(fold_id)
+                                    .style(ButtonStyle::Filled)
+                                    .layer(ElevationIndex::ElevatedSurface)
+                                    .child(Icon::new(icon))
+                                    .child(Label::new(label.clone()).single_line())
+                                    .on_click(move |_, cx| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                let buffer_start = fold_range
+                                                    .start
+                                                    .to_point(&editor.buffer().read(cx).read(cx));
+                                                let buffer_row = MultiBufferRow(buffer_start.row);
+                                                editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                                            })
+                                            .ok();
+                                    })
+                                    .into_any_element()
                             }
                         }),
                         constrain_width: false,

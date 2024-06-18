@@ -10,7 +10,7 @@ use gpui::{AppContext, Task, WeakView};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use workspace::Workspace;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -152,37 +152,11 @@ impl SlashCommand for FetchSlashCommand {
                 text,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        FetchPlaceholder {
-                            id,
-                            unfold,
-                            url: url.clone(),
-                        }
-                        .into_any_element()
-                    }),
+                    icon: IconName::AtSign,
+                    label: format!("fetch {}", url).into(),
                 }],
                 run_commands_in_text: false,
             })
         })
-    }
-}
-
-#[derive(IntoElement)]
-struct FetchPlaceholder {
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-    pub url: SharedString,
-}
-
-impl RenderOnce for FetchPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::AtSign))
-            .child(Label::new(format!("fetch {url}", url = self.url)))
-            .on_click(move |_, cx| unfold(cx))
     }
 }

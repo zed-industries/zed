@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
 use fs::Fs;
 use fuzzy::PathMatch;
-use gpui::{AppContext, Model, RenderOnce, SharedString, Task, View, WeakView};
+use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Worktree};
 use std::{
@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use util::{paths::PathMatcher, ResultExt};
 use workspace::Workspace;
 
@@ -156,18 +156,13 @@ impl SlashCommand for FileSlashCommand {
                 text,
                 sections: ranges
                     .into_iter()
-                    .map(|(range, path, entry_type)| SlashCommandOutputSection {
-                        range,
-                        render_placeholder: Arc::new(move |id, unfold, _cx| {
-                            EntryPlaceholder {
-                                path: Some(path.clone()),
-                                is_directory: entry_type == EntryType::Directory,
-                                line_range: None,
-                                id,
-                                unfold,
-                            }
-                            .into_any_element()
-                        }),
+                    .map(|(range, path, entry_type)| {
+                        build_entry_output_section(
+                            range,
+                            Some(&path),
+                            entry_type == EntryType::Directory,
+                            None,
+                        )
                     })
                     .collect(),
                 run_commands_in_text: false,
@@ -349,44 +344,6 @@ async fn collect_file_content(
     anyhow::Ok(())
 }
 
-#[derive(IntoElement)]
-pub struct EntryPlaceholder {
-    pub path: Option<PathBuf>,
-    pub is_directory: bool,
-    pub line_range: Option<Range<u32>>,
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-}
-
-impl RenderOnce for EntryPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-        let title = if let Some(path) = self.path.as_ref() {
-            SharedString::from(path.to_string_lossy().to_string())
-        } else {
-            SharedString::from("untitled")
-        };
-        let icon = if self.is_directory {
-            IconName::Folder
-        } else {
-            IconName::File
-        };
-
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(icon))
-            .child(Label::new(title))
-            .when_some(self.line_range, |button, line_range| {
-                button.child(Label::new(":")).child(Label::new(format!(
-                    "{}-{}",
-                    line_range.start, line_range.end
-                )))
-            })
-            .on_click(move |_, cx| unfold(cx))
-    }
-}
-
 pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32>>) -> String {
     let mut text = String::new();
     write!(text, "```").unwrap();
@@ -407,4 +364,32 @@ pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32
 
     text.push('\n');
     text
+}
+
+pub fn build_entry_output_section(
+    range: Range<usize>,
+    path: Option<&Path>,
+    is_directory: bool,
+    line_range: Option<Range<u32>>,
+) -> SlashCommandOutputSection<usize> {
+    let mut label = if let Some(path) = path {
+        path.to_string_lossy().to_string()
+    } else {
+        "untitled".to_string()
+    };
+    if let Some(line_range) = line_range {
+        write!(label, ":{}-{}", line_range.start, line_range.end).unwrap();
+    }
+
+    let icon = if is_directory {
+        IconName::Folder
+    } else {
+        IconName::File
+    };
+
+    SlashCommandOutputSection {
+        range,
+        icon,
+        label: label.into(),
+    }
 }
