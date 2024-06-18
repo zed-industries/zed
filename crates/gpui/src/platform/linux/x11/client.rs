@@ -475,9 +475,8 @@ impl X11Client {
                 if atom == state.atoms.WM_DELETE_WINDOW {
                     // window "x" button clicked by user
                     if window.should_close() {
-                        let window_ref = state.windows.remove(&event.window)?;
-                        state.loop_handle.remove(window_ref.refresh_event_token);
                         // Rest of the close logic is handled in drop_window()
+                        window.close();
                     }
                 }
             }
