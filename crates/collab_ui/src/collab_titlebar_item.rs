@@ -911,8 +911,8 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
-                            .action("Themes", theme_selector::Toggle::default().boxed_clone())
-                            .action("Extensions...", extensions_ui::Extensions.boxed_clone())
+                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
+                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
                             .separator()
                             .action("Sign Out", client::SignOut.boxed_clone())
                     })
@@ -940,8 +940,8 @@ impl CollabTitlebarItem {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
-                            .action("Themes", theme_selector::Toggle::default().boxed_clone())
-                            .action("Extensions...", extensions_ui::Extensions.boxed_clone())
+                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
+                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
                     })
                     .into()
                 })
