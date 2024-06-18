@@ -1,15 +1,14 @@
 use super::{
-    file_command::{codeblock_fence_for_path, EntryPlaceholder},
+    file_command::{build_entry_output_section, codeblock_fence_for_path},
     SlashCommand, SlashCommandOutput,
 };
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandOutputSection;
 use collections::HashMap;
 use editor::Editor;
 use gpui::{AppContext, Entity, Task, WeakView};
 use language::LspAdapterDelegate;
 use std::{fmt::Write, sync::Arc};
-use ui::{IntoElement, WindowContext};
+use ui::WindowContext;
 use workspace::Workspace;
 
 pub(crate) struct TabsSlashCommand;
@@ -89,20 +88,12 @@ impl SlashCommand for TabsSlashCommand {
                     }
                     writeln!(text, "```\n").unwrap();
                     let section_end_ix = text.len() - 1;
-
-                    sections.push(SlashCommandOutputSection {
-                        range: section_start_ix..section_end_ix,
-                        render_placeholder: Arc::new(move |id, unfold, _| {
-                            EntryPlaceholder {
-                                id,
-                                path: full_path.clone(),
-                                is_directory: false,
-                                line_range: None,
-                                unfold,
-                            }
-                            .into_any_element()
-                        }),
-                    });
+                    sections.push(build_entry_output_section(
+                        section_start_ix..section_end_ix,
+                        full_path.as_deref(),
+                        false,
+                        None,
+                    ));
                 }
 
                 Ok(SlashCommandOutput {

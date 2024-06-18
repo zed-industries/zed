@@ -11,7 +11,7 @@ use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
 use rustdoc::{convert_rustdoc_to_markdown, CrateName, LocalProvider, RustdocSource, RustdocStore};
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use util::{maybe, ResultExt};
 use workspace::Workspace;
 
@@ -213,57 +213,26 @@ impl SlashCommand for RustdocSlashCommand {
         cx.foreground_executor().spawn(async move {
             let (source, text) = text.await?;
             let range = 0..text.len();
+            let crate_path = module_path
+                .map(|module_path| format!("{}::{}", crate_name, module_path))
+                .unwrap_or_else(|| crate_name.to_string());
             Ok(SlashCommandOutput {
                 text,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        RustdocPlaceholder {
-                            id,
-                            unfold,
-                            source,
-                            crate_name: crate_name.clone(),
-                            module_path: module_path.clone(),
+                    icon: IconName::FileRust,
+                    label: format!(
+                        "rustdoc ({source}): {crate_path}",
+                        source = match source {
+                            RustdocSource::Index => "index",
+                            RustdocSource::Local => "local",
+                            RustdocSource::DocsDotRs => "docs.rs",
                         }
-                        .into_any_element()
-                    }),
+                    )
+                    .into(),
                 }],
                 run_commands_in_text: false,
             })
         })
-    }
-}
-
-#[derive(IntoElement)]
-struct RustdocPlaceholder {
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-    pub source: RustdocSource,
-    pub crate_name: CrateName,
-    pub module_path: Option<SharedString>,
-}
-
-impl RenderOnce for RustdocPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-
-        let crate_path = self
-            .module_path
-            .map(|module_path| format!("{crate_name}::{module_path}", crate_name = self.crate_name))
-            .unwrap_or(self.crate_name.to_string());
-
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::FileRust))
-            .child(Label::new(format!(
-                "rustdoc ({source}): {crate_path}",
-                source = match self.source {
-                    RustdocSource::Index => "index",
-                    RustdocSource::Local => "local",
-                    RustdocSource::DocsDotRs => "docs.rs",
-                }
-            )))
-            .on_click(move |_, cx| unfold(cx))
     }
 }

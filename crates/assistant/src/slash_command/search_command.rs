@@ -1,5 +1,5 @@
 use super::{
-    file_command::{codeblock_fence_for_path, EntryPlaceholder},
+    file_command::{build_entry_output_section, codeblock_fence_for_path},
     SlashCommand, SlashCommandOutput,
 };
 use anyhow::Result;
@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{prelude::*, ButtonLike, ElevationIndex, Icon, IconName};
+use ui::{prelude::*, IconName};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -151,34 +151,19 @@ impl SlashCommand for SearchSlashCommand {
                         text.push_str(&excerpt);
                         writeln!(text, "\n```\n").unwrap();
                         let section_end_ix = text.len() - 1;
-
-                        sections.push(SlashCommandOutputSection {
-                            range: section_start_ix..section_end_ix,
-                            render_placeholder: Arc::new(move |id, unfold, _| {
-                                EntryPlaceholder {
-                                    id,
-                                    path: Some(full_path.clone()),
-                                    is_directory: false,
-                                    line_range: Some(start_row + 1..end_row + 1),
-                                    unfold,
-                                }
-                                .into_any_element()
-                            }),
-                        });
+                        sections.push(build_entry_output_section(
+                            section_start_ix..section_end_ix,
+                            Some(&full_path),
+                            false,
+                            Some(start_row + 1..end_row + 1),
+                        ));
                     }
 
                     let query = SharedString::from(query);
                     sections.push(SlashCommandOutputSection {
                         range: 0..text.len(),
-                        render_placeholder: Arc::new(move |id, unfold, _cx| {
-                            ButtonLike::new(id)
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ElevatedSurface)
-                                .child(Icon::new(IconName::MagnifyingGlass))
-                                .child(Label::new(query.clone()))
-                                .on_click(move |_, cx| unfold(cx))
-                                .into_any_element()
-                        }),
+                        icon: IconName::MagnifyingGlass,
+                        label: query,
                     });
 
                     SlashCommandOutput {
