@@ -11,7 +11,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use util::post_inc;
 
@@ -32,6 +32,7 @@ struct TestDispatcherState {
     background: Vec<Runnable>,
     deprioritized_background: Vec<Runnable>,
     delayed: Vec<(Duration, Runnable)>,
+    start_time: Instant,
     time: Duration,
     is_main_thread: bool,
     next_id: TestDispatcherId,
@@ -52,6 +53,7 @@ impl TestDispatcher {
             deprioritized_background: Vec::new(),
             delayed: Vec::new(),
             time: Duration::ZERO,
+            start_time: Instant::now(),
             is_main_thread: true,
             next_id: TestDispatcherId(1),
             allow_parking: false,
@@ -249,6 +251,11 @@ impl Clone for TestDispatcher {
 impl PlatformDispatcher for TestDispatcher {
     fn is_main_thread(&self) -> bool {
         self.state.lock().is_main_thread
+    }
+
+    fn now(&self) -> Instant {
+        let state = self.state.lock();
+        state.start_time + state.time
     }
 
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {

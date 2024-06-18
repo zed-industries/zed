@@ -7,6 +7,7 @@ use language::{
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
+use lsp::NumberOrString;
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -1459,6 +1460,69 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
         .await
         .text_document;
     assert_eq!(notification.version, 0);
+}
+
+#[gpui::test]
+async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let progress_token = "the-progress-token";
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            disk_based_diagnostics_sources: vec!["disk".into()],
+            disk_based_diagnostics_progress_token: Some(progress_token.into()),
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    // Simulate diagnostics starting to update.
+    let mut fake_server = fake_servers.next().await.unwrap();
+    fake_server
+        .start_progress_with(
+            "another-token",
+            lsp::WorkDoneProgressBegin {
+                cancellable: Some(false),
+                ..Default::default()
+            },
+        )
+        .await;
+    fake_server
+        .start_progress_with(
+            progress_token,
+            lsp::WorkDoneProgressBegin {
+                cancellable: Some(true),
+                ..Default::default()
+            },
+        )
+        .await;
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        project.cancel_language_server_work_for_buffers([buffer.clone()], cx)
+    });
+
+    let cancel_notification = fake_server
+        .receive_notification::<lsp::notification::WorkDoneProgressCancel>()
+        .await;
+    assert_eq!(
+        cancel_notification.token,
+        NumberOrString::String(progress_token.into())
+    );
 }
 
 #[gpui::test]
@@ -3758,6 +3822,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_rename(cx: &mut gpui::TestAppContext) {
+    // hi
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
