@@ -18,8 +18,9 @@ use language::{
 };
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
+use paths::DEFAULT_PRETTIER_DIR;
 use prettier::Prettier;
-use util::{paths::DEFAULT_PRETTIER_DIR, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt};
 
 use crate::{
     Event, File, FormatOperation, PathChange, Project, ProjectEntryId, Worktree, WorktreeId,

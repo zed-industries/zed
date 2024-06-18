@@ -9,7 +9,7 @@ pub(crate) mod repeat;
 mod scroll;
 pub(crate) mod search;
 pub mod substitute;
-mod yank;
+pub(crate) mod yank;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -51,6 +51,7 @@ actions!(
         InsertEndOfLine,
         InsertLineAbove,
         InsertLineBelow,
+        InsertAtPrevious,
         DeleteLeft,
         DeleteRight,
         ChangeToEndOfLine,
@@ -73,6 +74,7 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(insert_end_of_line);
     workspace.register_action(insert_line_above);
     workspace.register_action(insert_line_below);
+    workspace.register_action(insert_at_previous);
     workspace.register_action(change_case);
     workspace.register_action(convert_to_upper_case);
     workspace.register_action(convert_to_lower_case);
@@ -337,6 +339,20 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
                     (next_line_end(map, cursor, 1), SelectionGoal::None)
                 });
             });
+        });
+    });
+}
+
+fn insert_at_previous(_: &mut Workspace, _: &InsertAtPrevious, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.start_recording(cx);
+        vim.switch_mode(Mode::Insert, false, cx);
+        vim.update_active_editor(cx, |vim, editor, cx| {
+            if let Some(marks) = vim.state().marks.get("^") {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
+                });
+            }
         });
     });
 }

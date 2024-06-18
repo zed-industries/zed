@@ -4,7 +4,7 @@ use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{AppContext, BackgroundExecutor, UpdateGlobal};
 use std::{io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};
-use util::{paths, ResultExt};
+use util::ResultExt;
 
 pub const EMPTY_THEME_NAME: &str = "empty-theme";
 

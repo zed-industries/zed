@@ -39,6 +39,7 @@
       "right": "vim::Right",
       "space": "vim::Space",
       "$": "vim::EndOfLine",
+      "end": "vim::EndOfLine",
       "^": "vim::FirstNonWhitespace",
       "_": "vim::StartOfLineDownward",
       "g _": "vim::EndOfLineDownward",
@@ -140,7 +141,8 @@
       "ctrl-q": "vim::ToggleVisualBlock",
       "shift-k": "editor::Hover",
       "shift-r": "vim::ToggleReplace",
-      "0": "vim::StartOfLine", // When no number operator present, use start of line motion
+      "0": "vim::StartOfLine",
+      "home": "vim::StartOfLine",
       "ctrl-f": "vim::PageDown",
       "pagedown": "vim::PageDown",
       "ctrl-b": "vim::PageUp",
@@ -246,9 +248,10 @@
           "displayLines": true
         }
       ],
+      "g v": "vim::RestoreVisualSelection",
       "g ]": "editor::GoToDiagnostic",
       "g [": "editor::GoToPrevDiagnostic",
-      "g i": ["workspace::SendKeystrokes", "` ^ i"],
+      "g i": "vim::InsertAtPrevious",
       "g ,": "vim::ChangeListNewer",
       "g ;": "vim::ChangeListOlder",
       "shift-h": "vim::WindowTop",
@@ -385,6 +388,7 @@
       "g u": ["vim::PushOperator", "Lowercase"],
       "g shift-u": ["vim::PushOperator", "Uppercase"],
       "g ~": ["vim::PushOperator", "OppositeCase"],
+      "\"": ["vim::PushOperator", "Register"],
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       // tree-sitter related commands
@@ -399,13 +403,14 @@
   {
     "context": "Editor && vim_mode == visual && vim_operator == none && !VimWaiting",
     "bindings": {
+      "\"": ["vim::PushOperator", "Register"],
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode"
     }
   },
   {
-    "context": "Editor && VimCount",
+    "context": "Editor && VimCount && vim_mode != insert",
     "bindings": {
       "0": ["vim::Number", 0]
     }
@@ -631,8 +636,7 @@
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
-      "ctrl-r \"": "editor::Paste",
-      "ctrl-r +": "editor::Paste"
+      "ctrl-r": ["vim::PushOperator", "Register"]
     }
   },
   {
@@ -651,6 +655,13 @@
       "enter": "vim::Enter",
       "escape": ["vim::SwitchMode", "Normal"],
       "ctrl-[": ["vim::SwitchMode", "Normal"]
+    }
+  },
+  {
+    "context": "Editor && vim_mode == insert && VimWaiting",
+    "bindings": {
+      "escape": "vim::NormalBefore",
+      "ctrl-[": "vim::NormalBefore"
     }
   },
   {

@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -5,10 +7,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use futures::AsyncReadExt;
 use gpui::{AppContext, Task, WeakView};
-use html_to_markdown::{convert_html_to_markdown, markdown, HandleTag};
+use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use workspace::Workspace;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -59,24 +61,26 @@ impl FetchSlashCommand {
 
         match content_type {
             ContentType::Html => {
-                let mut handlers: Vec<Box<dyn HandleTag>> = vec![
-                    Box::new(markdown::ParagraphHandler),
-                    Box::new(markdown::HeadingHandler),
-                    Box::new(markdown::ListHandler),
-                    Box::new(markdown::TableHandler::new()),
-                    Box::new(markdown::StyledTextHandler),
+                let mut handlers: Vec<TagHandler> = vec![
+                    Rc::new(RefCell::new(markdown::ParagraphHandler)),
+                    Rc::new(RefCell::new(markdown::HeadingHandler)),
+                    Rc::new(RefCell::new(markdown::ListHandler)),
+                    Rc::new(RefCell::new(markdown::TableHandler::new())),
+                    Rc::new(RefCell::new(markdown::StyledTextHandler)),
                 ];
                 if url.contains("wikipedia.org") {
                     use html_to_markdown::structure::wikipedia;
 
-                    handlers.push(Box::new(wikipedia::WikipediaChromeRemover));
-                    handlers.push(Box::new(wikipedia::WikipediaInfoboxHandler));
-                    handlers.push(Box::new(wikipedia::WikipediaCodeHandler::new()));
+                    handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaChromeRemover)));
+                    handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaInfoboxHandler)));
+                    handlers.push(Rc::new(
+                        RefCell::new(wikipedia::WikipediaCodeHandler::new()),
+                    ));
                 } else {
-                    handlers.push(Box::new(markdown::CodeHandler));
+                    handlers.push(Rc::new(RefCell::new(markdown::CodeHandler)));
                 }
 
-                convert_html_to_markdown(&body[..], handlers)
+                convert_html_to_markdown(&body[..], &mut handlers)
             }
             ContentType::Plaintext => Ok(std::str::from_utf8(&body)?.to_owned()),
             ContentType::Json => {
@@ -148,37 +152,11 @@ impl SlashCommand for FetchSlashCommand {
                 text,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        FetchPlaceholder {
-                            id,
-                            unfold,
-                            url: url.clone(),
-                        }
-                        .into_any_element()
-                    }),
+                    icon: IconName::AtSign,
+                    label: format!("fetch {}", url).into(),
                 }],
                 run_commands_in_text: false,
             })
         })
-    }
-}
-
-#[derive(IntoElement)]
-struct FetchPlaceholder {
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-    pub url: SharedString,
-}
-
-impl RenderOnce for FetchPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::AtSign))
-            .child(Label::new(format!("fetch {url}", url = self.url)))
-            .on_click(move |_, cx| unfold(cx))
     }
 }

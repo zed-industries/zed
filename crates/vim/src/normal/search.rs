@@ -165,6 +165,9 @@ fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewConte
                     {
                         count = count.saturating_sub(1)
                     }
+                    vim.workspace_state
+                        .registers
+                        .insert('/', search_bar.query(cx).into());
                     state.count = 1;
                     search_bar.select_match(direction, count, cx);
                     search_bar.focus_editor(&Default::default(), cx);

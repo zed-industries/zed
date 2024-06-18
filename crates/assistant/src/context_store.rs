@@ -1,15 +1,17 @@
 use crate::{assistant_settings::OpenAiModel, MessageId, MessageMetadata};
 use anyhow::{anyhow, Result};
+use assistant_slash_command::SlashCommandOutputSection;
 use collections::HashMap;
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, Model, ModelContext, Task};
+use paths::CONTEXTS_DIR;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{cmp::Reverse, ffi::OsStr, path::PathBuf, sync::Arc, time::Duration};
 use ui::Context;
-use util::{paths::CONTEXTS_DIR, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt};
 
 #[derive(Serialize, Deserialize)]
 pub struct SavedMessage {
@@ -26,10 +28,22 @@ pub struct SavedContext {
     pub messages: Vec<SavedMessage>,
     pub message_metadata: HashMap<MessageId, MessageMetadata>,
     pub summary: String,
+    pub slash_command_output_sections: Vec<SlashCommandOutputSection<usize>>,
 }
 
 impl SavedContext {
-    pub const VERSION: &'static str = "0.2.0";
+    pub const VERSION: &'static str = "0.3.0";
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SavedContextV0_2_0 {
+    pub id: Option<String>,
+    pub zed: String,
+    pub version: String,
+    pub text: String,
+    pub messages: Vec<SavedMessage>,
+    pub message_metadata: HashMap<MessageId, MessageMetadata>,
+    pub summary: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -99,6 +113,20 @@ impl ContextStore {
                     SavedContext::VERSION => {
                         Ok(serde_json::from_value::<SavedContext>(saved_context_json)?)
                     }
+                    "0.2.0" => {
+                        let saved_context =
+                            serde_json::from_value::<SavedContextV0_2_0>(saved_context_json)?;
+                        Ok(SavedContext {
+                            id: saved_context.id,
+                            zed: saved_context.zed,
+                            version: saved_context.version,
+                            text: saved_context.text,
+                            messages: saved_context.messages,
+                            message_metadata: saved_context.message_metadata,
+                            summary: saved_context.summary,
+                            slash_command_output_sections: Vec::new(),
+                        })
+                    }
                     "0.1.0" => {
                         let saved_context =
                             serde_json::from_value::<SavedContextV0_1_0>(saved_context_json)?;
@@ -110,6 +138,7 @@ impl ContextStore {
                             messages: saved_context.messages,
                             message_metadata: saved_context.message_metadata,
                             summary: saved_context.summary,
+                            slash_command_output_sections: Vec::new(),
                         })
                     }
                     _ => Err(anyhow!("unrecognized saved context version: {}", version)),

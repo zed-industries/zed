@@ -4904,7 +4904,15 @@ async fn test_project_search(
     let mut results = HashMap::default();
     let mut search_rx = project_b.update(cx_b, |project, cx| {
         project.search(
-            SearchQuery::text("world", false, false, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                "world",
+                false,
+                false,
+                false,
+                Default::default(),
+                Default::default(),
+            )
+            .unwrap(),
             cx,
         )
     });

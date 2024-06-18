@@ -150,7 +150,7 @@ impl ProjectDiagnosticsEditor {
         let focus_handle = cx.focus_handle();
         cx.on_focus_in(&focus_handle, |this, cx| this.focus_in(cx))
             .detach();
-        cx.on_focus_out(&focus_handle, |this, cx| this.focus_out(cx))
+        cx.on_focus_out(&focus_handle, |this, _event, cx| this.focus_out(cx))
             .detach();
 
         let excerpts = cx.new_model(|cx| {

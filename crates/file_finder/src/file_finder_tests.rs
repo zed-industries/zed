@@ -1747,6 +1747,45 @@ async fn test_extending_modifiers_does_not_confirm_selection(cx: &mut gpui::Test
     active_file_picker(&workspace, cx);
 }
 
+#[gpui::test]
+async fn test_repeat_toggle_action(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/test",
+            json!({
+                "00.txt": "",
+                "01.txt": "",
+                "02.txt": "",
+                "03.txt": "",
+                "04.txt": "",
+                "05.txt": "",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    cx.dispatch_action(Toggle::default());
+    let picker = active_file_picker(&workspace, cx);
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.selected_index, 0);
+        assert_eq!(picker.logical_scroll_top_index(), 0);
+    });
+
+    // When toggling repeatedly, the picker scrolls to reveal the selected item.
+    cx.dispatch_action(Toggle::default());
+    cx.dispatch_action(Toggle::default());
+    cx.dispatch_action(Toggle::default());
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.selected_index, 3);
+        assert_eq!(picker.logical_scroll_top_index(), 3);
+    });
+}
+
 async fn open_close_queried_buffer(
     input: &str,
     expected_matches: usize,

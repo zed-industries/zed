@@ -24,3 +24,12 @@
 {"Key":"`"}
 {"Key":"^"}
 {"Get":{"state":"Line one\nLine two\nLine three\nStraight thingˇ four\nLine five\n","mode":"Normal"}}
+{"Key":"k"}
+{"Key":"a"}
+{"Key":"!"}
+{"Key":"escape"}
+{"Key":"k"}
+{"Key":"g"}
+{"Key":"i"}
+{"Key":"?"}
+{"Get":{"state":"Line one\nLine two\nLine three!?ˇ\nStraight thing four\nLine five\n","mode":"Insert"}}

@@ -13,8 +13,8 @@ use rpc::proto::{self, DevServerStatus};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
-    ButtonStyle, ContextMenu, Icon, IconButton, IconName, Indicator, TintColor, TitleBar, Tooltip,
+    h_flex, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike, ButtonStyle,
+    ContextMenu, Icon, IconButton, IconName, Indicator, PopoverMenu, TintColor, TitleBar, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
@@ -57,6 +57,8 @@ impl Render for CollabTitlebarItem {
         let client = self.client.clone();
         let project_id = self.project.read(cx).remote_id();
         let workspace = self.workspace.upgrade();
+
+        let platform_supported = cfg!(target_os = "macos");
 
         TitleBar::new("collab-titlebar", Box::new(workspace::CloseWindow))
             // note: on windows titlebar behaviour is handled by the platform implementation
@@ -243,7 +245,9 @@ impl Render for CollabTitlebarItem {
                                 )
                                 .tooltip(move |cx| {
                                     Tooltip::text(
-                                        if is_muted {
+                                        if !platform_supported {
+                                            "Cannot share microphone"
+                                        } else if is_muted {
                                             "Unmute microphone"
                                         } else {
                                             "Mute microphone"
@@ -253,7 +257,8 @@ impl Render for CollabTitlebarItem {
                                 })
                                 .style(ButtonStyle::Subtle)
                                 .icon_size(IconSize::Small)
-                                .selected(is_muted)
+                                .selected(platform_supported && is_muted)
+                                .disabled(!platform_supported)
                                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                                 .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                             )
@@ -271,8 +276,11 @@ impl Render for CollabTitlebarItem {
                             .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                             .icon_size(IconSize::Small)
                             .selected(is_deafened)
+                            .disabled(!platform_supported)
                             .tooltip(move |cx| {
-                                if can_use_microphone {
+                                if !platform_supported {
+                                    Tooltip::text("Cannot share microphone", cx)
+                                } else if can_use_microphone {
                                     Tooltip::with_meta(
                                         "Deafen Audio",
                                         None,
@@ -291,10 +299,13 @@ impl Render for CollabTitlebarItem {
                                     .style(ButtonStyle::Subtle)
                                     .icon_size(IconSize::Small)
                                     .selected(is_screen_sharing)
+                                    .disabled(!platform_supported)
                                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                                     .tooltip(move |cx| {
                                         Tooltip::text(
-                                            if is_screen_sharing {
+                                            if !platform_supported {
+                                                "Cannot share screen"
+                                            } else if is_screen_sharing {
                                                 "Stop Sharing Screen"
                                             } else {
                                                 "Share Screen"
@@ -409,6 +420,17 @@ impl CollabTitlebarItem {
                             recent_projects::DevServerProjects::open(workspace, cx)
                         }
                     }))
+                    .into_any_element(),
+            );
+        }
+
+        if self.project.read(cx).is_disconnected() {
+            return Some(
+                Button::new("disconnected", "Disconnected")
+                    .disabled(true)
+                    .color(Color::Disabled)
+                    .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::Small)
                     .into_any_element(),
             );
         }
@@ -717,7 +739,7 @@ impl CollabTitlebarItem {
 
     pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if let Some(user) = self.user_store.read(cx).current_user() {
-            popover_menu("user-menu")
+            PopoverMenu::new("user-menu")
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
@@ -745,7 +767,7 @@ impl CollabTitlebarItem {
                 )
                 .anchor(gpui::AnchorCorner::TopRight)
         } else {
-            popover_menu("user-menu")
+            PopoverMenu::new("user-menu")
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())

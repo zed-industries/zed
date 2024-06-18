@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 use anyhow::Result;
@@ -22,6 +24,8 @@ pub enum StartTagOutcome {
     Skip,
 }
 
+pub type TagHandler = Rc<RefCell<dyn HandleTag>>;
+
 pub struct MarkdownWriter {
     current_element_stack: VecDeque<HtmlElement>,
     pub(crate) markdown: String,
@@ -42,7 +46,7 @@ impl MarkdownWriter {
     pub fn is_inside(&self, tag: &str) -> bool {
         self.current_element_stack
             .iter()
-            .any(|parent_element| parent_element.tag == tag)
+            .any(|parent_element| parent_element.tag() == tag)
     }
 
     /// Appends the given string slice onto the end of the Markdown output.
@@ -60,12 +64,8 @@ impl MarkdownWriter {
         self.push_str("\n\n");
     }
 
-    pub fn run(
-        mut self,
-        root_node: &Handle,
-        mut handlers: Vec<Box<dyn HandleTag>>,
-    ) -> Result<String> {
-        self.visit_node(&root_node, &mut handlers)?;
+    pub fn run(mut self, root_node: &Handle, handlers: &mut Vec<TagHandler>) -> Result<String> {
+        self.visit_node(&root_node, handlers)?;
         Ok(Self::prettify_markdown(self.markdown))
     }
 
@@ -76,7 +76,7 @@ impl MarkdownWriter {
         markdown.trim().to_string()
     }
 
-    fn visit_node(&mut self, node: &Handle, handlers: &mut [Box<dyn HandleTag>]) -> Result<()> {
+    fn visit_node(&mut self, node: &Handle, handlers: &mut [TagHandler]) -> Result<()> {
         let mut current_element = None;
 
         match node.data {
@@ -94,10 +94,7 @@ impl MarkdownWriter {
             } => {
                 let tag_name = name.local.to_string();
                 if !tag_name.is_empty() {
-                    current_element = Some(HtmlElement {
-                        tag: tag_name,
-                        attrs: attrs.clone(),
-                    });
+                    current_element = Some(HtmlElement::new(tag_name, attrs.clone()));
                 }
             }
             NodeData::Text { ref contents } => {
@@ -128,14 +125,10 @@ impl MarkdownWriter {
         Ok(())
     }
 
-    fn start_tag(
-        &mut self,
-        tag: &HtmlElement,
-        handlers: &mut [Box<dyn HandleTag>],
-    ) -> StartTagOutcome {
+    fn start_tag(&mut self, tag: &HtmlElement, handlers: &mut [TagHandler]) -> StartTagOutcome {
         for handler in handlers {
-            if handler.should_handle(tag.tag.as_str()) {
-                match handler.handle_tag_start(tag, self) {
+            if handler.borrow().should_handle(tag.tag()) {
+                match handler.borrow_mut().handle_tag_start(tag, self) {
                     StartTagOutcome::Continue => {}
                     StartTagOutcome::Skip => return StartTagOutcome::Skip,
                 }
@@ -145,17 +138,17 @@ impl MarkdownWriter {
         StartTagOutcome::Continue
     }
 
-    fn end_tag(&mut self, tag: &HtmlElement, handlers: &mut [Box<dyn HandleTag>]) {
+    fn end_tag(&mut self, tag: &HtmlElement, handlers: &mut [TagHandler]) {
         for handler in handlers {
-            if handler.should_handle(tag.tag.as_str()) {
-                handler.handle_tag_end(tag, self);
+            if handler.borrow().should_handle(tag.tag()) {
+                handler.borrow_mut().handle_tag_end(tag, self);
             }
         }
     }
 
-    fn visit_text(&mut self, text: String, handlers: &mut [Box<dyn HandleTag>]) -> Result<()> {
+    fn visit_text(&mut self, text: String, handlers: &mut [TagHandler]) -> Result<()> {
         for handler in handlers {
-            match handler.handle_text(&text, self) {
+            match handler.borrow_mut().handle_text(&text, self) {
                 HandlerOutcome::Handled => return Ok(()),
                 HandlerOutcome::NoOp => {}
             }

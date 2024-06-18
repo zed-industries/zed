@@ -19,9 +19,9 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-libc.workspace = true
 ipc-channel = "0.18"
 once_cell.workspace = true
+paths.workspace = true
 release_channel.workspace = true
 serde.workspace = true
 util.workspace = true

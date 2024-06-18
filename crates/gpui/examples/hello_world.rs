@@ -34,6 +34,7 @@ fn main() {
                     text: "World".into(),
                 })
             },
-        );
+        )
+        .unwrap();
     });
 }

@@ -811,7 +811,7 @@ impl BufferSearchBar {
         match event {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
-            editor::EditorEvent::Edited => {
+            editor::EditorEvent::Edited { .. } => {
                 self.clear_matches(cx);
                 let search = self.update_matches(cx);
 
@@ -927,8 +927,8 @@ impl BufferSearchBar {
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         false,
-                        Vec::new(),
-                        Vec::new(),
+                        Default::default(),
+                        Default::default(),
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
@@ -944,8 +944,8 @@ impl BufferSearchBar {
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         false,
-                        Vec::new(),
-                        Vec::new(),
+                        Default::default(),
+                        Default::default(),
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {

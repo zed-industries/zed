@@ -3,9 +3,9 @@ use std::sync::{atomic::AtomicBool, Arc};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use futures::FutureExt;
-use gpui::{AppContext, IntoElement, Task, WeakView, WindowContext};
+use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use wasmtime_wasi::WasiView;
 use workspace::Workspace;
 
@@ -87,18 +87,8 @@ impl SlashCommand for ExtensionSlashCommand {
                 text,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    render_placeholder: Arc::new({
-                        let command_name = command_name.clone();
-                        move |id, unfold, _cx| {
-                            ButtonLike::new(id)
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ElevatedSurface)
-                                .child(Icon::new(IconName::Code))
-                                .child(Label::new(command_name.clone()))
-                                .on_click(move |_event, cx| unfold(cx))
-                                .into_any_element()
-                        }
-                    }),
+                    icon: IconName::Code,
+                    label: command_name,
                 }],
                 run_commands_in_text: false,
             })

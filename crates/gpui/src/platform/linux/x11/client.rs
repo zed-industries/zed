@@ -359,6 +359,9 @@ impl X11Client {
                             window.window.set_appearance(appearance);
                         }
                     }
+                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
+                        // noop, X11 manages this for us.
+                    }
                 }
             })
             .unwrap();
@@ -458,6 +461,7 @@ impl X11Client {
         state
             .windows
             .get(&win)
+            .filter(|window_reference| !window_reference.window.state.borrow().destroyed)
             .map(|window_reference| window_reference.window.clone())
     }
 
@@ -471,9 +475,8 @@ impl X11Client {
                 if atom == state.atoms.WM_DELETE_WINDOW {
                     // window "x" button clicked by user
                     if window.should_close() {
-                        let window_ref = state.windows.remove(&event.window)?;
-                        state.loop_handle.remove(window_ref.refresh_event_token);
                         // Rest of the close logic is handled in drop_window()
+                        window.close();
                     }
                 }
             }
@@ -524,15 +527,20 @@ impl X11Client {
                     0,
                     event.locked_group.into(),
                 );
-                let modifiers = Modifiers::from_xkb(&state.xkb);
-                let focused_window_id = state.focused_window?;
-                state.modifiers = modifiers;
-                drop(state);
 
-                let focused_window = self.get_window(focused_window_id)?;
-                focused_window.handle_input(PlatformInput::ModifiersChanged(
-                    ModifiersChangedEvent { modifiers },
-                ));
+                let modifiers = Modifiers::from_xkb(&state.xkb);
+                if state.modifiers == modifiers {
+                    drop(state);
+                } else {
+                    let focused_window_id = state.focused_window?;
+                    state.modifiers = modifiers;
+                    drop(state);
+
+                    let focused_window = self.get_window(focused_window_id)?;
+                    focused_window.handle_input(PlatformInput::ModifiersChanged(
+                        ModifiersChangedEvent { modifiers },
+                    ));
+                }
             }
             Event::KeyPress(event) => {
                 let window = self.get_window(event.event)?;
@@ -883,6 +891,10 @@ impl X11Client {
 }
 
 impl LinuxClient for X11Client {
+    fn compositor_name(&self) -> &'static str {
+        "X11"
+    }
+
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
     }
@@ -895,8 +907,11 @@ impl LinuxClient for X11Client {
             .iter()
             .enumerate()
             .filter_map(|(root_id, _)| {
-                Some(Rc::new(X11Display::new(&state.xcb_connection, root_id)?)
-                    as Rc<dyn PlatformDisplay>)
+                Some(Rc::new(X11Display::new(
+                    &state.xcb_connection,
+                    state.scale_factor,
+                    root_id,
+                )?) as Rc<dyn PlatformDisplay>)
             })
             .collect()
     }
@@ -905,8 +920,12 @@ impl LinuxClient for X11Client {
         let state = self.0.borrow();
 
         Some(Rc::new(
-            X11Display::new(&state.xcb_connection, state.x_root_index)
-                .expect("There should always be a root index"),
+            X11Display::new(
+                &state.xcb_connection,
+                state.scale_factor,
+                state.x_root_index,
+            )
+            .expect("There should always be a root index"),
         ))
     }
 
@@ -915,6 +934,7 @@ impl LinuxClient for X11Client {
 
         Some(Rc::new(X11Display::new(
             &state.xcb_connection,
+            state.scale_factor,
             id.0 as usize,
         )?))
     }
@@ -923,7 +943,7 @@ impl LinuxClient for X11Client {
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
         let x_window = state.xcb_connection.generate_id().unwrap();
 
@@ -938,7 +958,7 @@ impl LinuxClient for X11Client {
             &state.atoms,
             state.scale_factor,
             state.common.appearance,
-        );
+        )?;
 
         let screen_resources = state
             .xcb_connection
@@ -1006,7 +1026,7 @@ impl LinuxClient for X11Client {
         };
 
         state.windows.insert(x_window, window_ref);
-        Box::new(window)
+        Ok(Box::new(window))
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {

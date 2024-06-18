@@ -68,6 +68,7 @@ async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppC
             assert_eq!(projects.len(), 1);
             assert_eq!(projects[0].path, "/remote");
             workspace::join_dev_server_project(
+                projects[0].id,
                 projects[0].project_id.unwrap(),
                 client.app_state.clone(),
                 None,
@@ -207,6 +208,7 @@ async fn create_dev_server_project(
             assert_eq!(projects.len(), 1);
             assert_eq!(projects[0].path, "/remote");
             workspace::join_dev_server_project(
+                projects[0].id,
                 projects[0].project_id.unwrap(),
                 client_app_state,
                 None,
@@ -491,6 +493,7 @@ async fn test_dev_server_reconnect(
         .update(cx2, |store, cx| {
             let projects = store.dev_server_projects();
             workspace::join_dev_server_project(
+                projects[0].id,
                 projects[0].project_id.unwrap(),
                 client2.app_state.clone(),
                 None,
@@ -572,7 +575,8 @@ async fn test_save_as_remote(cx1: &mut gpui::TestAppContext, cx2: &mut gpui::Tes
 
     let title = remote_workspace
         .update(&mut cx, |ws, cx| {
-            ws.active_item(cx).unwrap().tab_description(0, &cx).unwrap()
+            let active_item = ws.active_item(cx).unwrap();
+            active_item.tab_description(0, &cx).unwrap()
         })
         .unwrap();
 

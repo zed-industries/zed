@@ -1,7 +1,6 @@
 mod avatar;
 mod button;
 mod checkbox;
-mod collapsible_container;
 mod context_menu;
 mod disclosure;
 mod divider;
@@ -28,7 +27,6 @@ mod stories;
 pub use avatar::*;
 pub use button::*;
 pub use checkbox::*;
-pub use collapsible_container::*;
 pub use context_menu::*;
 pub use disclosure::*;
 pub use divider::*;

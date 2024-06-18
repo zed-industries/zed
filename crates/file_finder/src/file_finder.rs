@@ -483,7 +483,7 @@ impl FileFinderDelegate {
                         .root_entry()
                         .map_or(false, |entry| entry.is_ignored),
                     include_root_name,
-                    directories_only: false,
+                    candidates: project::Candidates::Files,
                 }
             })
             .collect::<Vec<_>>();

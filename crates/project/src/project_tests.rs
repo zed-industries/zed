@@ -1,13 +1,13 @@
 use crate::{Event, *};
 use fs::FakeFs;
 use futures::{future, StreamExt};
-use gpui::{AppContext, UpdateGlobal};
+use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
-use lsp::Url;
+use lsp::NumberOrString;
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -17,7 +17,6 @@ use std::task::Poll;
 use task::{ResolvedTask, TaskContext, TaskTemplate, TaskTemplates};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
-use worktree::WorktreeModelHandle as _;
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -25,7 +24,7 @@ async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
 
     let (tx, mut rx) = futures::channel::mpsc::unbounded();
     let _thread = std::thread::spawn(move || {
-        std::fs::metadata("/Users").unwrap();
+        std::fs::metadata("/tmp").unwrap();
         std::thread::sleep(Duration::from_millis(1000));
         tx.unbounded_send(1).unwrap();
     });
@@ -728,7 +727,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             worktree
                 .read(cx)
                 .snapshot()
-                .entries(true)
+                .entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
@@ -802,7 +801,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             worktree
                 .read(cx)
                 .snapshot()
-                .entries(true)
+                .entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
@@ -1417,6 +1416,69 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
         .await
         .text_document;
     assert_eq!(notification.version, 0);
+}
+
+#[gpui::test]
+async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let progress_token = "the-progress-token";
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            disk_based_diagnostics_sources: vec!["disk".into()],
+            disk_based_diagnostics_progress_token: Some(progress_token.into()),
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    // Simulate diagnostics starting to update.
+    let mut fake_server = fake_servers.next().await.unwrap();
+    fake_server
+        .start_progress_with(
+            "another-token",
+            lsp::WorkDoneProgressBegin {
+                cancellable: Some(false),
+                ..Default::default()
+            },
+        )
+        .await;
+    fake_server
+        .start_progress_with(
+            progress_token,
+            lsp::WorkDoneProgressBegin {
+                cancellable: Some(true),
+                ..Default::default()
+            },
+        )
+        .await;
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        project.cancel_language_server_work_for_buffers([buffer.clone()], cx)
+    });
+
+    let cancel_notification = fake_server
+        .receive_notification::<lsp::notification::WorkDoneProgressCancel>()
+        .await;
+    assert_eq!(
+        cancel_notification.token,
+        NumberOrString::String(progress_token.into())
+    );
 }
 
 #[gpui::test]
@@ -2456,7 +2518,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     let text = "let a = b.fqn";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len(), cx)
+        project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server
@@ -2483,7 +2545,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     let text = "let a = \"atoms/cmp\"";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len() - 1, cx)
+        project.completions(&buffer, text.len() - 1, DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server
@@ -2548,7 +2610,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
     let text = "let a = b.fqn";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len(), cx)
+        project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server
@@ -2937,6 +2999,8 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test(retries = 5)]
 async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
+    use worktree::WorktreeModelHandle as _;
+
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -3714,6 +3778,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_rename(cx: &mut gpui::TestAppContext) {
+    // hi
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -3864,7 +3929,15 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text("TWO", false, true, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                "TWO",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -3889,7 +3962,15 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text("TWO", false, true, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                "TWO",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -3929,8 +4010,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.odd").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -3949,8 +4030,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.rs").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -3972,11 +4053,10 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
-                Vec::new()
+
+                    PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
+                Default::default(),
             ).unwrap(),
             cx
         )
@@ -3997,12 +4077,10 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.rs").unwrap(),
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
-                Vec::new()
+
+                    PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
+               Default::default(),
             ).unwrap(),
             cx
         )
@@ -4045,8 +4123,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![PathMatcher::new("*.odd").unwrap()],
+                Default::default(),
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4070,8 +4148,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![PathMatcher::new("*.rs").unwrap()],
+                Default::default(),
+                PathMatcher::new(&["*.rs".to_owned()]).unwrap()
             )
             .unwrap(),
             cx
@@ -4093,11 +4171,10 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
+                Default::default(),
+
+                    PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
             ).unwrap(),
             cx
         )
@@ -4118,12 +4195,10 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![
-                    PathMatcher::new("*.rs").unwrap(),
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
+                 Default::default(),
+
+                    PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
             ).unwrap(),
             cx
         )
@@ -4160,8 +4235,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.odd").unwrap()],
-                vec![PathMatcher::new("*.odd").unwrap()],
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4180,8 +4255,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.ts").unwrap()],
-                vec![PathMatcher::new("*.ts").unwrap()],
+                PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
             ).unwrap(),
             cx
         )
@@ -4199,14 +4274,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4225,14 +4294,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
-                vec![
-                    PathMatcher::new("*.rs").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.rs".to_owned(), "*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4284,8 +4347,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("worktree-a/*.rs").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["worktree-a/*.rs".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -4303,8 +4366,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("worktree-b/*.rs").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["worktree-b/*.rs".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -4323,8 +4386,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.ts").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -4372,7 +4435,15 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text(query, false, false, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                query,
+                false,
+                false,
+                false,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4385,7 +4456,15 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text(query, false, false, true, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                query,
+                false,
+                false,
+                true,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4410,8 +4489,8 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         "Unrestricted search with ignored directories should find every file with the query"
     );
 
-    let files_to_include = vec![PathMatcher::new("/dir/node_modules/prettier/**").unwrap()];
-    let files_to_exclude = vec![PathMatcher::new("*.ts").unwrap()];
+    let files_to_include = PathMatcher::new(&["/dir/node_modules/prettier/**".to_owned()]).unwrap();
+    let files_to_exclude = PathMatcher::new(&["*.ts".to_owned()]).unwrap();
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     assert_eq!(
         search(
@@ -5135,7 +5214,7 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        release_channel::init("0.0.0", cx);
+        release_channel::init(SemanticVersion::default(), cx);
         language::init(cx);
         Project::init_settings(cx);
     });

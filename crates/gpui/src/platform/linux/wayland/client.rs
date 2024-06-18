@@ -430,7 +430,7 @@ impl WaylandClient {
 
         let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
-        let cursor = Cursor::new(&conn, &globals, 24);
+        let mut cursor = Cursor::new(&conn, &globals, 24);
 
         handle
             .insert_source(XDPEventSource::new(&common.background_executor), {
@@ -444,6 +444,18 @@ impl WaylandClient {
                             for (_, window) in &mut client.windows {
                                 window.set_appearance(appearance);
                             }
+                        }
+                    }
+                    XDPEvent::CursorTheme(theme) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let mut client = client.borrow_mut();
+                            client.cursor.set_theme(theme.as_str(), None);
+                        }
+                    }
+                    XDPEvent::CursorSize(size) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let mut client = client.borrow_mut();
+                            client.cursor.set_size(size);
                         }
                     }
                 }
@@ -529,7 +541,7 @@ impl LinuxClient for WaylandClient {
                 Rc::new(WaylandDisplay {
                     id: id.clone(),
                     name: output.name.clone(),
-                    bounds: output.bounds,
+                    bounds: output.bounds.to_pixels(output.scale as f32),
                 }) as Rc<dyn PlatformDisplay>
             })
             .collect()
@@ -545,7 +557,7 @@ impl LinuxClient for WaylandClient {
                     Rc::new(WaylandDisplay {
                         id: object_id.clone(),
                         name: output.name.clone(),
-                        bounds: output.bounds,
+                        bounds: output.bounds.to_pixels(output.scale as f32),
                     }) as Rc<dyn PlatformDisplay>
                 })
             })
@@ -559,7 +571,7 @@ impl LinuxClient for WaylandClient {
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
 
         let (window, surface_id) = WaylandWindow::new(
@@ -568,10 +580,10 @@ impl LinuxClient for WaylandClient {
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             state.common.appearance,
-        );
+        )?;
         state.windows.insert(surface_id, window.0.clone());
 
-        Box::new(window)
+        Ok(Box::new(window))
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
@@ -692,6 +704,10 @@ impl LinuxClient for WaylandClient {
             .keyboard_focused_window
             .as_ref()
             .map(|window| window.handle())
+    }
+
+    fn compositor_name(&self) -> &'static str {
+        "Wayland"
     }
 }
 
@@ -1077,13 +1093,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 ..
             } => {
                 let focused_window = state.keyboard_focused_window.clone();
-                let Some(focused_window) = focused_window else {
-                    return;
-                };
 
                 let keymap_state = state.keymap_state.as_mut().unwrap();
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 state.modifiers = Modifiers::from_xkb(keymap_state);
+
+                let Some(focused_window) = focused_window else {
+                    return;
+                };
 
                 let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: state.modifiers,

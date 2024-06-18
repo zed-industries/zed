@@ -14,7 +14,6 @@ mod object;
 mod replace;
 mod state;
 mod surrounds;
-mod utils;
 mod visual;
 
 use anyhow::Result;
@@ -32,16 +31,13 @@ use gpui::{
 use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
-use normal::{
-    mark::{create_mark, create_mark_after, create_mark_before},
-    normal_replace,
-};
+use normal::{mark::create_visual_marks, normal_replace};
 use replace::multi_replace;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
-use state::{EditorState, Mode, Operator, RecordedSelection, WorkspaceState};
+use state::{EditorState, Mode, Operator, RecordedSelection, Register, WorkspaceState};
 use std::{ops::Range, sync::Arc};
 use surrounds::{add_surrounds, change_surrounds, delete_surrounds};
 use ui::BorrowAppContext;
@@ -70,6 +66,9 @@ pub struct PushOperator(pub Operator);
 #[derive(Clone, Deserialize, PartialEq)]
 struct Number(usize);
 
+#[derive(Clone, Deserialize, PartialEq)]
+struct SelectRegister(String);
+
 actions!(
     vim,
     [
@@ -86,7 +85,7 @@ actions!(
 // in the workspace namespace so it's not filtered out when vim is disabled.
 actions!(workspace, [ToggleVimMode]);
 
-impl_actions!(vim, [SwitchMode, PushOperator, Number]);
+impl_actions!(vim, [SwitchMode, PushOperator, Number, SelectRegister]);
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut AppContext) {
@@ -129,7 +128,6 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, n: &Number, cx: _| {
         Vim::update(cx, |vim, cx| vim.push_count_digit(n.0, cx));
     });
-
     workspace.register_action(|_: &mut Workspace, _: &Tab, cx| {
         Vim::active_editor_input_ignored(" ".into(), cx)
     });
@@ -189,7 +187,7 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
         if action.name().starts_with("vim::") {
             return;
         }
-    } else if cx.has_pending_keystrokes() {
+    } else if cx.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress() {
         return;
     }
 
@@ -202,7 +200,8 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
             | Operator::ChangeSurrounds { .. }
             | Operator::DeleteSurrounds
             | Operator::Mark
-            | Operator::Jump { .. },
+            | Operator::Jump { .. }
+            | Operator::Register,
         ) => {}
         Some(_) => {
             vim.clear_operator(cx);
@@ -267,7 +266,9 @@ impl Vim {
             EditorEvent::TransactionUndone { transaction_id } => Vim::update(cx, |vim, cx| {
                 vim.transaction_undone(transaction_id, cx);
             }),
-            EditorEvent::Edited => Vim::update(cx, |vim, cx| vim.transaction_ended(editor, cx)),
+            EditorEvent::Edited { .. } => {
+                Vim::update(cx, |vim, cx| vim.transaction_ended(editor, cx))
+            }
             _ => {}
         }));
 
@@ -427,8 +428,8 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
-        if mode != Mode::Insert && last_mode == Mode::Insert {
-            create_mark_after(self, "^".into(), cx)
+        if !mode.is_visual() && last_mode.is_visual() {
+            create_visual_marks(self, last_mode, cx);
         }
 
         if leave_selections {
@@ -531,6 +532,151 @@ impl Vim {
         count
     }
 
+    fn select_register(&mut self, register: Arc<str>, cx: &mut WindowContext) {
+        self.update_state(|state| {
+            if register.chars().count() == 1 {
+                state
+                    .selected_register
+                    .replace(register.chars().next().unwrap());
+            }
+            state.operator_stack.clear();
+        });
+        self.sync_vim_settings(cx);
+    }
+
+    fn write_registers(
+        &mut self,
+        content: Register,
+        register: Option<char>,
+        is_yank: bool,
+        linewise: bool,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        if let Some(register) = register {
+            let lower = register.to_lowercase().next().unwrap_or(register);
+            if lower != register {
+                let current = self.workspace_state.registers.entry(lower).or_default();
+                current.text = (current.text.to_string() + &content.text).into();
+                // not clear how to support appending to registers with multiple cursors
+                current.clipboard_selections.take();
+                let yanked = current.clone();
+                self.workspace_state.registers.insert('"', yanked);
+            } else {
+                self.workspace_state.registers.insert('"', content.clone());
+                match lower {
+                    '_' | ':' | '.' | '%' | '#' | '=' | '/' => {}
+                    '+' => {
+                        cx.write_to_clipboard(content.into());
+                    }
+                    '*' => {
+                        #[cfg(target_os = "linux")]
+                        cx.write_to_primary(content.into());
+                        #[cfg(not(target_os = "linux"))]
+                        cx.write_to_clipboard(content.into());
+                    }
+                    '"' => {
+                        self.workspace_state.registers.insert('0', content.clone());
+                        self.workspace_state.registers.insert('"', content);
+                    }
+                    _ => {
+                        self.workspace_state.registers.insert(lower, content);
+                    }
+                }
+            }
+        } else {
+            let setting = VimSettings::get_global(cx).use_system_clipboard;
+            if setting == UseSystemClipboard::Always
+                || setting == UseSystemClipboard::OnYank && is_yank
+            {
+                self.workspace_state.last_yank.replace(content.text.clone());
+                cx.write_to_clipboard(content.clone().into());
+            } else {
+                self.workspace_state.last_yank = cx
+                    .read_from_clipboard()
+                    .map(|item| item.text().to_owned().into());
+            }
+
+            self.workspace_state.registers.insert('"', content.clone());
+            if is_yank {
+                self.workspace_state.registers.insert('0', content);
+            } else {
+                let contains_newline = content.text.contains('\n');
+                if !contains_newline {
+                    self.workspace_state.registers.insert('-', content.clone());
+                }
+                if linewise || contains_newline {
+                    let mut content = content;
+                    for i in '1'..'8' {
+                        if let Some(moved) = self.workspace_state.registers.insert(i, content) {
+                            content = moved;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn read_register(
+        &mut self,
+        register: Option<char>,
+        editor: Option<&mut Editor>,
+        cx: &mut WindowContext,
+    ) -> Option<Register> {
+        let Some(register) = register.filter(|reg| *reg != '"') else {
+            let setting = VimSettings::get_global(cx).use_system_clipboard;
+            return match setting {
+                UseSystemClipboard::Always => cx.read_from_clipboard().map(|item| item.into()),
+                UseSystemClipboard::OnYank if self.system_clipboard_is_newer(cx) => {
+                    cx.read_from_clipboard().map(|item| item.into())
+                }
+                _ => self.workspace_state.registers.get(&'"').cloned(),
+            };
+        };
+        let lower = register.to_lowercase().next().unwrap_or(register);
+        match lower {
+            '_' | ':' | '.' | '#' | '=' => None,
+            '+' => cx.read_from_clipboard().map(|item| item.into()),
+            '*' => {
+                #[cfg(target_os = "linux")]
+                {
+                    cx.read_from_primary().map(|item| item.into())
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    cx.read_from_clipboard().map(|item| item.into())
+                }
+            }
+            '%' => editor.and_then(|editor| {
+                let selection = editor.selections.newest::<Point>(cx);
+                if let Some((_, buffer, _)) = editor
+                    .buffer()
+                    .read(cx)
+                    .excerpt_containing(selection.head(), cx)
+                {
+                    buffer
+                        .read(cx)
+                        .file()
+                        .map(|file| file.path().to_string_lossy().to_string().into())
+                } else {
+                    None
+                }
+            }),
+            _ => self.workspace_state.registers.get(&lower).cloned(),
+        }
+    }
+
+    fn system_clipboard_is_newer(&self, cx: &mut AppContext) -> bool {
+        cx.read_from_clipboard().is_some_and(|item| {
+            if let Some(last_state) = &self.workspace_state.last_yank {
+                last_state != item.text()
+            } else {
+                true
+            }
+        })
+    }
+
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
         if matches!(
             operator,
@@ -573,7 +719,10 @@ impl Vim {
 
     fn clear_operator(&mut self, cx: &mut WindowContext) {
         self.take_count(cx);
-        self.update_state(|state| state.operator_stack.clear());
+        self.update_state(|state| {
+            state.selected_register.take();
+            state.operator_stack.clear()
+        });
         self.sync_vim_settings(cx);
     }
 
@@ -638,7 +787,6 @@ impl Vim {
         let is_multicursor = editor.read(cx).selections.count() > 1;
 
         let state = self.state();
-        let mut is_visual = state.mode.is_visual();
         if state.mode == Mode::Insert && state.current_tx.is_some() {
             if state.current_anchor.is_none() {
                 self.update_state(|state| state.current_anchor = Some(newest));
@@ -655,18 +803,11 @@ impl Vim {
             } else {
                 self.switch_mode(Mode::Visual, false, cx)
             }
-            is_visual = true;
         } else if newest.start == newest.end
             && !is_multicursor
             && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&state.mode)
         {
             self.switch_mode(Mode::Normal, true, cx);
-            is_visual = false;
-        }
-
-        if is_visual {
-            create_mark_before(self, ">".into(), cx);
-            create_mark(self, "<".into(), true, cx)
         }
     }
 
@@ -740,6 +881,26 @@ impl Vim {
             },
             Some(Operator::Mark) => Vim::update(cx, |vim, cx| {
                 normal::mark::create_mark(vim, text, false, cx)
+            }),
+            Some(Operator::Register) => Vim::update(cx, |vim, cx| match vim.state().mode {
+                Mode::Insert => {
+                    vim.update_active_editor(cx, |vim, editor, cx| {
+                        if let Some(register) =
+                            vim.read_register(text.chars().next(), Some(editor), cx)
+                        {
+                            editor.do_paste(
+                                &register.text.to_string(),
+                                register.clipboard_selections.clone(),
+                                false,
+                                cx,
+                            )
+                        }
+                    });
+                    vim.clear_operator(cx);
+                }
+                _ => {
+                    vim.select_register(text, cx);
+                }
             }),
             Some(Operator::Jump { line }) => normal::mark::jump(text, line, cx),
             _ => match Vim::read(cx).state().mode {

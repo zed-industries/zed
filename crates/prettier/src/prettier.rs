@@ -5,13 +5,14 @@ use gpui::{AsyncAppContext, Model};
 use language::{language_settings::language_settings, Buffer, Diff};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
+use paths::DEFAULT_PRETTIER_DIR;
 use serde::{Deserialize, Serialize};
 use std::{
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::paths::{PathMatcher, DEFAULT_PRETTIER_DIR};
+use util::paths::PathMatcher;
 
 #[derive(Clone)]
 pub enum Prettier {
@@ -112,7 +113,7 @@ impl Prettier {
                                                 None
                                             }
                                         }).any(|workspace_definition| {
-                                            if let Some(path_matcher) = PathMatcher::new(&workspace_definition).ok() {
+                                            if let Some(path_matcher) = PathMatcher::new(&[workspace_definition.clone()]).ok() {
                                                 path_matcher.is_match(subproject_path)
                                             } else {
                                                 workspace_definition == subproject_path.to_string_lossy()

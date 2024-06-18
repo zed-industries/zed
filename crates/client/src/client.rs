@@ -509,7 +509,7 @@ impl Client {
         let credentials_provider: Arc<dyn CredentialsProvider + Send + Sync + 'static> =
             if use_zed_development_auth {
                 Arc::new(DevelopmentCredentialsProvider {
-                    path: util::paths::CONFIG_DIR.join("development_auth"),
+                    path: paths::CONFIG_DIR.join("development_auth"),
                 })
             } else {
                 Arc::new(KeychainCredentialsProvider)

@@ -327,11 +327,15 @@ pub struct ThemeColorsContent {
     #[serde(rename = "pane_group.border")]
     pub pane_group_border: Option<String>,
 
+    /// The deprecated version of `scrollbar.thumb.background`.
+    ///
+    /// Don't use this field.
+    #[serde(rename = "scrollbar_thumb.background", skip_serializing)]
+    #[schemars(skip)]
+    pub deprecated_scrollbar_thumb_background: Option<String>,
+
     /// The color of the scrollbar thumb.
-    #[serde(
-        rename = "scrollbar.thumb.background",
-        alias = "scrollbar_thumb.background"
-    )]
+    #[serde(rename = "scrollbar.thumb.background")]
     pub scrollbar_thumb_background: Option<String>,
 
     /// The color of the scrollbar thumb when hovered over.
@@ -699,7 +703,12 @@ impl ThemeColorsContent {
             scrollbar_thumb_background: self
                 .scrollbar_thumb_background
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+                .and_then(|color| try_parse_color(color).ok())
+                .or_else(|| {
+                    self.deprecated_scrollbar_thumb_background
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok())
+                }),
             scrollbar_thumb_hover_background: self
                 .scrollbar_thumb_hover_background
                 .as_ref()

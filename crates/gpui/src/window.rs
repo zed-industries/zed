@@ -52,8 +52,7 @@ mod prompts;
 
 pub use prompts::*;
 
-pub(crate) const DEFAULT_WINDOW_SIZE: Size<DevicePixels> =
-    size(DevicePixels(1024), DevicePixels(700));
+pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1024.), px(700.));
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -86,11 +85,18 @@ impl DispatchPhase {
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 
-type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
+type AnyWindowFocusListener =
+    Box<dyn FnMut(&WindowFocusEvent, &mut WindowContext) -> bool + 'static>;
 
-struct FocusEvent {
+struct WindowFocusEvent {
     previous_focus_path: SmallVec<[FocusId; 8]>,
     current_focus_path: SmallVec<[FocusId; 8]>,
+}
+
+/// This is provided when subscribing for `ViewContext::on_focus_out` events.
+pub struct FocusOutEvent {
+    /// A weak focus handle representing what was blurred.
+    pub blurred: WeakFocusHandle,
 }
 
 slotmap::new_key_type! {
@@ -533,6 +539,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
 }
 
@@ -581,8 +588,8 @@ pub(crate) struct ElementStateBox {
     pub(crate) type_name: &'static str,
 }
 
-fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<DevicePixels> {
-    const DEFAULT_WINDOW_OFFSET: Point<DevicePixels> = point(DevicePixels(0), DevicePixels(35));
+fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<Pixels> {
+    const DEFAULT_WINDOW_OFFSET: Point<Pixels> = point(px(0.), px(35.));
 
     cx.active_window()
         .and_then(|w| w.update(cx, |_, cx| cx.bounds()).ok())
@@ -594,9 +601,7 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
 
             display
                 .map(|display| display.default_bounds())
-                .unwrap_or_else(|| {
-                    Bounds::new(point(DevicePixels(0), DevicePixels(0)), DEFAULT_WINDOW_SIZE)
-                })
+                .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE))
         })
 }
 
@@ -605,7 +610,7 @@ impl Window {
         handle: AnyWindowHandle,
         options: WindowOptions,
         cx: &mut AppContext,
-    ) -> Self {
+    ) -> Result<Self> {
         let WindowOptions {
             window_bounds,
             titlebar,
@@ -633,7 +638,7 @@ impl Window {
                 display_id,
                 window_background,
             },
-        );
+        )?;
         let display_id = platform_window.display().map(|display| display.id());
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
@@ -761,7 +766,7 @@ impl Window {
             platform_window.set_app_id(&app_id);
         }
 
-        Window {
+        Ok(Window {
             handle,
             removed: false,
             platform_window,
@@ -806,8 +811,9 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            pending_input_observers: SubscriberSet::new(),
             prompt: None,
-        }
+        })
     }
     fn new_focus_listener(
         &mut self,
@@ -1145,7 +1151,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
-    pub fn bounds(&self) -> Bounds<DevicePixels> {
+    pub fn bounds(&self) -> Bounds<Pixels> {
         self.window.platform_window.bounds()
     }
 
@@ -1154,7 +1160,7 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_fullscreen()
     }
 
-    fn appearance_changed(&mut self) {
+    pub(crate) fn appearance_changed(&mut self) {
         self.window.appearance = self.window.platform_window.appearance();
 
         self.window
@@ -1400,7 +1406,7 @@ impl<'a> WindowContext<'a> {
                     .retain(&(), |listener| listener(self));
             }
 
-            let event = FocusEvent {
+            let event = WindowFocusEvent {
                 previous_focus_path: if previous_window_active {
                     previous_focus_path
                 } else {
@@ -3124,16 +3130,20 @@ impl<'a> WindowContext<'a> {
                         let Some(currently_pending) = cx.window.pending_input.take() else {
                             return;
                         };
-                        cx.replay_pending_input(currently_pending)
+                        cx.pending_input_changed();
+                        cx.replay_pending_input(currently_pending);
                     })
                     .log_err();
                 }));
 
                 self.window.pending_input = Some(currently_pending);
+                self.pending_input_changed();
 
                 self.propagate_event = false;
+
                 return;
             } else if let Some(currently_pending) = self.window.pending_input.take() {
+                self.pending_input_changed();
                 if bindings
                     .iter()
                     .all(|binding| !currently_pending.used_by_binding(binding))
@@ -3167,6 +3177,13 @@ impl<'a> WindowContext<'a> {
         }
 
         self.dispatch_keystroke_observers(event, None);
+    }
+
+    fn pending_input_changed(&mut self) {
+        self.window
+            .pending_input_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
     }
 
     fn dispatch_key_down_up_event(
@@ -3224,6 +3241,14 @@ impl<'a> WindowContext<'a> {
             .rendered_frame
             .dispatch_tree
             .has_pending_keystrokes()
+    }
+
+    /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
+    pub fn pending_input_keystrokes(&self) -> Option<&[Keystroke]> {
+        self.window
+            .pending_input
+            .as_ref()
+            .map(|pending_input| pending_input.keystrokes.as_slice())
     }
 
     fn replay_pending_input(&mut self, currently_pending: PendingInput) {
@@ -4033,6 +4058,20 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
+    /// Register a callback to be invoked when the window's pending input changes.
+    pub fn observe_pending_input(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let (subscription, activate) = self.window.pending_input_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        );
+        activate();
+        subscription
+    }
+
     /// Register a listener to be called when the given focus handle receives focus.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus(
@@ -4058,6 +4097,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
+    /// This does not fire if the given focus handle - or one of its descendants - was previously focused.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus_in(
         &mut self,
@@ -4127,17 +4167,25 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn on_focus_out(
         &mut self,
         handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut listener: impl FnMut(&mut V, FocusOutEvent, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
         let (subscription, activate) =
             self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if event.previous_focus_path.contains(&focus_id)
-                        && !event.current_focus_path.contains(&focus_id)
-                    {
-                        listener(view, cx)
+                    if let Some(blurred_id) = event.previous_focus_path.last().copied() {
+                        if event.previous_focus_path.contains(&focus_id)
+                            && !event.current_focus_path.contains(&focus_id)
+                        {
+                            let event = FocusOutEvent {
+                                blurred: WeakFocusHandle {
+                                    id: blurred_id,
+                                    handles: Arc::downgrade(&cx.window.focus_handles),
+                                },
+                            };
+                            listener(view, event, cx)
+                        }
                     }
                 })
                 .is_ok()
@@ -4196,7 +4244,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             });
     }
 
-    /// Emit an event to be handled any other views that have subscribed via [ViewContext::subscribe].
+    /// Emit an event to be handled by any other views that have subscribed via [ViewContext::subscribe].
     pub fn emit<Evt>(&mut self, event: Evt)
     where
         Evt: 'static,
