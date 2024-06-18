@@ -3949,9 +3949,10 @@ impl Editor {
             let maybe_signature_help_popover =
                 if let Ok(Some((markdown, language_registry))) = markdown_task_result {
                     let markdown = markdown.await;
-                    if let Some(markdown) = markdown {
-                        let parsed_markdown =
+                    if let Some((markdown, markdown_highlights)) = markdown {
+                        let mut parsed_markdown =
                             parse_markdown(markdown.as_str(), &language_registry, None).await;
+                        parsed_markdown.highlights = markdown_highlights;
                         Some(SignatureHelpPopover {
                             parsed_content: parsed_markdown,
                         })
