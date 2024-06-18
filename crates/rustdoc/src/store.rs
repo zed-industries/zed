@@ -12,7 +12,6 @@ use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, Task, UpdateGloba
 use heed::types::SerdeBincode;
 use heed::Database;
 use parking_lot::RwLock;
-use paths::SUPPORT_DIR;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
@@ -57,7 +56,10 @@ impl RustdocStore {
             .spawn({
                 let executor = executor.clone();
                 async move {
-                    RustdocDatabase::new(SUPPORT_DIR.join("docs/rust/rustdoc-db.0.mdb"), executor)
+                    RustdocDatabase::new(
+                        paths::support_dir().join("docs/rust/rustdoc-db.0.mdb"),
+                        executor,
+                    )
                 }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))

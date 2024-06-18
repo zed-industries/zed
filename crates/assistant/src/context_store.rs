@@ -6,7 +6,7 @@ use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
 use gpui::{AppContext, Model, ModelContext, Task};
-use paths::CONTEXTS_DIR;
+use paths::contexts_dir;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{cmp::Reverse, ffi::OsStr, path::PathBuf, sync::Arc, time::Duration};
@@ -76,7 +76,7 @@ impl ContextStore {
     pub fn new(fs: Arc<dyn Fs>, cx: &mut AppContext) -> Task<Result<Model<Self>>> {
         cx.spawn(|mut cx| async move {
             const CONTEXT_WATCH_DURATION: Duration = Duration::from_millis(100);
-            let (mut events, _) = fs.watch(&CONTEXTS_DIR, CONTEXT_WATCH_DURATION).await;
+            let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
             let this = cx.new_model(|cx: &mut ModelContext<Self>| Self {
                 contexts_metadata: Vec::new(),
@@ -181,9 +181,9 @@ impl ContextStore {
     fn reload(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
-            fs.create_dir(&CONTEXTS_DIR).await?;
+            fs.create_dir(contexts_dir()).await?;
 
-            let mut paths = fs.read_dir(&CONTEXTS_DIR).await?;
+            let mut paths = fs.read_dir(contexts_dir()).await?;
             let mut contexts = Vec::<SavedContextMetadata>::new();
             while let Some(path) = paths.next().await {
                 let path = path?;

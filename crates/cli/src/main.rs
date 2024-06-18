@@ -220,7 +220,7 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let sock_path = paths::SUPPORT_DIR.join(format!("zed-{}.sock", *RELEASE_CHANNEL));
+            let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL));
             let sock = UnixDatagram::unbound()?;
             if sock.connect(&sock_path).is_err() {
                 self.boot_background(ipc_url)?;

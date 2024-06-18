@@ -28,50 +28,72 @@ pub fn config_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the support directory used by Zed.
+pub fn support_dir() -> &'static PathBuf {
+    static SUPPORT_DIR: OnceLock<PathBuf> = OnceLock::new();
+    SUPPORT_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            return HOME.join("Library/Application Support/Zed");
+        }
+
+        if cfg!(target_os = "linux") {
+            return if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
+                flatpak_xdg_data.into()
+            } else {
+                dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
+            }
+            .join("zed");
+        }
+
+        if cfg!(target_os = "windows") {
+            return dirs::data_local_dir()
+                .expect("failed to determine LocalAppData directory")
+                .join("Zed");
+        }
+
+        config_dir().clone()
+    })
+}
+
+/// Returns the path to the contexts directory.
+///
+/// This is where the saved contexts from the Assistant are stored.
+pub fn contexts_dir() -> &'static PathBuf {
+    static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    CONTEXTS_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            config_dir().join("conversations")
+        } else {
+            support_dir().join("conversations")
+        }
+    })
+}
+
 lazy_static::lazy_static! {
-    pub static ref CONTEXTS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        config_dir().join("conversations")
-    } else {
-        SUPPORT_DIR.join("conversations")
-    };
     pub static ref PROMPTS_DIR: PathBuf = if cfg!(target_os = "macos") {
         config_dir().join("prompts")
     } else {
-        SUPPORT_DIR.join("prompts")
+        support_dir().join("prompts")
     };
     pub static ref EMBEDDINGS_DIR: PathBuf = if cfg!(target_os = "macos") {
         config_dir().join("embeddings")
     } else {
-        SUPPORT_DIR.join("embeddings")
+        support_dir().join("embeddings")
     };
     pub static ref THEMES_DIR: PathBuf = config_dir().join("themes");
 
-    pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os = "macos") {
-        HOME.join("Library/Application Support/Zed")
-    } else if cfg!(target_os = "linux") {
-        if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
-            flatpak_xdg_data.into()
-        } else {
-            dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
-        }.join("zed")
-    } else if cfg!(target_os = "windows") {
-        dirs::data_local_dir()
-            .expect("failed to determine LocalAppData directory")
-            .join("Zed")
-    } else {
-        config_dir().clone()
-    };
+
     pub static ref LOGS_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Logs/Zed")
     } else {
-        SUPPORT_DIR.join("logs")
+        support_dir().join("logs")
     };
-    pub static ref EXTENSIONS_DIR: PathBuf = SUPPORT_DIR.join("extensions");
-    pub static ref LANGUAGES_DIR: PathBuf = SUPPORT_DIR.join("languages");
-    pub static ref COPILOT_DIR: PathBuf = SUPPORT_DIR.join("copilot");
-    pub static ref SUPERMAVEN_DIR: PathBuf = SUPPORT_DIR.join("supermaven");
-    pub static ref DEFAULT_PRETTIER_DIR: PathBuf = SUPPORT_DIR.join("prettier");
-    pub static ref DB_DIR: PathBuf = SUPPORT_DIR.join("db");
+    pub static ref EXTENSIONS_DIR: PathBuf = support_dir().join("extensions");
+    pub static ref LANGUAGES_DIR: PathBuf = support_dir().join("languages");
+    pub static ref COPILOT_DIR: PathBuf = support_dir().join("copilot");
+    pub static ref SUPERMAVEN_DIR: PathBuf = support_dir().join("supermaven");
+    pub static ref DEFAULT_PRETTIER_DIR: PathBuf = support_dir().join("prettier");
+    pub static ref DB_DIR: PathBuf = support_dir().join("db");
     pub static ref CRASHES_DIR: Option<PathBuf> = cfg!(target_os = "macos")
         .then_some(HOME.join("Library/Logs/DiagnosticReports"));
     pub static ref CRASHES_RETIRED_DIR: Option<PathBuf> = CRASHES_DIR
