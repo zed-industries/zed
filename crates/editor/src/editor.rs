@@ -4282,6 +4282,11 @@ impl Editor {
             true,
             cx,
         );
+
+        // After the code completion is finished, users often want to know what signatures are needed.
+        // so we should automatically call signature_help
+        self.show_signature_help(&ShowSignatureHelp, cx);
+
         Some(cx.foreground_executor().spawn(async move {
             apply_edits.await?;
             Ok(())
