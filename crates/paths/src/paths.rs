@@ -116,17 +116,35 @@ pub fn contexts_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the contexts directory.
+///
+/// This is where the prompts for use with the Assistant are stored.
+pub fn prompts_dir() -> &'static PathBuf {
+    static PROMPTS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    PROMPTS_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            config_dir().join("prompts")
+        } else {
+            support_dir().join("prompts")
+        }
+    })
+}
+
+/// Returns the path to the semantic search's embeddings directory.
+///
+/// This is where the embeddings used to power semantic search are stored.
+pub fn embeddings_dir() -> &'static PathBuf {
+    static EMBEDDINGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    EMBEDDINGS_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            config_dir().join("embeddings")
+        } else {
+            support_dir().join("embeddings")
+        }
+    })
+}
+
 lazy_static::lazy_static! {
-    pub static ref PROMPTS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        config_dir().join("prompts")
-    } else {
-        support_dir().join("prompts")
-    };
-    pub static ref EMBEDDINGS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        config_dir().join("embeddings")
-    } else {
-        support_dir().join("embeddings")
-    };
     pub static ref THEMES_DIR: PathBuf = config_dir().join("themes");
 
     pub static ref EXTENSIONS_DIR: PathBuf = support_dir().join("extensions");
