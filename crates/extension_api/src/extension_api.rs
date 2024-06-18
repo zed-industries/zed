@@ -69,7 +69,7 @@ pub trait Extension: Send + Sync {
         _language_server_id: &LanguageServerId,
         _worktree: &Worktree,
     ) -> Result<Command> {
-        Err(format!("no language server command was provided"))
+        Err("`language_server_command` not implemented".to_string())
     }
 
     /// Returns the initialization options to pass to the specified language server.
