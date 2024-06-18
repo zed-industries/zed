@@ -646,6 +646,7 @@ impl settings::Settings for AllLanguageSettings {
             .ok_or_else(Self::missing_default)?;
 
         let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
+
         for user_settings in sources.customizations() {
             if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
                 copilot_enabled = Some(copilot);
@@ -684,6 +685,14 @@ impl settings::Settings for AllLanguageSettings {
 
             for (language, suffixes) in &user_settings.file_types {
                 let mut builder = GlobSetBuilder::new();
+
+                let default_value = default_value.file_types.get(&language.clone());
+
+                if let Some(suffixes) = default_value {
+                    for suffix in suffixes {
+                        builder.add(Glob::new(suffix)?);
+                    }
+                }
 
                 for suffix in suffixes {
                     builder.add(Glob::new(suffix)?);
