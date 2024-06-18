@@ -59,7 +59,6 @@ fn query_render_extent(xcb_connection: &XCBConnection, x_window: xproto::Window)
         .unwrap()
         .reply()
         .unwrap();
-    dbg!(&reply.x, reply.y, reply.width, reply.height);
     gpu::Extent {
         width: reply.width as u32,
         height: reply.height as u32,
@@ -301,8 +300,8 @@ impl X11WindowState {
                 .configure_window(
                     x_window,
                     &xproto::ConfigureWindowAux::new()
-                        .x(bounds.origin.x.0 as i32)
-                        .y(bounds.origin.y.0 as i32),
+                        .x(bounds.origin.x.0)
+                        .y(bounds.origin.y.0),
                 )
                 .unwrap();
         }
