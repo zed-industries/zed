@@ -1246,8 +1246,8 @@ impl LspCommand for GetSignatureHelp {
         _: &Arc<LanguageServer>,
         _: &AppContext,
     ) -> <Self::LspRequest as Request>::Params {
-        let uri_result = lsp::Uri::from_file_path(path);
-        if uri_result.is_err() {
+        let url_result = lsp::Url::from_file_path(path);
+        if url_result.is_err() {
             log::error!("an invalid file path has been specified");
         }
 
@@ -1255,7 +1255,7 @@ impl LspCommand for GetSignatureHelp {
             context: None,
             text_document_position_params: lsp::TextDocumentPositionParams {
                 text_document: lsp::TextDocumentIdentifier {
-                    uri: uri_result.expect("invalid file path").into(),
+                    uri: url_result.expect("invalid file path").into(),
                 },
                 position: point_to_lsp(self.position),
             },
