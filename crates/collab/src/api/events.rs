@@ -402,12 +402,7 @@ pub async fn post_events(
         ))?;
     };
 
-    if checksum != expected {
-        return Err(Error::Http(
-            StatusCode::BAD_REQUEST,
-            "invalid checksum".into(),
-        ))?;
-    }
+    let checksum_matched = checksum == expected;
 
     let request_body: telemetry_events::EventRequestBody =
         serde_json::from_slice(&body).map_err(|err| {
@@ -432,6 +427,7 @@ pub async fn post_events(
                 &request_body,
                 first_event_at,
                 country_code.clone(),
+                checksum_matched,
             )),
             // Needed for clients sending old copilot_event types
             Event::Copilot(_) => {}
@@ -444,6 +440,7 @@ pub async fn post_events(
                         &request_body,
                         first_event_at,
                         country_code.clone(),
+                        checksum_matched,
                     ))
             }
             Event::Call(event) => to_upload.call_events.push(CallEventRow::from_event(
@@ -451,6 +448,7 @@ pub async fn post_events(
                 &wrapper,
                 &request_body,
                 first_event_at,
+                checksum_matched,
             )),
             Event::Assistant(event) => {
                 to_upload
@@ -460,6 +458,7 @@ pub async fn post_events(
                         &wrapper,
                         &request_body,
                         first_event_at,
+                        checksum_matched,
                     ))
             }
             Event::Cpu(event) => to_upload.cpu_events.push(CpuEventRow::from_event(
@@ -467,36 +466,42 @@ pub async fn post_events(
                 &wrapper,
                 &request_body,
                 first_event_at,
+                checksum_matched,
             )),
             Event::Memory(event) => to_upload.memory_events.push(MemoryEventRow::from_event(
                 event.clone(),
                 &wrapper,
                 &request_body,
                 first_event_at,
+                checksum_matched,
             )),
             Event::App(event) => to_upload.app_events.push(AppEventRow::from_event(
                 event.clone(),
                 &wrapper,
                 &request_body,
                 first_event_at,
+                checksum_matched,
             )),
             Event::Setting(event) => to_upload.setting_events.push(SettingEventRow::from_event(
                 event.clone(),
                 &wrapper,
                 &request_body,
                 first_event_at,
+                checksum_matched,
             )),
             Event::Edit(event) => to_upload.edit_events.push(EditEventRow::from_event(
                 event.clone(),
                 &wrapper,
                 &request_body,
                 first_event_at,
+                checksum_matched,
             )),
             Event::Action(event) => to_upload.action_events.push(ActionEventRow::from_event(
                 event.clone(),
                 &wrapper,
                 &request_body,
                 first_event_at,
+                checksum_matched,
             )),
             Event::Extension(event) => {
                 let metadata = app
@@ -511,6 +516,7 @@ pub async fn post_events(
                         &request_body,
                         metadata,
                         first_event_at,
+                        checksum_matched,
                     ))
             }
         }
@@ -658,29 +664,30 @@ where
 
 #[derive(Serialize, Debug, clickhouse::Row)]
 pub struct EditorEventRow {
-    pub installation_id: String,
-    pub operation: String,
-    pub app_version: String,
-    pub file_extension: String,
-    pub os_name: String,
-    pub os_version: String,
-    pub release_channel: String,
-    pub signed_in: bool,
-    pub vim_mode: bool,
+    installation_id: String,
+    operation: String,
+    app_version: String,
+    file_extension: String,
+    os_name: String,
+    os_version: String,
+    release_channel: String,
+    signed_in: bool,
+    vim_mode: bool,
     #[serde(serialize_with = "serialize_country_code")]
-    pub country_code: String,
-    pub region_code: String,
-    pub city: String,
-    pub time: i64,
-    pub copilot_enabled: bool,
-    pub copilot_enabled_for_language: bool,
-    pub historical_event: bool,
-    pub architecture: String,
-    pub is_staff: Option<bool>,
-    pub session_id: Option<String>,
-    pub major: Option<i32>,
-    pub minor: Option<i32>,
-    pub patch: Option<i32>,
+    country_code: String,
+    region_code: String,
+    city: String,
+    time: i64,
+    copilot_enabled: bool,
+    copilot_enabled_for_language: bool,
+    historical_event: bool,
+    architecture: String,
+    is_staff: Option<bool>,
+    session_id: Option<String>,
+    major: Option<i32>,
+    minor: Option<i32>,
+    patch: Option<i32>,
+    checksum_matched: bool,
 }
 
 impl EditorEventRow {
@@ -690,6 +697,7 @@ impl EditorEventRow {
         body: &EventRequestBody,
         first_event_at: chrono::DateTime<chrono::Utc>,
         country_code: Option<String>,
+        checksum_matched: bool,
     ) -> Self {
         let semver = body.semver();
         let time =
@@ -700,6 +708,7 @@ impl EditorEventRow {
             major: semver.map(|v| v.major() as i32),
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
+            checksum_matched,
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
@@ -743,6 +752,7 @@ pub struct InlineCompletionEventRow {
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
+    checksum_matched: bool,
 }
 
 impl InlineCompletionEventRow {
@@ -752,6 +762,7 @@ impl InlineCompletionEventRow {
         body: &EventRequestBody,
         first_event_at: chrono::DateTime<chrono::Utc>,
         country_code: Option<String>,
+        checksum_matched: bool,
     ) -> Self {
         let semver = body.semver();
         let time =
@@ -762,6 +773,7 @@ impl InlineCompletionEventRow {
             major: semver.map(|v| v.major() as i32),
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
+            checksum_matched,
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
@@ -790,6 +802,7 @@ pub struct CallEventRow {
     release_channel: String,
     os_name: String,
     os_version: String,
+    checksum_matched: bool,
 
     // ClientEventBase
     installation_id: String,
@@ -809,6 +822,7 @@ impl CallEventRow {
         wrapper: &EventWrapper,
         body: &EventRequestBody,
         first_event_at: chrono::DateTime<chrono::Utc>,
+        checksum_matched: bool,
     ) -> Self {
         let semver = body.semver();
         let time =
@@ -819,6 +833,7 @@ impl CallEventRow {
             major: semver.map(|v| v.major() as i32),
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
+            checksum_matched,
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
@@ -840,6 +855,7 @@ pub struct AssistantEventRow {
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
+    checksum_matched: bool,
     release_channel: String,
     os_name: String,
     os_version: String,
@@ -864,6 +880,7 @@ impl AssistantEventRow {
         wrapper: &EventWrapper,
         body: &EventRequestBody,
         first_event_at: chrono::DateTime<chrono::Utc>,
+        checksum_matched: bool,
     ) -> Self {
         let semver = body.semver();
         let time =
@@ -874,6 +891,7 @@ impl AssistantEventRow {
             major: semver.map(|v| v.major() as i32),
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
+            checksum_matched,
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
@@ -908,6 +926,7 @@ pub struct CpuEventRow {
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
+    checksum_matched: bool,
 }
 
 impl CpuEventRow {
@@ -916,6 +935,7 @@ impl CpuEventRow {
         wrapper: &EventWrapper,
         body: &EventRequestBody,
         first_event_at: chrono::DateTime<chrono::Utc>,
+        checksum_matched: bool,
     ) -> Self {
         let semver = body.semver();
         let time =
@@ -926,6 +946,7 @@ impl CpuEventRow {
             major: semver.map(|v| v.major() as i32),
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
+            checksum_matched,
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
@@ -946,6 +967,7 @@ pub struct MemoryEventRow {
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
+    checksum_matched: bool,
     release_channel: String,
     os_name: String,
     os_version: String,
@@ -967,6 +989,7 @@ impl MemoryEventRow {
         wrapper: &EventWrapper,
         body: &EventRequestBody,
         first_event_at: chrono::DateTime<chrono::Utc>,
+        checksum_matched: bool,
     ) -> Self {
         let semver = body.semver();
         let time =
@@ -977,6 +1000,7 @@ impl MemoryEventRow {
             major: semver.map(|v| v.major() as i32),
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
+            checksum_matched,
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
@@ -997,6 +1021,7 @@ pub struct AppEventRow {
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
+    checksum_matched: bool,
     release_channel: String,
     os_name: String,
     os_version: String,
@@ -1017,6 +1042,7 @@ impl AppEventRow {
         wrapper: &EventWrapper,
         body: &EventRequestBody,
         first_event_at: chrono::DateTime<chrono::Utc>,
+        checksum_matched: bool,
     ) -> Self {
         let semver = body.semver();
         let time =
@@ -1027,6 +1053,7 @@ impl AppEventRow {
             major: semver.map(|v| v.major() as i32),
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
+            checksum_matched,
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
@@ -1046,6 +1073,7 @@ pub struct SettingEventRow {
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
+    checksum_matched: bool,
     release_channel: String,
     os_name: String,
     os_version: String,
@@ -1066,6 +1094,7 @@ impl SettingEventRow {
         wrapper: &EventWrapper,
         body: &EventRequestBody,
         first_event_at: chrono::DateTime<chrono::Utc>,
+        checksum_matched: bool,
     ) -> Self {
         let semver = body.semver();
         let time =
@@ -1075,6 +1104,7 @@ impl SettingEventRow {
             app_version: body.app_version.clone(),
             major: semver.map(|v| v.major() as i32),
             minor: semver.map(|v| v.minor() as i32),
+            checksum_matched,
             patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
@@ -1096,6 +1126,7 @@ pub struct ExtensionEventRow {
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
+    checksum_matched: bool,
     release_channel: String,
     os_name: String,
     os_version: String,
@@ -1121,6 +1152,7 @@ impl ExtensionEventRow {
         body: &EventRequestBody,
         extension_metadata: Option<ExtensionMetadata>,
         first_event_at: chrono::DateTime<chrono::Utc>,
+        checksum_matched: bool,
     ) -> Self {
         let semver = body.semver();
         let time =
@@ -1131,6 +1163,7 @@ impl ExtensionEventRow {
             major: semver.map(|v| v.major() as i32),
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
+            checksum_matched,
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
@@ -1162,6 +1195,7 @@ pub struct EditEventRow {
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
+    checksum_matched: bool,
     release_channel: String,
     os_name: String,
     os_version: String,
@@ -1186,6 +1220,7 @@ impl EditEventRow {
         wrapper: &EventWrapper,
         body: &EventRequestBody,
         first_event_at: chrono::DateTime<chrono::Utc>,
+        checksum_matched: bool,
     ) -> Self {
         let semver = body.semver();
         let time =
@@ -1199,6 +1234,7 @@ impl EditEventRow {
             major: semver.map(|v| v.major() as i32),
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
+            checksum_matched,
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
@@ -1220,6 +1256,7 @@ pub struct ActionEventRow {
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
+    checksum_matched: bool,
     release_channel: String,
     os_name: String,
     os_version: String,
@@ -1242,6 +1279,7 @@ impl ActionEventRow {
         wrapper: &EventWrapper,
         body: &EventRequestBody,
         first_event_at: chrono::DateTime<chrono::Utc>,
+        checksum_matched: bool,
     ) -> Self {
         let semver = body.semver();
         let time =
@@ -1252,6 +1290,7 @@ impl ActionEventRow {
             major: semver.map(|v| v.major() as i32),
             minor: semver.map(|v| v.minor() as i32),
             patch: semver.map(|v| v.patch() as i32),
+            checksum_matched,
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
