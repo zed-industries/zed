@@ -13,7 +13,7 @@ use schemars::{
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsLocation, SettingsSources};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
-use util::serde::default_true;
+use util::serde::{default_false, default_true};
 
 impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
     fn into(self) -> SettingsLocation<'a> {
@@ -443,6 +443,11 @@ pub struct IndentGuideSettings {
     /// Default: 1
     #[serde(default = "line_width")]
     pub line_width: u32,
+    /// Whether to make an active indent guide thicker than the others.
+    ///
+    /// Default: false
+    #[serde(default = "default_false")]
+    pub thicken_active: bool,
     /// Determines how indent guides are colored.
     ///
     /// Default: Fixed
