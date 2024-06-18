@@ -7399,7 +7399,6 @@ name = "paths"
 version = "0.1.0"
 dependencies = [
  "dirs 4.0.0",
- "lazy_static",
  "util",
 ]
 

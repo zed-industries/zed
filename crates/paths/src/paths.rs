@@ -102,6 +102,44 @@ pub fn old_log_file() -> &'static PathBuf {
     OLD_LOG_FILE.get_or_init(|| logs_dir().join("Zed.log.old"))
 }
 
+/// Returns the path to the database directory.
+pub fn database_dir() -> &'static PathBuf {
+    static DATABASE_DIR: OnceLock<PathBuf> = OnceLock::new();
+    DATABASE_DIR.get_or_init(|| support_dir().join("db"))
+}
+
+/// Returns the path to the crashes directory, if it exists for the current platform.
+pub fn crashes_dir() -> &'static Option<PathBuf> {
+    static CRASHES_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    CRASHES_DIR.get_or_init(|| {
+        cfg!(target_os = "macos").then_some(HOME.join("Library/Logs/DiagnosticReports"))
+    })
+}
+
+/// Returns the path to the retired crashes directory, if it exists for the current platform.
+pub fn crashes_retired_dir() -> &'static Option<PathBuf> {
+    static CRASHES_RETIRED_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    CRASHES_RETIRED_DIR.get_or_init(|| crashes_dir().as_ref().map(|dir| dir.join("Retired")))
+}
+
+/// Returns the path to the `settings.json` file.
+pub fn settings_file() -> &'static PathBuf {
+    static SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    SETTINGS_FILE.get_or_init(|| config_dir().join("settings.json"))
+}
+
+/// Returns the path to the `keymap.json` file.
+pub fn keymap_file() -> &'static PathBuf {
+    static KEYMAP_FILE: OnceLock<PathBuf> = OnceLock::new();
+    KEYMAP_FILE.get_or_init(|| config_dir().join("keymap.json"))
+}
+
+/// Returns the path to the `tasks.json` file.
+pub fn tasks_file() -> &'static PathBuf {
+    static TASKS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    TASKS_DIR.get_or_init(|| config_dir().join("tasks.json"))
+}
+
 /// Returns the path to the extensions directory.
 ///
 /// This is where installed extensions are stored.
@@ -160,23 +198,46 @@ pub fn embeddings_dir() -> &'static PathBuf {
     })
 }
 
-lazy_static::lazy_static! {
-    pub static ref LANGUAGES_DIR: PathBuf = support_dir().join("languages");
-    pub static ref COPILOT_DIR: PathBuf = support_dir().join("copilot");
-    pub static ref SUPERMAVEN_DIR: PathBuf = support_dir().join("supermaven");
-    pub static ref DEFAULT_PRETTIER_DIR: PathBuf = support_dir().join("prettier");
-    pub static ref DB_DIR: PathBuf = support_dir().join("db");
-    pub static ref CRASHES_DIR: Option<PathBuf> = cfg!(target_os = "macos")
-        .then_some(HOME.join("Library/Logs/DiagnosticReports"));
-    pub static ref CRASHES_RETIRED_DIR: Option<PathBuf> = CRASHES_DIR
-        .as_ref()
-        .map(|dir| dir.join("Retired"));
+/// Returns the path to the languages directory.
+///
+/// This is where language servers are downloaded to for languages built-in to Zed.
+pub fn languages_dir() -> &'static PathBuf {
+    static LANGUAGES_DIR: OnceLock<PathBuf> = OnceLock::new();
+    LANGUAGES_DIR.get_or_init(|| support_dir().join("languages"))
+}
 
-    pub static ref SETTINGS: PathBuf = config_dir().join("settings.json");
-    pub static ref KEYMAP: PathBuf = config_dir().join("keymap.json");
-    pub static ref TASKS: PathBuf = config_dir().join("tasks.json");
-    pub static ref LAST_USERNAME: PathBuf = config_dir().join("last-username.txt");
-    pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
-    pub static ref LOCAL_TASKS_RELATIVE_PATH: &'static Path = Path::new(".zed/tasks.json");
-    pub static ref LOCAL_VSCODE_TASKS_RELATIVE_PATH: &'static Path = Path::new(".vscode/tasks.json");
+/// Returns the path to the Copilot directory.
+pub fn copilot_dir() -> &'static PathBuf {
+    static COPILOT_DIR: OnceLock<PathBuf> = OnceLock::new();
+    COPILOT_DIR.get_or_init(|| support_dir().join("copilot"))
+}
+
+/// Returns the path to the Supermaven directory.
+pub fn supermaven_dir() -> &'static PathBuf {
+    static SUPERMAVEN_DIR: OnceLock<PathBuf> = OnceLock::new();
+    SUPERMAVEN_DIR.get_or_init(|| support_dir().join("supermaven"))
+}
+
+/// Returns the path to the default Prettier directory.
+pub fn default_prettier_dir() -> &'static PathBuf {
+    static DEFAULT_PRETTIER_DIR: OnceLock<PathBuf> = OnceLock::new();
+    DEFAULT_PRETTIER_DIR.get_or_init(|| support_dir().join("prettier"))
+}
+
+/// Returns the relative path to a `settings.json` file within a project.
+pub fn local_settings_file_relative_path() -> &'static Path {
+    static LOCAL_SETTINGS_FILE_RELATIVE_PATH: OnceLock<&Path> = OnceLock::new();
+    LOCAL_SETTINGS_FILE_RELATIVE_PATH.get_or_init(|| Path::new(".zed/settings.json"))
+}
+
+/// Returns the relative path to a `tasks.json` file within a project.
+pub fn local_tasks_file_relative_path() -> &'static Path {
+    static LOCAL_TASKS_FILE_RELATIVE_PATH: OnceLock<&Path> = OnceLock::new();
+    LOCAL_TASKS_FILE_RELATIVE_PATH.get_or_init(|| Path::new(".zed/tasks.json"))
+}
+
+/// Returns the relative path to a `.vscode/tasks.json` file within a project.
+pub fn local_vscode_tasks_file_relative_path() -> &'static Path {
+    static LOCAL_VSCODE_TASKS_FILE_RELATIVE_PATH: OnceLock<&Path> = OnceLock::new();
+    LOCAL_VSCODE_TASKS_FILE_RELATIVE_PATH.get_or_init(|| Path::new(".vscode/tasks.json"))
 }

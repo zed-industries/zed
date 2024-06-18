@@ -8,7 +8,7 @@ use http::Method;
 use isahc::config::Configurable;
 
 use http::{self, HttpClient, HttpClientWithUrl};
-use paths::{CRASHES_DIR, CRASHES_RETIRED_DIR};
+use paths::{crashes_dir, crashes_retired_dir};
 use release_channel::ReleaseChannel;
 use release_channel::RELEASE_CHANNEL;
 use settings::Settings;
@@ -460,8 +460,8 @@ async fn upload_previous_crashes(
 
     let crash_report_url = http.build_zed_api_url("/telemetry/crashes", &[])?;
 
-    // crash directories are only set on MacOS
-    for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR]
+    // Crash directories are only set on macOS.
+    for dir in [crashes_dir(), crashes_retired_dir()]
         .iter()
         .filter_map(|d| d.as_deref())
     {

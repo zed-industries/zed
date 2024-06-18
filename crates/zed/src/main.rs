@@ -343,12 +343,12 @@ fn main() {
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
-        paths::SETTINGS.clone(),
+        paths::settings_file().clone(),
     );
     let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
-        paths::KEYMAP.clone(),
+        paths::keymap_file().clone(),
     );
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
@@ -399,7 +399,7 @@ fn main() {
         cx.update_http_client(client.http_client().clone());
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
-        languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
+        languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(client.http_client());
 
@@ -670,8 +670,8 @@ fn init_paths() -> anyhow::Result<()> {
     for path in [
         paths::config_dir(),
         paths::extensions_dir(),
-        &*paths::LANGUAGES_DIR,
-        &*paths::DB_DIR,
+        paths::languages_dir(),
+        paths::database_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
     ]
