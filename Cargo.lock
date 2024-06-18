@@ -11703,7 +11703,6 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
- "lazy_static",
  "log",
  "rand 0.8.5",
  "regex",
