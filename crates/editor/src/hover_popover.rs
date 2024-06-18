@@ -708,7 +708,7 @@ mod tests {
     impl InfoPopover {
         fn get_rendered_text(&self, cx: &gpui::AppContext) -> String {
             let mut rendered_text = String::new();
-            while let Some(parsed_content) = self.parsed_content.clone() {
+            if let Some(parsed_content) = self.parsed_content.clone() {
                 let markdown = parsed_content.read(cx);
                 let text = markdown.parsed_markdown().source().to_string();
                 let data = markdown.parsed_markdown().events();
@@ -1083,6 +1083,7 @@ mod tests {
         .next()
         .await;
         cx.dispatch_action(Hover);
+
         cx.condition(|editor, _| editor.hover_state.visible()).await;
         cx.editor(|editor, cx| {
             assert_eq!(
