@@ -281,8 +281,8 @@ impl PathMatcher {
     pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
         let globs = globs
             .into_iter()
-            .filter_map(|glob| Glob::new(&glob).ok())
-            .collect::<Vec<_>>();
+            .map(|glob| Glob::new(&glob))
+            .collect::<Result<Vec<_>, _>>()?;
         let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
         let mut glob_builder = GlobSetBuilder::new();
         for single_glob in globs {
