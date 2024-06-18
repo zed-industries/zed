@@ -268,6 +268,7 @@ gpui::actions!(
         SelectAllMatches,
         SelectDown,
         SelectLargerSyntaxNode,
+        SelectContainingSymbol,
         SelectLeft,
         SelectLine,
         SelectRight,
