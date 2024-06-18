@@ -1,4 +1,4 @@
-use super::{prompt_command::PromptPlaceholder, SlashCommand, SlashCommandOutput};
+use super::{SlashCommand, SlashCommandOutput};
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
@@ -68,14 +68,8 @@ impl SlashCommand for DefaultSlashCommand {
             Ok(SlashCommandOutput {
                 sections: vec![SlashCommandOutputSection {
                     range: 0..text.len(),
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        PromptPlaceholder {
-                            title: "Default".into(),
-                            id,
-                            unfold,
-                        }
-                        .into_any_element()
-                    }),
+                    icon: IconName::Library,
+                    label: "Default".into(),
                 }],
                 text,
                 run_commands_in_text: true,
