@@ -53,13 +53,17 @@ impl SlashCommand for DefaultSlashCommand {
             let prompts = store.default_prompt_metadata();
 
             let mut text = String::new();
-            writeln!(text, "Default Prompt:").unwrap();
+            text.push('\n');
             for prompt in prompts {
                 if let Some(title) = prompt.title {
                     writeln!(text, "/prompt {}", title).unwrap();
                 }
             }
             text.pop();
+
+            if text.is_empty() {
+                text.push('\n');
+            }
 
             Ok(SlashCommandOutput {
                 sections: vec![SlashCommandOutputSection {

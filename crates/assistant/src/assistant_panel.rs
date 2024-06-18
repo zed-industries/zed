@@ -18,29 +18,32 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::actions::ShowCompletions;
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, UnfoldAt},
-    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, Flap, ToDisplayPoint},
+    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, ToDisplayPoint},
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorEvent, RowExt, ToOffset as _, ToPoint,
 };
-use editor::{display_map::FlapId, FoldPlaceholder};
+use editor::{display_map::CreaseId, FoldPlaceholder};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    div, point, rems, Action, AnyElement, AnyView, AppContext, AsyncAppContext, AsyncWindowContext,
-    ClipboardItem, Context as _, Empty, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, UpdateGlobal, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    div, percentage, point, rems, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
+    AsyncAppContext, AsyncWindowContext, ClipboardItem, Context as _, Empty, EventEmitter,
+    FocusHandle, FocusOutEvent, FocusableView, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use language::{
     language_settings::SoftWrap, AnchorRangeExt, AutoindentMode, Buffer, LanguageRegistry,
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
+use paths::CONTEXTS_DIR;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
+use rustdoc::{CrateName, RustdocStore};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
@@ -54,10 +57,10 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use ui::{
-    popover_menu, prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding,
-    ListItem, ListItemSpacing, PopoverMenuHandle, Tab, TabBar, Tooltip,
+    prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tab, TabBar, Tooltip,
 };
-use util::{paths::CONTEXTS_DIR, post_inc, ResultExt, TryFutureExt};
+use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::NewFile;
 use workspace::{
@@ -296,7 +299,7 @@ impl AssistantPanel {
         }
     }
 
-    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _event: FocusOutEvent, cx: &mut ViewContext<Self>) {
         self.toolbar
             .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
         cx.notify();
@@ -576,7 +579,7 @@ impl AssistantPanel {
     fn render_popover_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let assistant = cx.view().clone();
         let zoomed = self.zoomed;
-        popover_menu("assistant-popover")
+        PopoverMenu::new("assistant-popover")
             .trigger(IconButton::new("trigger", IconName::Menu))
             .menu(move |cx| {
                 let assistant = assistant.clone();
@@ -618,7 +621,7 @@ impl AssistantPanel {
             )
         });
 
-        popover_menu("inject-context-menu")
+        PopoverMenu::new("inject-context-menu")
             .trigger(IconButton::new("trigger", IconName::Quote).tooltip(|cx| {
                 Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
             }))
@@ -2158,7 +2161,7 @@ pub struct ContextEditor {
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
-    pending_slash_command_flaps: HashMap<Range<language::Anchor>, FlapId>,
+    pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2230,7 +2233,7 @@ impl ContextEditor {
             scroll_position: None,
             fs,
             workspace: workspace.downgrade(),
-            pending_slash_command_flaps: HashMap::default(),
+            pending_slash_command_creases: HashMap::default(),
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -2493,14 +2496,14 @@ impl ContextEditor {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let excerpt_id = *buffer.as_singleton().unwrap().0;
 
-                    editor.remove_flaps(
+                    editor.remove_creases(
                         removed
                             .iter()
-                            .filter_map(|range| self.pending_slash_command_flaps.remove(range)),
+                            .filter_map(|range| self.pending_slash_command_creases.remove(range)),
                         cx,
                     );
 
-                    let flap_ids = editor.insert_flaps(
+                    let crease_ids = editor.insert_creases(
                         updated.iter().map(|command| {
                             let workspace = self.workspace.clone();
                             let confirm_command = Arc::new({
@@ -2537,8 +2540,23 @@ impl ContextEditor {
                                     )
                                 }
                             };
-                            let render_trailer =
-                                |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+                            let render_trailer = {
+                                let command = command.clone();
+                                move |row, _unfold, cx: &mut WindowContext| {
+                                    // TODO: In the future we should investigate how we can expose
+                                    // this as a hook on the `SlashCommand` trait so that we don't
+                                    // need to special-case it here.
+                                    if command.name == "rustdoc" {
+                                        return render_rustdoc_slash_command_trailer(
+                                            row,
+                                            command.clone(),
+                                            cx,
+                                        );
+                                    }
+
+                                    Empty.into_any()
+                                }
+                            };
 
                             let start = buffer
                                 .anchor_in_excerpt(excerpt_id, command.source_range.start)
@@ -2546,16 +2564,16 @@ impl ContextEditor {
                             let end = buffer
                                 .anchor_in_excerpt(excerpt_id, command.source_range.end)
                                 .unwrap();
-                            Flap::new(start..end, placeholder, render_toggle, render_trailer)
+                            Crease::new(start..end, placeholder, render_toggle, render_trailer)
                         }),
                         cx,
                     );
 
-                    self.pending_slash_command_flaps.extend(
+                    self.pending_slash_command_creases.extend(
                         updated
                             .iter()
                             .map(|command| command.source_range.clone())
-                            .zip(flap_ids),
+                            .zip(crease_ids),
                     );
                 })
             }
@@ -2598,7 +2616,7 @@ impl ContextEditor {
             let buffer = editor.buffer().read(cx).snapshot(cx);
             let excerpt_id = *buffer.as_singleton().unwrap().0;
             let mut buffer_rows_to_fold = BTreeSet::new();
-            let mut flaps = Vec::new();
+            let mut creases = Vec::new();
             for section in sections {
                 let start = buffer
                     .anchor_in_excerpt(excerpt_id, section.range.start)
@@ -2608,7 +2626,7 @@ impl ContextEditor {
                     .unwrap();
                 let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
-                flaps.push(Flap::new(
+                creases.push(Crease::new(
                     start..end,
                     FoldPlaceholder {
                         render: Arc::new({
@@ -2638,7 +2656,7 @@ impl ContextEditor {
                 ));
             }
 
-            editor.insert_flaps(flaps, cx);
+            editor.insert_creases(creases, cx);
 
             for buffer_row in buffer_rows_to_fold.into_iter().rev() {
                 editor.fold_at(&FoldAt { buffer_row }, cx);
@@ -3166,6 +3184,37 @@ fn render_pending_slash_command_gutter_decoration(
     }
 
     icon.into_any_element()
+}
+
+fn render_rustdoc_slash_command_trailer(
+    row: MultiBufferRow,
+    command: PendingSlashCommand,
+    cx: &mut WindowContext,
+) -> AnyElement {
+    let rustdoc_store = RustdocStore::global(cx);
+
+    let Some((crate_name, _)) = command
+        .argument
+        .as_ref()
+        .and_then(|arg| arg.split_once(':'))
+    else {
+        return Empty.into_any();
+    };
+
+    let crate_name = CrateName::from(crate_name);
+    if !rustdoc_store.is_indexing(&crate_name) {
+        return Empty.into_any();
+    }
+
+    div()
+        .id(("crates-being-indexed", row.0))
+        .child(Icon::new(IconName::ArrowCircle).with_animation(
+            "arrow-circle",
+            Animation::new(Duration::from_secs(4)).repeat(),
+            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+        ))
+        .tooltip(move |cx| Tooltip::text(format!("Indexing {crate_name}…"), cx))
+        .into_any_element()
 }
 
 fn make_lsp_adapter_delegate(

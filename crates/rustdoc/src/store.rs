@@ -12,8 +12,8 @@ use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, Task, UpdateGloba
 use heed::types::SerdeBincode;
 use heed::Database;
 use parking_lot::RwLock;
+use paths::SUPPORT_DIR;
 use serde::{Deserialize, Serialize};
-use util::paths::SUPPORT_DIR;
 use util::ResultExt;
 
 use crate::indexer::{RustdocIndexer, RustdocProvider};
@@ -71,6 +71,11 @@ impl RustdocStore {
         }
     }
 
+    /// Returns whether the crate with the given name is currently being indexed.
+    pub fn is_indexing(&self, crate_name: &CrateName) -> bool {
+        self.indexing_tasks_by_crate.read().contains_key(crate_name)
+    }
+
     pub async fn load(
         &self,
         crate_name: CrateName,
@@ -89,6 +94,10 @@ impl RustdocStore {
         crate_name: CrateName,
         provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
     ) -> Shared<Task<Result<(), Arc<anyhow::Error>>>> {
+        if let Some(existing_task) = self.indexing_tasks_by_crate.read().get(&crate_name) {
+            return existing_task.clone();
+        }
+
         let indexing_task = self
             .executor
             .spawn({

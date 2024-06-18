@@ -25,6 +25,7 @@ html_to_markdown.workspace = true
 http.workspace = true
 indexmap.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 serde.workspace = true
 strum.workspace = true
 util.workspace = true

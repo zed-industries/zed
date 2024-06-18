@@ -21,6 +21,7 @@ pub(crate) use context_store::*;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 pub(crate) use inline_assistant::*;
 pub(crate) use model_selector::*;
+use paths::EMBEDDINGS_DIR;
 use rustdoc::RustdocStore;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
@@ -34,7 +35,6 @@ use std::{
     sync::Arc,
 };
 pub(crate) use streaming_diff::*;
-use util::paths::EMBEDDINGS_DIR;
 
 actions!(
     assistant,

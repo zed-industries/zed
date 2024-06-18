@@ -5861,7 +5861,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -5887,7 +5887,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Uri::from_file_path("/file.rs").unwrap().into()
+            lsp::Url::from_file_path("/file.rs").unwrap()
         );
         futures::future::pending::<()>().await;
         unreachable!()
@@ -5936,7 +5936,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
@@ -6139,7 +6139,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         .on_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             Ok(Some(vec![lsp::TextEdit::new(
                 lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
-                format!("[{} formatted]", params.text_document.uri.as_str()),
+                format!("[{} formatted]", params.text_document.uri),
             )]))
         })
         .detach();
@@ -6213,7 +6213,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -6239,7 +6239,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -6289,7 +6289,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
@@ -6363,7 +6363,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -6385,7 +6385,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Uri::from_file_path("/file.rs").unwrap().into()
+            lsp::Url::from_file_path("/file.rs").unwrap()
         );
         futures::future::pending::<()>().await;
         unreachable!()
@@ -8028,7 +8028,7 @@ async fn go_to_prev_overlapping_diagnostic(
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
-                        uri: lsp::Uri::from_file_path("/root/file").unwrap().into(),
+                        uri: lsp::Url::from_file_path("/root/file").unwrap(),
                         version: None,
                         diagnostics: vec![
                             lsp::Diagnostic {
@@ -8400,7 +8400,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
         assert_eq!(
             params.text_document_position.text_document.uri,
-            lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+            lsp::Url::from_file_path("/a/main.rs").unwrap(),
         );
         assert_eq!(
             params.text_document_position.position,
@@ -12049,7 +12049,7 @@ async fn test_active_indent_guide_non_matching_indent(cx: &mut gpui::TestAppCont
 }
 
 #[gpui::test]
-fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
+fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|cx| {
@@ -12070,7 +12070,7 @@ fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
                 callback: Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
             }
 
-            let flap = Flap::new(
+            let crease = Crease::new(
                 range,
                 FoldPlaceholder::test(),
                 {
@@ -12087,7 +12087,7 @@ fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
                 |_row, _folded, _cx| div(),
             );
 
-            editor.insert_flaps(Some(flap), cx);
+            editor.insert_creases(Some(crease), cx);
             let snapshot = editor.snapshot(cx);
             let _div = snapshot.render_fold_toggle(MultiBufferRow(1), false, cx.view().clone(), cx);
             snapshot
@@ -12151,10 +12151,7 @@ pub fn handle_completion_request(
         let completions = completions.clone();
         counter.fetch_add(1, atomic::Ordering::Release);
         async move {
-            assert_eq!(
-                params.text_document_position.text_document.uri,
-                url.clone().into()
-            );
+            assert_eq!(params.text_document_position.text_document.uri, url.clone());
             assert_eq!(
                 params.text_document_position.position,
                 complete_from_position

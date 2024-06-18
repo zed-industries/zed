@@ -6,7 +6,7 @@ Folder-specific settings are used to override Zed's global settings for files wi
 
 The following global settings can be overridden with a folder-specific configuration:
 
-- `copilot`
+- `inline_completions`
 - `enable_language_server`
 - `ensure_final_newline_on_save`
 - `format_on_save`
@@ -17,7 +17,7 @@ The following global settings can be overridden with a folder-specific configura
 - `remove_trailing_whitespace_on_save`
 - `soft_wrap`
 - `tab_size`
-- `show_copilot_suggestions`
+- `show_inline_completions`
 - `show_whitespaces`
 
 _See the Global settings section for details about these settings_
@@ -161,14 +161,14 @@ For example, to disable ligatures and set `7` to `cv01` for a given font you can
 The `left_padding` and `right_padding` options define the relative width of the
 left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
 
-## Copilot
+## Inline Completions
 
-- Description: Copilot-specific settings.
-- Setting: `copilot`
+- Description: Settings for inline completions.
+- Setting: `inline_completions`
 - Default:
 
 ```json
-"copilot": {
+"inline_completions": {
   "disabled_globs": [
     ".env"
   ]
@@ -179,7 +179,7 @@ left and right padding of the central pane from the workspace when the centered 
 
 ### Disabled Globs
 
-- Description: The set of glob patterns for which Copilot should be disabled in any matching file.
+- Description: A list of globs representing files that inline completions should be disabled for.
 - Setting: `disabled_globs`
 - Default: [".env"]
 
@@ -959,7 +959,7 @@ The following settings can be overridden for each specific language:
 - `hard_tabs`
 - `preferred_line_length`
 - `remove_trailing_whitespace_on_save`
-- `show_copilot_suggestions`
+- `show_inline_completions`
 - `show_whitespaces`
 - `soft_wrap`
 - `tab_size`
@@ -1082,10 +1082,10 @@ These values take in the same options as the root-level settings with the same n
 
 `integer` values
 
-## Show Copilot Suggestions
+## Show Inline Completions
 
-- Description: Whether or not to show Copilot suggestions as you type or wait for a `copilot::Toggle`.
-- Setting: `show_copilot_suggestions`
+- Description: Whether to show inline completions as you type or manually by triggering `editor::ShowInlineCompletion`.
+- Setting: `show_inline_completions`
 - Default: `true`
 
 **Options**

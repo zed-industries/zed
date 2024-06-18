@@ -19,7 +19,7 @@ use client::{
     TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
-use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
+use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::{
@@ -61,11 +61,14 @@ use lsp::{
     CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, Edit, FileSystemWatcher, InsertTextFormat, LanguageServer,
     LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, OneOf,
-    ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit, Uri,
+    ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
+use paths::{
+    LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
+};
 use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
@@ -107,11 +110,8 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
 use unicase::UniCase;
 use util::{
-    debug_panic, defer, maybe, merge_json_value_into, parse_env_output,
-    paths::{
-        LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
-    },
-    post_inc, NumericPrefixWithSuffix, ResultExt, TryFutureExt as _,
+    debug_panic, defer, maybe, merge_json_value_into, parse_env_output, post_inc,
+    NumericPrefixWithSuffix, ResultExt, TryFutureExt as _,
 };
 use worktree::{CreatedEntry, RemoteWorktreeClient, Snapshot, Traversal};
 
@@ -131,7 +131,7 @@ pub use worktree::{
 const MAX_SERVER_REINSTALL_ATTEMPT_COUNT: u64 = 4;
 const SERVER_REINSTALL_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
-pub const SERVER_PROGRESS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
+pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 
@@ -164,9 +164,6 @@ pub struct Project {
     worktrees_reordered: bool,
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
-    pending_language_server_update: Option<BufferOrderedMessage>,
-    flush_language_server_update: Option<Task<()>>,
-
     languages: Arc<LanguageRegistry>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
@@ -231,40 +228,6 @@ pub struct Project {
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
-    telemetry_worktree_id_map: TelemetryWorktreeIdMap,
-}
-
-#[derive(Debug)]
-struct TelemetryWorktreeIdMap(HashMap<String, ProjectTypeTelemetry>);
-
-impl Default for TelemetryWorktreeIdMap {
-    fn default() -> Self {
-        Self(HashMap::from_iter([
-            (
-                "yarn.lock".to_string(),
-                ProjectTypeTelemetry::new("yarn".to_string()),
-            ),
-            (
-                "package.json".to_string(),
-                ProjectTypeTelemetry::new("node".to_string()),
-            ),
-        ]))
-    }
-}
-
-#[derive(Debug)]
-struct ProjectTypeTelemetry {
-    name: String,
-    worktree_ids_reported: HashSet<WorktreeId>,
-}
-
-impl ProjectTypeTelemetry {
-    fn new(name: String) -> Self {
-        Self {
-            name,
-            worktree_ids_reported: HashSet::default(),
-        }
-    }
 }
 
 pub enum LanguageServerToQuery {
@@ -415,6 +378,9 @@ pub struct LanguageServerStatus {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerProgress {
+    pub is_disk_based_diagnostics_progress: bool,
+    pub is_cancellable: bool,
+    pub title: Option<String>,
     pub message: Option<String>,
     pub percentage: Option<usize>,
     #[serde(skip_serializing)]
@@ -757,8 +723,6 @@ impl Project {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
-                flush_language_server_update: None,
-                pending_language_server_update: None,
                 collaborators: Default::default(),
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
@@ -812,7 +776,6 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
-                telemetry_worktree_id_map: TelemetryWorktreeIdMap::default(),
             }
         })
     }
@@ -899,8 +862,6 @@ impl Project {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
-                pending_language_server_update: None,
-                flush_language_server_update: None,
                 loading_buffers_by_path: Default::default(),
                 loading_buffers: Default::default(),
                 shared_buffers: Default::default(),
@@ -977,7 +938,6 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
-                telemetry_worktree_id_map: TelemetryWorktreeIdMap::default(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -2180,7 +2140,7 @@ impl Project {
     /// LanguageServerName is owned, because it is inserted into a map
     pub fn open_local_buffer_via_lsp(
         &mut self,
-        abs_path: lsp::Uri,
+        abs_path: lsp::Url,
         language_server_id: LanguageServerId,
         language_server_name: LanguageServerName,
         cx: &mut ModelContext<Self>,
@@ -2480,15 +2440,13 @@ impl Project {
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
-                    let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
+                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
                     for server in this.language_servers_for_buffer(buffer, cx) {
                         server
                             .1
                             .notify::<lsp::notification::DidCloseTextDocument>(
                                 lsp::DidCloseTextDocumentParams {
-                                    text_document: lsp::TextDocumentIdentifier::new(
-                                        uri.clone().into(),
-                                    ),
+                                    text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
                                 },
                             )
                             .log_err();
@@ -2520,7 +2478,7 @@ impl Project {
             }
 
             let abs_path = file.abs_path(cx);
-            let Some(uri) = lsp::Uri::from_file_path(&abs_path).log_err() else {
+            let Some(uri) = lsp::Url::from_file_path(&abs_path).log_err() else {
                 return;
             };
             let initial_snapshot = buffer.text_snapshot();
@@ -2558,7 +2516,7 @@ impl Project {
                         .notify::<lsp::notification::DidOpenTextDocument>(
                             lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
-                                    uri.clone().into(),
+                                    uri.clone(),
                                     adapter.language_id(&language),
                                     0,
                                     initial_snapshot.text(),
@@ -2616,14 +2574,12 @@ impl Project {
             }
 
             self.buffer_snapshots.remove(&buffer.remote_id());
-            let file_url = lsp::Uri::from_file_path(old_path).unwrap();
+            let file_url = lsp::Url::from_file_path(old_path).unwrap();
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
                 language_server
                     .notify::<lsp::notification::DidCloseTextDocument>(
                         lsp::DidCloseTextDocumentParams {
-                            text_document: lsp::TextDocumentIdentifier::new(
-                                file_url.clone().into(),
-                            ),
+                            text_document: lsp::TextDocumentIdentifier::new(file_url.clone()),
                         },
                     )
                     .log_err();
@@ -2782,7 +2738,7 @@ impl Project {
                 let buffer = buffer.read(cx);
                 let file = File::from_dyn(buffer.file())?;
                 let abs_path = file.as_local()?.abs_path(cx);
-                let uri = lsp::Uri::from_file_path(abs_path).unwrap();
+                let uri = lsp::Url::from_file_path(abs_path).unwrap();
                 let next_snapshot = buffer.text_snapshot();
 
                 let language_servers: Vec<_> = self
@@ -2863,7 +2819,7 @@ impl Project {
                         .notify::<lsp::notification::DidChangeTextDocument>(
                             lsp::DidChangeTextDocumentParams {
                                 text_document: lsp::VersionedTextDocumentIdentifier::new(
-                                    uri.clone().into(),
+                                    uri.clone(),
                                     next_version,
                                 ),
                                 content_changes,
@@ -2878,7 +2834,7 @@ impl Project {
                 let worktree_id = file.worktree_id(cx);
                 let abs_path = file.as_local()?.abs_path(cx);
                 let text_document = lsp::TextDocumentIdentifier {
-                    uri: lsp::Uri::from_file_path(abs_path).unwrap().into(),
+                    uri: lsp::Url::from_file_path(abs_path).unwrap(),
                 };
 
                 for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
@@ -3918,11 +3874,11 @@ impl Project {
                 let snapshot = versions.last().unwrap();
                 let version = snapshot.version;
                 let initial_snapshot = &snapshot.snapshot;
-                let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
+                let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
                 language_server.notify::<lsp::notification::DidOpenTextDocument>(
                     lsp::DidOpenTextDocumentParams {
                         text_document: lsp::TextDocumentItem::new(
-                            uri.into(),
+                            uri,
                             adapter.language_id(&language),
                             version,
                             initial_snapshot.text(),
@@ -4178,6 +4134,40 @@ impl Project {
         .detach();
     }
 
+    pub fn cancel_language_server_work_for_buffers(
+        &mut self,
+        buffers: impl IntoIterator<Item = Model<Buffer>>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let servers = buffers
+            .into_iter()
+            .flat_map(|buffer| {
+                self.language_server_ids_for_buffer(buffer.read(cx), cx)
+                    .into_iter()
+            })
+            .collect::<HashSet<_>>();
+
+        for server_id in servers {
+            let status = self.language_server_statuses.get(&server_id);
+            let server = self.language_servers.get(&server_id);
+            if let Some((server, status)) = server.zip(status) {
+                if let LanguageServerState::Running { server, .. } = server {
+                    for (token, progress) in &status.pending_work {
+                        if progress.is_cancellable {
+                            server
+                                .notify::<lsp::notification::WorkDoneProgressCancel>(
+                                    WorkDoneProgressCancelParams {
+                                        token: lsp::NumberOrString::String(token.clone()),
+                                    },
+                                )
+                                .ok();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn check_errored_server(
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
@@ -4247,35 +4237,7 @@ impl Project {
         .detach();
     }
 
-    fn enqueue_language_server_progress(
-        &mut self,
-        message: BufferOrderedMessage,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.pending_language_server_update.replace(message);
-        self.flush_language_server_update.get_or_insert_with(|| {
-            cx.spawn(|this, mut cx| async move {
-                cx.background_executor()
-                    .timer(SERVER_PROGRESS_DEBOUNCE_TIMEOUT)
-                    .await;
-                this.update(&mut cx, |this, _| {
-                    this.flush_language_server_update.take();
-                    if let Some(update) = this.pending_language_server_update.take() {
-                        this.enqueue_buffer_ordered_message(update).ok();
-                    }
-                })
-                .ok();
-            })
-        });
-    }
-
     fn enqueue_buffer_ordered_message(&mut self, message: BufferOrderedMessage) -> Result<()> {
-        if let Some(pending_message) = self.pending_language_server_update.take() {
-            self.flush_language_server_update.take();
-            self.buffer_ordered_messages_tx
-                .unbounded_send(pending_message)
-                .map_err(|e| anyhow!(e))?;
-        }
         self.buffer_ordered_messages_tx
             .unbounded_send(message)
             .map_err(|e| anyhow!(e))
@@ -4295,6 +4257,7 @@ impl Project {
                 return;
             }
         };
+
         let lsp::ProgressParamsValue::WorkDone(progress) = progress.value;
         let language_server_status =
             if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
@@ -4317,32 +4280,36 @@ impl Project {
             lsp::WorkDoneProgress::Begin(report) => {
                 if is_disk_based_diagnostics_progress {
                     self.disk_based_diagnostics_started(language_server_id, cx);
-                } else {
-                    self.on_lsp_work_start(
-                        language_server_id,
-                        token.clone(),
-                        LanguageServerProgress {
-                            message: report.message.clone(),
-                            percentage: report.percentage.map(|p| p as usize),
-                            last_update_at: Instant::now(),
-                        },
-                        cx,
-                    );
                 }
+                self.on_lsp_work_start(
+                    language_server_id,
+                    token.clone(),
+                    LanguageServerProgress {
+                        title: Some(report.title),
+                        is_disk_based_diagnostics_progress,
+                        is_cancellable: report.cancellable.unwrap_or(false),
+                        message: report.message.clone(),
+                        percentage: report.percentage.map(|p| p as usize),
+                        last_update_at: cx.background_executor().now(),
+                    },
+                    cx,
+                );
             }
             lsp::WorkDoneProgress::Report(report) => {
-                if !is_disk_based_diagnostics_progress {
-                    self.on_lsp_work_progress(
-                        language_server_id,
-                        token.clone(),
-                        LanguageServerProgress {
-                            message: report.message.clone(),
-                            percentage: report.percentage.map(|p| p as usize),
-                            last_update_at: Instant::now(),
-                        },
-                        cx,
-                    );
-                    self.enqueue_language_server_progress(
+                if self.on_lsp_work_progress(
+                    language_server_id,
+                    token.clone(),
+                    LanguageServerProgress {
+                        title: None,
+                        is_disk_based_diagnostics_progress,
+                        is_cancellable: report.cancellable.unwrap_or(false),
+                        message: report.message.clone(),
+                        percentage: report.percentage.map(|p| p as usize),
+                        last_update_at: cx.background_executor().now(),
+                    },
+                    cx,
+                ) {
+                    self.enqueue_buffer_ordered_message(
                         BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id,
                             message: proto::update_language_server::Variant::WorkProgress(
@@ -4353,17 +4320,15 @@ impl Project {
                                 },
                             ),
                         },
-                        cx,
-                    );
+                    )
+                    .ok();
                 }
             }
             lsp::WorkDoneProgress::End(_) => {
                 language_server_status.progress_tokens.remove(&token);
-
+                self.on_lsp_work_end(language_server_id, token.clone(), cx);
                 if is_disk_based_diagnostics_progress {
                     self.disk_based_diagnostics_finished(language_server_id, cx);
-                } else {
-                    self.on_lsp_work_end(language_server_id, token.clone(), cx);
                 }
             }
         }
@@ -4386,6 +4351,7 @@ impl Project {
                 language_server_id,
                 message: proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
                     token,
+                    title: progress.title,
                     message: progress.message,
                     percentage: progress.percentage.map(|p| p as u32),
                 }),
@@ -4400,25 +4366,34 @@ impl Project {
         token: String,
         progress: LanguageServerProgress,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> bool {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            let entry = status
-                .pending_work
-                .entry(token)
-                .or_insert(LanguageServerProgress {
-                    message: Default::default(),
-                    percentage: Default::default(),
-                    last_update_at: progress.last_update_at,
-                });
-            if progress.message.is_some() {
-                entry.message = progress.message;
+            match status.pending_work.entry(token) {
+                btree_map::Entry::Vacant(entry) => {
+                    entry.insert(progress);
+                    cx.notify();
+                    return true;
+                }
+                btree_map::Entry::Occupied(mut entry) => {
+                    let entry = entry.get_mut();
+                    if (progress.last_update_at - entry.last_update_at)
+                        >= SERVER_PROGRESS_THROTTLE_TIMEOUT
+                    {
+                        entry.last_update_at = progress.last_update_at;
+                        if progress.message.is_some() {
+                            entry.message = progress.message;
+                        }
+                        if progress.percentage.is_some() {
+                            entry.percentage = progress.percentage;
+                        }
+                        cx.notify();
+                        return true;
+                    }
+                }
             }
-            if progress.percentage.is_some() {
-                entry.percentage = progress.percentage;
-            }
-            entry.last_update_at = progress.last_update_at;
-            cx.notify();
         }
+
+        false
     }
 
     fn on_lsp_work_end(
@@ -4428,8 +4403,11 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            cx.emit(Event::RefreshInlayHints);
-            status.pending_work.remove(&token);
+            if let Some(work) = status.pending_work.remove(&token) {
+                if !work.is_disk_based_diagnostics_progress {
+                    cx.emit(Event::RefreshInlayHints);
+                }
+            }
             cx.notify();
         }
 
@@ -4524,13 +4502,10 @@ impl Project {
                                         lsp::OneOf::Left(workspace_folder) => &workspace_folder.uri,
                                         lsp::OneOf::Right(base_uri) => base_uri,
                                     };
-                                    lsp::Uri::from(base_uri.clone())
-                                        .to_file_path()
-                                        .ok()
-                                        .and_then(|file_path| {
-                                            (file_path.to_str() == Some(abs_path))
-                                                .then_some(rp.pattern.as_str())
-                                        })
+                                    base_uri.to_file_path().ok().and_then(|file_path| {
+                                        (file_path.to_str() == Some(abs_path))
+                                            .then_some(rp.pattern.as_str())
+                                    })
                                 }
                             };
                             if let Some(relative_glob_pattern) = relative_glob_pattern {
@@ -4619,9 +4594,10 @@ impl Project {
         disk_based_sources: &[String],
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let abs_path = Uri::from(params.uri.clone())
+        let abs_path = params
+            .uri
             .to_file_path()
-            .map_err(|_| anyhow!("URI `{}` is not a file", params.uri.as_str()))?;
+            .map_err(|_| anyhow!("URI is not a file"))?;
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
@@ -5302,9 +5278,9 @@ impl Project {
         tab_size: NonZeroU32,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
-        let uri = lsp::Uri::from_file_path(abs_path)
+        let uri = lsp::Url::from_file_path(abs_path)
             .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
-        let text_document = lsp::TextDocumentIdentifier::new(uri.into());
+        let text_document = lsp::TextDocumentIdentifier::new(uri);
         let capabilities = &language_server.capabilities();
 
         let formatting_provider = capabilities.document_formatting_provider.as_ref();
@@ -5609,8 +5585,7 @@ impl Project {
                         lsp_symbols
                             .into_iter()
                             .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
-                                let abs_path: lsp::Uri = symbol_location.uri.into();
-                                let abs_path = abs_path.to_file_path().ok()?;
+                                let abs_path = symbol_location.uri.to_file_path().ok()?;
                                 let source_worktree = source_worktree.upgrade()?;
                                 let source_worktree_id = source_worktree.read(cx).id();
 
@@ -5712,7 +5687,7 @@ impl Project {
             };
 
             let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
-            let symbol_uri = if let Ok(uri) = lsp::Uri::from_file_path(symbol_abs_path) {
+            let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
                 uri
             } else {
                 return Task::ready(Err(anyhow!("invalid symbol path")));
@@ -6645,7 +6620,8 @@ impl Project {
         for operation in operations {
             match operation {
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Create(op)) => {
-                    let abs_path = Uri::from(op.uri)
+                    let abs_path = op
+                        .uri
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
 
@@ -6669,10 +6645,12 @@ impl Project {
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(op)) => {
-                    let source_abs_path = Uri::from(op.old_uri)
+                    let source_abs_path = op
+                        .old_uri
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
-                    let target_abs_path = Uri::from(op.new_uri)
+                    let target_abs_path = op
+                        .new_uri
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
                     fs.rename(
@@ -6689,7 +6667,8 @@ impl Project {
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
-                    let abs_path: PathBuf = Uri::from(op.uri)
+                    let abs_path = op
+                        .uri
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
                     let options = op
@@ -6710,7 +6689,7 @@ impl Project {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
                             this.open_local_buffer_via_lsp(
-                                op.text_document.uri.clone().into(),
+                                op.text_document.uri.clone(),
                                 language_server.server_id(),
                                 lsp_adapter.name.clone(),
                                 cx,
@@ -7420,9 +7399,12 @@ impl Project {
                                     language_server.server_id(),
                                     id.to_string(),
                                     LanguageServerProgress {
+                                        is_disk_based_diagnostics_progress: false,
+                                        is_cancellable: false,
+                                        title: None,
                                         message: status.clone(),
                                         percentage: None,
-                                        last_update_at: Instant::now(),
+                                        last_update_at: cx.background_executor().now(),
                                     },
                                     cx,
                                 );
@@ -7798,7 +7780,10 @@ impl Project {
                         changes.clone(),
                     ));
 
-                    this.report_project_events(&worktree, changes, cx);
+                    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+                    this.client()
+                        .telemetry()
+                        .report_discovered_project_events(worktree_id, changes);
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
                     if is_local {
@@ -7849,48 +7834,6 @@ impl Project {
 
         cx.emit(Event::WorktreeAdded);
         self.metadata_changed(cx);
-    }
-
-    fn report_project_events(
-        &mut self,
-        worktree: &Model<Worktree>,
-        updated_entries_set: &UpdatedEntriesSet,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
-
-        let client = self.client();
-
-        for (project_file_name, project_type_telemetry) in
-            self.telemetry_worktree_id_map.0.iter_mut()
-        {
-            if project_type_telemetry
-                .worktree_ids_reported
-                .contains(&worktree_id)
-            {
-                continue;
-            }
-
-            let project_file_found = updated_entries_set.iter().any(|(path, _, _)| {
-                path.as_ref()
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .map(|name_str| name_str == project_file_name)
-                    .unwrap_or(false)
-            });
-
-            if !project_file_found {
-                continue;
-            }
-
-            client
-                .telemetry()
-                .report_app_event(format!("open {} project", project_type_telemetry.name));
-
-            project_type_telemetry
-                .worktree_ids_reported
-                .insert(worktree_id);
-        }
     }
 
     fn update_local_worktree_buffers(
@@ -8061,9 +8004,7 @@ impl Project {
                                     PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                                 };
                                 Some(lsp::FileEvent {
-                                    uri: lsp::Uri::from_file_path(abs_path.join(path))
-                                        .unwrap()
-                                        .into(),
+                                    uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
                                     typ,
                                 })
                             })
@@ -9080,9 +9021,12 @@ impl Project {
                         language_server_id,
                         payload.token,
                         LanguageServerProgress {
+                            title: payload.title,
+                            is_disk_based_diagnostics_progress: false,
+                            is_cancellable: false,
                             message: payload.message,
                             percentage: payload.percentage.map(|p| p as usize),
-                            last_update_at: Instant::now(),
+                            last_update_at: cx.background_executor().now(),
                         },
                         cx,
                     );
@@ -9093,9 +9037,12 @@ impl Project {
                         language_server_id,
                         payload.token,
                         LanguageServerProgress {
+                            title: None,
+                            is_disk_based_diagnostics_progress: false,
+                            is_cancellable: false,
                             message: payload.message,
                             percentage: payload.percentage.map(|p| p as usize),
-                            last_update_at: Instant::now(),
+                            last_update_at: cx.background_executor().now(),
                         },
                         cx,
                     );

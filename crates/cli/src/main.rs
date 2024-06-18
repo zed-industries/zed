@@ -172,7 +172,6 @@ mod linux {
     use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
     use fork::Fork;
     use once_cell::sync::Lazy;
-    use util::paths;
 
     use crate::{Detect, InstalledApp};
 

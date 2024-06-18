@@ -65,6 +65,7 @@ members = [
     "crates/open_ai",
     "crates/outline",
     "crates/outline_panel",
+    "crates/paths",
     "crates/picker",
     "crates/prettier",
     "crates/project",
@@ -77,6 +78,7 @@ members = [
     "crates/refineable/derive_refineable",
     "crates/release_channel",
     "crates/dev_server_projects",
+    "crates/repl",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
@@ -214,6 +216,7 @@ ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
+paths = { path = "crates/paths" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
@@ -227,6 +230,7 @@ quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
 dev_server_projects = { path = "crates/dev_server_projects" }
+repl = { path = "crates/repl" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
@@ -264,10 +268,12 @@ workspace = { path = "crates/workspace" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
+alacritty_terminal = "0.23"
 anyhow = "1.0.57"
 any_vec = "0.13"
 ashpd = "0.8.0"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-dispatcher = { version = "0.1"}
 async-fs = "1.6"
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
@@ -284,10 +290,10 @@ clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
 cocoa = "0.25"
 ctor = "0.2.6"
-signal-hook = "0.3.17"
 core-foundation = { version = "0.9.3" }
 core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
+dirs = "4.0"
 emojis = "0.6.1"
 env_logger = "0.9"
 exec = "0.3.1"
@@ -295,12 +301,13 @@ fork = "0.1.23"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-git2 = { version = "0.18", default-features = false }
+git2 = { version = "0.19", default-features = false }
 globset = "0.4"
 heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 ignore = "0.4.22"
+image = "0.23"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "1"
 # We explicitly disable http2 support in isahc.
@@ -333,6 +340,7 @@ rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
 regex = "1.5"
 repair_json = "0.1.0"
+runtimelib = { version="0.12", default-features = false, features = ["async-dispatcher-runtime"] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
 schemars = "0.8"
@@ -348,6 +356,7 @@ serde_repr = "0.1"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
+signal-hook = "0.3.17"
 similar = "1.3"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"

@@ -14,6 +14,8 @@ use crate::{
 
 #[derive(Debug, Clone, Copy)]
 pub enum RustdocSource {
+    /// The docs were sourced from Zed's rustdoc index.
+    Index,
     /// The docs were sourced from local `cargo doc` output.
     Local,
     /// The docs were sourced from `docs.rs`.

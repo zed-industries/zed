@@ -69,7 +69,10 @@ impl SlashCommand for PromptSlashCommand {
             }
         });
         cx.foreground_executor().spawn(async move {
-            let prompt = prompt.await?;
+            let mut prompt = prompt.await?;
+            if prompt.is_empty() {
+                prompt.push('\n');
+            }
             let range = 0..prompt.len();
             Ok(SlashCommandOutput {
                 text: prompt,

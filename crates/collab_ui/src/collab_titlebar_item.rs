@@ -13,8 +13,8 @@ use rpc::proto::{self, DevServerStatus};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
-    ButtonStyle, ContextMenu, Icon, IconButton, IconName, Indicator, TintColor, TitleBar, Tooltip,
+    h_flex, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike, ButtonStyle,
+    ContextMenu, Icon, IconButton, IconName, Indicator, PopoverMenu, TintColor, TitleBar, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
@@ -739,7 +739,7 @@ impl CollabTitlebarItem {
 
     pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if let Some(user) = self.user_store.read(cx).current_user() {
-            popover_menu("user-menu")
+            PopoverMenu::new("user-menu")
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
@@ -767,7 +767,7 @@ impl CollabTitlebarItem {
                 )
                 .anchor(gpui::AnchorCorner::TopRight)
         } else {
-            popover_menu("user-menu")
+            PopoverMenu::new("user-menu")
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
