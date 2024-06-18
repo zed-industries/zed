@@ -93,6 +93,26 @@ impl Render for QuickActionBar {
             return div().id("empty quick action bar");
         };
 
+        let (
+            selection_menu_enabled,
+            inlay_hints_enabled,
+            supports_inlay_hints,
+            git_blame_inline_enabled,
+        ) = {
+            let editor = editor.read(cx);
+            let selection_menu_enabled = editor.selection_menu_enabled(cx);
+            let inlay_hints_enabled = editor.inlay_hints_enabled();
+            let supports_inlay_hints = editor.supports_inlay_hints(cx);
+            let git_blame_inline_enabled = editor.git_blame_inline_enabled();
+
+            (
+                selection_menu_enabled,
+                inlay_hints_enabled,
+                supports_inlay_hints,
+                git_blame_inline_enabled,
+            )
+        };
+
         let search_button = editor.is_singleton(cx).then(|| {
             QuickActionBarButton::new(
                 "toggle buffer search",
@@ -129,7 +149,7 @@ impl Render for QuickActionBar {
             },
         );
 
-        let editor_selections_dropdown =
+        let editor_selections_dropdown = selection_menu_enabled.then(|| {
             IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
                 .size(ButtonSize::Compact)
                 .icon_size(IconSize::Small)
@@ -175,7 +195,8 @@ impl Render for QuickActionBar {
                 })
                 .when(self.toggle_selections_menu.is_none(), |this| {
                     this.tooltip(|cx| Tooltip::text("Selection Controls", cx))
-                });
+                })
+        });
 
         let editor_settings_dropdown =
             IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
@@ -186,10 +207,6 @@ impl Render for QuickActionBar {
                 .on_click({
                     let editor = editor.clone();
                     cx.listener(move |quick_action_bar, _, cx| {
-                        let inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
-                        let supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
-                        let git_blame_inline_enabled = editor.read(cx).git_blame_inline_enabled();
-
                         let menu = ContextMenu::build(cx, |mut menu, _| {
                             if supports_inlay_hints {
                                 menu = menu.toggleable_entry(
@@ -227,6 +244,23 @@ impl Render for QuickActionBar {
                                 },
                             );
 
+                            menu = menu.toggleable_entry(
+                                "Show Selection Menu",
+                                selection_menu_enabled,
+                                Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |cx| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.toggle_slection_menu(
+                                                &editor::actions::ToggleSelectionMenu,
+                                                cx,
+                                            )
+                                        });
+                                    }
+                                },
+                            );
+
                             menu
                         });
                         cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
@@ -247,7 +281,7 @@ impl Render for QuickActionBar {
                 h_flex()
                     .gap_1p5()
                     .children(search_button)
-                    .child(editor_selections_dropdown)
+                    .children(editor_selections_dropdown)
                     .when(AssistantSettings::get_global(cx).button, |bar| {
                         bar.child(assistant_button)
                     }),

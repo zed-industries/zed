@@ -290,6 +290,7 @@ gpui::actions!(
         TabPrev,
         ToggleGitBlame,
         ToggleGitBlameInline,
+        ToggleSelectionMenu,
         ToggleHunkDiff,
         ToggleInlayHints,
         ToggleLineNumbers,
