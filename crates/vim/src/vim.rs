@@ -896,6 +896,7 @@ impl Vim {
                             )
                         }
                     });
+                    vim.clear_operator(cx);
                 }
                 _ => {
                     vim.select_register(text, cx);

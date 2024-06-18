@@ -124,5 +124,9 @@ mod test {
         cx.set_shared_state("heˇllo\n").await;
         cx.simulate_shared_keystrokes("y y i ctrl-r \"").await;
         cx.shared_state().await.assert_eq("hehello\nˇllo\n");
+
+        cx.simulate_shared_keystrokes("ctrl-r x ctrl-r escape")
+            .await;
+        cx.shared_state().await.assert_eq("hehello\nˇllo\n");
     }
 }
