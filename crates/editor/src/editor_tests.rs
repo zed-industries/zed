@@ -4686,7 +4686,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_autoclose_and_autosurround_pairs(cx: &mut gpui::TestAppContext) {
+async fn test_autoclose_and_auto_surround_pairs(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -4865,7 +4865,7 @@ async fn test_autoclose_and_autosurround_pairs(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|view, cx| view.handle_input("<", cx));
     cx.assert_editor_state("<ˇ");
 
-    // Surround with brackets if text is selected and autosurround is enabled, even if autoclose is disabled
+    // Surround with brackets if text is selected and auto_surround is enabled, even if autoclose is disabled
     cx.set_state("«aˇ» b");
     cx.update_editor(|view, cx| view.handle_input("<", cx));
     cx.assert_editor_state("<«aˇ»> b");
