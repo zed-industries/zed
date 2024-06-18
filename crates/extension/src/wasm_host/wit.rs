@@ -268,9 +268,7 @@ impl Extension {
                 ext.call_complete_slash_command_argument(store, command, query)
                     .await
             }
-            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Err(anyhow!(
-                "`complete_slash_command_argument` not available prior to v0.0.7"
-            )),
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(Vec::new())),
         }
     }
 
