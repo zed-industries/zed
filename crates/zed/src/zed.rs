@@ -52,22 +52,15 @@ use zed_actions::{OpenBrowser, OpenSettings, OpenZedUrl, Quit};
 actions!(
     zed,
     [
-        About,
         DebugElements,
-        DecreaseBufferFontSize,
         Hide,
         HideOthers,
-        IncreaseBufferFontSize,
         Minimize,
         OpenDefaultKeymap,
         OpenDefaultSettings,
-        OpenKeymap,
-        OpenLicenses,
         OpenLocalSettings,
         OpenLocalTasks,
         OpenTasks,
-        OpenTelemetryLog,
-        ResetBufferFontSize,
         ResetDatabase,
         ShowAll,
         ToggleFullScreen,
@@ -252,13 +245,33 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 OpenListener::global(cx).open_urls(vec![action.url.clone()])
             })
             .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
-            .register_action(move |_, _: &IncreaseBufferFontSize, cx| {
-                theme::adjust_font_size(cx, |size| *size += px(1.0))
+            .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+                theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
             })
-            .register_action(move |_, _: &DecreaseBufferFontSize, cx| {
-                theme::adjust_font_size(cx, |size| *size -= px(1.0))
+            .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+                theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
             })
-            .register_action(move |_, _: &ResetBufferFontSize, cx| theme::reset_font_size(cx))
+            .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+                theme::reset_buffer_font_size(cx)
+            })
+            .register_action(move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
+                theme::adjust_ui_font_size(cx, |size| *size += px(1.0))
+            })
+            .register_action(move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
+                theme::adjust_ui_font_size(cx, |size| *size -= px(1.0))
+            })
+            .register_action(move |_, _: &zed_actions::ResetUiFontSize, cx| {
+                theme::reset_ui_font_size(cx)
+            })
+            .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+                theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
+            })
+            .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+                theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
+            })
+            .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+                theme::reset_buffer_font_size(cx)
+            })
             .register_action(|_, _: &install_cli::Install, cx| {
                 cx.spawn(|workspace, mut cx| async move {
                     if cfg!(target_os = "linux") {
@@ -323,7 +336,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             .register_action(|workspace, _: &OpenLog, cx| {
                 open_log_file(workspace, cx);
             })
-            .register_action(|workspace, _: &OpenLicenses, cx| {
+            .register_action(|workspace, _: &zed_actions::OpenLicenses, cx| {
                 open_bundled_file(
                     workspace,
                     asset_str::<Assets>("licenses.md"),
@@ -334,14 +347,16 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             })
             .register_action(
                 move |workspace: &mut Workspace,
-                      _: &OpenTelemetryLog,
+                      _: &zed_actions::OpenTelemetryLog,
                       cx: &mut ViewContext<Workspace>| {
                     open_telemetry_log_file(workspace, cx);
                 },
             )
             .register_action(
-                move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
-                    open_settings_file(paths::keymap_file(), Rope::default, cx);
+                move |_: &mut Workspace,
+                      _: &zed_actions::OpenKeymap,
+                      cx: &mut ViewContext<Workspace>| {
+                    open_settings_file(&paths::keymap_file(), Rope::default, cx);
                 },
             )
             .register_action(
@@ -485,7 +500,7 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
     });
 }
 
-fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
+fn about(_: &mut Workspace, _: &zed_actions::About, cx: &mut gpui::ViewContext<Workspace>) {
     let release_channel = ReleaseChannel::global(cx).display_name();
     let version = env!("CARGO_PKG_VERSION");
     let message = format!("{release_channel} {version}");

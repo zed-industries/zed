@@ -67,6 +67,7 @@ pub enum DoubleClickInMultibuffer {
 pub struct Toolbar {
     pub breadcrumbs: bool,
     pub quick_actions: bool,
+    pub selections_menu: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -129,6 +130,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub hover_popover_enabled: Option<bool>,
+
     /// Whether to pop the completions menu while typing in an editor without
     /// explicitly requesting it.
     ///
@@ -202,10 +204,15 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub breadcrumbs: Option<bool>,
-    /// Whether to display quik action buttons in the editor toolbar.
+    /// Whether to display quick action buttons in the editor toolbar.
     ///
     /// Default: true
     pub quick_actions: Option<bool>,
+
+    /// Whether to show the selections menu in the editor toolbar
+    ///
+    /// Default: true
+    pub selections_menu: Option<bool>,
 }
 
 /// Scrollbar related settings
