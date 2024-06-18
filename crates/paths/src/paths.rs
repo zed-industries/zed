@@ -78,6 +78,30 @@ pub fn temp_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the logs directory.
+pub fn logs_dir() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    LOGS_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            HOME.join("Library/Logs/Zed")
+        } else {
+            support_dir().join("logs")
+        }
+    })
+}
+
+/// Returns the path to the `Zed.log` file.
+pub fn log_file() -> &'static PathBuf {
+    static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
+    LOG_FILE.get_or_init(|| logs_dir().join("Zed.log"))
+}
+
+/// Returns the path to the `Zed.log.old` file.
+pub fn old_log_file() -> &'static PathBuf {
+    static OLD_LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
+    OLD_LOG_FILE.get_or_init(|| logs_dir().join("Zed.log.old"))
+}
+
 /// Returns the path to the contexts directory.
 ///
 /// This is where the saved contexts from the Assistant are stored.
@@ -105,12 +129,6 @@ lazy_static::lazy_static! {
     };
     pub static ref THEMES_DIR: PathBuf = config_dir().join("themes");
 
-
-    pub static ref LOGS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        HOME.join("Library/Logs/Zed")
-    } else {
-        support_dir().join("logs")
-    };
     pub static ref EXTENSIONS_DIR: PathBuf = support_dir().join("extensions");
     pub static ref LANGUAGES_DIR: PathBuf = support_dir().join("languages");
     pub static ref COPILOT_DIR: PathBuf = support_dir().join("copilot");
@@ -127,8 +145,6 @@ lazy_static::lazy_static! {
     pub static ref KEYMAP: PathBuf = config_dir().join("keymap.json");
     pub static ref TASKS: PathBuf = config_dir().join("tasks.json");
     pub static ref LAST_USERNAME: PathBuf = config_dir().join("last-username.txt");
-    pub static ref LOG: PathBuf = LOGS_DIR.join("Zed.log");
-    pub static ref OLD_LOG: PathBuf = LOGS_DIR.join("Zed.log.old");
     pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
     pub static ref LOCAL_TASKS_RELATIVE_PATH: &'static Path = Path::new(".zed/tasks.json");
     pub static ref LOCAL_VSCODE_TASKS_RELATIVE_PATH: &'static Path = Path::new(".vscode/tasks.json");

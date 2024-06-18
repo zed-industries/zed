@@ -672,7 +672,7 @@ fn init_paths() -> anyhow::Result<()> {
         &*paths::EXTENSIONS_DIR,
         &*paths::LANGUAGES_DIR,
         &*paths::DB_DIR,
-        &*paths::LOGS_DIR,
+        paths::logs_dir(),
         paths::temp_dir(),
     ]
     .iter()
@@ -693,15 +693,16 @@ fn init_logger() {
         const KIB: u64 = 1024;
         const MIB: u64 = 1024 * KIB;
         const MAX_LOG_BYTES: u64 = MIB;
-        if std::fs::metadata(&*paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
+        if std::fs::metadata(paths::log_file())
+            .map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
         {
-            let _ = std::fs::rename(&*paths::LOG, &*paths::OLD_LOG);
+            let _ = std::fs::rename(paths::log_file(), paths::old_log_file());
         }
 
         match OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&*paths::LOG)
+            .open(paths::log_file())
         {
             Ok(log_file) => {
                 let config = ConfigBuilder::new()

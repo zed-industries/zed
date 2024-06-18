@@ -566,7 +566,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
             let fs = workspace.app_state().fs.clone();
             cx.spawn(|workspace, mut cx| async move {
                 let (old_log, new_log) =
-                    futures::join!(fs.load(&paths::OLD_LOG), fs.load(&paths::LOG));
+                    futures::join!(fs.load(paths::old_log_file()), fs.load(paths::log_file()));
                 let log = match (old_log, new_log) {
                     (Err(_), Err(_)) => None,
                     (old_log, new_log) => {
@@ -602,7 +602,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                                     cx.new_view(|_| {
                                         MessageNotification::new(format!(
                                             "Unable to access/open log file at path {:?}",
-                                            paths::LOG.as_path()
+                                            paths::log_file().as_path()
                                         ))
                                     })
                                 },
