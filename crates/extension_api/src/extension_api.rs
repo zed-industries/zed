@@ -24,7 +24,7 @@ pub use wit::{
         npm_package_latest_version,
     },
     zed::extension::platform::{current_platform, Architecture, Os},
-    zed::extension::slash_command::SlashCommand,
+    zed::extension::slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection},
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
     LanguageServerInstallationStatus, Range, Worktree,
 };
@@ -114,8 +114,8 @@ pub trait Extension: Send + Sync {
         _command: SlashCommand,
         _argument: Option<String>,
         _worktree: &Worktree,
-    ) -> Result<Option<String>, String> {
-        Ok(None)
+    ) -> Result<SlashCommandOutput, String> {
+        Err("`run_slash_command` not implemented".to_string())
     }
 }
 
@@ -229,7 +229,7 @@ impl wit::Guest for Component {
         command: SlashCommand,
         argument: Option<String>,
         worktree: &Worktree,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<SlashCommandOutput, String> {
         extension().run_slash_command(command, argument, worktree)
     }
 }
