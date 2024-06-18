@@ -58,6 +58,7 @@ impl<T> Trie<T> {
         self.len
     }
 
+    // TODO: update len
     pub fn trim(&mut self, character: char) -> TrimResult<&T> {
         let node = match &mut self.root {
             TrieNode::Leaf(_) => {

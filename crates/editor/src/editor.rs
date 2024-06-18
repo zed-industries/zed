@@ -473,7 +473,7 @@ pub struct Editor {
     project: Option<Model<Project>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
-    blink_manager: Model<BlinkManager>,
+    pub blink_manager: Model<BlinkManager>,
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,

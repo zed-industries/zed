@@ -268,6 +268,11 @@ impl EasyMotion {
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
     ) -> Option<EasyMotionState> {
+        editor.blink_manager.update(cx, |blink, cx| {
+            blink.disable(cx);
+            blink.hide_cursor(cx);
+        });
+
         let selections = editor.selections.newest_display(cx);
         let snapshot = editor.snapshot(cx);
         let map = &snapshot.display_snapshot;
@@ -332,6 +337,15 @@ impl EasyMotion {
         EasyMotion::word_impl(editor, WordType::FullWord, direction, cx);
     }
 
+    fn clear_editor(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        editor.blink_manager.update(cx, |blink, cx| {
+            blink.enable(cx);
+        });
+        editor.clear_overlays::<Self>(cx);
+        editor.clear_highlights::<Self>(cx);
+        editor.remove_keymap_context_layer::<Self>(cx);
+    }
+
     fn word_impl(
         editor: View<Editor>,
         word_type: WordType,
@@ -378,11 +392,7 @@ impl EasyMotion {
         let id = editor.entity_id();
         Self::update(cx, |easy, _| easy.editor_states.remove(&id));
         Vim::update(cx, |vim, cx| vim.switch_mode(Mode::Normal, false, cx));
-        editor.update(cx, |editor, cx| {
-            editor.clear_overlays::<Self>(cx);
-            editor.clear_highlights::<Self>(cx);
-            editor.remove_keymap_context_layer::<Self>(cx);
-        });
+        editor.update(cx, |editor, cx| Self::clear_editor(editor, cx));
     }
 
     fn observe_keystrokes(
@@ -406,7 +416,9 @@ impl EasyMotion {
         let keys = keystroke_event.keystroke.key.as_str();
         let new_state = editor.update(cx, |editor, cx| Self::handle_trim(state, keys, editor, cx));
 
-        Vim::update(cx, |vim, cx| vim.switch_mode(Mode::Normal, false, cx));
+        if new_state.is_none() {
+            Vim::update(cx, |vim, cx| vim.switch_mode(Mode::Normal, false, cx));
+        }
         Self::update(cx, move |easy, cx| {
             if let Some(new_state) = new_state {
                 easy.editor_states.insert(entity_id, new_state);
@@ -432,9 +444,7 @@ impl EasyMotion {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |selection| {
                     selection.move_cursors_with(|_, _, _| (point, SelectionGoal::None))
                 });
-                editor.clear_overlays::<Self>(cx);
-                editor.clear_highlights::<Self>(cx);
-                editor.remove_keymap_context_layer::<Self>(cx);
+                Self::clear_editor(editor, cx);
                 None
             }
             TrimResult::Changed => {
@@ -453,9 +463,7 @@ impl EasyMotion {
                 Some(selection)
             }
             TrimResult::Err => {
-                editor.clear_overlays::<Self>(cx);
-                editor.clear_highlights::<Self>(cx);
-                editor.remove_keymap_context_layer::<Self>(cx);
+                Self::clear_editor(editor, cx);
                 None
             }
             TrimResult::NoChange => Some(selection),
