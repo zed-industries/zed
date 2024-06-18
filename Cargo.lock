@@ -425,6 +425,7 @@ dependencies = [
  "gpui",
  "language",
  "parking_lot",
+ "serde",
  "workspace",
 ]
 
@@ -11543,6 +11544,7 @@ dependencies = [
  "gpui",
  "itertools 0.11.0",
  "menu",
+ "serde",
  "settings",
  "smallvec",
  "story",

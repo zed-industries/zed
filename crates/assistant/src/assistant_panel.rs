@@ -15,12 +15,11 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use client::telemetry::Telemetry;
 use collections::{BTreeSet, HashMap, HashSet};
-use editor::actions::ShowCompletions;
 use editor::{
-    actions::{FoldAt, MoveToEndOfLine, Newline, UnfoldAt},
+    actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, ToDisplayPoint},
     scroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, EditorEvent, RowExt, ToOffset as _, ToPoint,
+    Anchor, AnchorRangeExt as _, Editor, EditorEvent, RowExt, ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use file_icons::FileIcons;
@@ -36,7 +35,7 @@ use gpui::{
     WindowContext,
 };
 use language::{
-    language_settings::SoftWrap, AnchorRangeExt, AutoindentMode, Buffer, LanguageRegistry,
+    language_settings::SoftWrap, AnchorRangeExt as _, AutoindentMode, Buffer, LanguageRegistry,
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
@@ -1013,6 +1012,7 @@ pub struct Context {
     edit_suggestions: Vec<EditSuggestion>,
     pending_slash_commands: Vec<PendingSlashCommand>,
     edits_since_last_slash_command_parse: language::Subscription,
+    slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1054,6 +1054,7 @@ impl Context {
             next_message_id: Default::default(),
             edit_suggestions: Vec::new(),
             pending_slash_commands: Vec::new(),
+            slash_command_output_sections: Vec::new(),
             edits_since_last_slash_command_parse,
             summary: None,
             pending_summary: Task::ready(None),
@@ -1090,11 +1091,12 @@ impl Context {
     }
 
     fn serialize(&self, cx: &AppContext) -> SavedContext {
+        let buffer = self.buffer.read(cx);
         SavedContext {
             id: self.id.clone(),
             zed: "context".into(),
             version: SavedContext::VERSION.into(),
-            text: self.buffer.read(cx).text(),
+            text: buffer.text(),
             message_metadata: self.messages_metadata.clone(),
             messages: self
                 .messages(cx)
@@ -1108,6 +1110,22 @@ impl Context {
                 .as_ref()
                 .map(|summary| summary.text.clone())
                 .unwrap_or_default(),
+            slash_command_output_sections: self
+                .slash_command_output_sections
+                .iter()
+                .filter_map(|section| {
+                    let range = section.range.to_offset(buffer);
+                    if section.range.start.is_valid(buffer) && !range.is_empty() {
+                        Some(SlashCommandOutputSection {
+                            range,
+                            icon: section.icon,
+                            label: section.label.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -1159,6 +1177,19 @@ impl Context {
                 next_message_id,
                 edit_suggestions: Vec::new(),
                 pending_slash_commands: Vec::new(),
+                slash_command_output_sections: saved_context
+                    .slash_command_output_sections
+                    .into_iter()
+                    .map(|section| {
+                        let buffer = buffer.read(cx);
+                        SlashCommandOutputSection {
+                            range: buffer.anchor_after(section.range.start)
+                                ..buffer.anchor_before(section.range.end),
+                            icon: section.icon,
+                            label: section.label,
+                        }
+                    })
+                    .collect(),
                 edits_since_last_slash_command_parse,
                 summary: Some(Summary {
                     text: saved_context.summary,
@@ -1445,13 +1476,14 @@ impl Context {
                             output.text.push('\n');
                         }
 
+                        let mut sections = Vec::new();
                         let event = this.buffer.update(cx, |buffer, cx| {
                             let start = command_range.start.to_offset(buffer);
                             let old_end = command_range.end.to_offset(buffer);
                             let new_end = start + output.text.len();
                             buffer.edit([(start..old_end, output.text)], None, cx);
 
-                            let mut sections = output
+                            sections = output
                                 .sections
                                 .into_iter()
                                 .map(|section| SlashCommandOutputSection {
@@ -1465,11 +1497,13 @@ impl Context {
                             ContextEvent::SlashCommandFinished {
                                 output_range: buffer.anchor_after(start)
                                     ..buffer.anchor_before(new_end),
-                                sections,
+                                sections: sections.clone(),
                                 run_commands_in_output: output.run_commands_in_text,
                             }
                         });
                         cx.emit(event);
+
+                        this.slash_command_output_sections.extend(sections);
                     }
                     Err(error) => {
                         if let Some(pending_command) =
@@ -2225,6 +2259,7 @@ impl ContextEditor {
             cx.subscribe(&editor, Self::handle_editor_event),
         ];
 
+        let sections = context.read(cx).slash_command_output_sections.clone();
         let mut this = Self {
             context,
             editor,
@@ -2238,6 +2273,7 @@ impl ContextEditor {
             _subscriptions,
         };
         this.update_message_headers(cx);
+        this.insert_slash_command_output_sections(sections, cx);
         this
     }
 
@@ -2663,6 +2699,7 @@ impl ContextEditor {
                 ));
             }
 
+            creases.sort_by(|a, b| a.range.cmp(&b.range, &buffer));
             editor.insert_creases(creases, cx);
 
             for buffer_row in buffer_rows_to_fold.into_iter().rev() {

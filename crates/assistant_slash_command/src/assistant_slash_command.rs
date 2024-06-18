@@ -3,6 +3,7 @@ mod slash_command_registry;
 use anyhow::Result;
 use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
 use language::{CodeLabel, LspAdapterDelegate};
+use serde::{Deserialize, Serialize};
 pub use slash_command_registry::*;
 use std::{
     ops::Range,
@@ -55,7 +56,7 @@ pub struct SlashCommandOutput {
     pub run_commands_in_text: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SlashCommandOutputSection<T> {
     pub range: Range<T>,
     pub icon: IconName,
