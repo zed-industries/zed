@@ -108,7 +108,7 @@ pub trait Extension: Send + Sync {
         None
     }
 
-    /// Returns the completions that should be shown when completing the provided slash command with the given query
+    /// Returns the completions that should be shown when completing the provided slash command with the given query.
     fn complete_slash_command_argument(
         &self,
         _command: SlashCommand,
