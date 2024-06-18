@@ -673,7 +673,7 @@ fn init_paths() -> anyhow::Result<()> {
         &*paths::LANGUAGES_DIR,
         &*paths::DB_DIR,
         &*paths::LOGS_DIR,
-        &*paths::TEMP_DIR,
+        paths::temp_dir(),
     ]
     .iter()
     {

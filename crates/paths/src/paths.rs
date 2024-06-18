@@ -55,6 +55,29 @@ pub fn support_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the temp directory used by Zed.
+pub fn temp_dir() -> &'static PathBuf {
+    static TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
+    TEMP_DIR.get_or_init(|| {
+        if cfg!(target_os = "windows") {
+            return dirs::cache_dir()
+                .expect("failed to determine LocalAppData directory")
+                .join("Zed");
+        }
+
+        if cfg!(target_os = "linux") {
+            return if let Ok(flatpak_xdg_cache) = std::env::var("FLATPAK_XDG_CACHE_HOME") {
+                flatpak_xdg_cache.into()
+            } else {
+                dirs::cache_dir().expect("failed to determine XDG_CACHE_HOME directory")
+            }
+            .join("zed");
+        }
+
+        HOME.join(".cache").join("zed")
+    })
+}
+
 /// Returns the path to the contexts directory.
 ///
 /// This is where the saved contexts from the Assistant are stored.
@@ -109,17 +132,4 @@ lazy_static::lazy_static! {
     pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
     pub static ref LOCAL_TASKS_RELATIVE_PATH: &'static Path = Path::new(".zed/tasks.json");
     pub static ref LOCAL_VSCODE_TASKS_RELATIVE_PATH: &'static Path = Path::new(".vscode/tasks.json");
-    pub static ref TEMP_DIR: PathBuf = if cfg!(target_os = "windows") {
-        dirs::cache_dir()
-            .expect("failed to determine LocalAppData directory")
-            .join("Zed")
-    } else if cfg!(target_os = "linux") {
-        if let Ok(flatpak_xdg_cache) = std::env::var("FLATPAK_XDG_CACHE_HOME") {
-            flatpak_xdg_cache.into()
-        } else {
-            dirs::cache_dir().expect("failed to determine XDG_CACHE_HOME directory")
-        }.join("zed")
-    } else {
-        HOME.join(".cache").join("zed")
-    };
 }
