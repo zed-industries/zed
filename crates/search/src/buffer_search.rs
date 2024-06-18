@@ -775,6 +775,7 @@ impl BufferSearchBar {
                 if let Some(matches) = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
+                    .filter(|matches| !matches.is_empty())
                 {
                     let new_match_index = searchable_item
                         .match_index_for_direction(matches, index, direction, count, cx);
