@@ -2,23 +2,23 @@ name: Feature Request
 description: "Tip: open this issue template from within Zed with the `request feature` command palette action"
 labels: ["admin read", "triage", "enhancement"]
 body:
-    - type: checkboxes
-      attributes:
-          label: Check for existing issues
-          description: Check the backlog of issues to reduce the chances of creating duplicates; if an issue already exists, place a `+1` (👍) on it.
-          options:
-              - label: Completed
-                required: true
-    - type: textarea
-      attributes:
-          label: Describe the feature
-          description: A clear and concise description of what you want to happen.
-      validations:
+  - type: checkboxes
+    attributes:
+      label: Check for existing issues
+      description: Check the backlog of issues to reduce the chances of creating duplicates; if an issue already exists, place a `+1` (👍) on it.
+      options:
+        - label: Completed
           required: true
-    - type: textarea
-      attributes:
-          label: |
-              If applicable, add mockups / screenshots to help present your vision of the feature
-          description: Drag images into the text input below
-      validations:
-          required: false
+  - type: textarea
+    attributes:
+      label: Describe the feature
+      description: A clear and concise description of what you want to happen.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: |
+        If applicable, add mockups / screenshots to help present your vision of the feature
+      description: Drag images into the text input below
+    validations:
+      required: false
