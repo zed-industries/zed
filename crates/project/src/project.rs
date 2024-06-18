@@ -165,9 +165,6 @@ pub struct Project {
     worktrees_reordered: bool,
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
-    pending_language_server_update: Option<BufferOrderedMessage>,
-    flush_language_server_update: Option<Task<()>>,
-
     languages: Arc<LanguageRegistry>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
@@ -418,6 +415,7 @@ pub struct LanguageServerStatus {
 pub struct LanguageServerProgress {
     pub is_disk_based_diagnostics_progress: bool,
     pub is_cancellable: bool,
+    pub title: Option<String>,
     pub message: Option<String>,
     pub percentage: Option<usize>,
     #[serde(skip_serializing)]
@@ -760,8 +758,6 @@ impl Project {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
-                flush_language_server_update: None,
-                pending_language_server_update: None,
                 collaborators: Default::default(),
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
@@ -902,8 +898,6 @@ impl Project {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
                 buffer_ordered_messages_tx: tx,
-                pending_language_server_update: None,
-                flush_language_server_update: None,
                 loading_buffers_by_path: Default::default(),
                 loading_buffers: Default::default(),
                 shared_buffers: Default::default(),
@@ -4284,35 +4278,7 @@ impl Project {
         .detach();
     }
 
-    fn enqueue_language_server_progress(
-        &mut self,
-        message: BufferOrderedMessage,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.pending_language_server_update.replace(message);
-        self.flush_language_server_update.get_or_insert_with(|| {
-            cx.spawn(|this, mut cx| async move {
-                cx.background_executor()
-                    .timer(SERVER_PROGRESS_DEBOUNCE_TIMEOUT)
-                    .await;
-                this.update(&mut cx, |this, _| {
-                    this.flush_language_server_update.take();
-                    if let Some(update) = this.pending_language_server_update.take() {
-                        this.enqueue_buffer_ordered_message(update).ok();
-                    }
-                })
-                .ok();
-            })
-        });
-    }
-
     fn enqueue_buffer_ordered_message(&mut self, message: BufferOrderedMessage) -> Result<()> {
-        if let Some(pending_message) = self.pending_language_server_update.take() {
-            self.flush_language_server_update.take();
-            self.buffer_ordered_messages_tx
-                .unbounded_send(pending_message)
-                .map_err(|e| anyhow!(e))?;
-        }
         self.buffer_ordered_messages_tx
             .unbounded_send(message)
             .map_err(|e| anyhow!(e))
@@ -4360,6 +4326,7 @@ impl Project {
                     language_server_id,
                     token.clone(),
                     LanguageServerProgress {
+                        title: Some(report.title),
                         is_disk_based_diagnostics_progress,
                         is_cancellable: report.cancellable.unwrap_or(false),
                         message: report.message.clone(),
@@ -4370,20 +4337,20 @@ impl Project {
                 );
             }
             lsp::WorkDoneProgress::Report(report) => {
-                if !is_disk_based_diagnostics_progress {
-                    self.on_lsp_work_progress(
-                        language_server_id,
-                        token.clone(),
-                        LanguageServerProgress {
-                            is_disk_based_diagnostics_progress,
-                            is_cancellable: report.cancellable.unwrap_or(false),
-                            message: report.message.clone(),
-                            percentage: report.percentage.map(|p| p as usize),
-                            last_update_at: Instant::now(),
-                        },
-                        cx,
-                    );
-                    self.enqueue_language_server_progress(
+                if self.on_lsp_work_progress(
+                    language_server_id,
+                    token.clone(),
+                    LanguageServerProgress {
+                        title: None,
+                        is_disk_based_diagnostics_progress,
+                        is_cancellable: report.cancellable.unwrap_or(false),
+                        message: report.message.clone(),
+                        percentage: report.percentage.map(|p| p as usize),
+                        last_update_at: Instant::now(),
+                    },
+                    cx,
+                ) {
+                    self.enqueue_buffer_ordered_message(
                         BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id,
                             message: proto::update_language_server::Variant::WorkProgress(
@@ -4394,17 +4361,16 @@ impl Project {
                                 },
                             ),
                         },
-                        cx,
-                    );
+                    )
+                    .ok();
                 }
             }
             lsp::WorkDoneProgress::End(_) => {
                 language_server_status.progress_tokens.remove(&token);
-
+                self.on_lsp_work_end(language_server_id, token.clone(), cx);
                 if is_disk_based_diagnostics_progress {
                     self.disk_based_diagnostics_finished(language_server_id, cx);
                 }
-                self.on_lsp_work_end(language_server_id, token.clone(), cx);
             }
         }
     }
@@ -4426,6 +4392,7 @@ impl Project {
                 language_server_id,
                 message: proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
                     token,
+                    title: progress.title,
                     message: progress.message,
                     percentage: progress.percentage.map(|p| p as u32),
                 }),
@@ -4440,27 +4407,36 @@ impl Project {
         token: String,
         progress: LanguageServerProgress,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> bool {
+        const MIN_LSP_WORK_PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             match status.pending_work.entry(token) {
                 btree_map::Entry::Vacant(entry) => {
                     entry.insert(progress);
+                    cx.notify();
+                    return true;
                 }
                 btree_map::Entry::Occupied(mut entry) => {
                     let entry = entry.get_mut();
-                    if progress.message.is_some() {
-                        entry.message = progress.message;
+                    if (progress.last_update_at - entry.last_update_at)
+                        > MIN_LSP_WORK_PROGRESS_INTERVAL
+                    {
+                        entry.last_update_at = progress.last_update_at;
+                        if progress.message.is_some() {
+                            entry.message = progress.message;
+                        }
+                        if progress.percentage.is_some() {
+                            entry.percentage = progress.percentage;
+                        }
+                        cx.notify();
+                        return true;
                     }
-                    if progress.percentage.is_some() {
-                        entry.percentage = progress.percentage;
-                    }
-                    entry.last_update_at = progress.last_update_at;
-                    entry.is_disk_based_diagnostics_progress =
-                        progress.is_disk_based_diagnostics_progress;
                 }
             }
-            cx.notify();
         }
+
+        false
     }
 
     fn on_lsp_work_end(
@@ -7464,6 +7440,7 @@ impl Project {
                                     LanguageServerProgress {
                                         is_disk_based_diagnostics_progress: false,
                                         is_cancellable: false,
+                                        title: None,
                                         message: status.clone(),
                                         percentage: None,
                                         last_update_at: Instant::now(),
@@ -9124,6 +9101,7 @@ impl Project {
                         language_server_id,
                         payload.token,
                         LanguageServerProgress {
+                            title: payload.title,
                             is_disk_based_diagnostics_progress: false,
                             is_cancellable: false,
                             message: payload.message,
@@ -9139,6 +9117,7 @@ impl Project {
                         language_server_id,
                         payload.token,
                         LanguageServerProgress {
+                            title: None,
                             is_disk_based_diagnostics_progress: false,
                             is_cancellable: false,
                             message: payload.message,
