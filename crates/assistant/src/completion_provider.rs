@@ -24,7 +24,7 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Choose which model to use based on the available models and the default model for openai provider.
+/// Choose which model to use for openai provider based on the available models and the default model.
 fn choose_openai_model(
     model: &::open_ai::Model,
     available_models: &Option<Vec<::open_ai::Model>>,
