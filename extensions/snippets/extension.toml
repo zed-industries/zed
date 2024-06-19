@@ -1,0 +1,12 @@
+id = "snippets"
+name = "Snippets"
+description = "Support for language-agnostic snippets, provided by simple-completion-language-server"
+version = "0.0.1"
+schema_version = 1
+authors = []
+repository = "https://github.com/zed-extensions/svelte"
+
+[language_servers.snippet-completion-server]
+name = "Snippet Completion Server"
+languages = ["TypeScript", "TSX", "JavaScript", "JSDoc", "Go", "Markdown", "Rust", "C", "C++", "PHP", "Python", "Ruby", "Shell"]
+language_ids = { "TypeScript" = "typescript", "TSX" = "typescriptreact", "JavaScript" = "javascript" }

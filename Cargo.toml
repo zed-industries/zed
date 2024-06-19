@@ -136,6 +136,7 @@ members = [
     "extensions/prisma",
     "extensions/purescript",
     "extensions/ruby",
+    "extensions/snippets",
     "extensions/svelte",
     "extensions/terraform",
     "extensions/toml",
