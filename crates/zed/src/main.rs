@@ -705,11 +705,19 @@ fn init_logger() {
             .open(paths::log_file())
         {
             Ok(log_file) => {
-                let config = ConfigBuilder::new()
-                    .set_time_format_str("%Y-%m-%dT%T%:z")
-                    .set_time_to_local(true)
-                    .build();
+                let mut config_builder = ConfigBuilder::new();
 
+                config_builder.set_time_format_str("%Y-%m-%dT%T%:z");
+                config_builder.set_time_to_local(true);
+
+                #[cfg(target_os = "linux")]
+                {
+                    config_builder.add_filter_ignore_str("zbus");
+                    config_builder.add_filter_ignore_str("blade_graphics::hal::resource");
+                    config_builder.add_filter_ignore_str("naga::back::spv::writer");
+                }
+
+                let config = config_builder.build();
                 simplelog::WriteLogger::init(level, config, log_file)
                     .expect("could not initialize logger");
             }
