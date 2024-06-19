@@ -87,7 +87,6 @@ impl Connection {
         self.backup_main(&destination)
     }
 
-    #[cfg(not(target_os = "linux"))]
     pub fn sql_has_syntax_error(&self, sql: &str) -> Option<(String, usize)> {
         let sql = CString::new(sql).unwrap();
         let mut remaining_sql = sql.as_c_str();
@@ -129,9 +128,15 @@ impl Connection {
                             &mut remaining_sql_ptr,
                         );
 
+                        #[cfg(not(target_os = "linux"))]
+                        let offset = sqlite3_error_offset(temp_connection.sqlite3);
+
+                        #[cfg(target_os = "linux")]
+                        let offset = 0;
+
                         (
                             sqlite3_errcode(temp_connection.sqlite3),
-                            sqlite3_error_offset(temp_connection.sqlite3),
+                            offset,
                             sqlite3_errmsg(temp_connection.sqlite3),
                             Some(temp_connection),
                         )
@@ -143,9 +148,16 @@ impl Connection {
                             &mut raw_statement,
                             &mut remaining_sql_ptr,
                         );
+
+                        #[cfg(not(target_os = "linux"))]
+                        let offset = sqlite3_error_offset(self.sqlite3);
+
+                        #[cfg(target_os = "linux")]
+                        let offset = 0;
+
                         (
                             sqlite3_errcode(self.sqlite3),
-                            sqlite3_error_offset(self.sqlite3),
+                            offset,
                             sqlite3_errmsg(self.sqlite3),
                             None,
                         )
@@ -203,7 +215,6 @@ impl Connection {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
 fn parse_alter_table(remaining_sql_str: &str) -> Option<(String, String)> {
     let remaining_sql_str = remaining_sql_str.to_lowercase();
     if remaining_sql_str.starts_with("alter") {
@@ -414,7 +425,6 @@ mod test {
         assert_eq!(res, Some(first_stmt.len() + second_offset + 1));
     }
 
-    #[cfg(not(target_os = "linux"))]
     #[test]
     fn test_alter_table_syntax() {
         let connection = Connection::open_memory(Some("test_alter_table_syntax"));
