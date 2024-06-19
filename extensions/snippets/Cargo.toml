@@ -15,4 +15,3 @@ crate-type = ["cdylib"]
 [dependencies]
 zed_extension_api = "0.0.6"
 serde_json = "1.0"
-dirs = "5.0"
