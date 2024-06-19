@@ -69,7 +69,8 @@ cargo test --workspace
 [MSYS2](https://msys2.org/) distribution provides Zed as a package. To download the prebuilt binary, run
 
 ```
-pacman -S mingw-w64-ucrt-x86_64-zed
+$ pacman -Syu
+$ pacman -S mingw-w64-ucrt-x86_64-zed
 ```
 
 then you can run `zed` in a UCRT64 shell.
