@@ -4853,6 +4853,11 @@ async fn test_autoclose_and_auto_surround_pairs(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|view, cx| view.handle_input("[", cx));
     cx.assert_editor_state("[ˇ");
 
+    // Surround with brackets if text is selected
+    cx.set_state("«aˇ» b");
+    cx.update_editor(|view, cx| view.handle_input("{", cx));
+    cx.assert_editor_state("{«aˇ»} b");
+
     // Autclose pair where the start and end characters are the same
     cx.set_state("aˇ");
     cx.update_editor(|view, cx| view.handle_input("\"", cx));
