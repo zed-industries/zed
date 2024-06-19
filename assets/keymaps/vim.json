@@ -672,7 +672,7 @@
     }
   },
   {
-    "context": "EmptyPane || SharedScreen",
+    "context": "EmptyPane || SharedScreen || Workspace",
     "bindings": {
       ":": "command_palette::Toggle"
     }
