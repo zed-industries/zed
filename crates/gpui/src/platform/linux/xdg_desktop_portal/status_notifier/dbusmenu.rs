@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
-use super::menu::MenuItem;
 use serde::Serialize;
 use zbus::{
     interface,
     object_server::SignalContext,
     zvariant::{Structure, StructureBuilder, Type, Value},
 };
+
+use super::menu::MenuItem;
 
 pub const DBUS_MENU_PATH: &str = "/MenuBar";
 
@@ -30,7 +31,8 @@ impl<'a> From<DBusMenuLayoutItem<'a>> for Structure<'a> {
 
 #[derive(Default)]
 pub struct DBusMenuInterface {
-    pub menu: MenuItem,
+    pub(crate) menu: MenuItem,
+    pub(crate) revision: u32,
 }
 
 #[interface(name = "com.canonical.dbusmenu")]
@@ -41,15 +43,10 @@ impl DBusMenuInterface {
         &self,
         parent_id: i32,
         recursion_depth: i32,
-        property_names: Vec<String>,
+        _property_names: Vec<String>,
     ) -> (u32, DBusMenuLayoutItem) {
         let mut main_menu = DBusMenuLayoutItem::default();
-        let menu = if parent_id == 0 {
-            &self.menu
-        } else {
-            // This is not supposed to panic if we do it correctly
-            self.menu.find_by_id(parent_id).unwrap()
-        };
+        let menu = self.menu.find_by_id(parent_id).unwrap();
         if !menu.children.is_empty() {
             main_menu
                 .properties
@@ -59,14 +56,18 @@ impl DBusMenuInterface {
                 main_menu.children.push(Value::from(submenu));
             }
         }
-        (0, main_menu)
+        (self.revision, main_menu)
     }
 
-    // TODO: This is not done.
-    pub async fn event(&self, id: i32, event_id: String, event_data: Value<'_>, timestamp: u32) {}
+    pub async fn event(&self, id: i32, event_id: String, event_data: Value<'_>, _timestamp: u32) {
+        let menu = self.menu.find_by_id(id).unwrap();
+        menu.action
+            .as_ref()
+            .map(|action| action(event_id, event_data));
+    }
 
-    // TODO: This is not done.
-    pub async fn about_to_show(&self, id: i32) -> bool {
+    // TODO: Not sure what is the purpose of this.
+    pub async fn about_to_show(&self, _id: i32) -> bool {
         false
     }
 

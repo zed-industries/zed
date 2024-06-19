@@ -293,7 +293,7 @@ impl StatusNotifierItemInterface {
 }
 
 pub struct StatusNotifierItem {
-    pub conn: zbus::Connection,
+    conn: zbus::Connection,
     item_ref: InterfaceRef<StatusNotifierItemInterface>,
     menu_ref: InterfaceRef<DBusMenuInterface>,
 }
@@ -433,12 +433,12 @@ impl StatusNotifierItem {
     }
 
     pub async fn set_menu(&self, menu: MenuItem) -> zbus::Result<()> {
+        let cx = self.menu_ref.signal_context();
         let mut iface = self.menu_ref.get_mut().await;
         iface.menu = menu;
-        drop(iface);
-        let cx = self.item_ref.signal_context();
-        let iface = self.item_ref.get().await;
-        iface.new_menu(cx).await?;
+        iface.revision += 1;
+        // TODO: We should allow users to select which submenu is gonna be update
+        iface.layout_updated(cx, iface.revision, 0).await?;
         Ok(())
     }
 }
