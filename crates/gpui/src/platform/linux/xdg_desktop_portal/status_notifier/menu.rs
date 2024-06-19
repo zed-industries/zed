@@ -6,34 +6,44 @@ use super::dbusmenu::DBusMenuLayoutItem;
 
 #[derive(Clone)]
 pub enum MenuProperties {
-    // "standard" | "separator"
+    /// "standard" | "separator"
     Type(String),
     Label(String),
     Enabled(bool),
     Visible(bool),
     IconName(String),
-    // PNG data of the icon
+    /// PNG data of the icon
     IconData(Vec<u8>),
     Shortcut(Vec<Vec<String>>),
     /// "checkmark" | "radio"
     ToggleType(String),
-    // 0 = off | 1 = on | x = indeterminate
+    /// 0 = off | 1 = on | x = indeterminate
     ToggleState(i32),
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct MenuItem {
     pub(crate) id: i32,
+    pub(crate) action: Option<Box<dyn Fn(String, Value) + Sync + Send>>,
     pub(crate) properties: Vec<MenuProperties>,
     pub(crate) children: Vec<MenuItem>,
+}
+
+impl Clone for MenuItem {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            action: None,
+            properties: self.properties.clone(),
+            children: self.children.clone(),
+        }
+    }
 }
 
 impl MenuItem {
     pub fn find_by_id(&self, id: i32) -> Option<&Self> {
         let mut queue: VecDeque<&Self> = VecDeque::new();
-        for child in &self.children {
-            queue.push_back(child);
-        }
+        queue.push_back(self);
         while !queue.is_empty() {
             let submenu = queue.pop_front().unwrap();
             if submenu.id == id {
@@ -102,22 +112,37 @@ impl MenuItem {
     }
 }
 
-pub struct SubmenuGenerator {
+pub struct MenuGenerator {
     next_id: i32,
 }
 
-impl SubmenuGenerator {
+impl MenuGenerator {
     pub fn new() -> Self {
-        SubmenuGenerator { next_id: 1 }
+        MenuGenerator { next_id: 1 }
     }
 
-    pub fn create_submenu(&mut self, properties: Vec<MenuProperties>) -> MenuItem {
+    pub fn menu_item(
+        &mut self,
+        action: Option<Box<dyn Fn(String, Value) + Sync + Send>>,
+        properties: Vec<MenuProperties>,
+    ) -> MenuItem {
         let id = self.next_id;
         self.next_id += 1;
         MenuItem {
             id,
-            properties,
+            action: action,
+            properties: properties,
             children: Vec::default(),
+        }
+    }
+
+    pub fn separator(&mut self) -> MenuItem {
+        let id = self.next_id;
+        self.next_id += 1;
+        MenuItem {
+            id,
+            properties: vec![MenuProperties::Type("separator".into())],
+            ..Default::default()
         }
     }
 }
