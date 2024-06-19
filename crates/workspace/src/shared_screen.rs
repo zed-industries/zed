@@ -3,15 +3,15 @@ use crate::{
     ItemNavHistory, WorkspaceId,
 };
 use anyhow::Result;
-use call::participant::{Frame, RemoteVideoTrack};
+use call::participant::RemoteVideoTrack;
 use client::{proto::PeerId, User};
-use futures::StreamExt;
+use futures::StreamExt as _;
 use gpui::{
     div, img, AppContext, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
-    WindowContext,
+    ParentElement, Render, ScreenCaptureFrame, SharedString, Styled, Task, View, ViewContext,
+    VisualContext, WindowContext,
 };
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use ui::{h_flex, prelude::*, Icon, IconName, Label};
 
 pub enum Event {
@@ -19,8 +19,8 @@ pub enum Event {
 }
 
 pub struct SharedScreen {
-    track: Weak<RemoteVideoTrack>,
-    frame: Option<Frame>,
+    track: RemoteVideoTrack,
+    frame: Option<ScreenCaptureFrame>,
     pub peer_id: PeerId,
     user: Arc<User>,
     nav_history: Option<ItemNavHistory>,
@@ -30,20 +30,22 @@ pub struct SharedScreen {
 
 impl SharedScreen {
     pub fn new(
-        track: &Arc<RemoteVideoTrack>,
+        track: RemoteVideoTrack,
         peer_id: PeerId,
         user: Arc<User>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.focus_handle();
-        let mut frames = track.frames();
+        let frames = call::create_screen_capture_frame_stream_from_video_track(&track);
+
         Self {
-            track: Arc::downgrade(track),
+            track,
             frame: None,
             peer_id,
             user,
             nav_history: Default::default(),
             _maintain_frame: cx.spawn(|this, mut cx| async move {
+                futures::pin_mut!(frames);
                 while let Some(frame) = frames.next().await {
                     this.update(&mut cx, |this, cx| {
                         this.frame = Some(frame);
@@ -72,11 +74,7 @@ impl Render for SharedScreen {
             .track_focus(&self.focus)
             .key_context("SharedScreen")
             .size_full()
-            .children(
-                self.frame
-                    .as_ref()
-                    .map(|frame| img(frame.image()).size_full()),
-            )
+            .children(self.frame.as_ref().map(|frame| img(frame.0.clone())))
     }
 }
 
@@ -122,8 +120,7 @@ impl Item for SharedScreen {
         _workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
-        let track = self.track.upgrade()?;
-        Some(cx.new_view(|cx| Self::new(&track, self.peer_id, self.user.clone(), cx)))
+        Some(cx.new_view(|cx| Self::new(self.track.clone(), self.peer_id, self.user.clone(), cx)))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {

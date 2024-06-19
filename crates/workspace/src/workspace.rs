@@ -3484,7 +3484,7 @@ impl Workspace {
             }
         }
 
-        Some(cx.new_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
+        Some(cx.new_view(|cx| SharedScreen::new(track, peer_id, user.clone(), cx)))
     }
 
     pub fn on_window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {

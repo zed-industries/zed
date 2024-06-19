@@ -64,10 +64,17 @@ use time::UtcOffset;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use test::TestScreenCaptureSource;
+
+#[cfg(target_os = "macos")]
+pub use mac::ScreenCaptureFrame;
+
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new())
 }
+
 #[cfg(target_os = "linux")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     match guess_compositor() {
@@ -120,6 +127,10 @@ pub(crate) trait Platform: 'static {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -197,6 +208,19 @@ pub trait PlatformDisplay: Send + Sync + Debug {
         Bounds::new(origin, DEFAULT_WINDOW_SIZE)
     }
 }
+
+/// A source of on-screen video content that can be captured.
+pub trait ScreenCaptureSource {
+    /// Start capture video from this source, invoking the given callback
+    /// with each frame.
+    fn stream(
+        &self,
+        frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+    ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
+}
+
+/// A video stream captured from a screen.
+pub trait ScreenCaptureStream {}
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]

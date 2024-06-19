@@ -33,6 +33,7 @@ async-trait = { workspace = true, optional = true }
 collections = { workspace = true, optional = true }
 futures.workspace = true
 gpui = { workspace = true, optional = true }
+livekit.workspace = true
 live_kit_server = { workspace = true, optional = true }
 log.workspace = true
 media.workspace = true

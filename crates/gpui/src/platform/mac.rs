@@ -4,6 +4,7 @@ mod dispatcher;
 mod display;
 mod display_link;
 mod events;
+mod screen_capture;
 
 #[cfg(not(feature = "macos-blade"))]
 mod metal_atlas;
@@ -38,8 +39,11 @@ pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
 pub(crate) use platform::*;
+pub(crate) use screen_capture::*;
 pub(crate) use text_system::*;
 pub(crate) use window::*;
+
+pub use screen_capture::ScreenCaptureFrame;
 
 trait BoolExt {
     fn to_objc(self) -> BOOL;

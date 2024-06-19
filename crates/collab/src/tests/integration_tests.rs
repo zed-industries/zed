@@ -14,14 +14,13 @@ use futures::{channel::mpsc, StreamExt as _};
 use git::repository::GitFileStatus;
 use gpui::{
     px, size, AppContext, BackgroundExecutor, Model, Modifiers, MouseButton, MouseDownEvent,
-    TestAppContext, UpdateGlobal,
+    TestAppContext, TestScreenCaptureSource, UpdateGlobal,
 };
 use language::{
     language_settings::{AllLanguageSettings, Formatter, PrettierSettings},
     tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
-use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use project::{
@@ -237,15 +236,15 @@ async fn test_basic_calls(
     );
 
     // User A shares their screen
-    let display = MacOSDisplay::new();
+    let display = TestScreenCaptureSource::new();
     let events_b = active_call_events(cx_b);
     let events_c = active_call_events(cx_c);
+    cx_a.set_screen_capture_sources(vec![display]);
     active_call_a
         .update(cx_a, |call, cx| {
-            call.room().unwrap().update(cx, |room, cx| {
-                room.set_display_sources(vec![display.clone()]);
-                room.share_screen(cx)
-            })
+            call.room()
+                .unwrap()
+                .update(cx, |room, cx| room.share_screen(cx))
         })
         .await
         .unwrap();
@@ -2075,7 +2074,7 @@ async fn test_mute_deafen(
                     audio_tracks_playing: participant
                         .audio_tracks
                         .values()
-                        .map(|track| track.is_playing())
+                        .map(|track| track.rtc_track().enabled())
                         .collect(),
                 })
                 .collect::<Vec<_>>()
@@ -6053,13 +6052,13 @@ async fn test_join_call_after_screen_was_shared(
     assert_eq!(call_b.calling_user.github_login, "user_a");
 
     // User A shares their screen
-    let display = MacOSDisplay::new();
+    let display = TestScreenCaptureSource::new();
+    cx_a.set_screen_capture_sources(vec![display]);
     active_call_a
         .update(cx_a, |call, cx| {
-            call.room().unwrap().update(cx, |room, cx| {
-                room.set_display_sources(vec![display.clone()]);
-                room.share_screen(cx)
-            })
+            call.room()
+                .unwrap()
+                .update(cx, |room, cx| room.share_screen(cx))
         })
         .await
         .unwrap();

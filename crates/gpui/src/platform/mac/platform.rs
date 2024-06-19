@@ -1,9 +1,9 @@
-use super::{events::key_to_native, BoolExt};
+use super::{events::key_to_native, screen_capture, BoolExt};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
-    WindowAppearance, WindowParams,
+    Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource,
+    SemanticVersion, Task, WindowAppearance, WindowParams,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -506,6 +506,12 @@ impl Platform for MacPlatform {
         MacDisplay::all()
             .map(|screen| Rc::new(screen) as Rc<_>)
             .collect()
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        screen_capture::get_sources()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

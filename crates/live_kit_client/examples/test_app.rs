@@ -1,11 +1,14 @@
-use std::time::Duration;
-
-use futures::StreamExt;
 use gpui::{actions, KeyBinding, Menu, MenuItem};
-use live_kit_client::{LocalAudioTrack, LocalVideoTrack, Room, RoomUpdate};
+use live_kit_client::{
+    create_audio_track_from_microphone, create_video_track_from_screen_capture_source,
+    id::ParticipantIdentity, options::TrackPublishOptions, track::LocalTrack, Room, RoomEvent,
+    RoomOptions,
+};
 use live_kit_server::token::{self, VideoGrant};
 use log::LevelFilter;
+use postage::stream::Stream as _;
 use simplelog::SimpleLogger;
+use std::time::Duration;
 
 actions!(live_kit_client, [Quit]);
 
@@ -45,8 +48,10 @@ fn main() {
                 VideoGrant::to_join("test-room"),
             )
             .unwrap();
-            let room_a = Room::new();
-            room_a.connect(&live_kit_url, &user_a_token).await.unwrap();
+            let (room_a, _room_a_events) =
+                Room::connect(&live_kit_url, &user_a_token, RoomOptions::default())
+                    .await
+                    .unwrap();
 
             let user2_token = token::create(
                 &live_kit_key,
@@ -55,45 +60,49 @@ fn main() {
                 VideoGrant::to_join("test-room"),
             )
             .unwrap();
-            let room_b = Room::new();
-            room_b.connect(&live_kit_url, &user2_token).await.unwrap();
+            let (room_b, mut room_b_events) =
+                Room::connect(&live_kit_url, &user2_token, RoomOptions::default())
+                    .await
+                    .unwrap();
 
-            let mut room_updates = room_b.updates();
-            let audio_track = LocalAudioTrack::create();
-            let audio_track_publication = room_a.publish_audio_track(audio_track).await.unwrap();
+            let audio_track = create_audio_track_from_microphone().await.unwrap();
+            let audio_track_publication = room_a
+                .local_participant()
+                .publish_track(
+                    LocalTrack::Audio(audio_track.clone()),
+                    TrackPublishOptions::default(),
+                )
+                .await
+                .unwrap();
 
-            if let RoomUpdate::SubscribedToRemoteAudioTrack(track, _) =
-                room_updates.next().await.unwrap()
+            if let RoomEvent::TrackSubscribed { participant, .. } =
+                room_b_events.recv().await.unwrap()
             {
-                let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
-                assert_eq!(remote_tracks.len(), 1);
-                assert_eq!(remote_tracks[0].publisher_id(), "test-participant-1");
-                assert_eq!(track.publisher_id(), "test-participant-1");
+                let remote_publications = room_b
+                    .remote_participants()
+                    .get(&ParticipantIdentity("test-participant-1".into()))
+                    .unwrap()
+                    .track_publications();
+                assert_eq!(remote_publications.len(), 1);
+                assert_eq!(participant.identity().0, "test-participant-1");
             } else {
                 panic!("unexpected message");
             }
 
-            audio_track_publication.set_mute(true).await.unwrap();
+            audio_track_publication.mute();
 
             println!("waiting for mute changed!");
-            if let RoomUpdate::RemoteAudioTrackMuteChanged { track_id, muted } =
-                room_updates.next().await.unwrap()
-            {
-                let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
-                assert_eq!(remote_tracks[0].sid(), track_id);
-                assert_eq!(muted, true);
+            if let RoomEvent::TrackMuted { publication, .. } = room_b_events.recv().await.unwrap() {
+                assert_eq!(publication.sid(), audio_track_publication.sid());
             } else {
                 panic!("unexpected message");
             }
 
-            audio_track_publication.set_mute(false).await.unwrap();
+            audio_track_publication.unmute();
 
-            if let RoomUpdate::RemoteAudioTrackMuteChanged { track_id, muted } =
-                room_updates.next().await.unwrap()
+            if let RoomEvent::TrackUnmuted { publication, .. } = room_b_events.recv().await.unwrap()
             {
-                let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
-                assert_eq!(remote_tracks[0].sid(), track_id);
-                assert_eq!(muted, false);
+                assert_eq!(publication.sid(), audio_track_publication.sid());
             } else {
                 panic!("unexpected message");
             }
@@ -101,62 +110,93 @@ fn main() {
             println!("Pausing for 5 seconds to test audio, make some noise!");
             let timer = cx.background_executor().timer(Duration::from_secs(5));
             timer.await;
-            let remote_audio_track = room_b
-                .remote_audio_tracks("test-participant-1")
-                .pop()
+            room_b
+                .local_participant()
+                .unpublish_track(&audio_track_publication.sid())
+                .await
                 .unwrap();
-            room_a.unpublish_track(audio_track_publication);
 
             // Clear out any active speakers changed messages
-            let mut next = room_updates.next().await.unwrap();
-            while let RoomUpdate::ActiveSpeakersChanged { speakers } = next {
+            let mut next = room_b_events.recv().await.unwrap();
+            while let RoomEvent::ActiveSpeakersChanged { speakers } = next {
                 println!("Speakers changed: {:?}", speakers);
-                next = room_updates.next().await.unwrap();
+                next = room_b_events.recv().await.unwrap();
             }
 
-            if let RoomUpdate::UnsubscribedFromRemoteAudioTrack {
-                publisher_id,
-                track_id,
+            if let RoomEvent::TrackUnsubscribed {
+                publication,
+                participant,
+                ..
             } = next
             {
-                assert_eq!(publisher_id, "test-participant-1");
-                assert_eq!(remote_audio_track.sid(), track_id);
-                assert_eq!(room_b.remote_audio_tracks("test-participant-1").len(), 0);
+                assert_eq!(participant.identity().0, "test-participant-1");
+                assert_eq!(audio_track_publication.sid(), publication.sid());
+                let remote_publications = room_b
+                    .remote_participants()
+                    .get(&ParticipantIdentity("test-participant-1".into()))
+                    .unwrap()
+                    .track_publications();
+                assert_eq!(remote_publications.len(), 0);
             } else {
                 panic!("unexpected message");
             }
 
-            let displays = room_a.display_sources().await.unwrap();
-            let display = displays.into_iter().next().unwrap();
-
-            let local_video_track = LocalVideoTrack::screen_share_for_display(&display);
-            let local_video_track_publication =
-                room_a.publish_video_track(local_video_track).await.unwrap();
-
-            if let RoomUpdate::SubscribedToRemoteVideoTrack(track) =
-                room_updates.next().await.unwrap()
-            {
-                let remote_video_tracks = room_b.remote_video_tracks("test-participant-1");
-                assert_eq!(remote_video_tracks.len(), 1);
-                assert_eq!(remote_video_tracks[0].publisher_id(), "test-participant-1");
-                assert_eq!(track.publisher_id(), "test-participant-1");
-            } else {
-                panic!("unexpected message");
-            }
-
-            let remote_video_track = room_b
-                .remote_video_tracks("test-participant-1")
-                .pop()
+            let sources = cx
+                .update(|cx| cx.screen_capture_sources())
+                .unwrap()
+                .await
+                .unwrap()
                 .unwrap();
-            room_a.unpublish_track(local_video_track_publication);
-            if let RoomUpdate::UnsubscribedFromRemoteVideoTrack {
-                publisher_id,
-                track_id,
-            } = room_updates.next().await.unwrap()
+            let source = sources.into_iter().next().unwrap();
+
+            let (local_video_track, stream) =
+                create_video_track_from_screen_capture_source(&*source)
+                    .await
+                    .unwrap();
+            let local_video_track_publication = room_a
+                .local_participant()
+                .publish_track(
+                    LocalTrack::Video(local_video_track),
+                    TrackPublishOptions::default(),
+                )
+                .await
+                .unwrap();
+
+            if let RoomEvent::TrackSubscribed {
+                track, participant, ..
+            } = room_b_events.recv().await.unwrap()
             {
-                assert_eq!(publisher_id, "test-participant-1");
-                assert_eq!(remote_video_track.sid(), track_id);
-                assert_eq!(room_b.remote_video_tracks("test-participant-1").len(), 0);
+                let remote_publications = room_b
+                    .remote_participants()
+                    .get(&ParticipantIdentity("test-participant-1".into()))
+                    .unwrap()
+                    .track_publications();
+
+                assert_eq!(remote_publications.len(), 1);
+                assert_eq!(participant.identity().0, "test-participant-1");
+            } else {
+                panic!("unexpected message");
+            }
+
+            room_a
+                .local_participant()
+                .unpublish_track(&local_video_track_publication.sid())
+                .await
+                .unwrap();
+            if let RoomEvent::TrackUnpublished {
+                publication,
+                participant,
+            } = room_b_events.recv().await.unwrap()
+            {
+                assert_eq!(participant.identity().0, "test-participant-1");
+                assert_eq!(publication.sid(), local_video_track_publication.sid());
+
+                let remote_publications = room_b
+                    .remote_participants()
+                    .get(&ParticipantIdentity("test-participant-1".into()))
+                    .unwrap()
+                    .track_publications();
+                assert_eq!(remote_publications.len(), 0);
             } else {
                 panic!("unexpected message");
             }
