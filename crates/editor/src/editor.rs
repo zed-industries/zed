@@ -1632,7 +1632,7 @@ impl Editor {
         clone
     }
 
-    fn new(
+    pub fn new(
         mode: EditorMode,
         buffer: Model<MultiBuffer>,
         project: Option<Model<Project>>,
@@ -2210,7 +2210,7 @@ impl Editor {
         // Copy selections to primary selection buffer
         #[cfg(target_os = "linux")]
         if local {
-            let selections = &self.selections.disjoint;
+            let selections = self.selections.all::<usize>(cx);
             let buffer_handle = self.buffer.read(cx).read(cx);
 
             let mut text = String::new();
