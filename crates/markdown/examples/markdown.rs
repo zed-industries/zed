@@ -154,6 +154,7 @@ pub fn main() {
                         selection.fade_out(0.7);
                         selection
                     },
+                    break_style: Default::default(),
                 };
 
                 MarkdownExample::new(

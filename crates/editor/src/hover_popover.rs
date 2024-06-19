@@ -469,6 +469,7 @@ async fn parse_blocks(
                 },
                 syntax: cx.theme().syntax().clone(),
                 selection_background_color: { cx.theme().players().local().selection },
+                break_style: Default::default(),
             };
 
             Markdown::new(

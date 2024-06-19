@@ -90,6 +90,7 @@ pub fn main() {
                         selection.fade_out(0.7);
                         selection
                     },
+                    break_style: Default::default(),
                 };
                 let markdown = cx.new_view(|cx| {
                     Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, cx)

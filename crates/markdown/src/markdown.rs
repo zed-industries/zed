@@ -28,6 +28,7 @@ pub struct MarkdownStyle {
     pub block_quote_border_color: Hsla,
     pub syntax: Arc<SyntaxTheme>,
     pub selection_background_color: Hsla,
+    pub break_style: StyleRefinement,
 }
 
 impl Default for MarkdownStyle {
@@ -42,6 +43,7 @@ impl Default for MarkdownStyle {
             block_quote_border_color: Default::default(),
             syntax: Arc::new(SyntaxTheme::default()),
             selection_background_color: Default::default(),
+            break_style: Default::default(),
         }
     }
 }
@@ -507,8 +509,6 @@ impl Element for MarkdownElement {
             0
         };
         for (range, event) in parsed_markdown.events.iter() {
-            println!("{:?}", event);
-
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
@@ -553,17 +553,7 @@ impl Element for MarkdownElement {
                                 None
                             };
 
-                            // let mut d = if self.style.pad_blocks {
-                            //     div().p_4().mb_2()
-                            // } else if !opening_line {
-                            //     div().mb_4().mt_4()
-                            // } else {
-                            //     div().mb_4()
-                            // }
-                            // }
-                            // .rounded_lg()
-                            // .w_full();
-                            let mut d = div().w_full();
+                            let mut d = div().w_full().rounded_lg();
                             d.style().refine(&self.style.code_block);
                             builder.push_code_block(language);
                             builder.push_div(d, range, markdown_end);
@@ -678,11 +668,15 @@ impl Element for MarkdownElement {
                     builder.pop_div()
                 }
                 MarkdownEvent::SoftBreak => {
-                    builder.push_div(div().p_2(), range, markdown_end);
+                    let mut d = div().py_3();
+                    d.style().refine(&self.style.break_style.clone());
+                    builder.push_div(d, range, markdown_end);
                     builder.pop_div()
                 }
                 MarkdownEvent::HardBreak => {
-                    builder.push_div(div().p_2(), range, markdown_end);
+                    let mut d = div().py_3();
+                    d.style().refine(&self.style.break_style);
+                    builder.push_div(d, range, markdown_end);
                     builder.pop_div()
                 }
                 _ => log::error!("unsupported markdown event {:?}", event),
