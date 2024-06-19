@@ -10,6 +10,11 @@ authors = ["Zed Team <hi@zed.dev>"]
 [lints]
 workspace = true
 
+[features]
+default = ["static-libraries"]
+static-libraries = ["client/static-libraries", "rpc/static-libraries", "sqlez/static-libraries"]
+dynamic-libraries = ["client/dynamic-libraries", "rpc/dynamic-libraries", "sqlez/dynamic-libraries"]
+
 [[bin]]
 name = "zed"
 path = "src/main.rs"
@@ -76,6 +81,7 @@ project_panel.workspace = true
 project_symbols.workspace = true
 quick_action_bar.workspace = true
 recent_projects.workspace = true
+rpc = { workspace = true, optional = true }
 dev_server_projects.workspace = true
 release_channel.workspace = true
 rope.workspace = true
@@ -85,6 +91,7 @@ serde_json.workspace = true
 settings.workspace = true
 simplelog = "0.9"
 smol.workspace = true
+sqlez = { workspace = true, optional = true }
 tab_switcher.workspace = true
 supermaven.workspace = true
 task.workspace = true

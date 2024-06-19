@@ -78,10 +78,10 @@ local_target_triple=${host_line#*: }
 
 if [ "$local_arch" = true ]; then
     echo "Building for local target only."
-    cargo build ${build_flag} --package zed --package cli
+    cargo build ${build_flag} --package zed --package cli --no-default-features --features "static-libraries"
 else
     echo "Compiling zed binaries"
-    cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
+    cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin --no-default-features --features "static-libraries"
 fi
 
 echo "Creating application bundle"

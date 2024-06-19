@@ -39,7 +39,7 @@ target_triple=${host_line#*: }
 
 # Build binary in release mode
 export RUSTFLAGS="-C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
-cargo build --release --target "${target_triple}" --package zed --package cli
+cargo build --release --target "${target_triple}" --package zed --package cli --no-default-features --features "dynamic-libraries"
 
 # Strip the binary of all debug symbols
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
