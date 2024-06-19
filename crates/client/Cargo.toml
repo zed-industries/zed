@@ -13,12 +13,20 @@ path = "src/client.rs"
 doctest = false
 
 [features]
+default = ["static-libraries"]
 test-support = ["clock/test-support", "collections/test-support", "gpui/test-support", "rpc/test-support"]
+static-libraries = ["async-native-tls", "isahc"]
+dynamic-libraries = []
+
+# Revert the changes
+# Reintroduce them, but with a feature flag.
 
 [dependencies]
 anyhow.workspace = true
 async-recursion = "0.3"
 async-tungstenite = { version = "0.16", features = ["async-std", "async-native-tls"] }
+async-native-tls = { version = "0.5.0", features = ["vendored"], optional = true}
+isahc = { workspace = true, features = ["static-curl"], optional = true}
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
@@ -65,5 +73,3 @@ windows.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa.workspace = true
-isahc = { workspace = true, features = ["static-curl"] }
-async-native-tls = { version = "0.5.0", features = ["vendored"] }

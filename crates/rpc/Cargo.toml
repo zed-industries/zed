@@ -14,7 +14,11 @@ path = "src/rpc.rs"
 doctest = false
 
 [features]
+default = ["static-libraries"]
 test-support = ["collections/test-support", "gpui/test-support", "proto/test-support"]
+static-libraries = []
+dynamic-libraries = ["zstd/pkg-config"]
+
 
 [dependencies]
 anyhow.workspace = true
@@ -34,9 +38,6 @@ strum.workspace = true
 tracing = { version = "0.1.34", features = ["log"] }
 util.workspace = true
 zstd = "0.11"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-zstd = { version = "0.11", features = [ "pkg-config" ] }
 
 
 [dev-dependencies]

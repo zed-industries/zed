@@ -8,24 +8,22 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+
+[features]
+default = ["static-libraries"]
+static-libraries = ["libsqlite3-sys/bundled"]
+dynamic-libraries = ["libsqlite3-sys/buildtime_bindgen"]
+
+
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
 indoc.workspace = true
 lazy_static.workspace = true
-libsqlite3-sys = { version = "0.26" }
+libsqlite3-sys = "0.26"
 parking_lot.workspace = true
 smol.workspace = true
 thread_local = "1.1.4"
 util.workspace = true
 uuid.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-libsqlite3-sys = { version = "0.26", features = ["bundled"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-libsqlite3-sys = { version = "0.26", features = ["bundled"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-libsqlite3-sys = { version = "0.26", features = ["buildtime_bindgen"] }
