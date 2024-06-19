@@ -62,6 +62,7 @@ impl FetchSlashCommand {
         match content_type {
             ContentType::Html => {
                 let mut handlers: Vec<TagHandler> = vec![
+                    Rc::new(RefCell::new(markdown::WebpageChromeRemover)),
                     Rc::new(RefCell::new(markdown::ParagraphHandler)),
                     Rc::new(RefCell::new(markdown::HeadingHandler)),
                     Rc::new(RefCell::new(markdown::ListHandler)),
