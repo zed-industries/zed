@@ -8,5 +8,5 @@ repository = "https://github.com/zed-extensions/svelte"
 
 [language_servers.snippet-completion-server]
 name = "Snippet Completion Server"
-languages = ["TypeScript", "TSX", "JavaScript", "JSDoc"]
+languages = ["TypeScript", "TSX", "JavaScript", "JSDoc", "Go", "Markdown", "Rust", "C", "C++", "PHP", "Python", "Ruby", "Shell"]
 language_ids = { "TypeScript" = "typescript", "TSX" = "typescriptreact", "JavaScript" = "javascript" }

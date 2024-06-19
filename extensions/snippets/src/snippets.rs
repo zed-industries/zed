@@ -101,22 +101,11 @@ impl zed::Extension for SnippetExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let home_dir = worktree
-            .shell_env()
-            .into_iter()
-            .find(|(k, _)| k == "HOME")
-            .ok_or_else(|| format!("HOME is not in path"))
-            .unwrap()
-            .1;
-        let abs_config_path = PathBuf::from(home_dir).join(".config/zed/snippets");
         Ok(zed::Command {
             command: self.language_server_binary_path(language_server_id, worktree)?,
             args: vec![],
             env: vec![
-                (
-                    "SNIPPETS_PATH".to_owned(),
-                    abs_config_path.to_string_lossy().into_owned(),
-                ),
+                ("SCLS_CONFIG_SUBDIRECTORY".to_owned(), "zed".to_owned()),
                 (
                     "RUST_LOG".to_owned(),
                     "info,simple-completion-language-server=info".to_owned(),
