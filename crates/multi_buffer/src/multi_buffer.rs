@@ -3834,8 +3834,7 @@ impl MultiBufferSnapshot {
                 return None;
             }
 
-            if range.as_ref().unwrap().is_empty() || *cursor.start() >= range.as_ref().unwrap().end
-            {
+            if *cursor.start() >= range.as_ref().unwrap().end {
                 range = next_range(&mut cursor);
                 if range.is_none() {
                     return None;
