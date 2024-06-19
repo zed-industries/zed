@@ -24,6 +24,21 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Choose which model to use based on the available models and the default model for openai provider.
+fn choose_openai_model(
+    model: &::open_ai::Model,
+    available_models: &Option<Vec<::open_ai::Model>>,
+) -> ::open_ai::Model {
+    let available_models = available_models.as_ref();
+
+    // available_models is set but default model isn't in the list, use the first available model instead
+    if available_models.is_some_and(|models| !models.is_empty() && !models.contains(model)) {
+        available_models.unwrap()[0].clone()
+    } else {
+        model.clone()
+    }
+}
+
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let mut settings_version = 0;
     let provider = match &AssistantSettings::get_global(cx).provider {
@@ -34,8 +49,9 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
             model,
             api_url,
             low_speed_timeout_in_seconds,
+            available_models,
         } => CompletionProvider::OpenAi(OpenAiCompletionProvider::new(
-            model.clone(),
+            choose_openai_model(model, available_models),
             api_url.clone(),
             client.http_client(),
             low_speed_timeout_in_seconds.map(Duration::from_secs),
@@ -77,10 +93,11 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                         model,
                         api_url,
                         low_speed_timeout_in_seconds,
+                        available_models,
                     },
                 ) => {
                     provider.update(
-                        model.clone(),
+                        choose_openai_model(model, available_models),
                         api_url.clone(),
                         low_speed_timeout_in_seconds.map(Duration::from_secs),
                         settings_version,
@@ -136,10 +153,11 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                         model,
                         api_url,
                         low_speed_timeout_in_seconds,
+                        available_models,
                     },
                 ) => {
                     *provider = CompletionProvider::OpenAi(OpenAiCompletionProvider::new(
-                        model.clone(),
+                        choose_openai_model(model, available_models),
                         api_url.clone(),
                         client.http_client(),
                         low_speed_timeout_in_seconds.map(Duration::from_secs),
@@ -201,10 +219,10 @@ impl CompletionProvider {
         cx.global::<Self>()
     }
 
-    pub fn available_models(&self) -> Vec<LanguageModel> {
+    pub fn available_models(&self, cx: &AppContext) -> Vec<LanguageModel> {
         match self {
             CompletionProvider::OpenAi(provider) => provider
-                .available_models()
+                .available_models(cx)
                 .map(LanguageModel::OpenAi)
                 .collect(),
             CompletionProvider::Anthropic(provider) => provider
