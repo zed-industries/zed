@@ -507,6 +507,8 @@ impl Element for MarkdownElement {
             0
         };
         for (range, event) in parsed_markdown.events.iter() {
+            println!("{:?}", event);
+
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
@@ -675,8 +677,14 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::SoftBreak => builder.push_text("\n", range.start),
-                MarkdownEvent::HardBreak => builder.push_text("\n", range.start),
+                MarkdownEvent::SoftBreak => {
+                    builder.push_div(div().p_2(), range, markdown_end);
+                    builder.pop_div()
+                }
+                MarkdownEvent::HardBreak => {
+                    builder.push_div(div().p_2(), range, markdown_end);
+                    builder.pop_div()
+                }
                 _ => log::error!("unsupported markdown event {:?}", event),
             }
         }

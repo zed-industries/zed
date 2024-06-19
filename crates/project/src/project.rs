@@ -5620,11 +5620,19 @@ impl Project {
                 cx,
             );
             cx.spawn(|_, _| async move {
-                all_actions_task
+                let a = all_actions_task
                     .await
                     .into_iter()
                     .filter_map(|hover| remove_empty_hover_blocks(hover?))
-                    .collect()
+                    .collect::<Vec<Hover>>();
+                for b in a.clone() {
+                    // println!("vvvvv");
+                    for block in b.contents {
+                        // println!("{:?}", block.text);
+                    }
+                }
+
+                a
             })
         } else if let Some(project_id) = self.remote_id() {
             let request_task = self.client().request(proto::MultiLspQuery {

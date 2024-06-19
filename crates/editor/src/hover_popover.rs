@@ -398,13 +398,14 @@ async fn parse_blocks(
 ) -> Option<View<Markdown>> {
     let mut combined_text = String::new();
     for block in blocks {
+        // println!("{:?}", block.clone().text);
+
         let language_name = if let Some(ref l) = language {
             let l = Arc::clone(l);
             l.lsp_id().clone()
         } else {
             "".to_string()
         };
-        println!("{}", language_name);
         let mut text = transform_codeblock(
             block.clone().text.replace("\\n", "\n").trim(),
             language_name.as_str(),
