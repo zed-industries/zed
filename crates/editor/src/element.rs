@@ -2605,20 +2605,22 @@ impl EditorElement {
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
         display_point: Option<DisplayPoint>,
+        start_row: DisplayRow,
+        line_layouts: &[LineWithInvisibles],
         line_height: Pixels,
         em_width: Pixels,
-        display_snapshot: &DisplaySnapshot,
         cx: &mut WindowContext,
     ) {
         let Some(display_point) = display_point else {
             return;
         };
 
-        let display_point = display_point.to_point(display_snapshot);
-        let start_x = content_origin.x - scroll_pixel_position.x
-            + Pixels(display_point.column as f32 * em_width.0);
-        let start_y = content_origin.y - scroll_pixel_position.y
-            + Pixels(line_height.0 * (display_point.row as f32 - 2.5));
+        let cursor_row_layout = &line_layouts[display_point.row().minus(start_row) as usize];
+        let start_x = cursor_row_layout.x_for_index(display_point.column() as usize)
+            - scroll_pixel_position.x
+            + content_origin.x;
+        let start_y =
+            (display_point.row().next_row().as_f32() + 1.0) * line_height - scroll_pixel_position.y;
 
         let point = point(start_x, start_y);
 
@@ -5005,9 +5007,10 @@ impl Element for EditorElement {
                         content_origin,
                         scroll_pixel_position,
                         newest_selection_head,
+                        start_row,
+                        &line_layouts,
                         line_height,
                         em_width,
-                        &snapshot.display_snapshot,
                         cx,
                     );
 
