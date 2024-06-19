@@ -421,7 +421,7 @@ impl Vim {
             state.current_tx.take();
             state.current_anchor.take();
         });
-        if mode != Mode::Insert {
+        if mode != Mode::Insert && mode != Mode::Replace {
             self.take_count(cx);
         }
 
@@ -487,11 +487,6 @@ impl Vim {
                     } else if !last_mode.is_visual() && mode.is_visual() {
                         if selection.is_empty() {
                             selection.end = movement::right(map, selection.start);
-                        }
-                    } else if last_mode == Mode::Replace {
-                        if selection.head().column() != 0 {
-                            let point = movement::left(map, selection.head());
-                            selection.collapse_to(point, selection.goal)
                         }
                     }
                 });

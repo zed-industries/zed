@@ -640,21 +640,21 @@
     }
   },
   {
-    "context": "Editor && vim_mode == replace",
-    "bindings": {
-      "escape": "vim::NormalBefore",
-      "ctrl-c": "vim::NormalBefore",
-      "ctrl-[": "vim::NormalBefore",
-      "backspace": "vim::UndoReplace"
-    }
-  },
-  {
     "context": "Editor && VimWaiting",
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter",
       "escape": ["vim::SwitchMode", "Normal"],
       "ctrl-[": ["vim::SwitchMode", "Normal"]
+    }
+  },
+  {
+    "context": "Editor && vim_mode == replace",
+    "bindings": {
+      "escape": "vim::NormalBefore",
+      "ctrl-c": "vim::NormalBefore",
+      "ctrl-[": "vim::NormalBefore",
+      "backspace": "vim::UndoReplace"
     }
   },
   {
