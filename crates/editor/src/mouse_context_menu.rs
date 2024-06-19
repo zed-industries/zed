@@ -1,5 +1,7 @@
 use crate::{
-    Copy, CopyPermalinkToLine, Cut, DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFinder, SelectMode, ToggleCodeActions
+    Copy, CopyPermalinkToLine, Cut, DisplayPoint, Editor, EditorMode, FindAllReferences,
+    GoToDefinition, GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFinder,
+    SelectMode, ToggleCodeActions,
 };
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
