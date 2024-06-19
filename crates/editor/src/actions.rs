@@ -281,6 +281,8 @@ gpui::actions!(
         SelectToPreviousWordStart,
         SelectToStartOfParagraph,
         SelectUp,
+        SelectPageDown,
+        SelectPageUp,
         ShowCharacterPalette,
         ShowInlineCompletion,
         ShuffleLines,
