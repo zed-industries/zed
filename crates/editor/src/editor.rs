@@ -552,6 +552,7 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     file_header_size: u8,
+    breadcrumb_header: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1863,6 +1864,7 @@ impl Editor {
             tasks_update_task: None,
             linked_edit_ranges: Default::default(),
             previous_search_ranges: None,
+            breadcrumb_header: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -10503,6 +10505,10 @@ impl Editor {
             |colors| colors.editor_document_highlight_read_background,
             cx,
         )
+    }
+
+    pub fn set_breadcrumb_header(&mut self, new_header: String) {
+        self.breadcrumb_header = Some(new_header);
     }
 
     pub fn clear_search_within_ranges(&mut self, cx: &mut ViewContext<Self>) {
