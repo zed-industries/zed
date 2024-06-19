@@ -1,8 +1,6 @@
 use serde_json::json;
 use std::fs;
-use std::path::PathBuf;
-use zed::lsp::CompletionKind;
-use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
+use zed::LanguageServerId;
 use zed_extension_api::{self as zed, Result};
 
 struct SnippetExtension {
@@ -58,7 +56,7 @@ impl SnippetExtension {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
 
-        let version_dir = format!("simple-completion-language-server");
+        let version_dir = "simple-completion-language-server".to_owned();
         let binary_path = format!("{version_dir}/simple-completion-language-server");
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
@@ -113,14 +111,6 @@ impl zed::Extension for SnippetExtension {
                 ("LOG_FILE".to_owned(), "/tmp/completion1.log".to_owned()),
             ],
         })
-    }
-
-    fn label_for_completion(
-        &self,
-        _language_server_id: &LanguageServerId,
-        completion: zed::lsp::Completion,
-    ) -> Option<zed::CodeLabel> {
-        None
     }
 
     fn language_server_initialization_options(
