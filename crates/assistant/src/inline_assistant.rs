@@ -442,20 +442,58 @@ impl InlineAssistant {
             to_remove.insert(decorations.prompt_block_id);
             to_remove.insert(decorations.end_block_id);
             editor.remove_blocks(to_remove, None, cx);
-            if decorations
-                .prompt_editor
-                .focus_handle(cx)
-                .contains_focused(cx)
-            {
-                editor.focus(cx);
-            }
         });
+
+        if decorations
+            .prompt_editor
+            .focus_handle(cx)
+            .contains_focused(cx)
+        {
+            self.focus_next_inline_assist(assist_id, cx);
+        }
 
         if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
             editor_assists.highlight_updates.send(()).ok();
         }
 
         true
+    }
+
+    fn focus_next_inline_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+        let Some(assist) = self.assists.get(&assist_id) else {
+            return;
+        };
+
+        let assist_group = &self.assist_groups[&assist.group_id];
+        let assist_ix = assist_group
+            .assist_ids
+            .iter()
+            .position(|id| *id == assist_id)
+            .unwrap();
+        let assist_ids = assist_group
+            .assist_ids
+            .iter()
+            .skip(assist_ix + 1)
+            .chain(assist_group.assist_ids.iter().take(assist_ix));
+
+        for assist_id in assist_ids {
+            let assist = &self.assists[assist_id];
+            if let Some(decorations) = assist.decorations.as_ref() {
+                cx.focus_view(&decorations.prompt_editor);
+                assist
+                    .editor
+                    .update(cx, |editor, cx| {
+                        let start = assist.codegen.read(cx).range.start;
+                        editor.change_selections(Some(Autoscroll::newest()), cx, |selections| {
+                            selections.select_anchor_ranges([start..start])
+                        })
+                    })
+                    .ok();
+                return;
+            }
+        }
+
+        assist.editor.update(cx, |editor, cx| editor.focus(cx)).ok();
     }
 
     fn resize_inline_assist(
