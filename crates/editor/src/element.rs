@@ -167,6 +167,8 @@ impl EditorElement {
         register_action(view, cx, Editor::move_up);
         register_action(view, cx, Editor::move_up_by_lines);
         register_action(view, cx, Editor::select_up_by_lines);
+        register_action(view, cx, Editor::select_page_down);
+        register_action(view, cx, Editor::select_page_up);
         register_action(view, cx, Editor::cancel);
         register_action(view, cx, Editor::newline);
         register_action(view, cx, Editor::newline_above);

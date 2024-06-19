@@ -62,11 +62,11 @@
       "ctrl-up": "editor::LineUp",
       "ctrl-down": "editor::LineDown",
       "pageup": "editor::PageUp",
-      // "shift-pageup": "editor::MovePageUp", todo(linux) should be 'select page up'
+      "shift-pageup": "editor::SelectPageUp",
       "home": "editor::MoveToBeginningOfLine",
       "down": "editor::MoveDown",
       "pagedown": "editor::PageDown",
-      // "shift-pagedown": "editor::MovePageDown", todo(linux) should be 'select page down'
+      "shift-pagedown": "editor::SelectPageDown",
       "end": "editor::MoveToEndOfLine",
       "left": "editor::MoveLeft",
       "right": "editor::MoveRight",

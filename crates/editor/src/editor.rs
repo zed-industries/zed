@@ -6722,6 +6722,20 @@ impl Editor {
         })
     }
 
+    pub fn select_page_up(&mut self, _: &SelectPageUp, cx: &mut ViewContext<Self>) {
+        let Some(row_count) = self.visible_row_count() else {
+            return;
+        };
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::up_by_rows(map, head, row_count, goal, false, &text_layout_details)
+            })
+        })
+    }
+
     pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
             return;
@@ -6732,9 +6746,7 @@ impl Editor {
             return;
         }
 
-        let row_count = if let Some(row_count) = self.visible_line_count() {
-            row_count as u32 - 1
-        } else {
+        let Some(row_count) = self.visible_row_count() else {
             return;
         };
 
@@ -6809,6 +6821,20 @@ impl Editor {
         }
     }
 
+    pub fn select_page_down(&mut self, _: &SelectPageDown, cx: &mut ViewContext<Self>) {
+        let Some(row_count) = self.visible_row_count() else {
+            return;
+        };
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::down_by_rows(map, head, row_count, goal, false, &text_layout_details)
+            })
+        })
+    }
+
     pub fn move_page_down(&mut self, action: &MovePageDown, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
             return;
@@ -6829,9 +6855,7 @@ impl Editor {
             return;
         }
 
-        let row_count = if let Some(row_count) = self.visible_line_count() {
-            row_count as u32 - 1
-        } else {
+        let Some(row_count) = self.visible_row_count() else {
             return;
         };
 
