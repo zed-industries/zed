@@ -296,6 +296,13 @@
       "ctrl-alt-shift-x": "search::ToggleRegex"
     }
   },
+  {
+    "context": "Terminal",
+    "bindings": {
+      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"]
+    }
+  },
   // Bindings from VS Code
   {
     "context": "Editor",
