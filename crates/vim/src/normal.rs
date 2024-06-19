@@ -508,9 +508,8 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
                 editor.change_selections(None, cx, |s| {
                     s.select_anchor_ranges(stable_anchors);
                     if count > 1 {
-                        s.move_cursors_with(|_, mut point, goal| {
-                            *point.column_mut() += (count - 1) as u32;
-                            (point, goal)
+                        s.move_cursors_with(|map, point, _| {
+                            (right(map, point, count - 1), SelectionGoal::None)
                         });
                     }
                 });
