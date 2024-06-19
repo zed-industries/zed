@@ -70,7 +70,7 @@ cargo test --workspace
 
 ```
 pacman -Syu
-$ pacman -S mingw-w64-ucrt-x86_64-zed
+pacman -S mingw-w64-ucrt-x86_64-zed
 ```
 
 then you can run `zed` in a UCRT64 shell.
