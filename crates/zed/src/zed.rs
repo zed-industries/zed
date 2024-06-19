@@ -633,7 +633,14 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
                         });
                         let editor = cx.new_view(|cx| {
-                            Editor::for_multibuffer(buffer, Some(project), true, cx)
+                            let mut editor =
+                                Editor::for_multibuffer(buffer, Some(project), true, cx);
+                            editor.set_breadcrumb_header(format!(
+                                "Last {} lines in {}",
+                                MAX_LINES,
+                                paths::log_file().display()
+                            ));
+                            editor
                         });
 
                         editor.update(cx, |editor, cx| {
