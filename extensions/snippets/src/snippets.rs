@@ -56,7 +56,7 @@ impl SnippetExtension {
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
 
-        let version_dir = "simple-completion-language-server".to_owned();
+        let version_dir = format!("simple-completion-language-server-{}", release.version);
         let binary_path = format!("{version_dir}/simple-completion-language-server");
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
@@ -102,14 +102,7 @@ impl zed::Extension for SnippetExtension {
         Ok(zed::Command {
             command: self.language_server_binary_path(language_server_id, worktree)?,
             args: vec![],
-            env: vec![
-                ("SCLS_CONFIG_SUBDIRECTORY".to_owned(), "zed".to_owned()),
-                (
-                    "RUST_LOG".to_owned(),
-                    "info,simple-completion-language-server=info".to_owned(),
-                ),
-                ("LOG_FILE".to_owned(), "/tmp/completion1.log".to_owned()),
-            ],
+            env: vec![("SCLS_CONFIG_SUBDIRECTORY".to_owned(), "zed".to_owned())],
         })
     }
 
