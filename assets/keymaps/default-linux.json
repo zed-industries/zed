@@ -59,12 +59,12 @@
       "ctrl-z": "editor::Undo",
       "ctrl-shift-z": "editor::Redo",
       "up": "editor::MoveUp",
-      // "ctrl-up": "editor::MoveToStartOfParagraph", todo(linux) Should be "scroll down by 1 line"
+      "ctrl-up": "editor::LineUp",
+      "ctrl-down": "editor::LineDown",
       "pageup": "editor::PageUp",
       // "shift-pageup": "editor::MovePageUp", todo(linux) should be 'select page up'
       "home": "editor::MoveToBeginningOfLine",
       "down": "editor::MoveDown",
-      // "ctrl-down": "editor::MoveToEndOfParagraph", todo(linux) should be "scroll up by 1 line"
       "pagedown": "editor::PageDown",
       // "shift-pagedown": "editor::MovePageDown", todo(linux) should be 'select page down'
       "end": "editor::MoveToEndOfLine",
