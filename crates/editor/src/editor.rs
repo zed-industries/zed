@@ -459,7 +459,7 @@ pub struct Editor {
     pub scroll_manager: ScrollManager,
     /// When inline assist editors are linked, they all render cursors because
     /// typing enters text into each of them, even the ones that aren't focused.
-    show_cursor_when_unfocused: bool,
+    pub(crate) show_cursor_when_unfocused: bool,
     columnar_selection_tail: Option<Anchor>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
@@ -10853,7 +10853,7 @@ impl Editor {
 
     pub fn show_local_cursors(&self, cx: &WindowContext) -> bool {
         (self.read_only(cx) || self.blink_manager.read(cx).visible())
-            && (self.show_cursor_when_unfocused || self.focus_handle.is_focused(cx))
+            && self.focus_handle.is_focused(cx)
     }
 
     pub fn set_show_cursor_when_unfocused(&mut self, is_enabled: bool) {
@@ -11679,7 +11679,7 @@ impl EditorSnapshot {
             .map(|(_, collaborator)| (collaborator.replica_id, collaborator))
             .collect::<HashMap<_, _>>();
         self.buffer_snapshot
-            .remote_selections_in_range(range)
+            .selections_in_range(range, false)
             .filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
                 let collaborator = collaborators_by_replica_id.get(&replica_id)?;
                 let participant_index = participant_indices.get(&collaborator.user_id).copied();

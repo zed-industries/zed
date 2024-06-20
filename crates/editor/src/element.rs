@@ -856,6 +856,28 @@ impl EditorElement {
             }
 
             selections.extend(remote_selections.into_values());
+        } else if !editor.is_focused(cx) && editor.show_cursor_when_unfocused {
+            let player = if editor.read_only(cx) {
+                cx.theme().players().read_only()
+            } else {
+                self.style.local_player
+            };
+            let layouts = snapshot
+                .buffer_snapshot
+                .selections_in_range(&(start_anchor..end_anchor), true)
+                .map(move |(_, line_mode, cursor_shape, selection)| {
+                    SelectionLayout::new(
+                        selection,
+                        line_mode,
+                        cursor_shape,
+                        &snapshot.display_snapshot,
+                        false,
+                        false,
+                        None,
+                    )
+                })
+                .collect::<Vec<_>>();
+            selections.push((player, layouts));
         }
         (selections, active_rows, newest_selection_head)
     }
