@@ -69,6 +69,7 @@ impl Editor {
         &mut self,
         bounds: Bounds<Pixels>,
         line_height: Pixels,
+        max_scroll_top: f32,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         let viewport_height = bounds.size.height;
@@ -84,11 +85,6 @@ impl Editor {
                 }
             }
         }
-        let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
-            (display_map.max_point().row().as_f32() - visible_lines + 1.).max(0.)
-        } else {
-            display_map.max_point().row().as_f32()
-        };
         if scroll_position.y > max_scroll_top {
             scroll_position.y = max_scroll_top;
         }
