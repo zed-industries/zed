@@ -576,8 +576,10 @@ impl InlineAssistant {
                     .row_for_block(decorations.prompt_block_id, cx)
                     .unwrap()
                     .0 as f32;
-                scroll_target_bottom =
-                    scroll_target_top + decorations.prompt_editor.read(cx).height_in_lines as f32;
+                scroll_target_bottom = editor
+                    .row_for_block(decorations.end_block_id, cx)
+                    .unwrap()
+                    .0 as f32;
             } else {
                 let snapshot = editor.snapshot(cx);
                 let codegen = assist.codegen.read(cx);
@@ -595,10 +597,16 @@ impl InlineAssistant {
             let height_in_lines = editor.visible_line_count().unwrap_or(0.);
             let scroll_top = editor.scroll_position(cx).y;
             let scroll_bottom = scroll_top + height_in_lines;
+
             if scroll_target_top < scroll_top {
                 editor.set_scroll_position(point(0., scroll_target_top), cx);
             } else if scroll_target_bottom > scroll_bottom {
-                editor.set_scroll_position(point(0., scroll_target_bottom - height_in_lines), cx);
+                if (scroll_target_bottom - scroll_target_top) <= height_in_lines {
+                    editor
+                        .set_scroll_position(point(0., scroll_target_bottom - height_in_lines), cx);
+                } else {
+                    editor.set_scroll_position(point(0., scroll_target_top), cx);
+                }
             }
         });
     }
