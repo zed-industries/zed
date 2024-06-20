@@ -985,7 +985,7 @@ impl DisplaySnapshot {
             }
 
             let mut row_before_line_breaks = end.unwrap_or(max_point);
-            while row_before_line_breaks.row > 0
+            while row_before_line_breaks.row > start.row
                 && self
                     .buffer_snapshot
                     .is_line_blank(MultiBufferRow(row_before_line_breaks.row))
