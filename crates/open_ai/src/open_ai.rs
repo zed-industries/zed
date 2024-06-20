@@ -109,7 +109,7 @@ impl Model {
     }
 }
 
-pub fn serialize_model<S>(model: &Model, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_model<S>(model: &Model, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
