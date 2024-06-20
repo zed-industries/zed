@@ -14,6 +14,10 @@ language = "Ruby"
 name = "Ruby LSP"
 language = "Ruby"
 
+[language_servers.rubocop]
+name = "Rubocop"
+language = "Ruby"
+
 [grammars.ruby]
 repository = "https://github.com/tree-sitter/tree-sitter-ruby"
 commit = "dc2d7d6b50f9975bc3c35bbec0ba11b2617b736b"

@@ -798,7 +798,7 @@
       }
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "..."]
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
     },
     "SCSS": {
       "prettier": {
