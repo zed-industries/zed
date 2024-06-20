@@ -57,6 +57,7 @@ impl GitStatus {
                     Some((
                         RepoPath(PathBuf::from(path)),
                         match status {
+                            // TODO kb more: deleted, renamed, copied, etc.
                             "A" | "??" => GitFileStatus::Added,
                             "M" => GitFileStatus::Modified,
                             _ => return None,

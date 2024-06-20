@@ -95,7 +95,9 @@ pub enum Event {
     },
     Reloaded,
     ReloadNeeded,
-    DiffBaseChanged,
+    DiffBaseChanged {
+        buffer: Model<Buffer>,
+    },
     DiffUpdated {
         buffer: Model<Buffer>,
     },
@@ -1824,7 +1826,7 @@ impl MultiBuffer {
             language::BufferEvent::FileHandleChanged => Event::FileHandleChanged,
             language::BufferEvent::Reloaded => Event::Reloaded,
             language::BufferEvent::ReloadNeeded => Event::ReloadNeeded,
-            language::BufferEvent::DiffBaseChanged => Event::DiffBaseChanged,
+            language::BufferEvent::DiffBaseChanged => Event::DiffBaseChanged { buffer },
             language::BufferEvent::DiffUpdated => Event::DiffUpdated { buffer },
             language::BufferEvent::LanguageChanged => {
                 Event::LanguageChanged(buffer.read(cx).remote_id())

@@ -80,7 +80,6 @@ impl BufferDiff {
         self.tree.is_empty()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn hunks_in_row_range<'a>(
         &'a self,
         range: Range<u32>,
