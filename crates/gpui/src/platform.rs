@@ -231,12 +231,33 @@ pub enum ResizeEdge {
 }
 
 /// A type to describe the appearance of a window
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub enum WindowDecorations {
     /// Client side decorations
     Client,
+    #[default]
     /// Server side decorations
     Server,
+}
+
+/// A type to describe which sides of the window are currently tiled in some way
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub struct Tiling {
+    /// Whether the top edge is tiled
+    pub top: bool,
+    /// Whether the left edge is tiled
+    pub left: bool,
+    /// Whether the right edge is tiled
+    pub right: bool,
+    /// Whether the bottom edge is tiled
+    pub bottom: bool,
+}
+
+impl Tiling {
+    /// Whether any edge is tiled
+    pub fn is_tiled(&self) -> bool {
+        self.top || self.left || self.right || self.bottom
+    }
 }
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
@@ -294,8 +315,13 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowDecorations::Client
     }
     fn set_app_id(&mut self, _app_id: &str) {}
-    fn is_tiled(&self) -> bool {
-        false
+    fn tiling(&self) -> Tiling {
+        Tiling {
+            top: false,
+            left: false,
+            right: false,
+            bottom: false,
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -609,6 +635,10 @@ pub struct WindowOptions {
 
     /// Window minimum size
     pub window_min_size: Option<Size<Pixels>>,
+
+    /// Whether to use client or server side decorations. Wayland only
+    /// Note that this may be ignored.
+    pub window_decorations: Option<WindowDecorations>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -688,6 +718,7 @@ impl Default for WindowOptions {
             window_background: WindowBackgroundAppearance::default(),
             app_id: None,
             window_min_size: None,
+            window_decorations: None,
         }
     }
 }
