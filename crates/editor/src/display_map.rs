@@ -983,23 +983,23 @@ impl DisplaySnapshot {
                     break;
                 }
             }
-            let mut adjusted_end = end.unwrap_or(max_point);
 
-            // Adjust end point to exclude folding any line breaks if present
-            while adjusted_end.row > 0
+            let mut row_before_line_breaks = end.unwrap_or(max_point);
+            while row_before_line_breaks.row > 0
                 && self
                     .buffer_snapshot
-                    .is_line_blank(MultiBufferRow(adjusted_end.row))
+                    .is_line_blank(MultiBufferRow(row_before_line_breaks.row))
             {
-                // Keep searching upwards until we find a non-blank line
-                adjusted_end = Point::new(
-                    adjusted_end.row - 1,
-                    self.buffer_snapshot
-                        .line_len(MultiBufferRow(adjusted_end.row - 1)),
-                );
+                row_before_line_breaks.row -= 1;
             }
 
-            Some((start..adjusted_end, self.fold_placeholder.clone()))
+            row_before_line_breaks = Point::new(
+                row_before_line_breaks.row,
+                self.buffer_snapshot
+                    .line_len(MultiBufferRow(row_before_line_breaks.row)),
+            );
+
+            Some((start..row_before_line_breaks, self.fold_placeholder.clone()))
         } else {
             None
         }
