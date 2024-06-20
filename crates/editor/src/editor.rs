@@ -457,6 +457,9 @@ pub struct Editor {
     pub display_map: Model<DisplayMap>,
     pub selections: SelectionsCollection,
     pub scroll_manager: ScrollManager,
+    /// When inline assist editors are linked, they all render cursors because
+    /// typing enters text into each of them, even the ones that aren't focused.
+    show_cursor_when_unfocused: bool,
     columnar_selection_tail: Option<Anchor>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
@@ -1749,6 +1752,7 @@ impl Editor {
 
         let mut this = Self {
             focus_handle,
+            show_cursor_when_unfocused: false,
             last_focused_descendant: None,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
@@ -10849,7 +10853,11 @@ impl Editor {
 
     pub fn show_local_cursors(&self, cx: &WindowContext) -> bool {
         (self.read_only(cx) || self.blink_manager.read(cx).visible())
-            && self.focus_handle.is_focused(cx)
+            && (self.show_cursor_when_unfocused || self.focus_handle.is_focused(cx))
+    }
+
+    pub fn set_show_cursor_when_unfocused(&mut self, is_enabled: bool) {
+        self.show_cursor_when_unfocused = is_enabled;
     }
 
     fn on_buffer_changed(&mut self, _: Model<MultiBuffer>, cx: &mut ViewContext<Self>) {

@@ -1310,6 +1310,10 @@ impl PromptEditor {
                 cx,
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            // Since the prompt editors for all inline assistants are linked,
+            // always show the cursor (even when it isn't focused) because
+            // typing in one will make what you typed appear in all of them.
+            editor.set_show_cursor_when_unfocused(true);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor
         });
