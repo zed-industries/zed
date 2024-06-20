@@ -1137,7 +1137,7 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         let mut modifiers = current_modifiers();
         // for characters that use 'shift' to type it is expected that the
         // shift is not reported if the uppercase/lowercase are the same and instead only the key is reported
-        if first_char.to_ascii_lowercase() == first_char.to_ascii_lowercase() {
+        if first_char.to_ascii_uppercase() == first_char.to_ascii_lowercase() {
             modifiers.shift = false;
         }
         let key = match first_char {
