@@ -1,3 +1,4 @@
+use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     display_map::{
@@ -1089,11 +1090,17 @@ impl EditorElement {
             point(bounds.lower_right().x, bounds.lower_left().y),
         );
 
+        let settings = EditorSettings::get_global(cx);
+        let scroll_beyond_last_line: f32 = match settings.scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => rows_per_page,
+            ScrollBeyondLastLine::Off => 1.0,
+            ScrollBeyondLastLine::VerticalScrollMargin => 1.0 + settings.vertical_scroll_margin,
+        };
+        let total_rows = snapshot.max_point().row().as_f32() + scroll_beyond_last_line;
         let height = bounds.size.height;
-        let total_rows = snapshot.max_point().row().as_f32() + rows_per_page;
         let px_per_row = height / total_rows;
         let thumb_height = (rows_per_page * px_per_row).max(ScrollbarLayout::MIN_THUMB_HEIGHT);
-        let row_height = (height - thumb_height) / snapshot.max_point().row().as_f32();
+        let row_height = (height - thumb_height) / (total_rows - rows_per_page).max(0.0);
 
         Some(ScrollbarLayout {
             hitbox: cx.insert_hitbox(track_bounds, false),
@@ -4805,9 +4812,22 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let settings = EditorSettings::get_global(cx);
+                    let scroll_max_row = max_row.as_f32();
+                    let scroll_max_row = match settings.scroll_beyond_last_line {
+                        ScrollBeyondLastLine::OnePage => scroll_max_row,
+                        ScrollBeyondLastLine::Off => {
+                            (scroll_max_row - height_in_lines + 1.0).max(0.0)
+                        }
+                        ScrollBeyondLastLine::VerticalScrollMargin => (scroll_max_row
+                            - height_in_lines
+                            + 1.0
+                            + settings.vertical_scroll_margin)
+                            .max(0.0),
+                    };
                     let scroll_max = point(
                         ((scroll_width - text_hitbox.size.width) / em_width).max(0.0),
-                        max_row.as_f32(),
+                        scroll_max_row,
                     );
 
                     self.editor.update(cx, |editor, cx| {
