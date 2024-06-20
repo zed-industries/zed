@@ -2907,10 +2907,10 @@ impl Editor {
                 }
 
                 if let Some(bracket_pair) = bracket_pair {
-                    let autoclose = self.use_autoclose
-                        && snapshot.settings_at(selection.start, cx).use_autoclose;
-                    let auto_surround = self.use_auto_surround
-                        && snapshot.settings_at(selection.start, cx).use_auto_surround;
+                    let snapshot_settings = snapshot.settings_at(selection.start, cx);
+                    let autoclose = self.use_autoclose && snapshot_settings.use_autoclose;
+                    let auto_surround =
+                        self.use_auto_surround && snapshot_settings.use_auto_surround;
                     if selection.is_empty() {
                         if is_bracket_pair_start {
                             let prefix_len = bracket_pair.start.len() - text.len();
