@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use gpui::{
-    point, Bounds, ContentMask, MouseDownEvent, MouseMoveEvent, ScrollWheelEvent, Style,
+    point, Bounds, ContentMask, Hitbox, MouseDownEvent, MouseMoveEvent, ScrollWheelEvent, Style,
     UniformListScrollHandle,
 };
 use ui::{prelude::*, px, relative, IntoElement};
@@ -29,7 +29,7 @@ impl ProjectPanelScrollbar {
 impl gpui::Element for ProjectPanelScrollbar {
     type RequestLayoutState = ();
 
-    type PrepaintState = ();
+    type PrepaintState = Hitbox;
 
     fn id(&self) -> Option<ui::ElementId> {
         None
@@ -51,10 +51,11 @@ impl gpui::Element for ProjectPanelScrollbar {
     fn prepaint(
         &mut self,
         _id: Option<&gpui::GlobalElementId>,
-        _bounds: Bounds<ui::Pixels>,
+        bounds: Bounds<ui::Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _cx: &mut ui::WindowContext,
+        cx: &mut ui::WindowContext,
     ) -> Self::PrepaintState {
+        dbg!(cx.insert_hitbox(dbg!(bounds), false))
     }
 
     fn paint(

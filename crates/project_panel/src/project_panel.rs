@@ -2335,7 +2335,7 @@ impl Render for ProjectPanel {
                         } else {
                             let end_offset = end_offset.clamp(percentage + 0.005, 1.);
                             Some(
-                                v_flex()
+                                div()
                                     .id("project-panel-scroll")
                                     .on_mouse_move(|_, cx| cx.stop_propagation())
                                     .on_hover(|_, cx| {
@@ -2345,10 +2345,13 @@ impl Render for ProjectPanel {
                                         cx.stop_propagation();
                                     })
                                     .h_full()
-                                    .visible_on_hover("project-panel")
                                     .absolute()
-                                    .cursor_default()
                                     .right_0()
+                                    .top_0()
+                                    .bottom_0()
+                                    .w_3()
+                                    .visible_on_hover("project-panel")
+                                    .cursor_default()
                                     .child(ProjectPanelScrollbar::new(
                                         percentage as f32..end_offset as f32,
                                         self.scroll_handle.clone(),
