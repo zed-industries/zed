@@ -255,6 +255,8 @@
     /// 2. "indent_aware"
     "background_coloring": "disabled"
   },
+  // Whether the editor will scroll beyond the last line.
+  "scroll_beyond_last_line": "one_page",
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
   // Scroll sensitivity multiplier. This multiplier is applied
