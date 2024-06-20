@@ -161,7 +161,7 @@ impl InlineAssistant {
             if focus_prompt_editor {
                 cx.focus_view(&prompt_editor);
                 editor.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::newest()), cx, |selections| {
+                    editor.change_selections(Some(Autoscroll::center()), cx, |selections| {
                         selections.select_anchor_ranges([range.start..range.start])
                     })
                 });
@@ -484,7 +484,7 @@ impl InlineAssistant {
                     .editor
                     .update(cx, |editor, cx| {
                         let start = assist.codegen.read(cx).range.start;
-                        editor.change_selections(Some(Autoscroll::newest()), cx, |selections| {
+                        editor.change_selections(Some(Autoscroll::center()), cx, |selections| {
                             selections.select_anchor_ranges([start..start])
                         })
                     })
