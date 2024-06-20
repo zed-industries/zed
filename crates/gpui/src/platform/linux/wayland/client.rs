@@ -636,7 +636,8 @@ impl LinuxClient for WaylandClient {
             token.set_surface(&window.surface());
             token.commit();
         } else {
-            open_uri_internal(uri, None);
+            let executor = state.common.background_executor.clone();
+            open_uri_internal(executor, uri.to_string(), None);
         }
     }
 
@@ -956,7 +957,8 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
         let mut state = client.borrow_mut();
         if let xdg_activation_token_v1::Event::Done { token } = event {
             if let Some(uri) = state.pending_open_uri.take() {
-                open_uri_internal(&uri, Some(&token));
+                let executor = state.common.background_executor.clone();
+                open_uri_internal(executor, uri, Some(token));
             } else {
                 log::error!("called while pending_open_uri is None");
             }

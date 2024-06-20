@@ -29,8 +29,8 @@ use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput,
-    Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, Platform, PlatformDisplay,
+    PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
 use super::{
@@ -1080,7 +1080,7 @@ impl LinuxClient for X11Client {
     }
 
     fn open_uri(&self, uri: &str) {
-        open_uri_internal(uri, None);
+        open_uri_internal(self.background_executor(), uri.to_string(), None);
     }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {

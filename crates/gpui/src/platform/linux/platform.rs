@@ -20,6 +20,8 @@ use std::{
 
 use anyhow::anyhow;
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
+use ashpd::desktop::open_uri::OpenFileRequest as OpenUriRequest;
+use ashpd::{url, ActivationToken};
 use async_task::Runnable;
 use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
@@ -490,18 +492,24 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn add_recent_document(&self, _path: &Path) {}
 }
 
-pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
-    let mut last_err = None;
-    for mut command in open::commands(uri) {
-        if let Some(token) = activation_token {
-            command.env("XDG_ACTIVATION_TOKEN", token);
-        }
-        match command.spawn() {
-            Ok(_) => return,
-            Err(err) => last_err = Some(err),
-        }
+pub(super) fn open_uri_internal(
+    executor: BackgroundExecutor,
+    uri: String,
+    activation_token: Option<String>,
+) {
+    if let Some(parsed_uri) = url::Url::parse(&uri).log_err() {
+        executor
+            .spawn(async move {
+                let result = OpenUriRequest::default()
+                    .activation_token(activation_token.map(ActivationToken::from))
+                    .send_uri(&parsed_uri)
+                    .await;
+                if result.is_err() {
+                    open::that_detached(uri);
+                }
+            })
+            .detach();
     }
-    log::error!("failed to open uri: {uri:?}, last error: {last_err:?}");
 }
 
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
