@@ -2802,6 +2802,7 @@ impl Editor {
 
         if self.signature_help_state.is_some() {
             self.signature_help_state = None;
+            self.signature_help_task = None;
             return true;
         }
 
