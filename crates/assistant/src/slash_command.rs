@@ -3,8 +3,8 @@ use anyhow::Result;
 pub use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandRegistry};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{Model, Task, ViewContext, WeakView, WindowContext};
-use language::{Anchor, Buffer, CodeLabel, Documentation, LanguageServerId, ToPoint};
+use gpui::{AppContext, Model, Task, ViewContext, WeakView, WindowContext};
+use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
 use parking_lot::{Mutex, RwLock};
 use rope::Point;
 use std::{
@@ -14,6 +14,7 @@ use std::{
         Arc,
     },
 };
+use ui::ActiveTheme;
 use workspace::Workspace;
 
 pub mod active_command;
@@ -346,4 +347,20 @@ impl SlashCommandLine {
         }
         call
     }
+}
+
+pub fn create_label_for_command(
+    command_name: &str,
+    arguments: &[&str],
+    cx: &AppContext,
+) -> CodeLabel {
+    let mut label = CodeLabel::default();
+    label.push_str(command_name, None);
+    label.push_str(" ", None);
+    label.push_str(
+        &arguments.join(" "),
+        cx.theme().syntax().highlight_id("comment").map(HighlightId),
+    );
+    label.filter_range = 0..command_name.len();
+    label
 }

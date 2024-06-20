@@ -1,4 +1,4 @@
-use super::{SlashCommand, SlashCommandOutput};
+use super::{create_label_for_command, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
 use fuzzy::{PathMatch, StringMatchCandidate};
@@ -83,6 +83,10 @@ impl DiagnosticsCommand {
 impl SlashCommand for DiagnosticsCommand {
     fn name(&self) -> String {
         "diagnostics".into()
+    }
+
+    fn label(&self, cx: &AppContext) -> language::CodeLabel {
+        create_label_for_command("diagnostics", &[INCLUDE_WARNINGS_ARGUMENT], cx)
     }
 
     fn description(&self) -> String {
