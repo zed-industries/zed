@@ -1,5 +1,7 @@
 mod project_panel_settings;
+mod scrollbar;
 use client::{ErrorCode, ErrorExt};
+use scrollbar::ProjectPanelScrollbar;
 use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
@@ -2249,8 +2251,15 @@ impl Render for ProjectPanel {
         let project = self.project.read(cx);
 
         if has_worktree {
+            let items_count = self
+                .visible_entries
+                .iter()
+                .map(|(_, worktree_entries, _)| worktree_entries.len())
+                .sum();
+
             h_flex()
                 .id("project-panel")
+                .group("project-panel")
                 .size_full()
                 .relative()
                 .key_context(self.dispatch_context(cx))
@@ -2298,27 +2307,59 @@ impl Render for ProjectPanel {
                 )
                 .track_focus(&self.focus_handle)
                 .child(
-                    uniform_list(
-                        cx.view().clone(),
-                        "entries",
-                        self.visible_entries
-                            .iter()
-                            .map(|(_, worktree_entries, _)| worktree_entries.len())
-                            .sum(),
-                        {
-                            |this, range, cx| {
-                                let mut items = Vec::new();
-                                this.for_each_visible_entry(range, cx, |id, details, cx| {
-                                    items.push(this.render_entry(id, details, cx));
-                                });
-                                items
-                            }
-                        },
-                    )
+                    uniform_list(cx.view().clone(), "entries", items_count, {
+                        |this, range, cx| {
+                            let mut items = Vec::new();
+                            this.for_each_visible_entry(range, cx, |id, details, cx| {
+                                items.push(this.render_entry(id, details, cx));
+                            });
+                            items
+                        }
+                    })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
                     .track_scroll(self.scroll_handle.clone()),
                 )
+                .children({
+                    let l = self.scroll_handle.0.borrow();
+
+                    if let Some(height) = l.last_item_height {
+                        let total_list_length = height.0 as f64 * items_count as f64;
+                        let current_offset = l.base_handle.offset().y.0.abs() as f64;
+                        let percentage = current_offset / total_list_length;
+                        let end_offset = (current_offset
+                            + l.base_handle.bounds().size.height.0 as f64)
+                            / total_list_length;
+                        if percentage > 1.0 || end_offset > total_list_length {
+                            None
+                        } else {
+                            let end_offset = end_offset.clamp(percentage + 0.005, 1.);
+                            Some(
+                                v_flex()
+                                    .id("project-panel-scroll")
+                                    .on_mouse_move(|_, cx| cx.stop_propagation())
+                                    .on_hover(|_, cx| {
+                                        cx.stop_propagation();
+                                    })
+                                    .on_any_mouse_down(|_, cx| {
+                                        cx.stop_propagation();
+                                    })
+                                    .h_full()
+                                    .visible_on_hover("project-panel")
+                                    .absolute()
+                                    .cursor_default()
+                                    .right_0()
+                                    .child(ProjectPanelScrollbar::new(
+                                        percentage as f32..end_offset as f32,
+                                        self.scroll_handle.clone(),
+                                        items_count,
+                                    )),
+                            )
+                        }
+                    } else {
+                        None
+                    }
+                })
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
                         anchored()
