@@ -28,6 +28,7 @@ pub mod prompt_command;
 pub mod rustdoc_command;
 pub mod search_command;
 pub mod tabs_command;
+pub mod term_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
     commands: Arc<SlashCommandRegistry>,
