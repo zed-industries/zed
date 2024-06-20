@@ -532,6 +532,7 @@ pub struct Editor {
     next_editor_action_id: EditorActionId,
     editor_actions: Rc<RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&mut ViewContext<Self>)>>>>,
     use_autoclose: bool,
+    use_auto_surround: bool,
     auto_replace_emoji_shortcode: bool,
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
@@ -1811,6 +1812,7 @@ impl Editor {
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
+            use_auto_surround: true,
             auto_replace_emoji_shortcode: false,
             leader_peer_id: None,
             remote_id: None,
@@ -2186,6 +2188,10 @@ impl Editor {
 
     pub fn set_use_autoclose(&mut self, autoclose: bool) {
         self.use_autoclose = autoclose;
+    }
+
+    pub fn set_use_auto_surround(&mut self, auto_surround: bool) {
+        self.use_auto_surround = auto_surround;
     }
 
     pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
@@ -2887,7 +2893,7 @@ impl Editor {
                     // `text` can be empty when a user is using IME (e.g. Chinese Wubi Simplified)
                     //  and they are removing the character that triggered IME popup.
                     for (pair, enabled) in scope.brackets() {
-                        if !pair.close {
+                        if !pair.close && !pair.surround {
                             continue;
                         }
 
@@ -2905,9 +2911,10 @@ impl Editor {
                 }
 
                 if let Some(bracket_pair) = bracket_pair {
-                    let autoclose = self.use_autoclose
-                        && snapshot.settings_at(selection.start, cx).use_autoclose;
-
+                    let snapshot_settings = snapshot.settings_at(selection.start, cx);
+                    let autoclose = self.use_autoclose && snapshot_settings.use_autoclose;
+                    let auto_surround =
+                        self.use_auto_surround && snapshot_settings.use_auto_surround;
                     if selection.is_empty() {
                         if is_bracket_pair_start {
                             let prefix_len = bracket_pair.start.len() - text.len();
@@ -2929,6 +2936,7 @@ impl Editor {
                                         &bracket_pair.start[..prefix_len],
                                     ));
                             if autoclose
+                                && bracket_pair.close
                                 && following_text_allows_autoclose
                                 && preceding_text_matches_prefix
                             {
@@ -2980,7 +2988,8 @@ impl Editor {
                     }
                     // If an opening bracket is 1 character long and is typed while
                     // text is selected, then surround that text with the bracket pair.
-                    else if autoclose
+                    else if auto_surround
+                        && bracket_pair.surround
                         && is_bracket_pair_start
                         && bracket_pair.start.chars().count() == 1
                     {
@@ -12188,9 +12197,12 @@ impl ViewInputHandler for Editor {
 
             // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
             let use_autoclose = this.use_autoclose;
+            let use_auto_surround = this.use_auto_surround;
             this.set_use_autoclose(false);
+            this.set_use_auto_surround(false);
             this.handle_input(text, cx);
             this.set_use_autoclose(use_autoclose);
+            this.set_use_auto_surround(use_auto_surround);
 
             if let Some(new_selected_range) = new_selected_range_utf16 {
                 let snapshot = this.buffer.read(cx).read(cx);

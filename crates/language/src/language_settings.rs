@@ -112,6 +112,8 @@ pub struct LanguageSettings {
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
     pub use_autoclose: bool,
+    /// Whether to automatically surround text with brackets.
+    pub use_auto_surround: bool,
     // Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
@@ -315,6 +317,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
+    /// Whether to automatically surround text with characters for you. For example,
+    /// when you select text and type (, Zed will automatically surround text with ().
+    ///
+    /// Default: true
+    pub use_auto_surround: Option<bool>,
     // Controls how the editor handles the autoclosed characters.
     // When set to `false`(default), skipping over and auto-removing of the closing characters
     // happen only for auto-inserted characters.
@@ -774,6 +781,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
+    merge(&mut settings.use_auto_surround, src.use_auto_surround);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,
         src.always_treat_brackets_as_autoclosed,
