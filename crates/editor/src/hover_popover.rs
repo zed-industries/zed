@@ -351,7 +351,16 @@ fn show_hover(
     editor.hover_state.info_task = Some(task);
 }
 
-fn transform_codeblock(input: &str, language: &str) -> String {
+fn transform_codeblock(mut input: String, language: &str) -> String {
+    input = input.replace("\\n", "\n").trim().to_string();
+
+    let language_aliases = [("js", "javascript")];
+    for (abbreviation, full_name) in language_aliases {
+        input = input.replace(
+            format!("```{}\n", abbreviation).as_str(),
+            format!("```{}\n", full_name).as_str(),
+        );
+    }
     let lines: Vec<&str> = input.lines().collect();
     let mut result: Vec<String> = Vec::new();
     let mut i = 0;
@@ -365,7 +374,6 @@ fn transform_codeblock(input: &str, language: &str) -> String {
                 //modify the line if the lsp didn't provide a language
                 line.clone_from(&language_tag);
             }
-
             open_block = !open_block;
             i += 1;
         } else {
@@ -406,15 +414,7 @@ async fn parse_blocks(
         } else {
             "".to_string()
         };
-        let mut text = transform_codeblock(
-            block.clone().text.replace("\\n", "\n").trim(),
-            language_name.as_str(),
-        );
-
-        // let mut text = block.clone().text;
-
-        text = text.replace("```js", "```javascript");
-        // println!("{}", text);
+        let text = transform_codeblock(block.clone().text, language_name.as_str());
 
         combined_text.push_str(text.as_str());
     }
@@ -1108,7 +1108,49 @@ mod tests {
             );
         });
     }
+    #[gpui::test]
+    async fn test_transform_info_popover_markdown(_cx: &mut gpui::TestAppContext) {
+        //test removing middle of the block line-breaks
+        let input =String::from( "```rust\nfn\n```\n\n---\n\nA function or function pointer.\n\nFunctions are the primary way code is executed within Rust. Function blocks, usually just\ncalled functions, can be defined in a variety of different places and be assigned many\ndifferent attributes and modifiers.\n\nStandalone functions that just sit within a module not attached to anything else are common,\nbut most functions will end up being inside [`impl`](https://doc.rust-lang.org/stable/std/keyword.impl.html) blocks, either on another type itself, or\nas a trait impl for that type.\n\n```rust\nfn standalone_function() {\n    // code\n}\n\npub fn public_thing(argument: bool) -> String {\n    // code\n}\n\nstruct Thing {\n    foo: i32,\n}\n\nimpl Thing {\n    pub fn new() -> Self {\n        Self {\n            foo: 42,\n        }\n    }\n}\n```\n\nIn addition to presenting fixed types in the form of `fn name(arg: type, ..) -> return_type`,\nfunctions can also declare a list of type parameters along with trait bounds that they fall\ninto.\n\n```rust\nfn generic_function<T: Clone>(x: T) -> (T, T, T) {\n    (x.clone(), x.clone(), x.clone())\n}\n\nfn generic_where<T>(x: T) -> T\n    where T: std::ops::Add<Output = T> + Copy\n{\n    x + x + x\n}\n```\n\nDeclaring trait bounds in the angle brackets is functionally identical to using a `where`\nclause. It's up to the programmer to decide which works better in each situation, but `where`\ntends to be better when things get longer than one line.\n\nAlong with being made public via `pub`, `fn` can also have an [`extern`](https://doc.rust-lang.org/stable/std/keyword.extern.html) added for use in\nFFI.\n\nFor more information on the various types of functions and how they're used, consult the [Rust\nbook](https://doc.rust-lang.org/stable/book/ch03-03-how-functions-work.html) or the [Reference](https://doc.rust-lang.org/stable/reference/items/functions.html).");
+        let  target_output = String::from("```rust\nfn\n```\n ---\n A function or function pointer.\n Functions are the primary way code is executed within Rust. Function blocks, usually just called functions, can be defined in a variety of different places and be assigned many different attributes and modifiers.\n Standalone functions that just sit within a module not attached to anything else are common, but most functions will end up being inside [`impl`](https://doc.rust-lang.org/stable/std/keyword.impl.html) blocks, either on another type itself, or as a trait impl for that type.\n\n```rust\nfn standalone_function() {\n    // code\n}\n\npub fn public_thing(argument: bool) -> String {\n    // code\n}\n\nstruct Thing {\n    foo: i32,\n}\n\nimpl Thing {\n    pub fn new() -> Self {\n        Self {\n            foo: 42,\n        }\n    }\n}\n```\n In addition to presenting fixed types in the form of `fn name(arg: type, ..) -> return_type`, functions can also declare a list of type parameters along with trait bounds that they fall into.\n\n```rust\nfn generic_function<T: Clone>(x: T) -> (T, T, T) {\n    (x.clone(), x.clone(), x.clone())\n}\n\nfn generic_where<T>(x: T) -> T\n    where T: std::ops::Add<Output = T> + Copy\n{\n    x + x + x\n}\n```\n Declaring trait bounds in the angle brackets is functionally identical to using a `where` clause. It's up to the programmer to decide which works better in each situation, but `where` tends to be better when things get longer than one line.\n Along with being made public via `pub`, `fn` can also have an [`extern`](https://doc.rust-lang.org/stable/std/keyword.extern.html) added for use in FFI.\n For more information on the various types of functions and how they're used, consult the [Rust book](https://doc.rust-lang.org/stable/book/ch03-03-how-functions-work.html) or the [Reference](https://doc.rust-lang.org/stable/reference/items/functions.html).");
+        let output = transform_codeblock(input, "rust");
+        assert_eq!(output, target_output);
 
+        //test adding missing language tag
+        let input =String::from( "```\nfn\n```\n\n---\n\nA function or function pointer.\n\nFunctions are the primary way code is executed within Rust. Function blocks, usually just\ncalled functions, can be defined in a variety of different places and be assigned many\ndifferent attributes and modifiers.\n\nStandalone functions that just sit within a module not attached to anything else are common,\nbut most functions will end up being inside [`impl`](https://doc.rust-lang.org/stable/std/keyword.impl.html) blocks, either on another type itself, or\nas a trait impl for that type.\n\n```\nfn standalone_function() {\n    // code\n}\n\npub fn public_thing(argument: bool) -> String {\n    // code\n}\n\nstruct Thing {\n    foo: i32,\n}\n\nimpl Thing {\n    pub fn new() -> Self {\n        Self {\n            foo: 42,\n        }\n    }\n}\n```\n\nIn addition to presenting fixed types in the form of `fn name(arg: type, ..) -> return_type`,\nfunctions can also declare a list of type parameters along with trait bounds that they fall\ninto.\n\n```\nfn generic_function<T: Clone>(x: T) -> (T, T, T) {\n    (x.clone(), x.clone(), x.clone())\n}\n\nfn generic_where<T>(x: T) -> T\n    where T: std::ops::Add<Output = T> + Copy\n{\n    x + x + x\n}\n```\n\nDeclaring trait bounds in the angle brackets is functionally identical to using a `where`\nclause. It's up to the programmer to decide which works better in each situation, but `where`\ntends to be better when things get longer than one line.\n\nAlong with being made public via `pub`, `fn` can also have an [`extern`](https://doc.rust-lang.org/stable/std/keyword.extern.html) added for use in\nFFI.\n\nFor more information on the various types of functions and how they're used, consult the [Rust\nbook](https://doc.rust-lang.org/stable/book/ch03-03-how-functions-work.html) or the [Reference](https://doc.rust-lang.org/stable/reference/items/functions.html).\n```js\nThis should remain the same```");
+        let target_output = String::from("```rust\nfn\n```\n ---\n A function or function pointer.\n Functions are the primary way code is executed within Rust. Function blocks, usually just called functions, can be defined in a variety of different places and be assigned many different attributes and modifiers.\n Standalone functions that just sit within a module not attached to anything else are common, but most functions will end up being inside [`impl`](https://doc.rust-lang.org/stable/std/keyword.impl.html) blocks, either on another type itself, or as a trait impl for that type.\n\n```rust\nfn standalone_function() {\n    // code\n}\n\npub fn public_thing(argument: bool) -> String {\n    // code\n}\n\nstruct Thing {\n    foo: i32,\n}\n\nimpl Thing {\n    pub fn new() -> Self {\n        Self {\n            foo: 42,\n        }\n    }\n}\n```\n In addition to presenting fixed types in the form of `fn name(arg: type, ..) -> return_type`, functions can also declare a list of type parameters along with trait bounds that they fall into.\n\n```rust\nfn generic_function<T: Clone>(x: T) -> (T, T, T) {\n    (x.clone(), x.clone(), x.clone())\n}\n\nfn generic_where<T>(x: T) -> T\n    where T: std::ops::Add<Output = T> + Copy\n{\n    x + x + x\n}\n```\n Declaring trait bounds in the angle brackets is functionally identical to using a `where` clause. It's up to the programmer to decide which works better in each situation, but `where` tends to be better when things get longer than one line.\n Along with being made public via `pub`, `fn` can also have an [`extern`](https://doc.rust-lang.org/stable/std/keyword.extern.html) added for use in FFI.\n For more information on the various types of functions and how they're used, consult the [Rust book](https://doc.rust-lang.org/stable/book/ch03-03-how-functions-work.html) or the [Reference](https://doc.rust-lang.org/stable/reference/items/functions.html).\n```javascript\nThis should remain the same```");
+        let output = transform_codeblock(input, "rust");
+        assert_eq!(output, target_output);
+
+        //test replacing language name
+        let input = String::from(
+            "
+
+
+```js
+//This is some js code
+```
+
+```python
+#This is some python code
+```
+
+
+",
+        );
+        let target_output = String::from(
+            "```javascript
+//This is some js code
+```
+
+```python
+#This is some python code
+```",
+        );
+        let output = transform_codeblock(input, "javascript");
+
+        assert_eq!(output, target_output);
+    }
     #[gpui::test]
     async fn test_line_ends_trimmed(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
