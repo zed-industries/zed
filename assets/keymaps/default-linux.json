@@ -1,5 +1,4 @@
 [
-  // todo(linux): Review the editor bindings
   // Standard Linux bindings
   {
     "bindings": {
@@ -43,13 +42,8 @@
       "shift-tab": "editor::TabPrev",
       "ctrl-k": "editor::CutToEndOfLine",
       "ctrl-t": "editor::Transpose",
-      // "ctrl-backspace": "editor::DeleteToBeginningOfLine",
-      // "ctrl-delete": "editor::DeleteToEndOfLine",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      // "ctrl-w": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
-      // "alt-h": "editor::DeleteToPreviousWordStart",
-      // "alt-d": "editor::DeleteToNextWordEnd",
       "ctrl-x": "editor::Cut",
       "ctrl-insert": "editor::Copy",
       "ctrl-c": "editor::Copy",
@@ -71,13 +65,7 @@
       "left": "editor::MoveLeft",
       "right": "editor::MoveRight",
       "ctrl-left": "editor::MoveToPreviousWordStart",
-      // "alt-b": "editor::MoveToPreviousWordStart",
       "ctrl-right": "editor::MoveToNextWordEnd",
-      // "alt-f": "editor::MoveToNextWordEnd",
-      // "cmd-left": "editor::MoveToBeginningOfLine",
-      // "ctrl-a": "editor::MoveToBeginningOfLine",
-      // "cmd-right": "editor::MoveToEndOfLine",
-      // "ctrl-e": "editor::MoveToEndOfLine",
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-end": "editor::MoveToEnd",
       "shift-up": "editor::SelectUp",
@@ -88,8 +76,6 @@
       "ctrl-shift-right": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::AddSelectionAbove",
       "ctrl-shift-down": "editor::AddSelectionBelow",
-      // "ctrl-shift-up": "editor::SelectToStartOfParagraph",
-      // "ctrl-shift-down": "editor::SelectToEndOfParagraph",
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
