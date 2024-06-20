@@ -233,6 +233,8 @@
     "enabled": true,
     /// The width of the indent guides in pixels, between 1 and 10.
     "line_width": 1,
+    /// The width of the active indent guide in pixels, between 1 and 10.
+    "active_line_width": 2,
     /// Determines how indent guides are colored.
     /// This setting can take the following three values:
     ///
@@ -245,9 +247,7 @@
     ///
     /// 1. "disabled"
     /// 2. "indent_aware"
-    "background_coloring": "disabled",
-    /// Whether to make an active indent guide thicker than the others.
-    "thicken_active": true
+    "background_coloring": "disabled"
   },
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
