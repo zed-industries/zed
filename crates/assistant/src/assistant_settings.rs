@@ -27,6 +27,7 @@ pub enum CloudModel {
     Claude3Opus,
     Claude3Sonnet,
     Claude3Haiku,
+    Claude3Point5Sonnet,
     Custom(String),
 }
 
@@ -108,6 +109,7 @@ impl CloudModel {
             Self::Claude3Opus => "claude-3-opus",
             Self::Claude3Sonnet => "claude-3-sonnet",
             Self::Claude3Haiku => "claude-3-haiku",
+            Self::Claude3Point5Sonnet => "claude-3-5-sonnet",
             Self::Custom(id) => id,
         }
     }
@@ -121,6 +123,7 @@ impl CloudModel {
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
+            Self::Claude3Point5Sonnet => "Claude 3.5 Sonnet",
             Self::Custom(id) => id.as_str(),
         }
     }
@@ -130,16 +133,20 @@ impl CloudModel {
             Self::Gpt3Point5Turbo => 2048,
             Self::Gpt4 => 4096,
             Self::Gpt4Turbo | Self::Gpt4Omni => 128000,
-            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 200000,
+            Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3Haiku
+            | Self::Claude3Point5Sonnet => 200000,
             Self::Custom(_) => 4096, // TODO: Make this configurable
         }
     }
 
     pub fn preprocess_request(&self, request: &mut LanguageModelRequest) {
         match self {
-            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => {
-                preprocess_anthropic_request(request)
-            }
+            Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3Haiku
+            | Self::Claude3Point5Sonnet => preprocess_anthropic_request(request),
             _ => {}
         }
     }
