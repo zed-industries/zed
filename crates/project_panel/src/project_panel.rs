@@ -2330,27 +2330,33 @@ impl Render for ProjectPanel {
                         let end_offset = (current_offset
                             + l.base_handle.bounds().size.height.0 as f64)
                             / total_list_length;
-                        if percentage > 1.0 || end_offset > total_list_length {
+                        if percentage + 0.005 > 1.0 || end_offset > total_list_length {
                             None
                         } else {
                             let end_offset = end_offset.clamp(percentage + 0.005, 1.);
                             Some(
                                 div()
+                                    .occlude()
                                     .id("project-panel-scroll")
-                                    .on_mouse_move(|_, cx| cx.stop_propagation())
+                                    .on_mouse_move(cx.listener(|_, _, cx| {
+                                        cx.notify();
+                                        cx.stop_propagation()
+                                    }))
                                     .on_hover(|_, cx| {
                                         cx.stop_propagation();
                                     })
                                     .on_any_mouse_down(|_, cx| {
                                         cx.stop_propagation();
                                     })
+                                    .on_scroll_wheel(cx.listener(|_, _, cx| {
+                                        cx.notify();
+                                    }))
                                     .h_full()
                                     .absolute()
                                     .right_0()
                                     .top_0()
                                     .bottom_0()
                                     .w_3()
-                                    .visible_on_hover("project-panel")
                                     .cursor_default()
                                     .child(ProjectPanelScrollbar::new(
                                         percentage as f32..end_offset as f32,

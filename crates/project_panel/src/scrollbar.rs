@@ -1,8 +1,8 @@
 use std::ops::Range;
 
 use gpui::{
-    point, Bounds, ContentMask, Hitbox, MouseDownEvent, MouseMoveEvent, ScrollWheelEvent, Style,
-    UniformListScrollHandle,
+    point, Bounds, ContentMask, EntityId, Hitbox, MouseDownEvent, MouseMoveEvent, ScrollWheelEvent,
+    Style, UniformListScrollHandle,
 };
 use ui::{prelude::*, px, relative, IntoElement};
 
@@ -55,7 +55,9 @@ impl gpui::Element for ProjectPanelScrollbar {
         _request_layout: &mut Self::RequestLayoutState,
         cx: &mut ui::WindowContext,
     ) -> Self::PrepaintState {
-        dbg!(cx.insert_hitbox(dbg!(bounds), false))
+        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+            cx.insert_hitbox(bounds, false)
+        })
     }
 
     fn paint(
@@ -66,6 +68,10 @@ impl gpui::Element for ProjectPanelScrollbar {
         _prepaint: &mut Self::PrepaintState,
         cx: &mut ui::WindowContext,
     ) {
+        if !bounds.contains(&cx.mouse_position()) {
+            return;
+        }
+        let hitbox_id = _prepaint.id;
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             cx.paint_quad(gpui::fill(
                 bounds,
@@ -87,7 +93,7 @@ impl gpui::Element for ProjectPanelScrollbar {
             let item_count = self.item_count;
             cx.on_mouse_event({
                 let scroll = self.scroll.clone();
-                move |event: &MouseDownEvent, phase, cx| {
+                move |event: &MouseDownEvent, phase, _cx| {
                     if phase.bubble() && bounds.contains(&event.position) {
                         if thumb_offset > px(0.) {
                             let percentage_offset =
@@ -123,8 +129,9 @@ impl gpui::Element for ProjectPanelScrollbar {
                     }
                 }
             });
+
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                if phase.bubble() && bounds.contains(&event.position) {
+                if phase.bubble() && bounds.contains(&event.position) && hitbox_id.is_hovered(cx) {
                     if event.dragging() {
                         let scroll = scroll.0.borrow();
                         if let Some(last_height) = scroll.last_item_height {
@@ -135,6 +142,8 @@ impl gpui::Element for ProjectPanelScrollbar {
                                 .base_handle
                                 .set_offset(point(px(0.), -max_offset * percentage));
                         }
+                    } else {
+                        cx.stop_propagation();
                     }
                 }
             });
