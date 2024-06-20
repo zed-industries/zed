@@ -141,8 +141,13 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     let auto_updater = cx.new_model(|cx| {
         let updater = AutoUpdater::new(version, http_client);
 
+        let poll_for_updates = ReleaseChannel::try_global(cx)
+            .map(|channel| channel.poll_for_updates())
+            .unwrap_or(false);
+
         if option_env!("ZED_UPDATE_EXPLANATION").is_none()
             && env::var("ZED_UPDATE_EXPLANATION").is_err()
+            && poll_for_updates
         {
             let mut update_subscription = AutoUpdateSetting::get_global(cx)
                 .0
@@ -183,6 +188,13 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
             Some(&message),
             &["Ok"],
         ));
+        return;
+    }
+
+    if !ReleaseChannel::try_global(cx)
+        .map(|channel| channel.poll_for_updates())
+        .unwrap_or(false)
+    {
         return;
     }
 
