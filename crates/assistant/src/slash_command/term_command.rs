@@ -4,10 +4,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use gpui::{AppContext, Task, WeakView};
-use language::{CodeLabel, HighlightId, LspAdapterDelegate};
+use language::{CodeLabel, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use workspace::Workspace;
+
+use super::create_label_for_command;
 
 pub(crate) struct TermSlashCommand;
 
@@ -19,14 +21,7 @@ impl SlashCommand for TermSlashCommand {
     }
 
     fn label(&self, cx: &AppContext) -> CodeLabel {
-        let mut label = CodeLabel::default();
-        label.push_str("term ", None);
-        label.push_str(
-            LINE_COUNT_ARG,
-            cx.theme().syntax().highlight_id("comment").map(HighlightId),
-        );
-        label.filter_range = 0.."term".len();
-        label
+        create_label_for_command("term", &[LINE_COUNT_ARG], cx)
     }
 
     fn description(&self) -> String {
@@ -42,7 +37,7 @@ impl SlashCommand for TermSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         _query: String,
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
@@ -91,9 +86,8 @@ impl SlashCommand for TermSlashCommand {
             text,
             sections: vec![SlashCommandOutputSection {
                 range,
-                render_placeholder: Arc::new(move |id, unfold, _cx| {
-                    TermPlaceholder { id, unfold }.into_any_element()
-                }),
+                icon: IconName::Terminal,
+                label: "Terminal".into(),
             }],
             run_commands_in_text: false,
         }))
@@ -108,23 +102,4 @@ fn parse_argument(argument: &str) -> Option<usize> {
         }
     }
     None
-}
-
-#[derive(IntoElement)]
-struct TermPlaceholder {
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-}
-
-impl RenderOnce for TermPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::Terminal))
-            .child(Label::new("Terminal"))
-            .on_click(move |_, cx| unfold(cx))
-    }
 }
