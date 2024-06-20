@@ -9,14 +9,14 @@ use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
+        ToDisplayPoint,
     },
-    scroll::Autoscroll,
     Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
     ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{
-    AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global,
+    point, AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global,
     HighlightStyle, Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View,
     ViewContext, WeakView, WhiteSpace, WindowContext,
 };
@@ -129,6 +129,7 @@ impl InlineAssistant {
 
         let mut assists = Vec::new();
         let mut assist_blocks = Vec::new();
+        let mut assist_to_focus = None;
         for range in codegen_ranges {
             let assist_id = self.next_assist_id.post_inc();
             let codegen = cx.new_model(|cx| {
@@ -153,25 +154,22 @@ impl InlineAssistant {
                 )
             });
 
-            let focus_prompt_editor = if newest_selection.reversed {
-                range.start.to_point(&snapshot) == newest_selection.start
-            } else {
-                range.end.to_point(&snapshot) == newest_selection.end
-            };
-            if focus_prompt_editor {
-                cx.focus_view(&prompt_editor);
-                editor.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::center()), cx, |selections| {
-                        selections.select_anchor_ranges([range.start..range.start])
-                    })
-                });
+            if assist_to_focus.is_none() {
+                let focus_assist = if newest_selection.reversed {
+                    range.start.to_point(&snapshot) == newest_selection.start
+                } else {
+                    range.end.to_point(&snapshot) == newest_selection.end
+                };
+                if focus_assist {
+                    assist_to_focus = Some(assist_id);
+                }
             }
 
             assist_blocks.push(BlockProperties {
                 style: BlockStyle::Sticky,
                 position: range.start,
                 height: prompt_editor.read(cx).height_in_lines,
-                render: build_inline_assist_editor_renderer(&prompt_editor),
+                render: build_assist_editor_renderer(&prompt_editor),
                 disposition: BlockDisposition::Above,
             });
             assist_blocks.push(BlockProperties {
@@ -192,14 +190,14 @@ impl InlineAssistant {
         }
 
         let assist_block_ids = editor.update(cx, |editor, cx| {
-            editor.insert_blocks(assist_blocks, Some(Autoscroll::newest()), cx)
+            editor.insert_blocks(assist_blocks, None, cx)
         });
 
         let editor_assists = self
             .assists_by_editor
             .entry(editor.downgrade())
             .or_insert_with(|| EditorInlineAssists::new(&editor, cx));
-        let mut assist_group = InlineAssistGroup::new(assist_group_id, &editor, cx);
+        let mut assist_group = InlineAssistGroup::default();
         for ((assist_id, prompt_editor), block_ids) in
             assists.into_iter().zip(assist_block_ids.chunks_exact(2))
         {
@@ -222,33 +220,37 @@ impl InlineAssistant {
             editor_assists.assist_ids.push(assist_id);
         }
         self.assist_groups.insert(assist_group_id, assist_group);
+
+        if let Some(assist_id) = assist_to_focus {
+            self.focus_assist(assist_id, cx);
+        }
     }
 
     fn handle_prompt_editor_event(
         &mut self,
-        inline_assist_editor: View<PromptEditor>,
+        assist_editor: View<PromptEditor>,
         event: &PromptEditorEvent,
         cx: &mut WindowContext,
     ) {
-        let assist_id = inline_assist_editor.read(cx).id;
+        let assist_id = assist_editor.read(cx).id;
         match event {
             PromptEditorEvent::StartRequested => {
-                self.start_inline_assist(assist_id, cx);
+                self.start_assist(assist_id, cx);
             }
             PromptEditorEvent::StopRequested => {
-                self.stop_inline_assist(assist_id, cx);
+                self.stop_assist(assist_id, cx);
             }
             PromptEditorEvent::ConfirmRequested => {
-                self.finish_inline_assist(assist_id, false, cx);
+                self.finish_assist(assist_id, false, cx);
             }
             PromptEditorEvent::CancelRequested => {
-                self.finish_inline_assist(assist_id, true, cx);
+                self.finish_assist(assist_id, true, cx);
             }
             PromptEditorEvent::DismissRequested => {
-                self.dismiss_inline_assist(assist_id, cx);
+                self.dismiss_assist(assist_id, cx);
             }
             PromptEditorEvent::Resized { height_in_lines } => {
-                self.resize_inline_assist(assist_id, *height_in_lines, cx);
+                self.resize_assist(assist_id, *height_in_lines, cx);
             }
         }
     }
@@ -268,9 +270,9 @@ impl InlineAssistant {
                 if assist_range.contains(&selection.start) && assist_range.contains(&selection.end)
                 {
                     if matches!(assist.codegen.read(cx).status, CodegenStatus::Pending) {
-                        self.dismiss_inline_assist(*assist_id, cx);
+                        self.dismiss_assist(*assist_id, cx);
                     } else {
-                        self.finish_inline_assist(*assist_id, false, cx);
+                        self.finish_assist(*assist_id, false, cx);
                     }
 
                     return;
@@ -286,70 +288,42 @@ impl InlineAssistant {
             return;
         };
 
-        let propagate = editor.update(cx, |editor, cx| {
-            if editor.selections.count() == 1 {
-                let buffer = editor.buffer().read(cx).snapshot(cx);
-                for assist_id in &editor_assists.assist_ids {
-                    let assist = &self.assists[assist_id];
-                    let assist_range = assist.codegen.read(cx).range.to_offset(&buffer);
-
-                    if let Some(decorations) = assist.decorations.as_ref() {
-                        let selection = editor.selections.newest::<usize>(cx);
-                        if assist_range.contains(&selection.start)
-                            && assist_range.contains(&selection.end)
-                        {
-                            editor.change_selections(
-                                Some(Autoscroll::newest()),
-                                cx,
-                                |selections| {
-                                    selections
-                                        .select_ranges([assist_range.start..assist_range.start]);
-                                },
-                            );
-                            decorations.prompt_editor.update(cx, |prompt_editor, cx| {
-                                prompt_editor.editor.update(cx, |prompt_editor, cx| {
-                                    prompt_editor.select_all(&SelectAll, cx);
-                                    prompt_editor.focus(cx);
-                                });
-                            });
-                            return false;
-                        }
-                    }
+        let editor = editor.read(cx);
+        if editor.selections.count() == 1 {
+            let selection = editor.selections.newest::<usize>(cx);
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            for assist_id in &editor_assists.assist_ids {
+                let assist = &self.assists[assist_id];
+                let assist_range = assist.codegen.read(cx).range.to_offset(&buffer);
+                if assist.decorations.is_some()
+                    && assist_range.contains(&selection.start)
+                    && assist_range.contains(&selection.end)
+                {
+                    self.focus_assist(*assist_id, cx);
+                    return;
                 }
             }
-            true
-        });
-
-        if propagate {
-            cx.propagate();
         }
+
+        cx.propagate();
     }
 
-    fn handle_editor_event_for_group(
+    fn handle_editor_event(
         &mut self,
-        group_id: InlineAssistGroupId,
         editor: View<Editor>,
         event: &EditorEvent,
         cx: &mut WindowContext,
     ) {
-        let Some(assist_group) = self.assist_groups.get(&group_id) else {
+        let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) else {
             return;
         };
 
         match event {
-            EditorEvent::SelectionsChanged { local } if *local => {
-                for assist_id in assist_group.assist_ids.clone() {
-                    let assist = &self.assists[&assist_id];
-                    if let CodegenStatus::Idle = &assist.codegen.read(cx).status {
-                        self.finish_inline_assist(assist_id, true, cx);
-                    }
-                }
-            }
             EditorEvent::Saved => {
-                for assist_id in assist_group.assist_ids.clone() {
+                for assist_id in editor_assists.assist_ids.clone() {
                     let assist = &self.assists[&assist_id];
                     if let CodegenStatus::Done = &assist.codegen.read(cx).status {
-                        self.finish_inline_assist(assist_id, false, cx)
+                        self.finish_assist(assist_id, false, cx)
                     }
                 }
             }
@@ -359,7 +333,7 @@ impl InlineAssistant {
                     buffer.edited_ranges_for_transaction::<usize>(*transaction_id, cx);
                 let snapshot = buffer.snapshot(cx);
 
-                for assist_id in assist_group.assist_ids.clone() {
+                for assist_id in editor_assists.assist_ids.clone() {
                     let assist = &self.assists[&assist_id];
                     if matches!(
                         assist.codegen.read(cx).status,
@@ -370,7 +344,24 @@ impl InlineAssistant {
                             .iter()
                             .any(|range| range.overlaps(&assist_range))
                         {
-                            self.finish_inline_assist(assist_id, false, cx);
+                            self.finish_assist(assist_id, false, cx);
+                        }
+                    }
+                }
+            }
+            EditorEvent::BufferEdited => {
+                for assist_id in editor_assists.assist_ids.clone() {
+                    let assist = &self.assists[&assist_id];
+                    if let Some(decorations) = assist.decorations.as_ref() {
+                        // Keep the prompt editor scrolled into view as the buffer changes if
+                        // it is focused.
+                        if decorations
+                            .prompt_editor
+                            .focus_handle(cx)
+                            .contains_focused(cx)
+                        {
+                            self.scroll_to_assist(assist_id, cx);
+                            break;
                         }
                     }
                 }
@@ -379,23 +370,18 @@ impl InlineAssistant {
         }
     }
 
-    fn finish_inline_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-        undo: bool,
-        cx: &mut WindowContext,
-    ) {
+    fn finish_assist(&mut self, assist_id: InlineAssistId, undo: bool, cx: &mut WindowContext) {
         if let Some(assist) = self.assists.get(&assist_id) {
             if assist.linked_to_group {
                 let assist_group_id = assist.group_id;
                 for assist_id in self.unlink_assist_group(assist_group_id, cx) {
-                    self.finish_inline_assist(assist_id, undo, cx);
+                    self.finish_assist(assist_id, undo, cx);
                 }
                 return;
             }
         }
 
-        self.dismiss_inline_assist(assist_id, cx);
+        self.dismiss_assist(assist_id, cx);
 
         if let Some(assist) = self.assists.remove(&assist_id) {
             if let hash_map::Entry::Occupied(mut entry) = self.assist_groups.entry(assist.group_id)
@@ -426,7 +412,7 @@ impl InlineAssistant {
         }
     }
 
-    fn dismiss_inline_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
+    fn dismiss_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
         let Some(assist) = self.assists.get_mut(&assist_id) else {
             return false;
         };
@@ -449,7 +435,7 @@ impl InlineAssistant {
             .focus_handle(cx)
             .contains_focused(cx)
         {
-            self.focus_next_inline_assist(assist_id, cx);
+            self.focus_next_assist(assist_id, cx);
         }
 
         if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
@@ -459,7 +445,7 @@ impl InlineAssistant {
         true
     }
 
-    fn focus_next_inline_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    fn focus_next_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
         let Some(assist) = self.assists.get(&assist_id) else {
             return;
         };
@@ -478,17 +464,8 @@ impl InlineAssistant {
 
         for assist_id in assist_ids {
             let assist = &self.assists[assist_id];
-            if let Some(decorations) = assist.decorations.as_ref() {
-                cx.focus_view(&decorations.prompt_editor);
-                assist
-                    .editor
-                    .update(cx, |editor, cx| {
-                        let start = assist.codegen.read(cx).range.start;
-                        editor.change_selections(Some(Autoscroll::center()), cx, |selections| {
-                            selections.select_anchor_ranges([start..start])
-                        })
-                    })
-                    .ok();
+            if assist.decorations.is_some() {
+                self.focus_assist(*assist_id, cx);
                 return;
             }
         }
@@ -496,7 +473,72 @@ impl InlineAssistant {
         assist.editor.update(cx, |editor, cx| editor.focus(cx)).ok();
     }
 
-    fn resize_inline_assist(
+    fn focus_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+        let assist = &self.assists[&assist_id];
+        let Some(editor) = assist.editor.upgrade() else {
+            return;
+        };
+
+        if let Some(decorations) = assist.decorations.as_ref() {
+            decorations.prompt_editor.update(cx, |prompt_editor, cx| {
+                prompt_editor.editor.update(cx, |editor, cx| {
+                    editor.focus(cx);
+                    editor.select_all(&SelectAll, cx);
+                })
+            });
+        }
+
+        let position = assist.codegen.read(cx).range.start;
+        editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |selections| {
+                selections.select_anchor_ranges([position..position])
+            })
+        });
+        self.scroll_to_assist(assist_id, cx);
+    }
+
+    fn scroll_to_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+        let assist = &self.assists[&assist_id];
+        let Some(editor) = assist.editor.upgrade() else {
+            return;
+        };
+
+        editor.update(cx, |editor, cx| {
+            let mut scroll_target_top;
+            let mut scroll_target_bottom;
+            if let Some(decorations) = assist.decorations.as_ref() {
+                scroll_target_top = editor
+                    .row_for_block(decorations.prompt_block_id, cx)
+                    .unwrap()
+                    .0 as f32;
+                scroll_target_bottom =
+                    scroll_target_top + decorations.prompt_editor.read(cx).height_in_lines as f32;
+            } else {
+                let snapshot = editor.snapshot(cx);
+                let codegen = assist.codegen.read(cx);
+                let start_row = codegen
+                    .range
+                    .start
+                    .to_display_point(&snapshot.display_snapshot)
+                    .row();
+                scroll_target_top = start_row.0 as f32;
+                scroll_target_bottom = scroll_target_top + 1.;
+            }
+            scroll_target_top -= editor.vertical_scroll_margin() as f32;
+            scroll_target_bottom += editor.vertical_scroll_margin() as f32;
+
+            let height_in_lines = editor.visible_line_count().unwrap_or(0.);
+            let scroll_top = editor.scroll_position(cx).y;
+            let scroll_bottom = scroll_top + height_in_lines;
+            if scroll_target_top < scroll_top {
+                editor.set_scroll_position(point(0., scroll_target_top), cx);
+            } else if scroll_target_bottom > scroll_bottom {
+                editor.set_scroll_position(point(0., scroll_target_bottom - height_in_lines), cx);
+            }
+        });
+    }
+
+    fn resize_assist(
         &mut self,
         assist_id: InlineAssistId,
         height_in_lines: u8,
@@ -510,7 +552,7 @@ impl InlineAssistant {
                         decorations.prompt_block_id,
                         (
                             Some(height_in_lines),
-                            build_inline_assist_editor_renderer(&decorations.prompt_editor),
+                            build_assist_editor_renderer(&decorations.prompt_editor),
                         ),
                     );
                     editor.update(cx, |editor, cx| {
@@ -541,7 +583,7 @@ impl InlineAssistant {
         assist_ids
     }
 
-    fn start_inline_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    fn start_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -551,7 +593,7 @@ impl InlineAssistant {
         if assist.linked_to_group {
             let assist_group_id = assist.group_id;
             for assist_id in self.unlink_assist_group(assist_group_id, cx) {
-                self.start_inline_assist(assist_id, cx);
+                self.start_assist(assist_id, cx);
             }
             return;
         }
@@ -612,11 +654,11 @@ impl InlineAssistant {
             if start_buffer.remote_id() == end_buffer.remote_id() {
                 (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
             } else {
-                self.finish_inline_assist(assist_id, false, cx);
+                self.finish_assist(assist_id, false, cx);
                 return;
             }
         } else {
-            self.finish_inline_assist(assist_id, false, cx);
+            self.finish_assist(assist_id, false, cx);
             return;
         };
 
@@ -677,7 +719,7 @@ impl InlineAssistant {
         .detach_and_log_err(cx);
     }
 
-    fn stop_inline_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
+    fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -888,6 +930,11 @@ impl EditorInlineAssists {
                 }
             }),
             _subscriptions: vec![
+                cx.subscribe(editor, move |editor, event, cx| {
+                    InlineAssistant::update_global(cx, |this, cx| {
+                        this.handle_editor_event(editor, event, cx)
+                    })
+                }),
                 editor.update(cx, |editor, cx| {
                     let editor_handle = cx.view().downgrade();
                     editor.register_action(
@@ -917,25 +964,12 @@ impl EditorInlineAssists {
     }
 }
 
+#[derive(Default)]
 struct InlineAssistGroup {
     assist_ids: Vec<InlineAssistId>,
-    _subscription: gpui::Subscription,
 }
 
-impl InlineAssistGroup {
-    fn new(id: InlineAssistGroupId, editor: &View<Editor>, cx: &mut WindowContext) -> Self {
-        Self {
-            assist_ids: Vec::new(),
-            _subscription: cx.subscribe(editor, move |editor, event, cx| {
-                InlineAssistant::update_global(cx, |this, cx| {
-                    this.handle_editor_event_for_group(id, editor, event, cx)
-                })
-            }),
-        }
-    }
-}
-
-fn build_inline_assist_editor_renderer(editor: &View<PromptEditor>) -> RenderBlock {
+fn build_assist_editor_renderer(editor: &View<PromptEditor>) -> RenderBlock {
     let editor = editor.clone();
     Box::new(move |cx: &mut BlockContext| {
         *editor.read(cx).gutter_dimensions.lock() = *cx.gutter_dimensions;
@@ -1464,7 +1498,7 @@ impl InlineAssist {
                 }),
                 cx.subscribe(&codegen, move |codegen, event, cx| {
                     InlineAssistant::update_global(cx, |this, cx| match event {
-                        CodegenEvent::Undone => this.finish_inline_assist(assist_id, false, cx),
+                        CodegenEvent::Undone => this.finish_assist(assist_id, false, cx),
                         CodegenEvent::Finished => {
                             let assist = if let Some(assist) = this.assists.get(&assist_id) {
                                 assist
@@ -1495,7 +1529,7 @@ impl InlineAssist {
                             }
 
                             if assist.decorations.is_none() {
-                                this.finish_inline_assist(assist_id, false, cx);
+                                this.finish_assist(assist_id, false, cx);
                             }
                         }
                     })

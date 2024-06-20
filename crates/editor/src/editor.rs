@@ -9923,6 +9923,15 @@ impl Editor {
         }
     }
 
+    pub fn row_for_block(
+        &self,
+        block_id: BlockId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<DisplayRow> {
+        self.display_map
+            .update(cx, |map, cx| map.row_for_block(block_id, cx))
+    }
+
     pub fn insert_creases(
         &mut self,
         creases: impl IntoIterator<Item = Crease>,
