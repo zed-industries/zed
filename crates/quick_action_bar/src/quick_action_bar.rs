@@ -282,7 +282,7 @@ impl Render for QuickActionBar {
                     .gap_1p5()
                     .children(search_button)
                     .children(editor_selections_dropdown)
-                    .when(AssistantSettings::get_global(cx).button, |bar| {
+                    .when(AssistantSettings::get_global(cx).enabled && AssistantSettings::get_global(cx).button, |bar| {
                         bar.child(assistant_button)
                     }),
             )
