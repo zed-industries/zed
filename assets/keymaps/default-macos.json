@@ -611,6 +611,7 @@
       "cmd-alt-c": "project_panel::CopyPath",
       "alt-cmd-shift-c": "project_panel::CopyRelativePath",
       "enter": "project_panel::Rename",
+      "delete": ["project_panel::Trash", { "skip_prompt": false }],
       "cmd-backspace": ["project_panel::Trash", { "skip_prompt": true }],
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-cmd-r": "project_panel::RevealInFinder",
