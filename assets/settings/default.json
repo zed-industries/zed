@@ -121,10 +121,10 @@
   // The debounce delay before re-querying the language server for completion
   // documentation when not included in original completion list.
   "completion_documentation_secondary_query_debounce": 300,
-  // Whether to show wrap guides in the editor. Setting this to true will
-  // show a guide at the 'preferred_line_length' value if 'soft_wrap' is set to
-  // 'preferred_line_length', and will show any additional guides as specified
-  // by the 'wrap_guides' setting.
+  // Whether to show wrap guides (vertical rulers) in the editor.
+  // Setting this to true will show a guide at the 'preferred_line_length' value
+  // if softwrap is set to 'preferred_line_length', and will show any
+  // additional guides as specified by the 'wrap_guides' setting.
   "show_wrap_guides": true,
   // Character counts at which to show wrap guides in the editor.
   "wrap_guides": [],
@@ -148,15 +148,19 @@
   // opening parenthesis, bracket, brace, single or double quote characters.
   // For example, when you type (, Zed will add a closing ) at the correct position.
   "use_autoclose": true,
+  // Whether to automatically surround selected text when typing opening parenthesis,
+  // bracket, brace, single or double quote characters.
+  // For example, when you select text and type (, Zed will surround the text with ().
+  "use_auto_surround": true,
   // Controls how the editor handles the autoclosed characters.
   // When set to `false`(default), skipping over and auto-removing of the closing characters
   // happen only for auto-inserted characters.
   // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
   // no matter how they were inserted.
   "always_treat_brackets_as_autoclosed": false,
-  // Controls whether copilot provides suggestion immediately
-  // or waits for a `copilot::Toggle`
-  "show_copilot_suggestions": true,
+  // Controls whether inline completions are shown immediately (true)
+  // or manually by triggering `editor::ShowInlineCompletion` (false).
+  "show_inline_completions": true,
   // Whether to show tabs and spaces in the editor.
   // This setting can take three values:
   //
@@ -166,6 +170,12 @@
   //   "none"
   // 3. Draw all invisible symbols:
   //   "all"
+  // 4. Draw whitespaces at boundaries only:
+  //   "boundaries"
+  // For a whitespace to be on a boundary, any of the following conditions need to be met:
+  // - It is a tab
+  // - It is adjacent to an edge (start or end)
+  // - It is adjacent to a whitespace (left or right)
   "show_whitespaces": "selection",
   // Settings related to calls in Zed
   "calls": {
@@ -179,7 +189,9 @@
     // Whether to show breadcrumbs.
     "breadcrumbs": true,
     // Whether to show quick action buttons.
-    "quick_actions": true
+    "quick_actions": true,
+    // Whether to show the Selections menu in the editor toolbar
+    "selections_menu": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -298,6 +310,29 @@
     /// when a directory has only one directory inside.
     "auto_fold_dirs": false
   },
+  "outline_panel": {
+    // Whether to show the outline panel button in the status bar
+    "button": true,
+    // Default width of the outline panel.
+    "default_width": 300,
+    // Where to dock the outline panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Whether to show file icons in the outline panel.
+    "file_icons": true,
+    // Whether to show folder icons or chevrons for directories in the outline panel.
+    "folder_icons": true,
+    // Whether to show the git status in the outline panel.
+    "git_status": true,
+    // Amount of indentation for nested items.
+    "indent_size": 20,
+    // Whether to reveal it in the outline panel automatically,
+    // when a corresponding outline entry becomes active.
+    // Gitignored entries are never auto revealed.
+    "auto_reveal_entries": true,
+    /// Whether to fold directories automatically
+    /// when a directory has only one directory inside.
+    "auto_fold_dirs": true
+  },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
     "button": true,
@@ -357,6 +392,9 @@
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
+  // Whether to perform linked edits of associated ranges, if the language server supports it.
+  // For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
+  "linked_edits": true,
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
@@ -455,7 +493,8 @@
     // Send anonymized usage data like what languages you're using Zed with.
     "metrics": true
   },
-  // Automatically update Zed
+  // Automatically update Zed. This setting may be ignored on Linux if
+  // installed through a package manager.
   "auto_update": true,
   // Diagnostics configuration.
   "diagnostics": {
@@ -492,9 +531,8 @@
       // "delay_ms": 600
     }
   },
-  "copilot": {
-    // The set of glob patterns for which copilot should be disabled
-    // in any matching file.
+  "inline_completions": {
+    // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
   },
   // Settings specific to journaling
@@ -674,9 +712,6 @@
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
-    "Gleam": {
-      "tab_size": 2
-    },
     "Go": {
       "code_actions_on_format": {
         "source.organizeImports": true
@@ -702,6 +737,7 @@
       }
     },
     "JavaScript": {
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -710,9 +746,6 @@
       "prettier": {
         "allowed": true
       }
-    },
-    "Make": {
-      "hard_tabs": true
     },
     "Markdown": {
       "format_on_save": "off",
@@ -725,9 +758,6 @@
         "allowed": true,
         "plugins": ["@prettier/plugin-php"]
       }
-    },
-    "Prisma": {
-      "tab_size": 2
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "..."]
@@ -750,6 +780,7 @@
       }
     },
     "TSX": {
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -760,6 +791,7 @@
       }
     },
     "TypeScript": {
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }

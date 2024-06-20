@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
-    foundation::NSUInteger,
+    foundation::{NSSize, NSUInteger},
     quartzcore::AutoresizingMask,
 };
 use collections::HashMap;
@@ -268,7 +268,11 @@ impl MetalRenderer {
             .set_presents_with_transaction(presents_with_transaction);
     }
 
-    pub fn update_drawable_size(&mut self, size: Size<f64>) {
+    pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
+        let size = NSSize {
+            width: size.width.0 as f64,
+            height: size.height.0 as f64,
+        };
         unsafe {
             let _: () = msg_send![
                 self.layer(),

@@ -150,7 +150,7 @@ impl ProjectDiagnosticsEditor {
         let focus_handle = cx.focus_handle();
         cx.on_focus_in(&focus_handle, |this, cx| this.focus_in(cx))
             .detach();
-        cx.on_focus_out(&focus_handle, |this, cx| this.focus_out(cx))
+        cx.on_focus_out(&focus_handle, |this, _event, cx| this.focus_out(cx))
             .detach();
 
         let excerpts = cx.new_model(|cx| {
@@ -867,10 +867,12 @@ fn compare_diagnostics(
     snapshot: &language::BufferSnapshot,
 ) -> Ordering {
     use language::ToOffset;
-    // The old diagnostics may point to a previously open Buffer for this file.
-    if !old.range.start.is_valid(snapshot) {
+
+    // The diagnostics may point to a previously open Buffer for this file.
+    if !old.range.start.is_valid(snapshot) || !new.range.start.is_valid(snapshot) {
         return Ordering::Greater;
     }
+
     old.range
         .start
         .to_offset(snapshot)

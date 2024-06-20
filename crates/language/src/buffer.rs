@@ -6,7 +6,7 @@ pub use crate::{
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
-    language_settings::{language_settings, LanguageSettings},
+    language_settings::{language_settings, IndentGuideSettings, LanguageSettings},
     markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
@@ -382,16 +382,6 @@ pub trait LocalFile: File {
     /// Loads the file's contents from disk.
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
 
-    /// Called when the buffer is reloaded from disk.
-    fn buffer_reloaded(
-        &self,
-        buffer_id: BufferId,
-        version: &clock::Global,
-        line_ending: LineEnding,
-        mtime: Option<SystemTime>,
-        cx: &mut AppContext,
-    );
-
     /// Returns true if the file should not be shared with collaborators.
     fn is_private(&self, _: &AppContext) -> bool {
         false
@@ -542,25 +532,10 @@ pub struct IndentGuide {
     pub end_row: BufferRow,
     pub depth: u32,
     pub tab_size: u32,
+    pub settings: IndentGuideSettings,
 }
 
 impl IndentGuide {
-    pub fn new(
-        buffer_id: BufferId,
-        start_row: BufferRow,
-        end_row: BufferRow,
-        depth: u32,
-        tab_size: u32,
-    ) -> Self {
-        Self {
-            buffer_id,
-            start_row,
-            end_row,
-            depth,
-            tab_size,
-        }
-    }
-
     pub fn indent_level(&self) -> u32 {
         self.depth * self.tab_size
     }
@@ -822,6 +797,10 @@ impl Buffer {
             .set_language_registry(language_registry);
     }
 
+    pub fn language_registry(&self) -> Option<Arc<LanguageRegistry>> {
+        self.syntax_map.lock().language_registry()
+    }
+
     /// Assign the buffer a new [Capability].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
         self.capability = capability;
@@ -899,15 +878,6 @@ impl Buffer {
         self.saved_version = version;
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
-        if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
-            file.buffer_reloaded(
-                self.remote_id(),
-                &self.saved_version,
-                self.line_ending(),
-                self.saved_mtime,
-                cx,
-            );
-        }
         cx.emit(Event::Reloaded);
         cx.notify();
     }
@@ -2768,12 +2738,13 @@ impl BufferSnapshot {
         Some(items)
     }
 
-    fn outline_items_containing(
+    pub fn outline_items_containing<T: ToOffset>(
         &self,
-        range: Range<usize>,
+        range: Range<T>,
         include_extra_context: bool,
         theme: Option<&SyntaxTheme>,
     ) -> Option<Vec<OutlineItem<Anchor>>> {
+        let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
         });
@@ -3151,9 +3122,15 @@ impl BufferSnapshot {
     pub fn indent_guides_in_range(
         &self,
         range: Range<Anchor>,
+        ignore_disabled_for_language: bool,
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
-        let tab_size = language_settings(self.language(), None, cx).tab_size.get() as u32;
+        let language_settings = language_settings(self.language(), self.file.as_ref(), cx);
+        let settings = language_settings.indent_guides;
+        if !ignore_disabled_for_language && !settings.enabled {
+            return Vec::new();
+        }
+        let tab_size = language_settings.tab_size.get() as u32;
 
         let start_row = range.start.to_point(self).row;
         let end_row = range.end.to_point(self).row;
@@ -3234,6 +3211,7 @@ impl BufferSnapshot {
                         end_row: last_row,
                         depth: next_depth,
                         tab_size,
+                        settings,
                     });
                 }
             }

@@ -2,6 +2,7 @@ use std::fmt;
 
 pub use anthropic::Model as AnthropicModel;
 use gpui::Pixels;
+pub use ollama::Model as OllamaModel;
 pub use open_ai::Model as OpenAiModel;
 use schemars::{
     schema::{InstanceType, Metadata, Schema, SchemaObject},
@@ -14,10 +15,10 @@ use serde::{
 use settings::{Settings, SettingsSources};
 use strum::{EnumIter, IntoEnumIterator};
 
-use crate::LanguageModel;
+use crate::{preprocess_anthropic_request, LanguageModel, LanguageModelRequest};
 
 #[derive(Clone, Debug, Default, PartialEq, EnumIter)]
-pub enum ZedDotDevModel {
+pub enum CloudModel {
     Gpt3Point5Turbo,
     Gpt4,
     Gpt4Turbo,
@@ -29,7 +30,7 @@ pub enum ZedDotDevModel {
     Custom(String),
 }
 
-impl Serialize for ZedDotDevModel {
+impl Serialize for CloudModel {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -38,7 +39,7 @@ impl Serialize for ZedDotDevModel {
     }
 }
 
-impl<'de> Deserialize<'de> for ZedDotDevModel {
+impl<'de> Deserialize<'de> for CloudModel {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -46,7 +47,7 @@ impl<'de> Deserialize<'de> for ZedDotDevModel {
         struct ZedDotDevModelVisitor;
 
         impl<'de> Visitor<'de> for ZedDotDevModelVisitor {
-            type Value = ZedDotDevModel;
+            type Value = CloudModel;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("a string for a ZedDotDevModel variant or a custom model")
@@ -56,9 +57,9 @@ impl<'de> Deserialize<'de> for ZedDotDevModel {
             where
                 E: de::Error,
             {
-                let model = ZedDotDevModel::iter()
+                let model = CloudModel::iter()
                     .find(|model| model.id() == value)
-                    .unwrap_or_else(|| ZedDotDevModel::Custom(value.to_string()));
+                    .unwrap_or_else(|| CloudModel::Custom(value.to_string()));
                 Ok(model)
             }
         }
@@ -67,13 +68,13 @@ impl<'de> Deserialize<'de> for ZedDotDevModel {
     }
 }
 
-impl JsonSchema for ZedDotDevModel {
+impl JsonSchema for CloudModel {
     fn schema_name() -> String {
         "ZedDotDevModel".to_owned()
     }
 
     fn json_schema(_generator: &mut schemars::gen::SchemaGenerator) -> Schema {
-        let variants = ZedDotDevModel::iter()
+        let variants = CloudModel::iter()
             .filter_map(|model| {
                 let id = model.id();
                 if id.is_empty() {
@@ -88,7 +89,7 @@ impl JsonSchema for ZedDotDevModel {
             enum_values: Some(variants.iter().map(|s| s.clone().into()).collect()),
             metadata: Some(Box::new(Metadata {
                 title: Some("ZedDotDevModel".to_owned()),
-                default: Some(ZedDotDevModel::default().id().into()),
+                default: Some(CloudModel::default().id().into()),
                 examples: variants.into_iter().map(Into::into).collect(),
                 ..Default::default()
             })),
@@ -97,7 +98,7 @@ impl JsonSchema for ZedDotDevModel {
     }
 }
 
-impl ZedDotDevModel {
+impl CloudModel {
     pub fn id(&self) -> &str {
         match self {
             Self::Gpt3Point5Turbo => "gpt-3.5-turbo",
@@ -133,6 +134,15 @@ impl ZedDotDevModel {
             Self::Custom(_) => 4096, // TODO: Make this configurable
         }
     }
+
+    pub fn preprocess_request(&self, request: &mut LanguageModelRequest) {
+        match self {
+            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => {
+                preprocess_anthropic_request(request)
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
@@ -147,7 +157,7 @@ pub enum AssistantDockPosition {
 #[derive(Debug, PartialEq)]
 pub enum AssistantProvider {
     ZedDotDev {
-        model: ZedDotDevModel,
+        model: CloudModel,
     },
     OpenAi {
         model: OpenAiModel,
@@ -156,6 +166,11 @@ pub enum AssistantProvider {
     },
     Anthropic {
         model: AnthropicModel,
+        api_url: String,
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
+    Ollama {
+        model: OllamaModel,
         api_url: String,
         low_speed_timeout_in_seconds: Option<u64>,
     },
@@ -175,9 +190,7 @@ impl Default for AssistantProvider {
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum AssistantProviderContent {
     #[serde(rename = "zed.dev")]
-    ZedDotDev {
-        default_model: Option<ZedDotDevModel>,
-    },
+    ZedDotDev { default_model: Option<CloudModel> },
     #[serde(rename = "openai")]
     OpenAi {
         default_model: Option<OpenAiModel>,
@@ -187,6 +200,12 @@ pub enum AssistantProviderContent {
     #[serde(rename = "anthropic")]
     Anthropic {
         default_model: Option<AnthropicModel>,
+        api_url: Option<String>,
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
+    #[serde(rename = "ollama")]
+    Ollama {
+        default_model: Option<OllamaModel>,
         api_url: Option<String>,
         low_speed_timeout_in_seconds: Option<u64>,
     },
@@ -281,7 +300,7 @@ impl AssistantSettingsContent {
                     Some(AssistantProviderContent::ZedDotDev {
                         default_model: model,
                     }) => {
-                        if let LanguageModel::ZedDotDev(new_model) = new_model {
+                        if let LanguageModel::Cloud(new_model) = new_model {
                             *model = Some(new_model);
                         }
                     }
@@ -302,7 +321,7 @@ impl AssistantSettingsContent {
                         }
                     }
                     provider => match new_model {
-                        LanguageModel::ZedDotDev(model) => {
+                        LanguageModel::Cloud(model) => {
                             *provider = Some(AssistantProviderContent::ZedDotDev {
                                 default_model: Some(model),
                             })
@@ -316,6 +335,13 @@ impl AssistantSettingsContent {
                         }
                         LanguageModel::Anthropic(model) => {
                             *provider = Some(AssistantProviderContent::Anthropic {
+                                default_model: Some(model),
+                                api_url: None,
+                                low_speed_timeout_in_seconds: None,
+                            })
+                        }
+                        LanguageModel::Ollama(model) => {
+                            *provider = Some(AssistantProviderContent::Ollama {
                                 default_model: Some(model),
                                 api_url: None,
                                 low_speed_timeout_in_seconds: None,
@@ -466,6 +492,27 @@ impl Settings for AssistantSettings {
                         }
                     }
                     (
+                        AssistantProvider::Ollama {
+                            model,
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                        },
+                        AssistantProviderContent::Ollama {
+                            default_model: model_override,
+                            api_url: api_url_override,
+                            low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
+                        },
+                    ) => {
+                        merge(model, model_override);
+                        merge(api_url, api_url_override);
+                        if let Some(low_speed_timeout_in_seconds_override) =
+                            low_speed_timeout_in_seconds_override
+                        {
+                            *low_speed_timeout_in_seconds =
+                                Some(low_speed_timeout_in_seconds_override);
+                        }
+                    }
+                    (
                         AssistantProvider::Anthropic {
                             model,
                             api_url,
@@ -510,6 +557,15 @@ impl Settings for AssistantSettings {
                                 model: model.unwrap_or_default(),
                                 api_url: api_url
                                     .unwrap_or_else(|| anthropic::ANTHROPIC_API_URL.into()),
+                                low_speed_timeout_in_seconds,
+                            },
+                            AssistantProviderContent::Ollama {
+                                default_model: model,
+                                api_url,
+                                low_speed_timeout_in_seconds,
+                            } => AssistantProvider::Ollama {
+                                model: model.unwrap_or_default(),
+                                api_url: api_url.unwrap_or_else(|| ollama::OLLAMA_API_URL.into()),
                                 low_speed_timeout_in_seconds,
                             },
                         };
@@ -613,7 +669,7 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::ZedDotDev {
-                model: ZedDotDevModel::Custom("custom".into())
+                model: CloudModel::Custom("custom".into())
             }
         );
     }

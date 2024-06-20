@@ -6,7 +6,7 @@ Folder-specific settings are used to override Zed's global settings for files wi
 
 The following global settings can be overridden with a folder-specific configuration:
 
-- `copilot`
+- `inline_completions`
 - `enable_language_server`
 - `ensure_final_newline_on_save`
 - `format_on_save`
@@ -17,7 +17,7 @@ The following global settings can be overridden with a folder-specific configura
 - `remove_trailing_whitespace_on_save`
 - `soft_wrap`
 - `tab_size`
-- `show_copilot_suggestions`
+- `show_inline_completions`
 - `show_whitespaces`
 
 _See the Global settings section for details about these settings_
@@ -110,14 +110,15 @@ The name of any font family installed on the user's system
 
 **Options**
 
-Zed supports a subset of OpenType features that can be enabled or disabled for a given buffer or terminal font. The following [OpenType features](https://en.wikipedia.org/wiki/List_of_typographic_features) can be enabled or disabled too: `calt`, `case`, `cpsp`, `frac`, `liga`, `onum`, `ordn`, `pnum`, `ss01`, `ss02`, `ss03`, `ss04`, `ss05`, `ss06`, `ss07`, `ss08`, `ss09`, `ss10`, `ss11`, `ss12`, `ss13`, `ss14`, `ss15`, `ss16`, `ss17`, `ss18`, `ss19`, `ss20`, `subs`, `sups`, `swsh`, `titl`, `tnum`, `zero`.
+Zed supports all OpenType features that can be enabled, disabled or set a value to a font feature for a given buffer or terminal font.
 
-For example, to disable ligatures for a given font you can add the following to your settings:
+For example, to disable ligatures and set `7` to `cv01` for a given font you can add the following to your settings:
 
 ```json
 {
   "buffer_font_features": {
-    "calt": false
+    "calt": false,
+    "cv01": 7
   }
 }
 ```
@@ -160,14 +161,14 @@ For example, to disable ligatures for a given font you can add the following to 
 The `left_padding` and `right_padding` options define the relative width of the
 left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
 
-## Copilot
+## Inline Completions
 
-- Description: Copilot-specific settings.
-- Setting: `copilot`
+- Description: Settings for inline completions.
+- Setting: `inline_completions`
 - Default:
 
 ```json
-"copilot": {
+"inline_completions": {
   "disabled_globs": [
     ".env"
   ]
@@ -178,7 +179,7 @@ left and right padding of the central pane from the workspace when the centered 
 
 ### Disabled Globs
 
-- Description: The set of glob patterns for which Copilot should be disabled in any matching file.
+- Description: A list of globs representing files that inline completions should be disabled for.
 - Setting: `disabled_globs`
 - Default: [".env"]
 
@@ -958,7 +959,7 @@ The following settings can be overridden for each specific language:
 - `hard_tabs`
 - `preferred_line_length`
 - `remove_trailing_whitespace_on_save`
-- `show_copilot_suggestions`
+- `show_inline_completions`
 - `show_whitespaces`
 - `soft_wrap`
 - `tab_size`
@@ -1081,10 +1082,10 @@ These values take in the same options as the root-level settings with the same n
 
 `integer` values
 
-## Show Copilot Suggestions
+## Show Inline Completions
 
-- Description: Whether or not to show Copilot suggestions as you type or wait for a `copilot::Toggle`.
-- Setting: `show_copilot_suggestions`
+- Description: Whether to show inline completions as you type or manually by triggering `editor::ShowInlineCompletion`.
+- Setting: `show_inline_completions`
 - Default: `true`
 
 **Options**
@@ -1102,6 +1103,7 @@ These values take in the same options as the root-level settings with the same n
 1. `all`
 2. `selection`
 3. `none`
+4. `boundaries`
 
 ## Soft Wrap
 
@@ -1114,6 +1116,16 @@ These values take in the same options as the root-level settings with the same n
 1. `editor_width`
 2. `preferred_line_length`
 3. `none`
+
+## Wrap Guides (Vertical Rulers)
+
+- Description: Where to display vertical rulers as wrap-guides. Disable by setting `show_wrap_guides` to `false`.
+- Setting: `wrap_guides`
+- Default: []
+
+**Options**
+
+List of `integer` column numbers
 
 ## Tab Size
 

@@ -4,10 +4,10 @@ use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
 use gpui::{AppContext, Size};
-use settings::Settings;
 use std::sync::{Arc, Weak};
-use theme::ThemeSettings;
+
 use ui::{prelude::*, Button, Label};
+use util::ResultExt;
 use workspace::AppState;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
@@ -27,16 +27,21 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
 
             for screen in cx.displays() {
                 let options = notification_window_options(screen, window_size, cx);
-                let window = cx.open_window(options, |cx| {
-                    cx.new_view(|_| {
-                        ProjectSharedNotification::new(
-                            owner.clone(),
-                            *project_id,
-                            worktree_root_names.clone(),
-                            app_state.clone(),
-                        )
+                let Some(window) = cx
+                    .open_window(options, |cx| {
+                        cx.new_view(|_| {
+                            ProjectSharedNotification::new(
+                                owner.clone(),
+                                *project_id,
+                                worktree_root_names.clone(),
+                                app_state.clone(),
+                            )
+                        })
                     })
-                });
+                    .log_err()
+                else {
+                    continue;
+                };
                 notification_windows
                     .entry(*project_id)
                     .or_insert(Vec::new())
@@ -118,13 +123,7 @@ impl ProjectSharedNotification {
 
 impl Render for ProjectSharedNotification {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        // TODO: Is there a better place for us to initialize the font?
-        let (ui_font, ui_font_size) = {
-            let theme_settings = ThemeSettings::get_global(cx);
-            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
-        };
-
-        cx.set_rem_size(ui_font_size);
+        let ui_font = theme::setup_ui_font(cx);
 
         div().size_full().font(ui_font).child(
             CollabNotification::new(

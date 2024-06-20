@@ -38,6 +38,7 @@ pub struct GitSettings {
 
 impl GitSettings {
     pub fn inline_blame_enabled(&self) -> bool {
+        #[allow(unknown_lints, clippy::manual_unwrap_or_default)]
         match self.inline_blame {
             Some(InlineBlameSettings { enabled, .. }) => enabled,
             _ => false,
@@ -93,6 +94,7 @@ const fn true_value() -> bool {
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
+    pub path_lookup: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

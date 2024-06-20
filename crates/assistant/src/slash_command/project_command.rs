@@ -10,7 +10,7 @@ use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use workspace::Workspace;
 
 pub(crate) struct ProjectSlashCommand;
@@ -102,10 +102,10 @@ impl SlashCommand for ProjectSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         _query: String,
         _cancel: Arc<AtomicBool>,
-        _workspace: WeakView<Workspace>,
+        _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
@@ -138,16 +138,10 @@ impl SlashCommand for ProjectSlashCommand {
                     text,
                     sections: vec![SlashCommandOutputSection {
                         range,
-                        render_placeholder: Arc::new(move |id, unfold, _cx| {
-                            ButtonLike::new(id)
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ElevatedSurface)
-                                .child(Icon::new(IconName::FileTree))
-                                .child(Label::new("Project"))
-                                .on_click(move |_, cx| unfold(cx))
-                                .into_any_element()
-                        }),
+                        icon: IconName::FileTree,
+                        label: "Project".into(),
                     }],
+                    run_commands_in_text: false,
                 })
             })
         });

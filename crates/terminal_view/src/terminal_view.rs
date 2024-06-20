@@ -152,7 +152,7 @@ impl TerminalView {
         let focus_in = cx.on_focus_in(&focus_handle, |terminal_view, cx| {
             terminal_view.focus_in(cx);
         });
-        let focus_out = cx.on_focus_out(&focus_handle, |terminal_view, cx| {
+        let focus_out = cx.on_focus_out(&focus_handle, |terminal_view, _event, cx| {
             terminal_view.focus_out(cx);
         });
 
@@ -972,6 +972,7 @@ impl SearchableItem for TerminalView {
             word: false,
             regex: true,
             replacement: false,
+            selection: false,
         }
     }
 
@@ -1023,8 +1024,8 @@ impl SearchableItem for TerminalView {
                     query.whole_word(),
                     query.case_sensitive(),
                     query.include_ignored(),
-                    query.files_to_include().to_vec(),
-                    query.files_to_exclude().to_vec(),
+                    query.files_to_include().clone(),
+                    query.files_to_exclude().clone(),
                 )
                 .unwrap()),
             ),
@@ -1300,15 +1301,10 @@ mod tests {
             .unwrap();
 
         let entry = cx
-            .update(|cx| {
-                wt.update(cx, |wt, cx| {
-                    wt.as_local()
-                        .unwrap()
-                        .create_entry(Path::new(""), is_dir, cx)
-                })
-            })
+            .update(|cx| wt.update(cx, |wt, cx| wt.create_entry(Path::new(""), is_dir, cx)))
             .await
             .unwrap()
+            .to_included()
             .unwrap();
 
         (wt, entry)

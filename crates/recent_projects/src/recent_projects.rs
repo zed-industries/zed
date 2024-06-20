@@ -1,8 +1,10 @@
 mod dev_servers;
+pub mod disconnected_overlay;
 
-use client::ProjectId;
-use dev_servers::reconnect_to_dev_server;
+use client::{DevServerProjectId, ProjectId};
+use dev_servers::reconnect_to_dev_server_project;
 pub use dev_servers::DevServerProjects;
+use disconnected_overlay::DisconnectedOverlay;
 use feature_flags::FeatureFlagAppExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -20,7 +22,6 @@ use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
 };
 use ui::{
     prelude::*, tooltip_container, ButtonLike, IconWithIndicator, Indicator, KeyBinding, ListItem,
@@ -48,6 +49,7 @@ gpui::actions!(projects, [OpenRemote]);
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(RecentProjects::register).detach();
     cx.observe_new_views(DevServerProjects::register).detach();
+    cx.observe_new_views(DisconnectedOverlay::register).detach();
 }
 
 pub struct RecentProjects {
@@ -118,16 +120,6 @@ impl RecentProjects {
             let delegate = RecentProjectsDelegate::new(weak, create_new_window, true);
             let modal = Self::new(delegate, 34., cx);
             modal
-        })
-    }
-
-    pub fn open_popover(workspace: WeakView<Workspace>, cx: &mut WindowContext<'_>) -> View<Self> {
-        cx.new_view(|cx| {
-            Self::new(
-                RecentProjectsDelegate::new(workspace, false, false),
-                20.,
-                cx,
-            )
         })
     }
 }
@@ -234,9 +226,10 @@ impl PickerDelegate for RecentProjectsDelegate {
             .filter(|(_, (id, _))| !self.is_current_workspace(*id, cx))
             .map(|(id, (_, location))| {
                 let combined_string = match location {
-                    SerializedWorkspaceLocation::Local(paths, _) => paths
-                        .paths()
+                    SerializedWorkspaceLocation::Local(paths, order) => order
+                        .order()
                         .iter()
+                        .filter_map(|i| paths.paths().get(*i))
                         .map(|path| path.compact().to_string_lossy().into_owned())
                         .collect::<Vec<_>>()
                         .join(""),
@@ -295,7 +288,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     } else {
                         match candidate_workspace_location {
                             SerializedWorkspaceLocation::Local(paths, _) => {
-                                let paths = paths.paths().as_ref().clone();
+                                let paths = paths.paths().to_vec();
                                 if replace_current_window || WorkspaceSettings::get_global(cx).open_new_workspace_in_current_window {
                                     cx.spawn(move |workspace, mut cx| async move {
                                         let continue_replacing = workspace
@@ -326,23 +319,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 else {
                                     let server = store.read(cx).dev_server_for_project(dev_server_project.id);
                                     if server.is_some_and(|server| server.ssh_connection_string.is_some()) {
-                                        let reconnect =  reconnect_to_dev_server(cx.view().clone(), server.unwrap().clone(), cx);
-                                        let id = dev_server_project.id;
-                                        return cx.spawn(|workspace, mut cx| async move {
-                                            reconnect.await?;
-
-                                            cx.background_executor().timer(Duration::from_millis(1000)).await;
-
-                                            if let Some(project_id) = store.update(&mut cx, |store, _| {
-                                                store.dev_server_project(id)
-                                                    .and_then(|p| p.project_id)
-                                            })? {
-                                                    workspace.update(&mut cx, move |_, cx| {
-                                                    open_dev_server_project(replace_current_window, project_id, cx)
-                                                    })?.await?;
-                                                }
-                                            Ok(())
-                                        })
+                                        return reconnect_to_dev_server_project(cx.view().clone(), server.unwrap().clone(), dev_server_project.id, replace_current_window, cx);
                                     } else {
                                         let dev_server_name = dev_server_project.dev_server_name.clone();
                                         return cx.spawn(|workspace, mut cx| async move {
@@ -366,7 +343,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         })
                                     }
                                 };
-                                open_dev_server_project(replace_current_window, project_id, cx)
+                                open_dev_server_project(replace_current_window, dev_server_project.id, project_id, cx)
                         }
                     }
                 }
@@ -415,7 +392,13 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         let mut path_start_offset = 0;
         let paths = match location {
-            SerializedWorkspaceLocation::Local(paths, _) => paths.paths(),
+            SerializedWorkspaceLocation::Local(paths, order) => Arc::new(
+                order
+                    .order()
+                    .iter()
+                    .filter_map(|i| paths.paths().get(*i).cloned())
+                    .collect(),
+            ),
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",
@@ -556,6 +539,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
 fn open_dev_server_project(
     replace_current_window: bool,
+    dev_server_project_id: DevServerProjectId,
     project_id: ProjectId,
     cx: &mut ViewContext<Workspace>,
 ) -> Task<anyhow::Result<()>> {
@@ -577,6 +561,7 @@ fn open_dev_server_project(
                     workspace
                         .update(&mut cx, |_workspace, cx| {
                             workspace::join_dev_server_project(
+                                dev_server_project_id,
                                 project_id,
                                 app_state,
                                 Some(handle),
@@ -588,7 +573,13 @@ fn open_dev_server_project(
                 Ok(())
             })
         } else {
-            let task = workspace::join_dev_server_project(project_id, app_state, None, cx);
+            let task = workspace::join_dev_server_project(
+                dev_server_project_id,
+                project_id,
+                app_state,
+                None,
+                cx,
+            );
             cx.spawn(|_, _| async move {
                 task.await?;
                 Ok(())

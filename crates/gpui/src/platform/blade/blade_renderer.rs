@@ -3,8 +3,8 @@
 
 use super::{BladeAtlas, PATH_TEXTURE_FORMAT};
 use crate::{
-    AtlasTextureKind, AtlasTile, Bounds, ContentMask, Hsla, MonochromeSprite, Path, PathId,
-    PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, Hsla, MonochromeSprite, Path,
+    PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
     Underline,
 };
 use bytemuck::{Pod, Zeroable};
@@ -20,7 +20,9 @@ use std::{mem, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 1000;
 
+#[cfg(target_os = "macos")]
 pub type Context = ();
+#[cfg(target_os = "macos")]
 pub type Renderer = BladeRenderer;
 
 #[cfg(target_os = "macos")]
@@ -415,10 +417,10 @@ impl BladeRenderer {
         }
     }
 
-    pub fn update_drawable_size(&mut self, size: Size<f64>) {
+    pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
         let gpu_size = gpu::Extent {
-            width: size.width as u32,
-            height: size.height as u32,
+            width: size.width.0 as u32,
+            height: size.height.0 as u32,
             depth: 1,
         };
 

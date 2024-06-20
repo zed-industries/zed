@@ -1,41 +1,31 @@
-// todo(linux): remove
-#![allow(unused)]
+use anyhow::Context;
 
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    size, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels, Platform, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions,
-    WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
+    px, size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowKind, WindowParams, X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
-use parking_lot::Mutex;
 use raw_window_handle as rwh;
-use util::ResultExt;
+use util::{maybe, ResultExt};
 use x11rb::{
-    connection::{Connection as _, RequestConnection as _},
+    connection::Connection,
     protocol::{
-        render,
         xinput::{self, ConnectionExt as _},
         xproto::{
-            self, Atom, ClientMessageEvent, ConnectionExt as _, CreateWindowAux, EventMask,
-            TranslateCoordinatesReply,
+            self, ClientMessageEvent, ConnectionExt as _, EventMask, TranslateCoordinatesReply,
         },
     },
-    resource_manager::Database,
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
 
-use std::ops::Deref;
-use std::rc::Weak;
 use std::{
-    cell::{Ref, RefCell, RefMut},
-    collections::HashMap,
+    cell::RefCell,
     ffi::c_void,
-    iter::Zip,
-    mem,
     num::NonZeroU32,
     ops::Div,
     ptr::NonNull,
@@ -59,6 +49,8 @@ x11rb::atom_manager! {
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
         _NET_WM_MOVERESIZE,
+        _NET_WM_WINDOW_TYPE,
+        _NET_WM_WINDOW_TYPE_NOTIFICATION,
         _GTK_SHOW_WINDOW_MENU,
     }
 }
@@ -165,29 +157,30 @@ pub struct Callbacks {
     appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
-pub(crate) struct X11WindowState {
+pub struct X11WindowState {
+    pub destroyed: bool,
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
     x_root_window: xproto::Window,
-    raw: RawWindow,
-    bounds: Bounds<i32>,
+    _raw: RawWindow,
+    bounds: Bounds<Pixels>,
     scale_factor: f32,
     renderer: BladeRenderer,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
+    pub handle: AnyWindowHandle,
 }
 
 #[derive(Clone)]
 pub(crate) struct X11WindowStatePtr {
-    pub(crate) state: Rc<RefCell<X11WindowState>>,
+    pub state: Rc<RefCell<X11WindowState>>,
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb_connection: Rc<XCBConnection>,
     x_window: xproto::Window,
 }
 
-// todo(linux): Remove other RawWindowHandle implementation
 impl rwh::HasWindowHandle for RawWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
         let non_zero = NonZeroU32::new(self.window_id).unwrap();
@@ -218,6 +211,7 @@ impl rwh::HasDisplayHandle for X11Window {
 impl X11WindowState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
         params: WindowParams,
@@ -227,7 +221,7 @@ impl X11WindowState {
         atoms: &XcbAtoms,
         scale_factor: f32,
         appearance: WindowAppearance,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let x_screen_index = params
             .display_id
             .map_or(x_main_screen_index, |did| did.0 as usize);
@@ -259,44 +253,60 @@ impl X11WindowState {
             xcb_connection
                 .create_colormap(xproto::ColormapAlloc::NONE, id, visual_set.root, visual.id)
                 .unwrap()
-                .check()
-                .unwrap();
+                .check()?;
             id
         };
 
         let win_aux = xproto::CreateWindowAux::new()
-            .background_pixel(x11rb::NONE)
             // https://stackoverflow.com/questions/43218127/x11-xlib-xcb-creating-a-window-requires-border-pixel-if-specifying-colormap-wh
             .border_pixel(visual_set.black_pixel)
             .colormap(colormap)
             .event_mask(
                 xproto::EventMask::EXPOSURE
                     | xproto::EventMask::STRUCTURE_NOTIFY
-                    | xproto::EventMask::ENTER_WINDOW
-                    | xproto::EventMask::LEAVE_WINDOW
                     | xproto::EventMask::FOCUS_CHANGE
                     | xproto::EventMask::KEY_PRESS
                     | xproto::EventMask::KEY_RELEASE,
             );
+
+        let mut bounds = params.bounds.to_device_pixels(scale_factor);
 
         xcb_connection
             .create_window(
                 visual.depth,
                 x_window,
                 visual_set.root,
-                params.bounds.origin.x.0 as i16,
-                params.bounds.origin.y.0 as i16,
-                params.bounds.size.width.0 as u16,
-                params.bounds.size.height.0 as u16,
+                (bounds.origin.x.0 + 2) as i16,
+                bounds.origin.y.0 as i16,
+                bounds.size.width.0 as u16,
+                bounds.size.height.0 as u16,
                 0,
                 xproto::WindowClass::INPUT_OUTPUT,
                 visual.id,
                 &win_aux,
             )
             .unwrap()
-            .check()
-            .unwrap();
+            .check()?;
 
+        let reply = xcb_connection
+            .get_geometry(x_window)
+            .unwrap()
+            .reply()
+            .unwrap();
+        if reply.x == 0 && reply.y == 0 {
+            bounds.origin.x.0 += 2;
+            // Work around a bug where our rendered content appears
+            // outside the window bounds when opened at the default position
+            // (14px, 49px on X + Gnome + Ubuntu 22).
+            xcb_connection
+                .configure_window(
+                    x_window,
+                    &xproto::ConfigureWindowAux::new()
+                        .x(bounds.origin.x.0)
+                        .y(bounds.origin.y.0),
+                )
+                .unwrap();
+        }
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
                 xcb_connection
@@ -309,6 +319,17 @@ impl X11WindowState {
                     )
                     .unwrap();
             }
+        }
+        if params.kind == WindowKind::PopUp {
+            xcb_connection
+                .change_property32(
+                    xproto::PropMode::REPLACE,
+                    x_window,
+                    atoms._NET_WM_WINDOW_TYPE,
+                    xproto::AtomEnum::ATOM,
+                    &[atoms._NET_WM_WINDOW_TYPE_NOTIFICATION],
+                )
+                .unwrap();
         }
 
         xcb_connection
@@ -336,7 +357,6 @@ impl X11WindowState {
             )
             .unwrap();
 
-        xcb_connection.map_window(x_window).unwrap();
         xcb_connection.flush().unwrap();
 
         let raw = RawWindow {
@@ -358,7 +378,7 @@ impl X11WindowState {
                     },
                 )
             }
-            .unwrap(),
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
         );
 
         let config = BladeSurfaceConfig {
@@ -367,20 +387,25 @@ impl X11WindowState {
             size: query_render_extent(xcb_connection, x_window),
             transparent: params.window_background != WindowBackgroundAppearance::Opaque,
         };
+        xcb_connection.map_window(x_window).unwrap();
 
-        Self {
+        Ok(Self {
             client,
             executor,
-            display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
-            raw,
+            display: Rc::new(
+                X11Display::new(xcb_connection, scale_factor, x_screen_index).unwrap(),
+            ),
+            _raw: raw,
             x_root_window: visual_set.root,
-            bounds: params.bounds.map(|v| v.0),
+            bounds: bounds.to_pixels(scale_factor),
             scale_factor,
             renderer: BladeRenderer::new(gpu, config),
             atoms: *atoms,
             input_handler: None,
             appearance,
-        }
+            handle,
+            destroyed: false,
+        })
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -399,35 +424,46 @@ impl Drop for X11Window {
         let mut state = self.0.state.borrow_mut();
         state.renderer.destroy();
 
-        self.0.xcb_connection.unmap_window(self.0.x_window).unwrap();
-        self.0
-            .xcb_connection
-            .destroy_window(self.0.x_window)
-            .unwrap();
-        self.0.xcb_connection.flush().unwrap();
+        let destroy_x_window = maybe!({
+            self.0.xcb_connection.unmap_window(self.0.x_window)?;
+            self.0.xcb_connection.destroy_window(self.0.x_window)?;
+            self.0.xcb_connection.flush()?;
 
-        let this_ptr = self.0.clone();
-        let client_ptr = state.client.clone();
-        state
-            .executor
-            .spawn(async move {
-                this_ptr.close();
-                client_ptr.drop_window(this_ptr.x_window);
-            })
-            .detach();
+            anyhow::Ok(())
+        })
+        .context("unmapping and destroying X11 window")
+        .log_err();
+
+        if destroy_x_window.is_some() {
+            // Mark window as destroyed so that we can filter out when X11 events
+            // for it still come in.
+            state.destroyed = true;
+
+            let this_ptr = self.0.clone();
+            let client_ptr = state.client.clone();
+            state
+                .executor
+                .spawn(async move {
+                    this_ptr.close();
+                    client_ptr.drop_window(this_ptr.x_window);
+                })
+                .detach();
+        }
+
         drop(state);
     }
 }
 
 enum WmHintPropertyState {
-    Remove = 0,
-    Add = 1,
+    // Remove = 0,
+    // Add = 1,
     Toggle = 2,
 }
 
 impl X11Window {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
         params: WindowParams,
@@ -437,9 +473,10 @@ impl X11Window {
         atoms: &XcbAtoms,
         scale_factor: f32,
         appearance: WindowAppearance,
-    ) -> Self {
-        Self(X11WindowStatePtr {
+    ) -> anyhow::Result<Self> {
+        Ok(Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
+                handle,
                 client,
                 executor,
                 params,
@@ -449,11 +486,11 @@ impl X11Window {
                 atoms,
                 scale_factor,
                 appearance,
-            ))),
+            )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
             x_window,
-        })
+        }))
     }
 
     fn set_wm_hints(&self, wm_hint_property_state: WmHintPropertyState, prop1: u32, prop2: u32) {
@@ -617,18 +654,28 @@ impl X11WindowStatePtr {
 
     pub fn configure(&self, bounds: Bounds<i32>) {
         let mut resize_args = None;
-        let do_move;
+        let is_resize;
         {
             let mut state = self.state.borrow_mut();
-            let old_bounds = mem::replace(&mut state.bounds, bounds);
-            do_move = old_bounds.origin != bounds.origin;
-            // todo(linux): use normal GPUI types here, refactor out the double
-            // viewport check and extra casts ( )
+            let bounds = bounds.map(|f| px(f as f32 / state.scale_factor));
+
+            is_resize = bounds.size.width != state.bounds.size.width
+                || bounds.size.height != state.bounds.size.height;
+
+            // If it's a resize event (only width/height changed), we ignore `bounds.origin`
+            // because it contains wrong values.
+            if is_resize {
+                state.bounds.size = bounds.size;
+            } else {
+                state.bounds = bounds;
+            }
+
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
-            if state.renderer.viewport_size() != gpu_size {
-                state
-                    .renderer
-                    .update_drawable_size(size(gpu_size.width as f64, gpu_size.height as f64));
+            if true {
+                state.renderer.update_drawable_size(size(
+                    DevicePixels(gpu_size.width as i32),
+                    DevicePixels(gpu_size.height as i32),
+                ));
                 resize_args = Some((state.content_size(), state.scale_factor));
             }
         }
@@ -639,7 +686,7 @@ impl X11WindowStatePtr {
                 fun(content_size, scale_factor)
             }
         }
-        if do_move {
+        if !is_resize {
             if let Some(ref mut fun) = callbacks.moved {
                 fun()
             }
@@ -663,8 +710,8 @@ impl X11WindowStatePtr {
 }
 
 impl PlatformWindow for X11Window {
-    fn bounds(&self) -> Bounds<DevicePixels> {
-        self.0.state.borrow().bounds.map(|v| v.into())
+    fn bounds(&self) -> Bounds<Pixels> {
+        self.0.state.borrow().bounds
     }
 
     fn is_maximized(&self) -> bool {
@@ -678,7 +725,11 @@ impl PlatformWindow for X11Window {
 
     fn window_bounds(&self) -> WindowBounds {
         let state = self.0.state.borrow();
-        WindowBounds::Windowed(state.bounds.map(|p| DevicePixels(p)))
+        if self.is_maximized() {
+            WindowBounds::Maximized(state.bounds)
+        } else {
+            WindowBounds::Windowed(state.bounds)
+        }
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -698,8 +749,8 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().appearance
     }
 
-    fn display(&self) -> Rc<dyn PlatformDisplay> {
-        self.0.state.borrow().display.clone()
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(self.0.state.borrow().display.clone())
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -713,9 +764,15 @@ impl PlatformWindow for X11Window {
         Point::new((reply.root_x as u32).into(), (reply.root_y as u32).into())
     }
 
-    // todo(linux)
     fn modifiers(&self) -> Modifiers {
-        Modifiers::default()
+        self.0
+            .state
+            .borrow()
+            .client
+            .0
+            .upgrade()
+            .map(|ref_cell| ref_cell.borrow().modifiers)
+            .unwrap_or_default()
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -741,6 +798,14 @@ impl PlatformWindow for X11Window {
         self.0
             .xcb_connection
             .configure_window(self.0.x_window, &win_aux)
+            .log_err();
+        self.0
+            .xcb_connection
+            .set_input_focus(
+                xproto::InputFocus::POINTER_ROOT,
+                self.0.x_window,
+                xproto::Time::CURRENT_TIME,
+            )
             .log_err();
     }
 
@@ -792,8 +857,9 @@ impl PlatformWindow for X11Window {
             .unwrap();
     }
 
-    // todo(linux)
-    fn set_edited(&mut self, edited: bool) {}
+    fn set_edited(&mut self, _edited: bool) {
+        log::info!("ignoring macOS specific set_edited");
+    }
 
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
         let mut inner = self.0.state.borrow_mut();
@@ -801,14 +867,8 @@ impl PlatformWindow for X11Window {
         inner.renderer.update_transparency(transparent);
     }
 
-    // todo(linux), this corresponds to `orderFrontCharacterPalette` on macOS,
-    // but it looks like the equivalent for Linux is GTK specific:
-    //
-    // https://docs.gtk.org/gtk3/signal.Entry.insert-emoji.html
-    //
-    // This API might need to change, or we might need to build an emoji picker into GPUI
     fn show_character_palette(&self) {
-        unimplemented!()
+        log::info!("ignoring macOS specific show_character_palette");
     }
 
     fn minimize(&self) {

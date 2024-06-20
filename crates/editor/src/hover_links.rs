@@ -1,5 +1,6 @@
 use crate::{
     hover_popover::{self, InlayHover},
+    scroll::ScrollAmount,
     Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition, InlayId,
     PointForPosition, SelectPhase,
 };
@@ -38,7 +39,11 @@ impl RangeInEditor {
         }
     }
 
-    fn point_within_range(&self, trigger_point: &TriggerPoint, snapshot: &EditorSnapshot) -> bool {
+    pub fn point_within_range(
+        &self,
+        trigger_point: &TriggerPoint,
+        snapshot: &EditorSnapshot,
+    ) -> bool {
         match (self, trigger_point) {
             (Self::Text(range), TriggerPoint::Text(point)) => {
                 let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot).is_le();
@@ -167,6 +172,21 @@ impl Editor {
             }
         })
         .detach();
+    }
+
+    pub fn scroll_hover(&mut self, amount: &ScrollAmount, cx: &mut ViewContext<Self>) -> bool {
+        let selection = self.selections.newest_anchor().head();
+        let snapshot = self.snapshot(cx);
+
+        let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
+            popover
+                .symbol_range
+                .point_within_range(&TriggerPoint::Text(selection), &snapshot)
+        }) else {
+            return false;
+        };
+        popover.scroll(amount, cx);
+        true
     }
 
     fn cmd_click_reveal_task(
@@ -302,7 +322,6 @@ pub fn update_inlay_link_and_hover_points(
                                     hover_popover::hover_at_inlay(
                                         editor,
                                         InlayHover {
-                                            excerpt: excerpt_id,
                                             tooltip: match tooltip {
                                                 InlayHintTooltip::String(text) => HoverBlock {
                                                     text,
@@ -350,7 +369,6 @@ pub fn update_inlay_link_and_hover_points(
                                         hover_popover::hover_at_inlay(
                                             editor,
                                             InlayHover {
-                                                excerpt: excerpt_id,
                                                 tooltip: match tooltip {
                                                     InlayHintLabelPartTooltip::String(text) => {
                                                         HoverBlock {
@@ -730,9 +748,13 @@ mod tests {
                 ])))
             });
 
-        cx.cx
-            .cx
-            .simulate_mouse_move(screen_coord.unwrap(), None, Modifiers::command_shift());
+        let modifiers = if cfg!(target_os = "macos") {
+            Modifiers::command_shift()
+        } else {
+            Modifiers::control_shift()
+        };
+
+        cx.simulate_mouse_move(screen_coord.unwrap(), None, modifiers);
 
         requests.next().await;
         cx.run_until_parked();
@@ -749,9 +771,7 @@ mod tests {
             let variable = A;
         "});
 
-        cx.cx
-            .cx
-            .simulate_click(screen_coord.unwrap(), Modifiers::command_shift());
+        cx.simulate_click(screen_coord.unwrap(), modifiers);
 
         cx.assert_editor_state(indoc! {"
             struct «Aˇ»;

@@ -12,7 +12,7 @@ We have a growing collection of pre-defined keymaps in [zed repository's keymaps
 - TextMate
 - VSCode (default)
 
-These keymaps can be set via the `base_keymap` setting in your `keymap.json` file. Additionally, if you'd like to work from a clean slate, you can provide `"None"` to the setting.
+These keymaps can be set via the `base_keymap` setting in your `settings.json` file. Additionally, if you'd like to work from a clean slate, you can provide `"None"` to the setting.
 
 ## Custom key bindings
 
@@ -101,6 +101,21 @@ There are some limitations to this, notably:
 - There is a limit of 100 simulated keys at a time, this is to avoid accidental infinite recursion if you trigger SendKeystrokes again inside your bindings.
 
 The argument to `SendKeystrokes` is a space-separated list of keystrokes (using the same syntax as above). Due to the way that keystrokes are parsed, any segment that is not recognized as a keypress will be sent verbatim to the currently focused input field.
+
+### Forward keys to terminal
+
+If you're on Linux or Windows, you might find yourself wanting to forward key combinations to the built-in terminal instead of them being handled by Zed.
+
+For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ctrl-n` to the built-in terminal when it's focused, add the following to your keymap:
+
+```json
+{
+  "context": "Terminal",
+  "bindings": {
+    "ctrl-n": ["terminal::SendKeystroke", "ctrl-n"]
+  }
+}
+```
 
 ### All key bindings
 
@@ -347,7 +362,7 @@ The argument to `SendKeystrokes` is a space-separated list of keystrokes (using 
 | Close all items               | Pane           | `⌘ + K, ⌘ + W`          |
 | Close clean items             | Pane           | `⌘ + K, U`              |
 | Close inactive items          | Pane           | `Alt + ⌘ + T`           |
-| Go back                       | Pane           | `Control + `            |
+| Go back                       | Pane           | `Control + -`           |
 | Go forward                    | Pane           | `Control + _`           |
 | Reopen closed item            | Pane           | `⌘ + Shift + T`         |
 | Split down                    | Pane           | `⌘ + K, Down`           |

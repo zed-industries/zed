@@ -6,7 +6,8 @@ use crate::{
 use anyhow::{anyhow, Context, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{
-    Attrs, AttrsList, BufferLine, CacheKey, Family, Font as CosmicTextFont, FontSystem, SwashCache,
+    Attrs, AttrsList, CacheKey, Family, Font as CosmicTextFont, FontSystem, ShapeBuffer, ShapeLine,
+    SwashCache,
 };
 
 use itertools::Itertools;
@@ -23,6 +24,7 @@ pub(crate) struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
 struct CosmicTextSystemState {
     swash_cache: SwashCache,
     font_system: FontSystem,
+    scratch: ShapeBuffer,
     /// Contains all already loaded fonts, including all faces. Indexed by `FontId`.
     loaded_fonts_store: Vec<Arc<CosmicTextFont>>,
     /// Caches the `FontId`s associated with a specific family to avoid iterating the font database
@@ -42,6 +44,7 @@ impl CosmicTextSystem {
         Self(RwLock::new(CosmicTextSystemState {
             font_system,
             swash_cache: SwashCache::new(),
+            scratch: ShapeBuffer::default(),
             loaded_fonts_store: Vec::new(),
             font_ids_by_family_cache: HashMap::default(),
             postscript_names: HashMap::default(),
@@ -60,8 +63,6 @@ impl PlatformTextSystem for CosmicTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    // todo(linux) ensure that this integrates with platform font loading
-    // do we need to do more than call load_system_fonts()?
     fn all_font_names(&self) -> Vec<String> {
         self.0
             .read()
@@ -294,7 +295,7 @@ impl CosmicTextSystemState {
                 .0,
             )
             .clone()
-            .unwrap();
+            .with_context(|| format!("no image for {params:?} in font {font:?}"))?;
         Ok(Bounds {
             origin: point(image.placement.left.into(), (-image.placement.top).into()),
             size: size(image.placement.width.into(), image.placement.height.into()),
@@ -314,7 +315,7 @@ impl CosmicTextSystemState {
             let bitmap_size = glyph_bounds.size;
             let font = &self.loaded_fonts_store[params.font_id.0];
             let font_system = &mut self.font_system;
-            let image = self
+            let mut image = self
                 .swash_cache
                 .get_image(
                     font_system,
@@ -328,7 +329,14 @@ impl CosmicTextSystemState {
                     .0,
                 )
                 .clone()
-                .unwrap();
+                .with_context(|| format!("no image for {params:?} in font {font:?}"))?;
+
+            if params.is_emoji {
+                // Convert from RGBA to BGRA.
+                for pixel in image.data.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+            }
 
             Ok((bitmap_size, image.data))
         }
@@ -360,13 +368,11 @@ impl CosmicTextSystemState {
         }
     }
 
-    // todo(linux) This is all a quick first pass, maybe we should be using cosmic_text::Buffer
     #[profiling::function]
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         let mut attrs_list = AttrsList::new(Attrs::new());
         let mut offs = 0;
         for run in font_runs {
-            // todo(linux) We need to check we are doing utf properly
             let font = &self.loaded_fonts_store[run.font_id.0];
             let font = self.font_system.db().face(font.id()).unwrap();
             attrs_list.add_span(
@@ -379,28 +385,45 @@ impl CosmicTextSystemState {
             );
             offs += run.len;
         }
-        let mut line = BufferLine::new(text, attrs_list, cosmic_text::Shaping::Advanced);
-
-        let layout = line.layout(
+        let mut line = ShapeLine::new_in_buffer(
+            &mut self.scratch,
             &mut self.font_system,
+            text,
+            &attrs_list,
+            cosmic_text::Shaping::Advanced,
+            4,
+        );
+
+        let mut layout = Vec::with_capacity(1);
+        line.layout_to_buffer(
+            &mut self.scratch,
             font_size.0,
-            f32::MAX, // We do our own wrapping
+            None, // We do our own wrapping
             cosmic_text::Wrap::None,
             None,
+            &mut layout,
+            None,
         );
-        let mut runs = Vec::new();
 
+        let mut runs = Vec::new();
         let layout = layout.first().unwrap();
         for glyph in &layout.glyphs {
             let font_id = glyph.font_id;
             let font_id = self.font_id_for_cosmic_id(font_id);
+            let is_emoji = self.is_emoji(font_id);
             let mut glyphs = SmallVec::new();
+
+            // HACK: Prevent crash caused by variation selectors.
+            if glyph.glyph_id == 3 && is_emoji {
+                continue;
+            }
+
             // todo(linux) this is definitely wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
             glyphs.push(ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
-                position: point((glyph.x).into(), glyph.y.into()),
+                position: point(glyph.x.into(), glyph.y.into()),
                 index: glyph.start,
-                is_emoji: self.is_emoji(font_id),
+                is_emoji,
             });
 
             runs.push(crate::ShapedRun { font_id, glyphs });

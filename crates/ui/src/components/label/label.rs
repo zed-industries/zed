@@ -62,7 +62,7 @@ impl Label {
     /// ```
     /// use ui::prelude::*;
     ///
-    /// let my_label = Label::new("Hello, World!").single_line(true);
+    /// let my_label = Label::new("Hello, World!").single_line();
     /// ```
     pub fn single_line(mut self) -> Self {
         self.single_line = true;

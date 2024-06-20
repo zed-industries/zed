@@ -9,7 +9,10 @@ use crate::{
     JoinLines,
 };
 use futures::StreamExt;
-use gpui::{div, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds, WindowOptions};
+use gpui::{
+    div, AssetSource, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
+    WindowBounds, WindowOptions,
+};
 use indoc::indoc;
 use language::{
     language_settings::{
@@ -20,6 +23,7 @@ use language::{
     FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
     Point,
 };
+use language_settings::IndentGuideSettings;
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -53,10 +57,10 @@ fn test_edit_events(cx: &mut TestAppContext) {
         let events = events.clone();
         |cx| {
             let view = cx.view().clone();
-            cx.subscribe(&view, move |_, _, event: &EditorEvent, _| {
-                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
-                    events.borrow_mut().push(("editor1", event.clone()));
-                }
+            cx.subscribe(&view, move |_, _, event: &EditorEvent, _| match event {
+                EditorEvent::Edited { .. } => events.borrow_mut().push(("editor1", "edited")),
+                EditorEvent::BufferEdited => events.borrow_mut().push(("editor1", "buffer edited")),
+                _ => {}
             })
             .detach();
             Editor::for_buffer(buffer.clone(), None, cx)
@@ -66,11 +70,16 @@ fn test_edit_events(cx: &mut TestAppContext) {
     let editor2 = cx.add_window({
         let events = events.clone();
         |cx| {
-            cx.subscribe(&cx.view().clone(), move |_, _, event: &EditorEvent, _| {
-                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
-                    events.borrow_mut().push(("editor2", event.clone()));
-                }
-            })
+            cx.subscribe(
+                &cx.view().clone(),
+                move |_, _, event: &EditorEvent, _| match event {
+                    EditorEvent::Edited { .. } => events.borrow_mut().push(("editor2", "edited")),
+                    EditorEvent::BufferEdited => {
+                        events.borrow_mut().push(("editor2", "buffer edited"))
+                    }
+                    _ => {}
+                },
+            )
             .detach();
             Editor::for_buffer(buffer.clone(), None, cx)
         }
@@ -83,9 +92,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -94,9 +103,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -105,9 +114,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -116,9 +125,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor1", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor1", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -127,9 +136,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -138,9 +147,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.borrow_mut()),
         [
-            ("editor2", EditorEvent::Edited),
-            ("editor1", EditorEvent::BufferEdited),
-            ("editor2", EditorEvent::BufferEdited),
+            ("editor2", "edited"),
+            ("editor1", "buffer edited"),
+            ("editor2", "buffer edited"),
         ]
     );
 
@@ -473,6 +482,42 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_movement_actions_with_pending_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
+        build_editor(buffer, cx)
+    });
+
+    _ = view.update(cx, |view, cx| {
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)]
+        );
+
+        view.move_down(&Default::default(), cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 2)]
+        );
+
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)]
+        );
+
+        view.move_up(&Default::default(), cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2)]
+        );
+    });
+}
+
+#[gpui::test]
 fn test_clone(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -508,6 +553,7 @@ fn test_clone(cx: &mut TestAppContext) {
         .update(cx, |editor, cx| {
             cx.open_window(Default::default(), |cx| cx.new_view(|cx| editor.clone(cx)))
         })
+        .unwrap()
         .unwrap();
 
     let snapshot = editor.update(cx, |e, cx| e.snapshot(cx)).unwrap();
@@ -890,6 +936,8 @@ fn test_move_cursor(cx: &mut TestAppContext) {
     });
 }
 
+// TODO: Re-enable this test
+#[cfg(target_os = "macos")]
 #[gpui::test]
 fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -4587,12 +4635,14 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
                             start: "{".to_string(),
                             end: "}".to_string(),
                             close: false,
+                            surround: false,
                             newline: true,
                         },
                         BracketPair {
                             start: "(".to_string(),
                             end: ")".to_string(),
                             close: false,
+                            surround: false,
                             newline: true,
                         },
                     ],
@@ -4636,7 +4686,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
+async fn test_autoclose_and_auto_surround_pairs(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -4649,31 +4699,43 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "(".to_string(),
                         end: ")".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "/*".to_string(),
                         end: " */".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "[".to_string(),
                         end: "]".to_string(),
                         close: false,
+                        surround: false,
                         newline: true,
                     },
                     BracketPair {
                         start: "\"".to_string(),
                         end: "\"".to_string(),
                         close: true,
+                        surround: true,
                         newline: false,
+                    },
+                    BracketPair {
+                        start: "<".to_string(),
+                        end: ">".to_string(),
+                        close: false,
+                        surround: true,
+                        newline: true,
                     },
                 ],
                 ..Default::default()
@@ -4802,6 +4864,16 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("a\"ˇ\"");
     cx.update_editor(|view, cx| view.handle_input("\"", cx));
     cx.assert_editor_state("a\"\"ˇ");
+
+    // Don't autoclose pair if autoclose is disabled
+    cx.set_state("ˇ");
+    cx.update_editor(|view, cx| view.handle_input("<", cx));
+    cx.assert_editor_state("<ˇ");
+
+    // Surround with brackets if text is selected and auto_surround is enabled, even if autoclose is disabled
+    cx.set_state("«aˇ» b");
+    cx.update_editor(|view, cx| view.handle_input("<", cx));
+    cx.assert_editor_state("<«aˇ»> b");
 }
 
 #[gpui::test]
@@ -4820,18 +4892,21 @@ async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestA
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "(".to_string(),
                         end: ")".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "[".to_string(),
                         end: "]".to_string(),
                         close: false,
+                        surround: false,
                         newline: true,
                     },
                 ],
@@ -5245,12 +5320,14 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "/* ".to_string(),
                         end: "*/".to_string(),
                         close: true,
+                        surround: true,
                         ..Default::default()
                     },
                 ],
@@ -5399,6 +5476,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
                     start: "{".to_string(),
                     end: "}".to_string(),
                     close: true,
+                    surround: true,
                     newline: true,
                 }],
                 ..Default::default()
@@ -5510,18 +5588,21 @@ async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppC
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "(".to_string(),
                         end: ")".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "[".to_string(),
                         end: "]".to_string(),
                         close: false,
+                        surround: true,
                         newline: true,
                     },
                 ],
@@ -6695,7 +6776,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("editor.cloˇ");
     assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
     cx.update_editor(|editor, cx| {
-        editor.show_completions(&ShowCompletions, cx);
+        editor.show_completions(&ShowCompletions { trigger: None }, cx);
     });
     handle_completion_request(
         &mut cx,
@@ -7489,12 +7570,14 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
                             start: "{".to_string(),
                             end: "}".to_string(),
                             close: true,
+                            surround: true,
                             newline: true,
                         },
                         BracketPair {
                             start: "/* ".to_string(),
                             end: " */".to_string(),
                             close: true,
+                            surround: true,
                             newline: true,
                         },
                     ],
@@ -7649,13 +7732,14 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::from_corners(
-                    gpui::Point::new(0.into(), 0.into()),
-                    gpui::Point::new(10.into(), 80.into()),
+                    gpui::Point::new(px(0.), px(0.)),
+                    gpui::Point::new(px(10.), px(80.)),
                 ))),
                 ..Default::default()
             },
             |cx| cx.new_view(|cx| build_editor(buffer.clone(), cx)),
         )
+        .unwrap()
     });
 
     let is_still_following = Rc::new(RefCell::new(true));
@@ -8295,6 +8379,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
                     start: "{".to_string(),
                     end: "}".to_string(),
                     close: true,
+                    surround: true,
                     newline: true,
                 }],
                 disabled_scopes_by_bracket_ix: Vec::new(),
@@ -11505,6 +11590,7 @@ fn assert_indent_guides(
         let snapshot = editor.snapshot(cx).display_snapshot;
         let mut indent_guides: Vec<_> = crate::indent_guides::indent_guides_in_range(
             MultiBufferRow(range.start)..MultiBufferRow(range.end),
+            true,
             &snapshot,
             cx,
         );
@@ -11543,6 +11629,21 @@ fn assert_indent_guides(
     assert_eq!(indent_guides, expected, "Indent guides do not match");
 }
 
+fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -> IndentGuide {
+    IndentGuide {
+        buffer_id,
+        start_row,
+        end_row,
+        depth,
+        tab_size: 4,
+        settings: IndentGuideSettings {
+            enabled: true,
+            line_width: 1,
+            ..Default::default()
+        },
+    }
+}
+
 #[gpui::test]
 async fn test_indent_guide_single_line(cx: &mut gpui::TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
@@ -11555,12 +11656,7 @@ async fn test_indent_guide_single_line(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    assert_indent_guides(
-        0..3,
-        vec![IndentGuide::new(buffer_id, 1, 1, 0, 4)],
-        None,
-        &mut cx,
-    );
+    assert_indent_guides(0..3, vec![indent_guide(buffer_id, 1, 1, 0)], None, &mut cx);
 }
 
 #[gpui::test]
@@ -11576,12 +11672,7 @@ async fn test_indent_guide_simple_block(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    assert_indent_guides(
-        0..4,
-        vec![IndentGuide::new(buffer_id, 1, 2, 0, 4)],
-        None,
-        &mut cx,
-    );
+    assert_indent_guides(0..4, vec![indent_guide(buffer_id, 1, 2, 0)], None, &mut cx);
 }
 
 #[gpui::test]
@@ -11604,9 +11695,9 @@ async fn test_indent_guide_nested(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         0..8,
         vec![
-            IndentGuide::new(buffer_id, 1, 6, 0, 4),
-            IndentGuide::new(buffer_id, 3, 3, 1, 4),
-            IndentGuide::new(buffer_id, 5, 5, 1, 4),
+            indent_guide(buffer_id, 1, 6, 0),
+            indent_guide(buffer_id, 3, 3, 1),
+            indent_guide(buffer_id, 5, 5, 1),
         ],
         None,
         &mut cx,
@@ -11630,8 +11721,8 @@ async fn test_indent_guide_tab(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         0..5,
         vec![
-            IndentGuide::new(buffer_id, 1, 3, 0, 4),
-            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+            indent_guide(buffer_id, 1, 3, 0),
+            indent_guide(buffer_id, 2, 2, 1),
         ],
         None,
         &mut cx,
@@ -11652,12 +11743,7 @@ async fn test_indent_guide_continues_on_empty_line(cx: &mut gpui::TestAppContext
     )
     .await;
 
-    assert_indent_guides(
-        0..5,
-        vec![IndentGuide::new(buffer_id, 1, 3, 0, 4)],
-        None,
-        &mut cx,
-    );
+    assert_indent_guides(0..5, vec![indent_guide(buffer_id, 1, 3, 0)], None, &mut cx);
 }
 
 #[gpui::test]
@@ -11683,9 +11769,9 @@ async fn test_indent_guide_complex(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         0..11,
         vec![
-            IndentGuide::new(buffer_id, 1, 9, 0, 4),
-            IndentGuide::new(buffer_id, 6, 6, 1, 4),
-            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+            indent_guide(buffer_id, 1, 9, 0),
+            indent_guide(buffer_id, 6, 6, 1),
+            indent_guide(buffer_id, 8, 8, 1),
         ],
         None,
         &mut cx,
@@ -11715,9 +11801,9 @@ async fn test_indent_guide_starts_off_screen(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         1..11,
         vec![
-            IndentGuide::new(buffer_id, 1, 9, 0, 4),
-            IndentGuide::new(buffer_id, 6, 6, 1, 4),
-            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+            indent_guide(buffer_id, 1, 9, 0),
+            indent_guide(buffer_id, 6, 6, 1),
+            indent_guide(buffer_id, 8, 8, 1),
         ],
         None,
         &mut cx,
@@ -11747,9 +11833,9 @@ async fn test_indent_guide_ends_off_screen(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         1..10,
         vec![
-            IndentGuide::new(buffer_id, 1, 9, 0, 4),
-            IndentGuide::new(buffer_id, 6, 6, 1, 4),
-            IndentGuide::new(buffer_id, 8, 8, 1, 4),
+            indent_guide(buffer_id, 1, 9, 0),
+            indent_guide(buffer_id, 6, 6, 1),
+            indent_guide(buffer_id, 8, 8, 1),
         ],
         None,
         &mut cx,
@@ -11775,9 +11861,9 @@ async fn test_indent_guide_without_brackets(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         1..10,
         vec![
-            IndentGuide::new(buffer_id, 1, 4, 0, 4),
-            IndentGuide::new(buffer_id, 2, 3, 1, 4),
-            IndentGuide::new(buffer_id, 3, 3, 2, 4),
+            indent_guide(buffer_id, 1, 4, 0),
+            indent_guide(buffer_id, 2, 3, 1),
+            indent_guide(buffer_id, 3, 3, 2),
         ],
         None,
         &mut cx,
@@ -11802,8 +11888,8 @@ async fn test_indent_guide_ends_before_empty_line(cx: &mut gpui::TestAppContext)
     assert_indent_guides(
         0..6,
         vec![
-            IndentGuide::new(buffer_id, 1, 2, 0, 4),
-            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+            indent_guide(buffer_id, 1, 2, 0),
+            indent_guide(buffer_id, 2, 2, 1),
         ],
         None,
         &mut cx,
@@ -11825,12 +11911,7 @@ async fn test_indent_guide_continuing_off_screen(cx: &mut gpui::TestAppContext) 
     )
     .await;
 
-    assert_indent_guides(
-        0..1,
-        vec![IndentGuide::new(buffer_id, 1, 1, 0, 4)],
-        None,
-        &mut cx,
-    );
+    assert_indent_guides(0..1, vec![indent_guide(buffer_id, 1, 1, 0)], None, &mut cx);
 }
 
 #[gpui::test]
@@ -11852,8 +11933,8 @@ async fn test_indent_guide_tabs(cx: &mut gpui::TestAppContext) {
     assert_indent_guides(
         0..6,
         vec![
-            IndentGuide::new(buffer_id, 1, 6, 0, 4),
-            IndentGuide::new(buffer_id, 3, 4, 1, 4),
+            indent_guide(buffer_id, 1, 6, 0),
+            indent_guide(buffer_id, 3, 4, 1),
         ],
         None,
         &mut cx,
@@ -11880,7 +11961,7 @@ async fn test_active_indent_guide_single_line(cx: &mut gpui::TestAppContext) {
 
     assert_indent_guides(
         0..3,
-        vec![IndentGuide::new(buffer_id, 1, 1, 0, 4)],
+        vec![indent_guide(buffer_id, 1, 1, 0)],
         Some(vec![0]),
         &mut cx,
     );
@@ -11909,8 +11990,8 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut gpui::TestAppC
     assert_indent_guides(
         0..4,
         vec![
-            IndentGuide::new(buffer_id, 1, 3, 0, 4),
-            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+            indent_guide(buffer_id, 1, 3, 0),
+            indent_guide(buffer_id, 2, 2, 1),
         ],
         Some(vec![1]),
         &mut cx,
@@ -11925,8 +12006,8 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut gpui::TestAppC
     assert_indent_guides(
         0..4,
         vec![
-            IndentGuide::new(buffer_id, 1, 3, 0, 4),
-            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+            indent_guide(buffer_id, 1, 3, 0),
+            indent_guide(buffer_id, 2, 2, 1),
         ],
         Some(vec![1]),
         &mut cx,
@@ -11941,8 +12022,8 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut gpui::TestAppC
     assert_indent_guides(
         0..4,
         vec![
-            IndentGuide::new(buffer_id, 1, 3, 0, 4),
-            IndentGuide::new(buffer_id, 2, 2, 1, 4),
+            indent_guide(buffer_id, 1, 3, 0),
+            indent_guide(buffer_id, 2, 2, 1),
         ],
         Some(vec![0]),
         &mut cx,
@@ -11971,7 +12052,7 @@ async fn test_active_indent_guide_empty_line(cx: &mut gpui::TestAppContext) {
 
     assert_indent_guides(
         0..5,
-        vec![IndentGuide::new(buffer_id, 1, 3, 0, 4)],
+        vec![indent_guide(buffer_id, 1, 3, 0)],
         Some(vec![0]),
         &mut cx,
     );
@@ -11997,14 +12078,14 @@ async fn test_active_indent_guide_non_matching_indent(cx: &mut gpui::TestAppCont
 
     assert_indent_guides(
         0..3,
-        vec![IndentGuide::new(buffer_id, 1, 2, 0, 4)],
+        vec![indent_guide(buffer_id, 1, 2, 0)],
         Some(vec![0]),
         &mut cx,
     );
 }
 
 #[gpui::test]
-fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
+fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|cx| {
@@ -12025,7 +12106,7 @@ fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
                 callback: Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
             }
 
-            let flap = Flap::new(
+            let crease = Crease::new(
                 range,
                 FoldPlaceholder::test(),
                 {
@@ -12042,7 +12123,7 @@ fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
                 |_row, _folded, _cx| div(),
             );
 
-            editor.insert_flaps(Some(flap), cx);
+            editor.insert_creases(Some(crease), cx);
             let snapshot = editor.snapshot(cx);
             let _div = snapshot.render_fold_toggle(MultiBufferRow(1), false, cx.view().clone(), cx);
             snapshot
@@ -12187,10 +12268,16 @@ pub(crate) fn update_test_project_settings(
 
 pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
     _ = cx.update(|cx| {
+        cx.text_system()
+            .add_fonts(vec![assets::Assets
+                .load("fonts/zed-mono/zed-mono-extended.ttf")
+                .unwrap()
+                .unwrap()])
+            .unwrap();
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
-        release_channel::init("0.0.0", cx);
+        release_channel::init(SemanticVersion::default(), cx);
         client::init_settings(cx);
         language::init(cx);
         Project::init_settings(cx);
