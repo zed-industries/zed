@@ -26,6 +26,7 @@ lazy_static.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
+paths.workspace = true
 project.workspace = true
 regex.workspace = true
 rope.workspace = true

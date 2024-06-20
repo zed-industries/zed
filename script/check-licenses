@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+check_license () {
+    for license in "LICENSE-AGPL" "LICENSE-GPL" "LICENSE-APACHE"; do
+        if [[ -L "$1/$license" ]]; then
+            return 0
+        elif [[ -e "$1/$license" ]]; then
+            echo "Error: $1/$license exists but is not a symlink."
+            exit 1
+        fi
+    done
+    echo "Error: $1 does not contain a license symlink"
+    exit 1
+}
+
+git ls-files **/*/Cargo.toml | while read cargo_toml; do
+   check_license $(dirname "$cargo_toml");
+done

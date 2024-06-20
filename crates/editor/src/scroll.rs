@@ -330,6 +330,11 @@ impl Editor {
         self.scroll_manager.visible_line_count
     }
 
+    pub fn visible_row_count(&self) -> Option<u32> {
+        self.visible_line_count()
+            .map(|line_count| line_count as u32 - 1)
+    }
+
     pub(crate) fn set_visible_line_count(&mut self, lines: f32, cx: &mut ViewContext<Self>) {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);

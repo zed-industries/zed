@@ -649,6 +649,13 @@
     }
   },
   {
+    "context": "Editor && vim_mode == insert && VimWaiting",
+    "bindings": {
+      "escape": "vim::NormalBefore",
+      "ctrl-[": "vim::NormalBefore"
+    }
+  },
+  {
     "context": "Editor && vim_mode == replace",
     "bindings": {
       "escape": "vim::NormalBefore",

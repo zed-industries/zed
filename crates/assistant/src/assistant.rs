@@ -34,7 +34,6 @@ use std::{
     sync::Arc,
 };
 pub(crate) use streaming_diff::*;
-use util::paths::EMBEDDINGS_DIR;
 
 actions!(
     assistant,
@@ -271,7 +270,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         async move {
             let embedding_provider = CloudEmbeddingProvider::new(client.clone());
             let semantic_index = SemanticIndex::new(
-                EMBEDDINGS_DIR.join("semantic-index-db.0.mdb"),
+                paths::embeddings_dir().join("semantic-index-db.0.mdb"),
                 Arc::new(embedding_provider),
                 &mut cx,
             )

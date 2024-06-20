@@ -1199,6 +1199,7 @@ message UpdateLanguageServer {
 
 message LspWorkStart {
     string token = 1;
+    optional string title = 4;
     optional string message = 2;
     optional uint32 percentage = 3;
 }

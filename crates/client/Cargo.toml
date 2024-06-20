@@ -31,6 +31,7 @@ http.workspace = true
 lazy_static.workspace = true
 log.workspace = true
 once_cell.workspace = true
+paths.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true
@@ -51,6 +52,7 @@ time.workspace = true
 tiny_http = "0.8"
 url.workspace = true
 util.workspace = true
+worktree.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

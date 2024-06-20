@@ -39,6 +39,7 @@ ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 ordered-float.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 project.workspace = true
 regex.workspace = true
 rope.workspace = true

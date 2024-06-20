@@ -28,7 +28,7 @@ use language::{
 use multi_buffer::MultiBufferRow;
 use project::{
     project_settings::{InlineBlameSettings, ProjectSettings},
-    SERVER_PROGRESS_DEBOUNCE_TIMEOUT,
+    SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
@@ -344,7 +344,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .handle_request::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -461,7 +461,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .handle_request::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -585,7 +585,7 @@ async fn test_collaborating_with_code_actions(
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(0, 0));
             assert_eq!(params.range.end, lsp::Position::new(0, 0));
@@ -607,7 +607,7 @@ async fn test_collaborating_with_code_actions(
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(1, 31));
             assert_eq!(params.range.end, lsp::Position::new(1, 31));
@@ -619,7 +619,7 @@ async fn test_collaborating_with_code_actions(
                         changes: Some(
                             [
                                 (
-                                    lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(1, 22),
@@ -629,7 +629,7 @@ async fn test_collaborating_with_code_actions(
                                     )],
                                 ),
                                 (
-                                    lsp::Uri::from_file_path("/a/other.rs").unwrap().into(),
+                                    lsp::Url::from_file_path("/a/other.rs").unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(0, 0),
@@ -689,7 +689,7 @@ async fn test_collaborating_with_code_actions(
                     changes: Some(
                         [
                             (
-                                lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                                lsp::Url::from_file_path("/a/main.rs").unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(1, 22),
@@ -699,7 +699,7 @@ async fn test_collaborating_with_code_actions(
                                 )],
                             ),
                             (
-                                lsp::Uri::from_file_path("/a/other.rs").unwrap().into(),
+                                lsp::Url::from_file_path("/a/other.rs").unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(0, 0),
@@ -897,14 +897,14 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
                 changes: Some(
                     [
                         (
-                            lsp::Uri::from_file_path("/dir/one.rs").unwrap().into(),
+                            lsp::Url::from_file_path("/dir/one.rs").unwrap(),
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                                 "THREE".to_string(),
                             )],
                         ),
                         (
-                            lsp::Uri::from_file_path("/dir/two.rs").unwrap().into(),
+                            lsp::Url::from_file_path("/dir/two.rs").unwrap(),
                             vec![
                                 lsp::TextEdit::new(
                                     lsp::Range::new(
@@ -1006,6 +1006,8 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server.start_progress("the-token").await;
+
+    executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
     fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
@@ -1015,11 +1017,10 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
             },
         )),
     });
-    executor.advance_clock(SERVER_PROGRESS_DEBOUNCE_TIMEOUT);
     executor.run_until_parked();
 
     project_a.read_with(cx_a, |project, _| {
-        let status = project.language_server_statuses().next().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert_eq!(status.name, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
@@ -1036,10 +1037,11 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
     project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert_eq!(status.name, "the-language-server");
     });
 
+    executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
     fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
@@ -1049,11 +1051,10 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
             },
         )),
     });
-    executor.advance_clock(SERVER_PROGRESS_DEBOUNCE_TIMEOUT);
     executor.run_until_parked();
 
     project_a.read_with(cx_a, |project, _| {
-        let status = project.language_server_statuses().next().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert_eq!(status.name, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
@@ -1063,7 +1064,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     });
 
     project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert_eq!(status.name, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
@@ -1313,7 +1314,7 @@ async fn test_on_input_format_from_host_to_guest(
         |params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -1441,7 +1442,7 @@ async fn test_on_input_format_from_guest_to_host(
         .handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -1610,7 +1611,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
                 );
                 let edits_made = task_edits_made.load(atomic::Ordering::Acquire);
                 Ok(Some(vec![lsp::InlayHint {
@@ -1873,7 +1874,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
                 );
                 let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
                 let character = if other_hints { 0 } else { 2 };

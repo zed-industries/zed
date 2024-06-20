@@ -59,14 +59,14 @@
       "ctrl-z": "editor::Undo",
       "ctrl-shift-z": "editor::Redo",
       "up": "editor::MoveUp",
-      // "ctrl-up": "editor::MoveToStartOfParagraph", todo(linux) Should be "scroll down by 1 line"
+      "ctrl-up": "editor::LineUp",
+      "ctrl-down": "editor::LineDown",
       "pageup": "editor::PageUp",
-      // "shift-pageup": "editor::MovePageUp", todo(linux) should be 'select page up'
+      "shift-pageup": "editor::SelectPageUp",
       "home": "editor::MoveToBeginningOfLine",
       "down": "editor::MoveDown",
-      // "ctrl-down": "editor::MoveToEndOfParagraph", todo(linux) should be "scroll up by 1 line"
       "pagedown": "editor::PageDown",
-      // "shift-pagedown": "editor::MovePageDown", todo(linux) should be 'select page down'
+      "shift-pagedown": "editor::SelectPageDown",
       "end": "editor::MoveToEndOfLine",
       "left": "editor::MoveLeft",
       "right": "editor::MoveRight",
@@ -294,6 +294,13 @@
       "alt-ctrl-f": "project_search::ToggleFilters",
       "ctrl-alt-shift-r": "search::ToggleRegex",
       "ctrl-alt-shift-x": "search::ToggleRegex"
+    }
+  },
+  {
+    "context": "Terminal",
+    "bindings": {
+      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"]
     }
   },
   // Bindings from VS Code

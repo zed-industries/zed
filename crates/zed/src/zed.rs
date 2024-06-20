@@ -36,12 +36,9 @@ use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
 
+use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use util::{
-    asset_str,
-    paths::{self, LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH},
-    ResultExt,
-};
+use util::{asset_str, ResultExt};
 use uuid::Uuid;
 use vim::VimModeSetting;
 use welcome::BaseKeymap;
@@ -55,22 +52,15 @@ use zed_actions::{OpenBrowser, OpenSettings, OpenZedUrl, Quit};
 actions!(
     zed,
     [
-        About,
         DebugElements,
-        DecreaseBufferFontSize,
         Hide,
         HideOthers,
-        IncreaseBufferFontSize,
         Minimize,
         OpenDefaultKeymap,
         OpenDefaultSettings,
-        OpenKeymap,
-        OpenLicenses,
         OpenLocalSettings,
         OpenLocalTasks,
         OpenTasks,
-        OpenTelemetryLog,
-        ResetBufferFontSize,
         ResetDatabase,
         ShowAll,
         ToggleFullScreen,
@@ -181,11 +171,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
                     let tasks_file_rx =
-                        watch_config_file(&cx.background_executor(), fs, paths::TASKS.clone());
+                        watch_config_file(&cx.background_executor(), fs, paths::tasks_file().clone());
                     inventory.add_source(
                         TaskSourceKind::AbsPath {
                             id_base: "global_tasks".into(),
-                            abs_path: paths::TASKS.clone(),
+                            abs_path: paths::tasks_file().clone(),
                         },
                         |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                         cx,
@@ -255,13 +245,33 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 OpenListener::global(cx).open_urls(vec![action.url.clone()])
             })
             .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
-            .register_action(move |_, _: &IncreaseBufferFontSize, cx| {
-                theme::adjust_font_size(cx, |size| *size += px(1.0))
+            .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+                theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
             })
-            .register_action(move |_, _: &DecreaseBufferFontSize, cx| {
-                theme::adjust_font_size(cx, |size| *size -= px(1.0))
+            .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+                theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
             })
-            .register_action(move |_, _: &ResetBufferFontSize, cx| theme::reset_font_size(cx))
+            .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+                theme::reset_buffer_font_size(cx)
+            })
+            .register_action(move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
+                theme::adjust_ui_font_size(cx, |size| *size += px(1.0))
+            })
+            .register_action(move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
+                theme::adjust_ui_font_size(cx, |size| *size -= px(1.0))
+            })
+            .register_action(move |_, _: &zed_actions::ResetUiFontSize, cx| {
+                theme::reset_ui_font_size(cx)
+            })
+            .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+                theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
+            })
+            .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+                theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
+            })
+            .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+                theme::reset_buffer_font_size(cx)
+            })
             .register_action(|_, _: &install_cli::Install, cx| {
                 cx.spawn(|workspace, mut cx| async move {
                     if cfg!(target_os = "linux") {
@@ -326,7 +336,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             .register_action(|workspace, _: &OpenLog, cx| {
                 open_log_file(workspace, cx);
             })
-            .register_action(|workspace, _: &OpenLicenses, cx| {
+            .register_action(|workspace, _: &zed_actions::OpenLicenses, cx| {
                 open_bundled_file(
                     workspace,
                     asset_str::<Assets>("licenses.md"),
@@ -337,20 +347,22 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             })
             .register_action(
                 move |workspace: &mut Workspace,
-                      _: &OpenTelemetryLog,
+                      _: &zed_actions::OpenTelemetryLog,
                       cx: &mut ViewContext<Workspace>| {
                     open_telemetry_log_file(workspace, cx);
                 },
             )
             .register_action(
-                move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
-                    open_settings_file(&paths::KEYMAP, Rope::default, cx);
+                move |_: &mut Workspace,
+                      _: &zed_actions::OpenKeymap,
+                      cx: &mut ViewContext<Workspace>| {
+                    open_settings_file(&paths::keymap_file(), Rope::default, cx);
                 },
             )
             .register_action(
                 move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
                     open_settings_file(
-                        &paths::SETTINGS,
+                        paths::settings_file(),
                         || settings::initial_user_settings_content().as_ref().into(),
                         cx,
                     );
@@ -359,7 +371,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             .register_action(
                 move |_: &mut Workspace, _: &OpenTasks, cx: &mut ViewContext<Workspace>| {
                     open_settings_file(
-                        &paths::TASKS,
+                        paths::tasks_file(),
                         || settings::initial_tasks_content().as_ref().into(),
                         cx,
                     );
@@ -488,7 +500,7 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
     });
 }
 
-fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
+fn about(_: &mut Workspace, _: &zed_actions::About, cx: &mut gpui::ViewContext<Workspace>) {
     let release_channel = ReleaseChannel::global(cx).display_name();
     let version = env!("CARGO_PKG_VERSION");
     let message = format!("{release_channel} {version}");
@@ -569,7 +581,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
             let fs = workspace.app_state().fs.clone();
             cx.spawn(|workspace, mut cx| async move {
                 let (old_log, new_log) =
-                    futures::join!(fs.load(&paths::OLD_LOG), fs.load(&paths::LOG));
+                    futures::join!(fs.load(paths::old_log_file()), fs.load(paths::log_file()));
                 let log = match (old_log, new_log) {
                     (Err(_), Err(_)) => None,
                     (old_log, new_log) => {
@@ -605,7 +617,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                                     cx.new_view(|_| {
                                         MessageNotification::new(format!(
                                             "Unable to access/open log file at path {:?}",
-                                            paths::LOG.as_path()
+                                            paths::log_file().as_path()
                                         ))
                                     })
                                 },
@@ -621,7 +633,14 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
                         });
                         let editor = cx.new_view(|cx| {
-                            Editor::for_multibuffer(buffer, Some(project), true, cx)
+                            let mut editor =
+                                Editor::for_multibuffer(buffer, Some(project), true, cx);
+                            editor.set_breadcrumb_header(format!(
+                                "Last {} lines in {}",
+                                MAX_LINES,
+                                paths::log_file().display()
+                            ));
+                            editor
                         });
 
                         editor.update(cx, |editor, cx| {
@@ -718,7 +737,7 @@ fn open_local_settings_file(
 ) {
     open_local_file(
         workspace,
-        &LOCAL_SETTINGS_RELATIVE_PATH,
+        local_settings_file_relative_path(),
         initial_local_settings_content(),
         cx,
     )
@@ -731,7 +750,7 @@ fn open_local_tasks_file(
 ) {
     open_local_file(
         workspace,
-        &LOCAL_TASKS_RELATIVE_PATH,
+        local_tasks_file_relative_path(),
         initial_tasks_content(),
         cx,
     )
@@ -907,7 +926,7 @@ fn open_settings_file(
                 let worktree_creation_task = workspace.project().update(cx, |project, cx| {
                     // Set up a dedicated worktree for settings, since otherwise we're dropping and re-starting LSP servers for each file inside on every settings file close/open
                     // TODO: Do note that all other external files (e.g. drag and drop from OS) still have their worktrees released on file close, causing LSP servers' restarts.
-                    project.find_or_create_local_worktree(paths::CONFIG_DIR.as_path(), false, cx)
+                    project.find_or_create_local_worktree(paths::config_dir().as_path(), false, cx)
                 });
                 let settings_open_task = create_and_open_local_file(&abs_path, cx, default_content);
                 (worktree_creation_task, settings_open_task)
@@ -2214,7 +2233,7 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         window
-            .read_with(cx, |workspace, cx| {
+            .update(cx, |workspace, cx| {
                 assert_eq!(workspace.panes().len(), 1);
                 assert!(workspace.active_item(cx).is_none());
             })
