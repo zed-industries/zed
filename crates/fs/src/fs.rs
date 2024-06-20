@@ -23,7 +23,7 @@ use std::{
 };
 use tempfile::{NamedTempFile, TempDir};
 use text::LineEnding;
-use util::{paths, ResultExt};
+use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
@@ -135,8 +135,6 @@ pub struct RealFs {
 }
 
 pub struct RealWatcher {
-    #[cfg(target_os = "linux")]
-    root_path: PathBuf,
     #[cfg(target_os = "linux")]
     fs_watcher: parking_lot::Mutex<notify::INotifyWatcher>,
 }
@@ -327,7 +325,7 @@ impl Fs for RealFs {
                 // Use the directory of the destination as temp dir to avoid
                 // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
                 // See https://github.com/zed-industries/zed/pull/8437 for more details.
-                NamedTempFile::new_in(path.parent().unwrap_or(&paths::TEMP_DIR))
+                NamedTempFile::new_in(path.parent().unwrap_or(&paths::temp_dir()))
             } else {
                 NamedTempFile::new()
             }?;
@@ -452,25 +450,38 @@ impl Fs for RealFs {
     async fn watch(
         &self,
         path: &Path,
-        _latency: Duration,
+        latency: Duration,
     ) -> (
         Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
         Arc<dyn Watcher>,
     ) {
+        use parking_lot::Mutex;
+
         let (tx, rx) = smol::channel::unbounded();
+        let pending_paths: Arc<Mutex<Vec<PathBuf>>> = Default::default();
+        let root_path = path.to_path_buf();
 
         let file_watcher = notify::recommended_watcher({
             let tx = tx.clone();
+            let pending_paths = pending_paths.clone();
             move |event: Result<notify::Event, _>| {
                 if let Some(event) = event.log_err() {
-                    tx.try_send(event.paths).ok();
+                    let mut paths = event.paths;
+                    paths.retain(|path| path.starts_with(&root_path));
+                    if !paths.is_empty() {
+                        paths.sort();
+                        let mut pending_paths = pending_paths.lock();
+                        if pending_paths.is_empty() {
+                            tx.try_send(()).ok();
+                        }
+                        util::extend_sorted(&mut *pending_paths, paths, usize::MAX, PathBuf::cmp);
+                    }
                 }
             }
         })
         .expect("Could not start file watcher");
 
         let watcher = Arc::new(RealWatcher {
-            root_path: path.to_path_buf(),
             fs_watcher: parking_lot::Mutex::new(file_watcher),
         });
 
@@ -484,14 +495,13 @@ impl Fs for RealFs {
         (
             Box::pin(rx.filter_map({
                 let watcher = watcher.clone();
-                move |mut paths| {
-                    paths.retain(|path| path.starts_with(&watcher.root_path));
+                move |_| {
+                    let _ = watcher.clone();
+                    let pending_paths = pending_paths.clone();
                     async move {
-                        if paths.is_empty() {
-                            None
-                        } else {
-                            Some(paths)
-                        }
+                        smol::Timer::after(latency).await;
+                        let paths = std::mem::take(&mut *pending_paths.lock());
+                        (!paths.is_empty()).then_some(paths)
                     }
                 }
             })),

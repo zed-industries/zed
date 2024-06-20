@@ -90,8 +90,7 @@ fn main() {
                 ..Default::default()
             },
             move |cx| {
-                let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
-                cx.set_rem_size(ui_font_size);
+                theme::setup_ui_font(cx);
 
                 cx.new_view(|cx| StoryWrapper::new(selector.story(cx)))
             },

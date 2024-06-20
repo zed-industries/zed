@@ -2,7 +2,7 @@ use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
 use fuzzy::{PathMatch, StringMatchCandidate};
-use gpui::{svg, AppContext, Model, RenderOnce, Task, View, WeakView};
+use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{
     Anchor, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, LspAdapterDelegate,
     OffsetRangeExt, ToOffset,
@@ -14,7 +14,7 @@ use std::{
     ops::Range,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use util::paths::PathMatcher;
 use util::ResultExt;
 use workspace::Workspace;
@@ -98,7 +98,7 @@ impl SlashCommand for DiagnosticsCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
@@ -164,14 +164,45 @@ impl SlashCommand for DiagnosticsCommand {
                     .into_iter()
                     .map(|(range, placeholder_type)| SlashCommandOutputSection {
                         range,
-                        render_placeholder: Arc::new(move |id, unfold, _cx| {
-                            DiagnosticsPlaceholder {
-                                id,
-                                unfold,
-                                placeholder_type: placeholder_type.clone(),
+                        icon: match placeholder_type {
+                            PlaceholderType::Root(_, _) => IconName::ExclamationTriangle,
+                            PlaceholderType::File(_) => IconName::File,
+                            PlaceholderType::Diagnostic(DiagnosticType::Error, _) => {
+                                IconName::XCircle
                             }
-                            .into_any_element()
-                        }),
+                            PlaceholderType::Diagnostic(DiagnosticType::Warning, _) => {
+                                IconName::ExclamationTriangle
+                            }
+                        },
+                        label: match placeholder_type {
+                            PlaceholderType::Root(summary, source) => {
+                                let mut label = String::new();
+                                label.push_str("Diagnostics");
+                                if let Some(source) = source {
+                                    write!(label, " ({})", source).unwrap();
+                                }
+
+                                if summary.error_count > 0 || summary.warning_count > 0 {
+                                    label.push(':');
+
+                                    if summary.error_count > 0 {
+                                        write!(label, " {} errors", summary.error_count).unwrap();
+                                        if summary.warning_count > 0 {
+                                            label.push_str(",");
+                                        }
+                                    }
+
+                                    if summary.warning_count > 0 {
+                                        write!(label, " {} warnings", summary.warning_count)
+                                            .unwrap();
+                                    }
+                                }
+
+                                label.into()
+                            }
+                            PlaceholderType::File(file_path) => file_path.into(),
+                            PlaceholderType::Diagnostic(_, message) => message.into(),
+                        },
                     })
                     .collect(),
                 run_commands_in_text: false,
@@ -189,7 +220,7 @@ struct Options {
 const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
 
 impl Options {
-    pub fn parse(arguments_line: Option<&str>) -> Self {
+    fn parse(arguments_line: Option<&str>) -> Self {
         arguments_line
             .map(|arguments_line| {
                 let args = arguments_line.split_whitespace().collect::<Vec<_>>();
@@ -199,7 +230,7 @@ impl Options {
                     if arg == INCLUDE_WARNINGS_ARGUMENT {
                         include_warnings = true;
                     } else {
-                        path_matcher = PathMatcher::new(arg).log_err();
+                        path_matcher = PathMatcher::new(&[arg.to_owned()]).log_err();
                     }
                 }
                 Self {
@@ -223,10 +254,11 @@ fn collect_diagnostics(
     options: Options,
     cx: &mut AppContext,
 ) -> Task<Result<(String, Vec<(Range<usize>, PlaceholderType)>)>> {
-    let header = if let Some(path_matcher) = &options.path_matcher {
-        format!("diagnostics: {}", path_matcher.source())
+    let error_source = if let Some(path_matcher) = &options.path_matcher {
+        debug_assert_eq!(path_matcher.sources().len(), 1);
+        Some(path_matcher.sources().first().cloned().unwrap_or_default())
     } else {
-        "diagnostics".to_string()
+        None
     };
 
     let project_handle = project.downgrade();
@@ -234,7 +266,11 @@ fn collect_diagnostics(
 
     cx.spawn(|mut cx| async move {
         let mut text = String::new();
-        writeln!(text, "{}", &header).unwrap();
+        if let Some(error_source) = error_source.as_ref() {
+            writeln!(text, "diagnostics: {}", error_source).unwrap();
+        } else {
+            writeln!(text, "diagnostics").unwrap();
+        }
         let mut sections: Vec<(Range<usize>, PlaceholderType)> = Vec::new();
 
         let mut project_summary = DiagnosticSummary::default();
@@ -276,7 +312,7 @@ fn collect_diagnostics(
         }
         sections.push((
             0..text.len(),
-            PlaceholderType::Root(project_summary, header),
+            PlaceholderType::Root(project_summary, error_source),
         ));
 
         Ok((text, sections))
@@ -362,12 +398,12 @@ fn collect_diagnostic(
 
 #[derive(Clone)]
 pub enum PlaceholderType {
-    Root(DiagnosticSummary, String),
+    Root(DiagnosticSummary, Option<String>),
     File(String),
     Diagnostic(DiagnosticType, String),
 }
 
-#[derive(Copy, Clone, IntoElement)]
+#[derive(Copy, Clone)]
 pub enum DiagnosticType {
     Warning,
     Error,
@@ -379,66 +415,5 @@ impl DiagnosticType {
             DiagnosticType::Warning => "warning",
             DiagnosticType::Error => "error",
         }
-    }
-}
-
-#[derive(IntoElement)]
-pub struct DiagnosticsPlaceholder {
-    pub id: ElementId,
-    pub placeholder_type: PlaceholderType,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-}
-
-impl RenderOnce for DiagnosticsPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-        let (icon, content) = match self.placeholder_type {
-            PlaceholderType::Root(summary, title) => (
-                h_flex()
-                    .w_full()
-                    .gap_0p5()
-                    .when(summary.error_count > 0, |this| {
-                        this.child(DiagnosticType::Error)
-                            .child(Label::new(summary.error_count.to_string()))
-                    })
-                    .when(summary.warning_count > 0, |this| {
-                        this.child(DiagnosticType::Warning)
-                            .child(Label::new(summary.warning_count.to_string()))
-                    })
-                    .into_any_element(),
-                Label::new(title),
-            ),
-            PlaceholderType::File(file) => (
-                Icon::new(IconName::File).into_any_element(),
-                Label::new(file),
-            ),
-            PlaceholderType::Diagnostic(diagnostic_type, message) => (
-                diagnostic_type.into_any_element(),
-                Label::new(message).single_line(),
-            ),
-        };
-
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(icon)
-            .child(content)
-            .on_click(move |_, cx| unfold(cx))
-    }
-}
-
-impl RenderOnce for DiagnosticType {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        svg()
-            .size(cx.text_style().font_size)
-            .flex_none()
-            .map(|icon| match self {
-                DiagnosticType::Error => icon
-                    .path(IconName::XCircle.path())
-                    .text_color(Color::Error.color(cx)),
-                DiagnosticType::Warning => icon
-                    .path(IconName::ExclamationTriangle.path())
-                    .text_color(Color::Warning.color(cx)),
-            })
     }
 }

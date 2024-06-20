@@ -3897,7 +3897,7 @@ async fn test_collaborating_with_diagnostics(
         .await;
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         lsp::PublishDiagnosticsParams {
-            uri: lsp::Uri::from_file_path("/a/a.rs").unwrap().into(),
+            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -3917,7 +3917,7 @@ async fn test_collaborating_with_diagnostics(
         .unwrap();
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         lsp::PublishDiagnosticsParams {
-            uri: lsp::Uri::from_file_path("/a/a.rs").unwrap().into(),
+            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::ERROR),
@@ -3991,7 +3991,7 @@ async fn test_collaborating_with_diagnostics(
     // Simulate a language server reporting more errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         lsp::PublishDiagnosticsParams {
-            uri: lsp::Uri::from_file_path("/a/a.rs").unwrap().into(),
+            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![
                 lsp::Diagnostic {
@@ -4085,7 +4085,7 @@ async fn test_collaborating_with_diagnostics(
     // Simulate a language server reporting no errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         lsp::PublishDiagnosticsParams {
-            uri: lsp::Uri::from_file_path("/a/a.rs").unwrap().into(),
+            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![],
         },
@@ -4189,9 +4189,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     for file_name in file_names {
         fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
             lsp::PublishDiagnosticsParams {
-                uri: lsp::Uri::from_file_path(Path::new("/test").join(file_name))
-                    .unwrap()
-                    .into(),
+                uri: lsp::Url::from_file_path(Path::new("/test").join(file_name)).unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -4609,7 +4607,7 @@ async fn test_definition(
     fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Uri::from_file_path("/root/dir-2/b.rs").unwrap().into(),
+                lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
             ),
         )))
@@ -4638,7 +4636,7 @@ async fn test_definition(
     fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Uri::from_file_path("/root/dir-2/b.rs").unwrap().into(),
+                lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
                 lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
             ),
         )))
@@ -4674,7 +4672,7 @@ async fn test_definition(
             );
             Ok(Some(lsp::GotoDefinitionResponse::Scalar(
                 lsp::Location::new(
-                    lsp::Uri::from_file_path("/root/dir-2/c.rs").unwrap().into(),
+                    lsp::Url::from_file_path("/root/dir-2/c.rs").unwrap(),
                     lsp::Range::new(lsp::Position::new(0, 5), lsp::Position::new(0, 7)),
                 ),
             )))
@@ -4774,7 +4772,7 @@ async fn test_references(
     // User is informed that a request is pending.
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().cloned().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert_eq!(status.name, "my-fake-lsp-adapter");
         assert_eq!(
             status.pending_work.values().next().unwrap().message,
@@ -4786,21 +4784,15 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Ok(Some(vec![
             lsp::Location {
-                uri: lsp::Uri::from_file_path("/root/dir-1/two.rs")
-                    .unwrap()
-                    .into(),
+                uri: lsp::Url::from_file_path("/root/dir-1/two.rs").unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 24), lsp::Position::new(0, 27)),
             },
             lsp::Location {
-                uri: lsp::Uri::from_file_path("/root/dir-1/two.rs")
-                    .unwrap()
-                    .into(),
+                uri: lsp::Url::from_file_path("/root/dir-1/two.rs").unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 35), lsp::Position::new(0, 38)),
             },
             lsp::Location {
-                uri: lsp::Uri::from_file_path("/root/dir-2/three.rs")
-                    .unwrap()
-                    .into(),
+                uri: lsp::Url::from_file_path("/root/dir-2/three.rs").unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 37), lsp::Position::new(0, 40)),
             },
         ])))
@@ -4810,7 +4802,7 @@ async fn test_references(
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, cx| {
         // User is informed that a request is no longer pending.
-        let status = project.language_server_statuses().next().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert!(status.pending_work.is_empty());
 
         assert_eq!(references.len(), 3);
@@ -4838,7 +4830,7 @@ async fn test_references(
     // User is informed that a request is pending.
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().cloned().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert_eq!(status.name, "my-fake-lsp-adapter");
         assert_eq!(
             status.pending_work.values().next().unwrap().message,
@@ -4855,7 +4847,7 @@ async fn test_references(
     // User is informed that the request is no longer pending.
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert!(status.pending_work.is_empty());
     });
 }
@@ -4912,7 +4904,15 @@ async fn test_project_search(
     let mut results = HashMap::default();
     let mut search_rx = project_b.update(cx_b, |project, cx| {
         project.search(
-            SearchQuery::text("world", false, false, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                "world",
+                false,
+                false,
+                false,
+                Default::default(),
+                Default::default(),
+            )
+            .unwrap(),
             cx,
         )
     });
@@ -5300,9 +5300,7 @@ async fn test_project_symbols(
             lsp::SymbolInformation {
                 name: "TWO".into(),
                 location: lsp::Location {
-                    uri: lsp::Uri::from_file_path("/code/crate-2/two.rs")
-                        .unwrap()
-                        .into(),
+                    uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
                     range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                 },
                 kind: lsp::SymbolKind::CONSTANT,
@@ -5392,7 +5390,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Uri::from_file_path("/root/b.rs").unwrap().into(),
+                lsp::Url::from_file_path("/root/b.rs").unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
             ),
         )))

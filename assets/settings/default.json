@@ -131,7 +131,14 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
+  "private_files": [
+    "**/.env*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.cert",
+    "**/*.crt",
+    "**/secrets.yml"
+  ],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -139,15 +146,19 @@
   // opening parenthesis, bracket, brace, single or double quote characters.
   // For example, when you type (, Zed will add a closing ) at the correct position.
   "use_autoclose": true,
+  // Whether to automatically surround selected text when typing opening parenthesis,
+  // bracket, brace, single or double quote characters.
+  // For example, when you select text and type (, Zed will surround the text with ().
+  "use_auto_surround": true,
   // Controls how the editor handles the autoclosed characters.
   // When set to `false`(default), skipping over and auto-removing of the closing characters
   // happen only for auto-inserted characters.
   // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
   // no matter how they were inserted.
   "always_treat_brackets_as_autoclosed": false,
-  // Controls whether copilot provides suggestion immediately
-  // or waits for a `copilot::Toggle`
-  "show_copilot_suggestions": true,
+  // Controls whether inline completions are shown immediately (true)
+  // or manually by triggering `editor::ShowInlineCompletion` (false).
+  "show_inline_completions": true,
   // Whether to show tabs and spaces in the editor.
   // This setting can take three values:
   //
@@ -176,7 +187,9 @@
     // Whether to show breadcrumbs.
     "breadcrumbs": true,
     // Whether to show quick action buttons.
-    "quick_actions": true
+    "quick_actions": true,
+    // Whether to show the Selections menu in the editor toolbar
+    "selections_menu": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -516,9 +529,8 @@
       // "delay_ms": 600
     }
   },
-  "copilot": {
-    // The set of glob patterns for which copilot should be disabled
-    // in any matching file.
+  "inline_completions": {
+    // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
   },
   // Settings specific to journaling
@@ -723,7 +735,7 @@
       }
     },
     "JavaScript": {
-      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -766,7 +778,7 @@
       }
     },
     "TSX": {
-      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -777,7 +789,7 @@
       }
     },
     "TypeScript": {
-      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }

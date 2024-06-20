@@ -227,6 +227,7 @@ impl EditorState {
             Some(Operator::FindForward { .. })
                 | Some(Operator::FindBackward { .. })
                 | Some(Operator::Mark)
+                | Some(Operator::Register)
                 | Some(Operator::Jump { .. })
         )
     }

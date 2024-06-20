@@ -3,9 +3,7 @@ mod input_handler;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
-pub use lsp_types::Uri as RawUri;
-
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
@@ -23,13 +21,11 @@ use smol::{
 use smol::process::windows::CommandExt;
 
 use std::{
-    borrow::Cow,
     ffi::OsString,
     fmt,
     io::Write,
     path::PathBuf,
     pin::Pin,
-    str::FromStr,
     sync::{
         atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
@@ -58,61 +54,6 @@ pub enum IoKind {
     StdErr,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq)]
-pub struct Uri(lsp_types::Uri);
-
-const FILE_SCHEME: &str = "file://";
-impl Uri {
-    pub fn from_file_path<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let mut uri = FILE_SCHEME.to_owned();
-        for part in path.as_ref().components() {
-            let part: Cow<_> = match part {
-                std::path::Component::Prefix(prefix) => prefix.as_os_str().to_string_lossy(),
-                std::path::Component::RootDir => "/".into(),
-                std::path::Component::CurDir => ".".into(),
-                std::path::Component::ParentDir => "..".into(),
-                std::path::Component::Normal(component) => {
-                    let as_str = component.to_string_lossy();
-                    pct_str::PctString::encode(as_str.chars(), pct_str::URIReserved)
-                        .to_string()
-                        .into()
-                }
-            };
-            if !uri.ends_with('/') {
-                uri.push('/');
-            }
-            uri.push_str(&part);
-        }
-        Ok(lsp_types::Uri::from_str(&uri)?.into())
-    }
-    pub fn to_file_path(self) -> Result<PathBuf> {
-        if self
-            .0
-            .scheme()
-            .map_or(true, |scheme| !scheme.eq_lowercase("file"))
-        {
-            bail!("file path does not have a file scheme");
-        }
-        Ok(self.0.path().as_str().into())
-    }
-}
-
-impl PartialEq<lsp_types::Uri> for Uri {
-    fn eq(&self, other: &lsp_types::Uri) -> bool {
-        self.0.eq(other)
-    }
-}
-impl From<lsp_types::Uri> for Uri {
-    fn from(uri: lsp_types::Uri) -> Self {
-        Self(uri)
-    }
-}
-
-impl From<Uri> for lsp_types::Uri {
-    fn from(uri: Uri) -> Self {
-        uri.0
-    }
-}
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
 #[derive(Debug, Clone, Deserialize)]
@@ -582,12 +523,12 @@ impl LanguageServer {
         options: Option<Value>,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
-        let root_uri = Uri::from_file_path(&self.working_dir).unwrap();
+        let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: None,
             root_path: None,
-            root_uri: Some(root_uri.clone().into()),
+            root_uri: Some(root_uri.clone()),
             initialization_options: options,
             capabilities: ClientCapabilities {
                 workspace: Some(WorkspaceClientCapabilities {
@@ -704,10 +645,6 @@ impl LanguageServer {
                     on_type_formatting: Some(DynamicRegistrationClientCapabilities {
                         dynamic_registration: None,
                     }),
-                    diagnostic: Some(DiagnosticClientCapabilities {
-                        related_document_support: Some(true),
-                        dynamic_registration: None,
-                    }),
                     ..Default::default()
                 }),
                 experimental: Some(json!({
@@ -718,11 +655,10 @@ impl LanguageServer {
                     ..Default::default()
                 }),
                 general: None,
-                notebook_document: None,
             },
             trace: None,
             workspace_folders: Some(vec![WorkspaceFolder {
-                uri: root_uri.into(),
+                uri: root_uri,
                 name: Default::default(),
             }]),
             client_info: release_channel::ReleaseChannel::try_global(cx).map(|release_channel| {
@@ -1355,6 +1291,14 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has started work and notifies about its progress with the specified token.
     pub async fn start_progress(&self, token: impl Into<String>) {
+        self.start_progress_with(token, Default::default()).await
+    }
+
+    pub async fn start_progress_with(
+        &self,
+        token: impl Into<String>,
+        progress: WorkDoneProgressBegin,
+    ) {
         let token = token.into();
         self.request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
             token: NumberOrString::String(token.clone()),
@@ -1363,7 +1307,7 @@ impl FakeLanguageServer {
         .unwrap();
         self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token),
-            value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(Default::default())),
+            value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
         });
     }
 
@@ -1380,6 +1324,7 @@ impl FakeLanguageServer {
 mod tests {
     use super::*;
     use gpui::{SemanticVersion, TestAppContext};
+    use std::str::FromStr;
 
     #[ctor::ctor]
     fn init_logger() {
@@ -1422,7 +1367,7 @@ mod tests {
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
-                    RawUri::from_str("file://a/b").unwrap(),
+                    Url::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
                     0,
                     "".to_string(),
@@ -1443,7 +1388,7 @@ mod tests {
             message: "ok".to_string(),
         });
         fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
-            uri: RawUri::from_str("file://b/c").unwrap(),
+            uri: Url::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
         });

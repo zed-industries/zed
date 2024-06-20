@@ -187,7 +187,7 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
         if action.name().starts_with("vim::") {
             return;
         }
-    } else if cx.has_pending_keystrokes() {
+    } else if cx.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress() {
         return;
     }
 
@@ -624,7 +624,7 @@ impl Vim {
         editor: Option<&mut Editor>,
         cx: &mut WindowContext,
     ) -> Option<Register> {
-        let Some(register) = register else {
+        let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
             return match setting {
                 UseSystemClipboard::Always => cx.read_from_clipboard().map(|item| item.into()),
@@ -882,8 +882,25 @@ impl Vim {
             Some(Operator::Mark) => Vim::update(cx, |vim, cx| {
                 normal::mark::create_mark(vim, text, false, cx)
             }),
-            Some(Operator::Register) => Vim::update(cx, |vim, cx| {
-                vim.select_register(text, cx);
+            Some(Operator::Register) => Vim::update(cx, |vim, cx| match vim.state().mode {
+                Mode::Insert => {
+                    vim.update_active_editor(cx, |vim, editor, cx| {
+                        if let Some(register) =
+                            vim.read_register(text.chars().next(), Some(editor), cx)
+                        {
+                            editor.do_paste(
+                                &register.text.to_string(),
+                                register.clipboard_selections.clone(),
+                                false,
+                                cx,
+                            )
+                        }
+                    });
+                    vim.clear_operator(cx);
+                }
+                _ => {
+                    vim.select_register(text, cx);
+                }
             }),
             Some(Operator::Jump { line }) => normal::mark::jump(text, line, cx),
             _ => match Vim::read(cx).state().mode {

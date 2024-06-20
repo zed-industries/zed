@@ -1,12 +1,14 @@
-use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
+use super::{
+    file_command::{build_entry_output_section, codeblock_fence_for_path},
+    SlashCommand, SlashCommandOutput,
+};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandOutputSection;
 use collections::HashMap;
 use editor::Editor;
 use gpui::{AppContext, Entity, Task, WeakView};
 use language::LspAdapterDelegate;
-use std::{fmt::Write, path::Path, sync::Arc};
-use ui::{IntoElement, WindowContext};
+use std::{fmt::Write, sync::Arc};
+use ui::WindowContext;
 use workspace::Workspace;
 
 pub(crate) struct TabsSlashCommand;
@@ -29,7 +31,7 @@ impl SlashCommand for TabsSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         _query: String,
         _cancel: Arc<std::sync::atomic::AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
@@ -77,15 +79,7 @@ impl SlashCommand for TabsSlashCommand {
                 let mut text = String::new();
                 for (full_path, buffer, _) in open_buffers {
                     let section_start_ix = text.len();
-                    writeln!(
-                        text,
-                        "```{}\n",
-                        full_path
-                            .as_deref()
-                            .unwrap_or(Path::new("untitled"))
-                            .display()
-                    )
-                    .unwrap();
+                    text.push_str(&codeblock_fence_for_path(full_path.as_deref(), None));
                     for chunk in buffer.as_rope().chunks() {
                         text.push_str(chunk);
                     }
@@ -94,19 +88,12 @@ impl SlashCommand for TabsSlashCommand {
                     }
                     writeln!(text, "```\n").unwrap();
                     let section_end_ix = text.len() - 1;
-
-                    sections.push(SlashCommandOutputSection {
-                        range: section_start_ix..section_end_ix,
-                        render_placeholder: Arc::new(move |id, unfold, _| {
-                            FilePlaceholder {
-                                id,
-                                path: full_path.clone(),
-                                line_range: None,
-                                unfold,
-                            }
-                            .into_any_element()
-                        }),
-                    });
+                    sections.push(build_entry_output_section(
+                        section_start_ix..section_end_ix,
+                        full_path.as_deref(),
+                        false,
+                        None,
+                    ));
                 }
 
                 Ok(SlashCommandOutput {

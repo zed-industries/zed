@@ -25,8 +25,15 @@ use crate::panel_settings::MessageEditorSettings;
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
 lazy_static! {
-    static ref MENTIONS_SEARCH: SearchQuery =
-        SearchQuery::regex("@[-_\\w]+", false, false, false, Vec::new(), Vec::new()).unwrap();
+    static ref MENTIONS_SEARCH: SearchQuery = SearchQuery::regex(
+        "@[-_\\w]+",
+        false,
+        false,
+        false,
+        Default::default(),
+        Default::default()
+    )
+    .unwrap();
 }
 
 pub struct MessageEditor {

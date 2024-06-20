@@ -1,5 +1,10 @@
 use assistant::assistant_settings::AssistantSettings;
 use assistant::{AssistantPanel, InlineAssist};
+use editor::actions::{
+    AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
+    GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,
+    SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine, ToggleOutline,
+};
 use editor::{Editor, EditorSettings};
 
 use gpui::{
@@ -18,6 +23,7 @@ use workspace::{
 pub struct QuickActionBar {
     buffer_search_bar: View<BufferSearchBar>,
     toggle_settings_menu: Option<View<ContextMenu>>,
+    toggle_selections_menu: Option<View<ContextMenu>>,
     active_item: Option<Box<dyn ItemHandle>>,
     _inlay_hints_enabled_subscription: Option<Subscription>,
     workspace: WeakView<Workspace>,
@@ -33,6 +39,7 @@ impl QuickActionBar {
         let mut this = Self {
             buffer_search_bar,
             toggle_settings_menu: None,
+            toggle_selections_menu: None,
             active_item: None,
             _inlay_hints_enabled_subscription: None,
             workspace: workspace.weak_handle(),
@@ -86,22 +93,43 @@ impl Render for QuickActionBar {
             return div().id("empty quick action bar");
         };
 
-        let search_button = Some(QuickActionBarButton::new(
-            "toggle buffer search",
-            IconName::MagnifyingGlass,
-            !self.buffer_search_bar.read(cx).is_dismissed(),
-            Box::new(buffer_search::Deploy::find()),
-            "Buffer Search",
-            {
-                let buffer_search_bar = self.buffer_search_bar.clone();
-                move |_, cx| {
-                    buffer_search_bar.update(cx, |search_bar, cx| {
-                        search_bar.toggle(&buffer_search::Deploy::find(), cx)
-                    });
-                }
-            },
-        ))
-        .filter(|_| editor.is_singleton(cx));
+        let (
+            selection_menu_enabled,
+            inlay_hints_enabled,
+            supports_inlay_hints,
+            git_blame_inline_enabled,
+        ) = {
+            let editor = editor.read(cx);
+            let selection_menu_enabled = editor.selection_menu_enabled(cx);
+            let inlay_hints_enabled = editor.inlay_hints_enabled();
+            let supports_inlay_hints = editor.supports_inlay_hints(cx);
+            let git_blame_inline_enabled = editor.git_blame_inline_enabled();
+
+            (
+                selection_menu_enabled,
+                inlay_hints_enabled,
+                supports_inlay_hints,
+                git_blame_inline_enabled,
+            )
+        };
+
+        let search_button = editor.is_singleton(cx).then(|| {
+            QuickActionBarButton::new(
+                "toggle buffer search",
+                IconName::MagnifyingGlass,
+                !self.buffer_search_bar.read(cx).is_dismissed(),
+                Box::new(buffer_search::Deploy::find()),
+                "Buffer Search",
+                {
+                    let buffer_search_bar = self.buffer_search_bar.clone();
+                    move |_, cx| {
+                        buffer_search_bar.update(cx, |search_bar, cx| {
+                            search_bar.toggle(&buffer_search::Deploy::find(), cx)
+                        });
+                    }
+                },
+            )
+        });
 
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
@@ -121,6 +149,55 @@ impl Render for QuickActionBar {
             },
         );
 
+        let editor_selections_dropdown = selection_menu_enabled.then(|| {
+            IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
+                .size(ButtonSize::Compact)
+                .icon_size(IconSize::Small)
+                .style(ButtonStyle::Subtle)
+                .selected(self.toggle_selections_menu.is_some())
+                .on_click({
+                    let focus = editor.focus_handle(cx);
+                    cx.listener(move |quick_action_bar, _, cx| {
+                        let focus = focus.clone();
+                        let menu = ContextMenu::build(cx, move |menu, _| {
+                            menu.context(focus.clone())
+                                .action("Select All", Box::new(SelectAll))
+                                .action(
+                                    "Select Next Occurrence",
+                                    Box::new(SelectNext {
+                                        replace_newest: false,
+                                    }),
+                                )
+                                .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
+                                .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
+                                .action("Add Cursor Above", Box::new(AddSelectionAbove))
+                                .action("Add Cursor Below", Box::new(AddSelectionBelow))
+                                .separator()
+                                .action("Go to Symbol", Box::new(ToggleOutline))
+                                .action("Go to Line/Column", Box::new(ToggleGoToLine))
+                                .separator()
+                                .action("Next Problem", Box::new(GoToDiagnostic))
+                                .action("Previous Problem", Box::new(GoToPrevDiagnostic))
+                                .separator()
+                                .action("Next Hunk", Box::new(GoToHunk))
+                                .action("Previous Hunk", Box::new(GoToPrevHunk))
+                                .separator()
+                                .action("Move Line Up", Box::new(MoveLineUp))
+                                .action("Move Line Down", Box::new(MoveLineDown))
+                                .action("Duplicate Selection", Box::new(DuplicateLineDown))
+                        });
+                        cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
+                            quick_action_bar.toggle_selections_menu = None;
+                        })
+                        .detach();
+                        quick_action_bar.toggle_selections_menu = Some(menu);
+                    })
+                })
+                .when(self.toggle_selections_menu.is_none(), |this| {
+                    this.tooltip(|cx| Tooltip::text("Selection Controls", cx))
+                })
+        });
+
         let editor_settings_dropdown =
             IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
                 .size(ButtonSize::Compact)
@@ -130,10 +207,6 @@ impl Render for QuickActionBar {
                 .on_click({
                     let editor = editor.clone();
                     cx.listener(move |quick_action_bar, _, cx| {
-                        let inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
-                        let supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
-                        let git_blame_inline_enabled = editor.read(cx).git_blame_inline_enabled();
-
                         let menu = ContextMenu::build(cx, |mut menu, _| {
                             if supports_inlay_hints {
                                 menu = menu.toggleable_entry(
@@ -171,6 +244,23 @@ impl Render for QuickActionBar {
                                 },
                             );
 
+                            menu = menu.toggleable_entry(
+                                "Show Selection Menu",
+                                selection_menu_enabled,
+                                Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |cx| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.toggle_selection_menu(
+                                                &editor::actions::ToggleSelectionMenu,
+                                                cx,
+                                            )
+                                        });
+                                    }
+                                },
+                            );
+
                             menu
                         });
                         cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
@@ -191,15 +281,24 @@ impl Render for QuickActionBar {
                 h_flex()
                     .gap_1p5()
                     .children(search_button)
-                    .when(AssistantSettings::get_global(cx).button, |bar| {
-                        bar.child(assistant_button)
-                    }),
+                    .children(editor_selections_dropdown)
+                    .when(
+                        AssistantSettings::get_global(cx).enabled
+                            && AssistantSettings::get_global(cx).button,
+                        |bar| bar.child(assistant_button),
+                    ),
             )
             .child(editor_settings_dropdown)
             .when_some(
                 self.toggle_settings_menu.as_ref(),
                 |el, toggle_settings_menu| {
                     el.child(Self::render_menu_overlay(toggle_settings_menu))
+                },
+            )
+            .when_some(
+                self.toggle_selections_menu.as_ref(),
+                |el, toggle_selections_menu| {
+                    el.child(Self::render_menu_overlay(toggle_selections_menu))
                 },
             )
     }

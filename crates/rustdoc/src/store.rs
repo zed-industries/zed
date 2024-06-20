@@ -13,7 +13,6 @@ use heed::types::SerdeBincode;
 use heed::Database;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use util::paths::SUPPORT_DIR;
 use util::ResultExt;
 
 use crate::indexer::{RustdocIndexer, RustdocProvider};
@@ -57,7 +56,10 @@ impl RustdocStore {
             .spawn({
                 let executor = executor.clone();
                 async move {
-                    RustdocDatabase::new(SUPPORT_DIR.join("docs/rust/rustdoc-db.0.mdb"), executor)
+                    RustdocDatabase::new(
+                        paths::support_dir().join("docs/rust/rustdoc-db.0.mdb"),
+                        executor,
+                    )
                 }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
@@ -69,6 +71,11 @@ impl RustdocStore {
             database_future,
             indexing_tasks_by_crate: RwLock::new(HashMap::default()),
         }
+    }
+
+    /// Returns whether the crate with the given name is currently being indexed.
+    pub fn is_indexing(&self, crate_name: &CrateName) -> bool {
+        self.indexing_tasks_by_crate.read().contains_key(crate_name)
     }
 
     pub async fn load(
@@ -89,6 +96,10 @@ impl RustdocStore {
         crate_name: CrateName,
         provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
     ) -> Shared<Task<Result<(), Arc<anyhow::Error>>>> {
+        if let Some(existing_task) = self.indexing_tasks_by_crate.read().get(&crate_name) {
+            return existing_task.clone();
+        }
+
         let indexing_task = self
             .executor
             .spawn({

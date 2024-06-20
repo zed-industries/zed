@@ -18,11 +18,10 @@ test-support = ["tempfile", "git2"]
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-dirs = "3.0"
+dirs.workspace = true
 futures.workspace = true
 git2 = { workspace = true, optional = true }
 globset.workspace = true
-lazy_static.workspace = true
 log.workspace = true
 rand.workspace = true
 regex.workspace = true

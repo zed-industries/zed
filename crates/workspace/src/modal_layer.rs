@@ -87,7 +87,7 @@ impl ModalLayer {
                 cx.subscribe(&new_modal, |this, _, _: &DismissEvent, cx| {
                     this.hide_modal(cx);
                 }),
-                cx.on_focus_out(&focus_handle, |this, cx| {
+                cx.on_focus_out(&focus_handle, |this, _event, cx| {
                     if this.dismiss_on_focus_lost {
                         this.hide_modal(cx);
                     }
@@ -96,7 +96,9 @@ impl ModalLayer {
             previous_focus_handle: cx.focused(),
             focus_handle,
         });
-        cx.focus_view(&new_modal);
+        cx.defer(move |_, cx| {
+            cx.focus_view(&new_modal);
+        });
         cx.notify();
     }
 

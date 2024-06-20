@@ -8,10 +8,8 @@ use calloop::generic::{FdWrapper, Generic};
 use calloop::{EventLoop, LoopHandle, RegistrationToken};
 
 use collections::HashMap;
-use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
-use copypasta::ClipboardProvider;
-
 use util::ResultExt;
+
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::cursor;
 use x11rb::errors::ConnectionError;
@@ -129,8 +127,7 @@ pub struct X11ClientState {
     pub(crate) scroll_y: Option<f32>,
 
     pub(crate) common: LinuxCommon,
-    pub(crate) clipboard: X11ClipboardContext<Clipboard>,
-    pub(crate) primary: X11ClipboardContext<Primary>,
+    pub(crate) clipboard: x11_clipboard::Clipboard,
 }
 
 #[derive(Clone)]
@@ -277,8 +274,7 @@ impl X11Client {
             .reply()
             .unwrap();
 
-        let clipboard = X11ClipboardContext::<Clipboard>::new().unwrap();
-        let primary = X11ClipboardContext::<Primary>::new().unwrap();
+        let clipboard = x11_clipboard::Clipboard::new().unwrap();
 
         let xcb_connection = Rc::new(xcb_connection);
 
@@ -399,7 +395,6 @@ impl X11Client {
             scroll_y: None,
 
             clipboard,
-            primary,
         })))
     }
 
@@ -475,9 +470,8 @@ impl X11Client {
                 if atom == state.atoms.WM_DELETE_WINDOW {
                     // window "x" button clicked by user
                     if window.should_close() {
-                        let window_ref = state.windows.remove(&event.window)?;
-                        state.loop_handle.remove(window_ref.refresh_event_token);
                         // Rest of the close logic is handled in drop_window()
+                        window.close();
                     }
                 }
             }
@@ -1073,35 +1067,61 @@ impl LinuxClient for X11Client {
     }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {
-        self.0.borrow_mut().primary.set_contents(item.text).ok();
+        let state = self.0.borrow_mut();
+        state
+            .clipboard
+            .store(
+                state.clipboard.setter.atoms.primary,
+                state.clipboard.setter.atoms.utf8_string,
+                item.text().as_bytes(),
+            )
+            .ok();
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
-        self.0.borrow_mut().clipboard.set_contents(item.text).ok();
+        let state = self.0.borrow_mut();
+        state
+            .clipboard
+            .store(
+                state.clipboard.setter.atoms.clipboard,
+                state.clipboard.setter.atoms.utf8_string,
+                item.text().as_bytes(),
+            )
+            .ok();
     }
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
-        self.0
-            .borrow_mut()
-            .primary
-            .get_contents()
-            .ok()
+        let state = self.0.borrow_mut();
+        state
+            .clipboard
+            .load(
+                state.clipboard.getter.atoms.primary,
+                state.clipboard.getter.atoms.utf8_string,
+                state.clipboard.getter.atoms.property,
+                Duration::from_secs(3),
+            )
             .map(|text| crate::ClipboardItem {
-                text,
+                text: String::from_utf8(text).unwrap(),
                 metadata: None,
             })
+            .ok()
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
-        self.0
-            .borrow_mut()
+        let state = self.0.borrow_mut();
+        state
             .clipboard
-            .get_contents()
-            .ok()
+            .load(
+                state.clipboard.getter.atoms.clipboard,
+                state.clipboard.getter.atoms.utf8_string,
+                state.clipboard.getter.atoms.property,
+                Duration::from_secs(3),
+            )
             .map(|text| crate::ClipboardItem {
-                text,
+                text: String::from_utf8(text).unwrap(),
                 metadata: None,
             })
+            .ok()
     }
 
     fn run(&self) {

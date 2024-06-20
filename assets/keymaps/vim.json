@@ -39,6 +39,7 @@
       "right": "vim::Right",
       "space": "vim::Space",
       "$": "vim::EndOfLine",
+      "end": "vim::EndOfLine",
       "^": "vim::FirstNonWhitespace",
       "_": "vim::StartOfLineDownward",
       "g _": "vim::EndOfLineDownward",
@@ -140,7 +141,8 @@
       "ctrl-q": "vim::ToggleVisualBlock",
       "shift-k": "editor::Hover",
       "shift-r": "vim::ToggleReplace",
-      "0": "vim::StartOfLine", // When no number operator present, use start of line motion
+      "0": "vim::StartOfLine",
+      "home": "vim::StartOfLine",
       "ctrl-f": "vim::PageDown",
       "pagedown": "vim::PageDown",
       "ctrl-b": "vim::PageUp",
@@ -408,7 +410,7 @@
     }
   },
   {
-    "context": "Editor && VimCount",
+    "context": "Editor && VimCount && vim_mode != insert",
     "bindings": {
       "0": ["vim::Number", 0]
     }
@@ -634,8 +636,7 @@
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
-      "ctrl-r \"": "editor::Paste",
-      "ctrl-r +": "editor::Paste"
+      "ctrl-r": ["vim::PushOperator", "Register"]
     }
   },
   {
@@ -654,6 +655,13 @@
       "enter": "vim::Enter",
       "escape": ["vim::SwitchMode", "Normal"],
       "ctrl-[": ["vim::SwitchMode", "Normal"]
+    }
+  },
+  {
+    "context": "Editor && vim_mode == insert && VimWaiting",
+    "bindings": {
+      "escape": "vim::NormalBefore",
+      "ctrl-[": "vim::NormalBefore"
     }
   },
   {

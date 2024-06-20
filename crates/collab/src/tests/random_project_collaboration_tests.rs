@@ -875,8 +875,15 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                 let mut search = project.update(cx, |project, cx| {
                     project.search(
-                        SearchQuery::text(query, false, false, false, Vec::new(), Vec::new())
-                            .unwrap(),
+                        SearchQuery::text(
+                            query,
+                            false,
+                            false,
+                            false,
+                            Default::default(),
+                            Default::default(),
+                        )
+                        .unwrap(),
                         cx,
                     )
                 });
@@ -1101,7 +1108,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         files
                                             .into_iter()
                                             .map(|file| lsp::Location {
-                                                uri: lsp::Uri::from_file_path(file).unwrap().into(),
+                                                uri: lsp::Url::from_file_path(file).unwrap(),
                                                 range: Default::default(),
                                             })
                                             .collect(),

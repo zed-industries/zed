@@ -6,8 +6,9 @@ pub mod serde;
 pub mod test;
 
 use futures::Future;
-use lazy_static::lazy_static;
 use rand::{seq::SliceRandom, Rng};
+use regex::Regex;
+use std::sync::OnceLock;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -309,13 +310,14 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
 }
 
 pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
-    lazy_static! {
-        pub static ref ZED_MEASUREMENTS: bool = env::var("ZED_MEASUREMENTS")
+    static ZED_MEASUREMENTS: OnceLock<bool> = OnceLock::new();
+    let zed_measurements = ZED_MEASUREMENTS.get_or_init(|| {
+        env::var("ZED_MEASUREMENTS")
             .map(|measurements| measurements == "1" || measurements == "true")
-            .unwrap_or(false);
-    }
+            .unwrap_or(false)
+    });
 
-    if *ZED_MEASUREMENTS {
+    if *zed_measurements {
         let start = Instant::now();
         let result = f();
         let elapsed = start.elapsed();
@@ -662,15 +664,17 @@ impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
         Some(self.cmp(other))
     }
 }
-lazy_static! {
-    static ref EMOJI_REGEX: regex::Regex = regex::Regex::new("(\\p{Emoji}|\u{200D})").unwrap();
+
+fn emoji_regex() -> &'static Regex {
+    static EMOJI_REGEX: OnceLock<Regex> = OnceLock::new();
+    EMOJI_REGEX.get_or_init(|| Regex::new("(\\p{Emoji}|\u{200D})").unwrap())
 }
 
 /// Returns true if the given string consists of emojis only.
 /// E.g. "👨‍👩‍👧‍👧👋" will return true, but "👋!" will return false.
 pub fn word_consists_of_emojis(s: &str) -> bool {
     let mut prev_end = 0;
-    for capture in EMOJI_REGEX.find_iter(s) {
+    for capture in emoji_regex().find_iter(s) {
         if capture.start() != prev_end {
             return false;
         }
