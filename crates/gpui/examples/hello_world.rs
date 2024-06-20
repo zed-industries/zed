@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use gpui::*;
 
 struct HelloWorld {
@@ -5,7 +7,9 @@ struct HelloWorld {
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let decorations = cx.window_decorations();
+
         div()
             .rounded_t(px(10.0))
             .bg(gpui::black())

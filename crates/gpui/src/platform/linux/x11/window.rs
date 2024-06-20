@@ -4,7 +4,7 @@ use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
     px, size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    PromptLevel, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowKind, WindowParams, X11ClientStatePtr,
 };
 
@@ -1023,11 +1023,18 @@ impl PlatformWindow for X11Window {
             .unwrap();
     }
 
+    // TODO: implement X11 decoration management
     fn window_decorations(&self) -> crate::WindowDecorations {
         crate::WindowDecorations::Server
     }
 
-    fn is_tiled(&self) -> bool {
-        false
+    // TODO: implement X11 decoration management
+    fn tiling(&self) -> Tiling {
+        Tiling {
+            top: false,
+            left: false,
+            right: false,
+            bottom: false,
+        }
     }
 }

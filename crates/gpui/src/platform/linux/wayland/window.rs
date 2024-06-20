@@ -26,7 +26,7 @@ use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, AnyWindowHandle, Bounds, Globals, Modifiers, Output, Pixels, PlatformDisplay,
-    PlatformInput, Point, PromptLevel, Size, WaylandClientStatePtr, WindowAppearance,
+    PlatformInput, Point, PromptLevel, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowParams,
 };
 
@@ -66,7 +66,7 @@ struct InProgressConfigure {
     size: Option<Size<Pixels>>,
     fullscreen: bool,
     maximized: bool,
-    tiled: bool,
+    tiling: Tiling,
 }
 
 pub struct WaylandWindowState {
@@ -88,7 +88,7 @@ pub struct WaylandWindowState {
     decoration_state: WindowDecorations,
     fullscreen: bool,
     maximized: bool,
-    tiled: bool,
+    tiling: Tiling,
     windowed_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
@@ -165,7 +165,7 @@ impl WaylandWindowState {
             decoration_state: WindowDecorations::Client,
             fullscreen: false,
             maximized: false,
-            tiled: false,
+            tiling: Tiling::default(),
             windowed_bounds: options.bounds,
             in_progress_configure: None,
             client,
@@ -249,13 +249,7 @@ impl WaylandWindow {
             .decoration_manager
             .as_ref()
             .map(|decoration_manager| {
-                let decoration = decoration_manager.get_toplevel_decoration(
-                    &toplevel,
-                    &globals.qh,
-                    surface.id(),
-                );
-                decoration.set_mode(zxdg_toplevel_decoration_v1::Mode::ClientSide);
-                decoration
+                decoration_manager.get_toplevel_decoration(&toplevel, &globals.qh, surface.id())
             });
 
         let viewport = globals
@@ -321,7 +315,7 @@ impl WaylandWindowStatePtr {
                         let got_unmaximized = state.maximized && !configure.maximized;
                         state.fullscreen = configure.fullscreen;
                         state.maximized = configure.maximized;
-                        state.tiled = configure.tiled;
+                        state.tiling = configure.tiling;
 
                         if got_unmaximized {
                             configure.size = Some(state.windowed_bounds.size);
@@ -356,9 +350,19 @@ impl WaylandWindowStatePtr {
             zxdg_toplevel_decoration_v1::Event::Configure { mode } => match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
                     self.state.borrow_mut().decoration_state = WindowDecorations::Server;
+                    if let Some(mut appearance_changed) =
+                        self.callbacks.borrow_mut().appearance_changed
+                    {
+                        appearance_changed();
+                    }
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
                     self.state.borrow_mut().decoration_state = WindowDecorations::Client;
+                    if let Some(mut appearance_changed) =
+                        self.callbacks.borrow_mut().appearance_changed
+                    {
+                        appearance_changed();
+                    }
                 }
                 WEnum::Value(_) => {
                     log::warn!("Unknown decoration mode");
@@ -393,10 +397,12 @@ impl WaylandWindowStatePtr {
                     Some(size(px(width as f32), px(height as f32)))
                 };
 
-                let tiled = states.contains(&(xdg_toplevel::State::TiledLeft as u8))
-                    || states.contains(&(xdg_toplevel::State::TiledRight as u8))
-                    || states.contains(&(xdg_toplevel::State::TiledTop as u8))
-                    || states.contains(&(xdg_toplevel::State::TiledBottom as u8));
+                let tiling = Tiling {
+                    top: states.contains(&(xdg_toplevel::State::TiledTop as u8)),
+                    left: states.contains(&(xdg_toplevel::State::TiledLeft as u8)),
+                    right: states.contains(&(xdg_toplevel::State::TiledRight as u8)),
+                    bottom: states.contains(&(xdg_toplevel::State::TiledBottom as u8)),
+                };
 
                 let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
                 let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
@@ -406,7 +412,7 @@ impl WaylandWindowStatePtr {
                     size,
                     fullscreen,
                     maximized,
-                    tiled,
+                    tiling,
                 });
 
                 false
@@ -850,7 +856,23 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().decoration_state
     }
 
-    fn is_tiled(&self) -> bool {
-        self.borrow().tiled
+    fn tiling(&self) -> Tiling {
+        self.borrow().tiling
+    }
+
+    fn request_decorations(&self, decorations: WindowDecorations) {
+        let mut state = self.borrow_mut();
+        if let Some(decoration) = state.decoration.as_ref() {
+            decoration.set_mode(decorations.to_xdg())
+        }
+    }
+}
+
+impl WindowDecorations {
+    fn to_xdg(&self) -> zxdg_toplevel_decoration_v1::Mode {
+        match self {
+            WindowDecorations::Client => zxdg_toplevel_decoration_v1::Mode::ClientSide,
+            WindowDecorations::Server => zxdg_toplevel_decoration_v1::Mode::ServerSide,
+        }
     }
 }
