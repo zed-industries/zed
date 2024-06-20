@@ -225,7 +225,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     SerializedWorkspaceLocation::Local(paths, order) => order
                         .order()
                         .iter()
-                        .filter_map(|i| paths.paths().get(*i).cloned())
+                        .filter_map(|i| paths.paths().get(*i))
                         .map(|path| path.compact().to_string_lossy().into_owned())
                         .collect::<Vec<_>>()
                         .join(""),
@@ -284,7 +284,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     } else {
                         match candidate_workspace_location {
                             SerializedWorkspaceLocation::Local(paths, _) => {
-                                let paths = paths.paths().as_ref().clone();
+                                let paths = paths.paths().to_vec();
                                 if replace_current_window {
                                     cx.spawn(move |workspace, mut cx| async move {
                                         let continue_replacing = workspace
