@@ -131,7 +131,14 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
+  "private_files": [
+    "**/.env*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.cert",
+    "**/*.crt",
+    "**/secrets.yml"
+  ],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -238,7 +245,9 @@
     ///
     /// 1. "disabled"
     /// 2. "indent_aware"
-    "background_coloring": "disabled"
+    "background_coloring": "disabled",
+    /// Whether to make an active indent guide thicker than the others.
+    "thicken_active": true
   },
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,

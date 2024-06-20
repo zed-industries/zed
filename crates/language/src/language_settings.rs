@@ -445,8 +445,8 @@ pub struct IndentGuideSettings {
     pub line_width: u32,
     /// Whether to make an active indent guide thicker than the others.
     ///
-    /// Default: false
-    #[serde(default)]
+    /// Default: true
+    #[serde(default = "default_true")]
     pub thicken_active: bool,
     /// Determines how indent guides are colored.
     ///
