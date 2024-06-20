@@ -117,6 +117,7 @@ pub fn create_signature_help_markdown_string(
     if markdown.is_empty() {
         None
     } else {
+        let markdown = format!("```{}```", markdown);
         Some((markdown, highlights))
     }
 }
