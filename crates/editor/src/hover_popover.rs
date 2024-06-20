@@ -375,25 +375,23 @@ fn transform_codeblock(mut input: String, language: &str) -> String {
                 line.clone_from(&language_tag);
             }
             open_block = !open_block;
-            i += 1;
         } else {
-            i += 1;
-
             //remove mid-sentence single linebreaks
-            while i < lines.len()
-                && !lines[i].trim().is_empty()
+            while i + 1 < lines.len()
+                && !lines[i + 1].trim().is_empty()
                 && !open_block
-                && !lines[i].contains("```")
+                && !lines[i + 1].contains("```")
             {
+                i += 1;
                 if line.contains('\n') {
                     break;
                 }
                 line.push(' ');
                 line.push_str(lines[i]);
-                i += 1;
             }
         }
         result.push(line);
+        i += 1;
     }
     result.join("\n")
 }
