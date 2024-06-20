@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ops::Deref;
+use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
@@ -33,15 +34,14 @@ use crate::{
     PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
-use super::{
-    super::{get_xkb_compose_state, open_uri_internal, SCROLL_LINES},
-    X11Display, X11WindowStatePtr, XcbAtoms,
-};
 use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
+use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
-use crate::platform::linux::is_within_click_distance;
-use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
+use crate::platform::linux::platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES};
 use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
+use crate::platform::linux::{
+    get_xkb_compose_state, is_within_click_distance, open_uri_internal, reveal_path_internal,
+};
 
 pub(super) const XINPUT_MASTER_DEVICE: u16 = 1;
 
@@ -1080,7 +1080,11 @@ impl LinuxClient for X11Client {
     }
 
     fn open_uri(&self, uri: &str) {
-        open_uri_internal(self.background_executor(), uri.to_string(), None);
+        open_uri_internal(self.background_executor(), uri, None);
+    }
+
+    fn reveal_path(&self, path: PathBuf) {
+        reveal_path_internal(self.background_executor(), path, None);
     }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {
