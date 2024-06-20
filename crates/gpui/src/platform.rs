@@ -210,6 +210,35 @@ impl Debug for DisplayId {
 
 unsafe impl Send for DisplayId {}
 
+/// Which part of the window to resize
+pub enum ResizeEdge {
+    /// The top edge
+    Top,
+    /// The top right corner
+    TopRight,
+    /// The right edge
+    Right,
+    /// The bottom right corner
+    BottomRight,
+    /// The bottom edge
+    Bottom,
+    /// The bottom left corner
+    BottomLeft,
+    /// The left edge
+    Left,
+    /// The top left corner
+    TopLeft,
+}
+
+/// A type to describe the appearance of a window
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum WindowDecorations {
+    /// Client side decorations
+    Client,
+    /// Server side decorations
+    Server,
+}
+
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
@@ -232,10 +261,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn set_title(&mut self, title: &str);
-    fn set_app_id(&mut self, app_id: &str);
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance);
-    fn set_edited(&mut self, edited: bool);
-    fn show_character_palette(&self);
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_fullscreen(&self);
@@ -252,12 +278,25 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
+    // macOS specific methods
+    fn set_edited(&mut self, _edited: bool) {}
+    fn show_character_palette(&self) {}
+
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
 
-    fn show_window_menu(&self, position: Point<Pixels>);
-    fn start_system_move(&self);
-    fn should_render_window_controls(&self) -> bool;
+    // Linux specific methods
+    fn request_decorations(&self, _decorations: WindowDecorations) {}
+    fn show_window_menu(&self, _position: Point<Pixels>) {}
+    fn start_window_move(&self) {}
+    fn start_window_resize(&self, _edge: ResizeEdge) {}
+    fn window_decorations(&self) -> WindowDecorations {
+        WindowDecorations::Client
+    }
+    fn set_app_id(&mut self, _app_id: &str) {}
+    fn is_tiled(&self) -> bool {
+        false
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

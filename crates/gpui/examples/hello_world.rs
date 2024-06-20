@@ -7,17 +7,34 @@ struct HelloWorld {
 impl Render for HelloWorld {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
+            .rounded_t(px(10.0))
+            .bg(gpui::black())
+            .size_full()
             .flex()
-            .bg(rgb(0x2e7d32))
-            .size(Length::Definite(Pixels(300.0).into()))
-            .justify_center()
-            .items_center()
-            .shadow_lg()
-            .border_1()
-            .border_color(rgb(0x0000ff))
-            .text_xl()
-            .text_color(rgb(0xffffff))
-            .child(format!("Hello, {}!", &self.text))
+            .flex_col()
+            .justify_around()
+            .child(
+                div().w_full().flex().flex_row().justify_around().child(
+                    div()
+                        .id("hello")
+                        .flex()
+                        .bg(rgb(0x2e7d32))
+                        .size(Length::Definite(Pixels(300.0).into()))
+                        .justify_center()
+                        .items_center()
+                        .shadow_lg()
+                        .border_1()
+                        .border_color(rgb(0x0000ff))
+                        .text_xl()
+                        .text_color(rgb(0xffffff))
+                        .child(format!("Hello, {}!", &self.text))
+                        .on_mouse_move(|e, cx| {
+                            if e.dragging() {
+                                cx.start_window_move();
+                            }
+                        }),
+                ),
+            )
     }
 }
 
@@ -27,6 +44,7 @@ fn main() {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_background: WindowBackgroundAppearance::Transparent,
                 ..Default::default()
             },
             |cx| {

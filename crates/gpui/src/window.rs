@@ -9,11 +9,11 @@ use crate::{
     MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions, WindowParams,
-    WindowTextSystem, SUBPIXEL_VARIANTS,
+    RenderSvgParams, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -990,6 +990,21 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_maximized()
     }
 
+    /// Check if the platform window is current tiled
+    pub fn is_tiled(&self) -> bool {
+        self.window.platform_window.is_tiled()
+    }
+
+    /// request a certain window decoration (Wayland)
+    pub fn request_decorations(&self, decorations: WindowDecorations) {
+        self.window.platform_window.request_decorations(decorations);
+    }
+
+    /// Start a window resize operation (Wayland)
+    pub fn start_window_resize(&self, edge: ResizeEdge) {
+        self.window.platform_window.start_window_resize(edge);
+    }
+
     /// Return the `WindowBounds` to indicate that how a window should be opened
     /// after it has been closed
     pub fn window_bounds(&self) -> WindowBounds {
@@ -1217,13 +1232,13 @@ impl<'a> WindowContext<'a> {
     /// Tells the compositor to take control of window movement (Wayland and X11)
     ///
     /// Events may not be received during a move operation.
-    pub fn start_system_move(&self) {
-        self.window.platform_window.start_system_move()
+    pub fn start_window_move(&self) {
+        self.window.platform_window.start_window_move()
     }
 
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
-    pub fn should_render_window_controls(&self) -> bool {
-        self.window.platform_window.should_render_window_controls()
+    pub fn window_decorations(&self) -> WindowDecorations {
+        self.window.platform_window.window_decorations()
     }
 
     /// Updates the window's title at the platform level.

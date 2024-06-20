@@ -262,7 +262,7 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn start_system_move(&self) {
+    fn start_window_move(&self) {
         unimplemented!()
     }
 

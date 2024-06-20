@@ -27,7 +27,7 @@ use crate::scene::Scene;
 use crate::{
     px, size, AnyWindowHandle, Bounds, Globals, Modifiers, Output, Pixels, PlatformDisplay,
     PlatformInput, Point, PromptLevel, Size, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowParams,
+    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowParams,
 };
 
 #[derive(Default)]
@@ -66,6 +66,7 @@ struct InProgressConfigure {
     size: Option<Size<Pixels>>,
     fullscreen: bool,
     maximized: bool,
+    tiled: bool,
 }
 
 pub struct WaylandWindowState {
@@ -84,9 +85,10 @@ pub struct WaylandWindowState {
     bounds: Bounds<Pixels>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
-    decoration_state: WaylandDecorationState,
+    decoration_state: WindowDecorations,
     fullscreen: bool,
     maximized: bool,
+    tiled: bool,
     windowed_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
@@ -160,9 +162,10 @@ impl WaylandWindowState {
             bounds: options.bounds,
             scale: 1.0,
             input_handler: None,
-            decoration_state: WaylandDecorationState::Client,
+            decoration_state: WindowDecorations::Client,
             fullscreen: false,
             maximized: false,
+            tiled: false,
             windowed_bounds: options.bounds,
             in_progress_configure: None,
             client,
@@ -318,6 +321,7 @@ impl WaylandWindowStatePtr {
                         let got_unmaximized = state.maximized && !configure.maximized;
                         state.fullscreen = configure.fullscreen;
                         state.maximized = configure.maximized;
+                        state.tiled = configure.tiled;
 
                         if got_unmaximized {
                             configure.size = Some(state.windowed_bounds.size);
@@ -351,10 +355,10 @@ impl WaylandWindowStatePtr {
         match event {
             zxdg_toplevel_decoration_v1::Event::Configure { mode } => match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
-                    self.set_decoration_state(WaylandDecorationState::Server)
+                    self.state.borrow_mut().decoration_state = WindowDecorations::Server;
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
-                    self.set_decoration_state(WaylandDecorationState::Client)
+                    self.state.borrow_mut().decoration_state = WindowDecorations::Client;
                 }
                 WEnum::Value(_) => {
                     log::warn!("Unknown decoration mode");
@@ -389,6 +393,11 @@ impl WaylandWindowStatePtr {
                     Some(size(px(width as f32), px(height as f32)))
                 };
 
+                let tiled = states.contains(&(xdg_toplevel::State::TiledLeft as u8))
+                    || states.contains(&(xdg_toplevel::State::TiledRight as u8))
+                    || states.contains(&(xdg_toplevel::State::TiledTop as u8))
+                    || states.contains(&(xdg_toplevel::State::TiledBottom as u8));
+
                 let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
                 let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
 
@@ -397,6 +406,7 @@ impl WaylandWindowStatePtr {
                     size,
                     fullscreen,
                     maximized,
+                    tiled,
                 });
 
                 false
@@ -543,18 +553,6 @@ impl WaylandWindowStatePtr {
 
     pub fn rescale(&self, scale: f32) {
         self.set_size_and_scale(None, Some(scale));
-    }
-
-    /// Notifies the window of the state of the decorations.
-    ///
-    /// # Note
-    ///
-    /// This API is indirectly called by the wayland compositor and
-    /// not meant to be called by a user who wishes to change the state
-    /// of the decorations. This is because the state of the decorations
-    /// is managed by the compositor and not the client.
-    pub fn set_decoration_state(&self, state: WaylandDecorationState) {
-        self.state.borrow_mut().decoration_state = state;
     }
 
     pub fn close(&self) {
@@ -758,14 +756,6 @@ impl PlatformWindow for WaylandWindow {
         region.destroy();
     }
 
-    fn set_edited(&mut self, _edited: bool) {
-        log::info!("ignoring macOS specific set_edited");
-    }
-
-    fn show_character_palette(&self) {
-        log::info!("ignoring macOS specific show_character_palette");
-    }
-
     fn minimize(&self) {
         self.borrow().toplevel.set_minimized();
     }
@@ -850,22 +840,17 @@ impl PlatformWindow for WaylandWindow {
         );
     }
 
-    fn start_system_move(&self) {
+    fn start_window_move(&self) {
         let state = self.borrow();
         let serial = state.client.get_serial(SerialKind::MousePress);
         state.toplevel._move(&state.globals.seat, serial);
     }
 
-    fn should_render_window_controls(&self) -> bool {
-        self.borrow().decoration_state == WaylandDecorationState::Client
+    fn window_decorations(&self) -> WindowDecorations {
+        self.borrow().decoration_state
     }
-}
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum WaylandDecorationState {
-    /// Decorations are to be provided by the client
-    Client,
-
-    /// Decorations are provided by the server
-    Server,
+    fn is_tiled(&self) -> bool {
+        self.borrow().tiled
+    }
 }
