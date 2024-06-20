@@ -1099,10 +1099,10 @@ impl Terminal {
                 lines.push(line.to_string());
             }
 
-            if current_line == Line(0) {
+            if current_line == terminal.topmost_line() {
                 break;
             }
-            current_line = Line(current_line.0.saturating_sub(1));
+            current_line = Line(current_line.0 - 1);
         }
         lines.reverse();
         lines
