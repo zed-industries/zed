@@ -990,7 +990,7 @@ impl PlatformWindow for X11Window {
             .unwrap();
     }
 
-    fn start_system_move(&self) {
+    fn start_window_move(&self) {
         let state = self.0.state.borrow();
         let pointer = self
             .0
@@ -1023,7 +1023,11 @@ impl PlatformWindow for X11Window {
             .unwrap();
     }
 
-    fn should_render_window_controls(&self) -> bool {
+    fn window_decorations(&self) -> crate::WindowDecorations {
+        crate::WindowDecorations::Server
+    }
+
+    fn is_tiled(&self) -> bool {
         false
     }
 }
