@@ -658,6 +658,13 @@
     }
   },
   {
+    "context": "Editor && vim_mode == insert && VimWaiting",
+    "bindings": {
+      "escape": "vim::NormalBefore",
+      "ctrl-[": "vim::NormalBefore"
+    }
+  },
+  {
     "context": "BufferSearchBar && !in_replace",
     "bindings": {
       "enter": "vim::SearchSubmit",

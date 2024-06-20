@@ -1121,10 +1121,7 @@ mod tests {
             cx.handle_request::<lsp::request::Completion, _, _>(move |url, params, _| {
                 let completions = completions.clone();
                 async move {
-                    assert_eq!(
-                        params.text_document_position.text_document.uri,
-                        url.clone().into()
-                    );
+                    assert_eq!(params.text_document_position.text_document.uri, url.clone());
                     assert_eq!(
                         params.text_document_position.position,
                         complete_from_position

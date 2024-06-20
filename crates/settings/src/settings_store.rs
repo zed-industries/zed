@@ -866,9 +866,6 @@ fn replace_value_in_json_text(
     tab_size: usize,
     new_value: &serde_json::Value,
 ) -> (Range<usize>, String) {
-    const LANGUAGE_OVERRIDES: &str = "language_overrides";
-    const LANGUAGES: &str = "languages";
-
     lazy_static! {
         static ref PAIR_QUERY: tree_sitter::Query = tree_sitter::Query::new(
             &tree_sitter_json::language(),
@@ -882,8 +879,6 @@ fn replace_value_in_json_text(
     let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = tree_sitter::QueryCursor::new();
-
-    let has_language_overrides = text.contains(LANGUAGE_OVERRIDES);
 
     let mut depth = 0;
     let mut last_value_range = 0..0;
@@ -914,13 +909,7 @@ fn replace_value_in_json_text(
 
         let found_key = text
             .get(key_range.clone())
-            .map(|key_text| {
-                if key_path[depth] == LANGUAGES && has_language_overrides {
-                    key_text == format!("\"{}\"", LANGUAGE_OVERRIDES)
-                } else {
-                    key_text == format!("\"{}\"", key_path[depth])
-                }
-            })
+            .map(|key_text| key_text == format!("\"{}\"", key_path[depth]))
             .unwrap_or(false);
 
         if found_key {
@@ -943,20 +932,12 @@ fn replace_value_in_json_text(
         (existing_value_range, new_val)
     } else {
         // We have key paths, construct the sub objects
-        let new_key = if has_language_overrides && key_path[depth] == LANGUAGES {
-            LANGUAGE_OVERRIDES
-        } else {
-            key_path[depth]
-        };
+        let new_key = key_path[depth];
 
         // We don't have the key, construct the nested objects
         let mut new_value = serde_json::to_value(new_value).unwrap();
         for key in key_path[(depth + 1)..].iter().rev() {
-            if has_language_overrides && key == &LANGUAGES {
-                new_value = serde_json::json!({ LANGUAGE_OVERRIDES.to_string(): new_value });
-            } else {
-                new_value = serde_json::json!({ key.to_string(): new_value });
-            }
+            new_value = serde_json::json!({ key.to_string(): new_value });
         }
 
         if let Some(first_key_start) = first_key_start {

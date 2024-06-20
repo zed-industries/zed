@@ -893,7 +893,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
             Ok(Some(lsp::WorkspaceEdit {
                 changes: Some(
                     [(
-                        url.clone().into(),
+                        url.clone(),
                         vec![
                             lsp::TextEdit::new(def_range, params.new_name.clone()),
                             lsp::TextEdit::new(tgt_range, params.new_name),

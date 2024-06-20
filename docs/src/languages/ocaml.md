@@ -18,7 +18,7 @@ Once you install opam and setup a switch with your development environment as pe
 By now you should have `ocamllsp` installed, you can verify so by running
 
 ```sh
-$ ocamllsp --help
+ocamllsp --help
 ```
 
 in your terminal. If you get a help message, you're good to go. If not, please revisit the installation instructions for `ocamllsp` and ensure it's properly installed.
@@ -28,7 +28,7 @@ With that aside, we can now launch Zed. Given how the OCaml package manager work
 Once you have the cli, simply from a terminal, navigate to your project and run
 
 ```sh
-$ zed .
+zed .
 ```
 
 Voila! You should have Zed running with OCaml support, no additional setup required.

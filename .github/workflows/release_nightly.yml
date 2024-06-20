@@ -32,7 +32,7 @@ jobs:
         uses: ./.github/actions/check_style
 
       - name: Run clippy
-        run: cargo xtask clippy
+        run: ./script/clippy
   tests:
     timeout-minutes: 60
     name: Run tests

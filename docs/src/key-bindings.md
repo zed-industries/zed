@@ -102,6 +102,21 @@ There are some limitations to this, notably:
 
 The argument to `SendKeystrokes` is a space-separated list of keystrokes (using the same syntax as above). Due to the way that keystrokes are parsed, any segment that is not recognized as a keypress will be sent verbatim to the currently focused input field.
 
+### Forward keys to terminal
+
+If you're on Linux or Windows, you might find yourself wanting to forward key combinations to the built-in terminal instead of them being handled by Zed.
+
+For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ctrl-n` to the built-in terminal when it's focused, add the following to your keymap:
+
+```json
+{
+  "context": "Terminal",
+  "bindings": {
+    "ctrl-n": ["terminal::SendKeystroke", "ctrl-n"]
+  }
+}
+```
+
 ### All key bindings
 
 #### Global

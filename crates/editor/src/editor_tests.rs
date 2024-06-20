@@ -4635,12 +4635,14 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
                             start: "{".to_string(),
                             end: "}".to_string(),
                             close: false,
+                            surround: false,
                             newline: true,
                         },
                         BracketPair {
                             start: "(".to_string(),
                             end: ")".to_string(),
                             close: false,
+                            surround: false,
                             newline: true,
                         },
                     ],
@@ -4684,7 +4686,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
+async fn test_autoclose_and_auto_surround_pairs(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -4697,31 +4699,43 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "(".to_string(),
                         end: ")".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "/*".to_string(),
                         end: " */".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "[".to_string(),
                         end: "]".to_string(),
                         close: false,
+                        surround: false,
                         newline: true,
                     },
                     BracketPair {
                         start: "\"".to_string(),
                         end: "\"".to_string(),
                         close: true,
+                        surround: true,
                         newline: false,
+                    },
+                    BracketPair {
+                        start: "<".to_string(),
+                        end: ">".to_string(),
+                        close: false,
+                        surround: true,
+                        newline: true,
                     },
                 ],
                 ..Default::default()
@@ -4850,6 +4864,16 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("a\"ˇ\"");
     cx.update_editor(|view, cx| view.handle_input("\"", cx));
     cx.assert_editor_state("a\"\"ˇ");
+
+    // Don't autoclose pair if autoclose is disabled
+    cx.set_state("ˇ");
+    cx.update_editor(|view, cx| view.handle_input("<", cx));
+    cx.assert_editor_state("<ˇ");
+
+    // Surround with brackets if text is selected and auto_surround is enabled, even if autoclose is disabled
+    cx.set_state("«aˇ» b");
+    cx.update_editor(|view, cx| view.handle_input("<", cx));
+    cx.assert_editor_state("<«aˇ»> b");
 }
 
 #[gpui::test]
@@ -4868,18 +4892,21 @@ async fn test_always_treat_brackets_as_autoclosed_skip_over(cx: &mut gpui::TestA
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "(".to_string(),
                         end: ")".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "[".to_string(),
                         end: "]".to_string(),
                         close: false,
+                        surround: false,
                         newline: true,
                     },
                 ],
@@ -5293,12 +5320,14 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "/* ".to_string(),
                         end: "*/".to_string(),
                         close: true,
+                        surround: true,
                         ..Default::default()
                     },
                 ],
@@ -5447,6 +5476,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
                     start: "{".to_string(),
                     end: "}".to_string(),
                     close: true,
+                    surround: true,
                     newline: true,
                 }],
                 ..Default::default()
@@ -5558,18 +5588,21 @@ async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut gpui::TestAppC
                         start: "{".to_string(),
                         end: "}".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "(".to_string(),
                         end: ")".to_string(),
                         close: true,
+                        surround: true,
                         newline: true,
                     },
                     BracketPair {
                         start: "[".to_string(),
                         end: "]".to_string(),
                         close: false,
+                        surround: true,
                         newline: true,
                     },
                 ],
@@ -5861,7 +5894,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -5887,7 +5920,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Uri::from_file_path("/file.rs").unwrap().into()
+            lsp::Url::from_file_path("/file.rs").unwrap()
         );
         futures::future::pending::<()>().await;
         unreachable!()
@@ -5936,7 +5969,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
@@ -6139,7 +6172,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         .on_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             Ok(Some(vec![lsp::TextEdit::new(
                 lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
-                format!("[{} formatted]", params.text_document.uri.as_str()),
+                format!("[{} formatted]", params.text_document.uri),
             )]))
         })
         .detach();
@@ -6213,7 +6246,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -6239,7 +6272,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -6289,7 +6322,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
@@ -6363,7 +6396,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Uri::from_file_path("/file.rs").unwrap().into()
+                lsp::Url::from_file_path("/file.rs").unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -6385,7 +6418,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
             params.text_document.uri,
-            lsp::Uri::from_file_path("/file.rs").unwrap().into()
+            lsp::Url::from_file_path("/file.rs").unwrap()
         );
         futures::future::pending::<()>().await;
         unreachable!()
@@ -7537,12 +7570,14 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
                             start: "{".to_string(),
                             end: "}".to_string(),
                             close: true,
+                            surround: true,
                             newline: true,
                         },
                         BracketPair {
                             start: "/* ".to_string(),
                             end: " */".to_string(),
                             close: true,
+                            surround: true,
                             newline: true,
                         },
                     ],
@@ -8028,7 +8063,7 @@ async fn go_to_prev_overlapping_diagnostic(
                 .update_diagnostics(
                     LanguageServerId(0),
                     lsp::PublishDiagnosticsParams {
-                        uri: lsp::Uri::from_file_path("/root/file").unwrap().into(),
+                        uri: lsp::Url::from_file_path("/root/file").unwrap(),
                         version: None,
                         diagnostics: vec![
                             lsp::Diagnostic {
@@ -8344,6 +8379,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
                     start: "{".to_string(),
                     end: "}".to_string(),
                     close: true,
+                    surround: true,
                     newline: true,
                 }],
                 disabled_scopes_by_bracket_ix: Vec::new(),
@@ -8400,7 +8436,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
         assert_eq!(
             params.text_document_position.text_document.uri,
-            lsp::Uri::from_file_path("/a/main.rs").unwrap().into(),
+            lsp::Url::from_file_path("/a/main.rs").unwrap(),
         );
         assert_eq!(
             params.text_document_position.position,
@@ -12049,7 +12085,7 @@ async fn test_active_indent_guide_non_matching_indent(cx: &mut gpui::TestAppCont
 }
 
 #[gpui::test]
-fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
+fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|cx| {
@@ -12070,7 +12106,7 @@ fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
                 callback: Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
             }
 
-            let flap = Flap::new(
+            let crease = Crease::new(
                 range,
                 FoldPlaceholder::test(),
                 {
@@ -12087,7 +12123,7 @@ fn test_flap_insertion_and_rendering(cx: &mut TestAppContext) {
                 |_row, _folded, _cx| div(),
             );
 
-            editor.insert_flaps(Some(flap), cx);
+            editor.insert_creases(Some(crease), cx);
             let snapshot = editor.snapshot(cx);
             let _div = snapshot.render_fold_toggle(MultiBufferRow(1), false, cx.view().clone(), cx);
             snapshot
@@ -12151,10 +12187,7 @@ pub fn handle_completion_request(
         let completions = completions.clone();
         counter.fetch_add(1, atomic::Ordering::Release);
         async move {
-            assert_eq!(
-                params.text_document_position.text_document.uri,
-                url.clone().into()
-            );
+            assert_eq!(params.text_document_position.text_document.uri, url.clone());
             assert_eq!(
                 params.text_document_position.position,
                 complete_from_position

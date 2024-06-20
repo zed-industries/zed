@@ -7,9 +7,9 @@ use collections::{BTreeSet, HashMap};
 use editor::{scroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter,
-    FocusHandle, FocusableView, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task,
+    View, ViewContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
 use new_path_prompt::NewPathPrompt;
@@ -30,13 +30,6 @@ use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::{item::PreviewTabsSettings, ModalView, Workspace};
 
 actions!(file_finder, [SelectPrev]);
-impl_actions!(file_finder, [Toggle]);
-
-#[derive(Default, PartialEq, Eq, Clone, serde::Deserialize)]
-pub struct Toggle {
-    #[serde(default)]
-    pub separate_history: bool,
-}
 
 impl ModalView for FileFinder {}
 
@@ -52,7 +45,7 @@ pub fn init(cx: &mut AppContext) {
 
 impl FileFinder {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(|workspace, action: &Toggle, cx| {
+        workspace.register_action(|workspace, action: &workspace::ToggleFileFinder, cx| {
             let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
                 Self::open(workspace, action.separate_history, cx);
                 return;

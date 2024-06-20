@@ -113,9 +113,8 @@ impl OpenListener {
 pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::unix::net::UnixDatagram;
-    use util::paths;
 
-    let sock_path = paths::SUPPORT_DIR.join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
+    let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
     // remove the socket if the process listening on it has died
     if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path) {
         if e.kind() == std::io::ErrorKind::ConnectionRefused {
