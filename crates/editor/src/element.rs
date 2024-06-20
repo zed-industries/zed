@@ -4931,14 +4931,18 @@ impl Element for EditorElement {
                         }
                     }
 
-                    let test_indicators = self.layout_run_indicators(
-                        line_height,
-                        scroll_pixel_position,
-                        &gutter_dimensions,
-                        &gutter_hitbox,
-                        &snapshot,
-                        cx,
-                    );
+                    let test_indicators = if gutter_settings.runnables {
+                        self.layout_run_indicators(
+                            line_height,
+                            scroll_pixel_position,
+                            &gutter_dimensions,
+                            &gutter_hitbox,
+                            &snapshot,
+                            cx,
+                        )
+                    } else {
+                        vec![]
+                    };
 
                     if !cx.has_active_drag() {
                         self.layout_hover_popovers(

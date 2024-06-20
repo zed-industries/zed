@@ -84,6 +84,7 @@ pub struct Scrollbar {
 pub struct Gutter {
     pub line_numbers: bool,
     pub code_actions: bool,
+    pub runnables: bool,
     pub folds: bool,
 }
 
@@ -255,6 +256,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub code_actions: Option<bool>,
+    /// Whether to show runnable buttons in the gutter.
+    ///
+    /// Default: true
+    pub runnables: Option<bool>,
     /// Whether to show fold buttons in the gutter.
     ///
     /// Default: true

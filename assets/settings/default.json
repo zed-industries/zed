@@ -231,6 +231,8 @@
     "line_numbers": true,
     // Whether to show code action buttons in the gutter.
     "code_actions": true,
+    // Whether to show runnables buttons in the gutter.
+    "runnables": true,
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
