@@ -9,10 +9,12 @@ use gpui::WindowContext;
 use language::BracketPair;
 use serde::Deserialize;
 use std::sync::Arc;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurroundsType {
     Motion(Motion),
     Object(Object),
+    Selection,
 }
 
 // This exists so that we can have Deserialize on Operators, but not on Motions.
@@ -29,6 +31,7 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
     Vim::update(cx, |vim, cx| {
         vim.stop_recording();
         let count = vim.take_count(cx);
+        let mode = vim.state().mode;
         vim.update_active_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
@@ -83,6 +86,7 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                                 });
                             range
                         }
+                        SurroundsType::Selection => Some(selection.range()),
                     };
 
                     if let Some(range) = range {
@@ -110,7 +114,11 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                 });
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.select_anchor_ranges(anchors)
+                    if mode == Mode::VisualBlock {
+                        s.select_anchor_ranges(anchors.into_iter().take(1))
+                    } else {
+                        s.select_anchor_ranges(anchors)
+                    }
                 });
             });
         });
@@ -511,9 +519,14 @@ fn object_to_bracket_pair(object: Object) -> Option<BracketPair> {
 
 #[cfg(test)]
 mod test {
+    use gpui::KeyBinding;
     use indoc::indoc;
 
-    use crate::{state::Mode, test::VimTestContext};
+    use crate::{
+        state::{Mode, Operator},
+        test::VimTestContext,
+        PushOperator,
+    };
 
     #[gpui::test]
     async fn test_add_surrounds(cx: &mut gpui::TestAppContext) {
@@ -659,6 +672,104 @@ mod test {
                 ˇ({ The quick brown }•
             fox jumps over)
             the lazy dog."},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_add_surrounds_visual(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "shift-s",
+                PushOperator(Operator::AddSurrounds { target: None }),
+                Some("vim_mode == visual"),
+            )])
+        });
+
+        // test add surrounds with arround
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v i w shift-s {");
+        cx.assert_state(
+            indoc! {"
+            The ˇ{ quick } brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        // test add surrounds not with arround
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v i w shift-s }");
+        cx.assert_state(
+            indoc! {"
+            The ˇ{quick} brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        // test add surrounds with motion
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v e shift-s }");
+        cx.assert_state(
+            indoc! {"
+            The quˇ{ick} brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        // test add surrounds with multi cursor
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the laˇzy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v i w shift-s '");
+        cx.assert_state(
+            indoc! {"
+            The ˇ'quick' brown
+            fox jumps over
+            the ˇ'lazy' dog."},
+            Mode::Normal,
+        );
+
+        // test add surrounds with visual block
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("ctrl-v i w j j shift-s '");
+        cx.assert_state(
+            indoc! {"
+            The ˇ'quick' brown
+            fox 'jumps' over
+            the 'lazy 'dog."},
             Mode::Normal,
         );
     }

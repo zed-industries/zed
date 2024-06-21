@@ -39,7 +39,7 @@ use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, Register, WorkspaceState};
 use std::{ops::Range, sync::Arc};
-use surrounds::{add_surrounds, change_surrounds, delete_surrounds};
+use surrounds::{add_surrounds, change_surrounds, delete_surrounds, SurroundsType};
 use ui::BorrowAppContext;
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
@@ -860,6 +860,10 @@ impl Vim {
                         add_surrounds(text, target, cx);
                         Vim::update(cx, |vim, cx| vim.clear_operator(cx));
                     }
+                }
+                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                    add_surrounds(text, SurroundsType::Selection, cx);
+                    Vim::update(cx, |vim, cx| vim.clear_operator(cx));
                 }
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
