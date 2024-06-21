@@ -87,7 +87,15 @@
   },
   {
     "context": "ProjectPanel",
-    "bindings": {}
+    "bindings": {
+      "cmd-backspace": ["project_panel::Trash", { "skip_prompt": true }],
+      "cmd-d": "project_panel::Duplicate",
+      "cmd-n": "project_panel::NewFolder",
+      "return": "project_panel::Rename",
+      "cmd-c": "project_panel::Copy",
+      "cmd-v": "project_panel::Paste",
+      "cmd-alt-c": "project_panel::CopyPath"
+    }
   },
   {
     "context": "Dock",

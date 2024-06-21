@@ -94,6 +94,10 @@
     "context": "ProjectPanel",
     "bindings": {
       "enter": "project_panel::Open",
+      "cmd-backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "delete": ["project_panel::Trash", { "skip_prompt": false }],
+      "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "shift-f6": "project_panel::Rename"
     }
   }
