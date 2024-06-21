@@ -82,7 +82,7 @@ impl gpui::Element for ProjectPanelScrollbar {
                 bounds.origin.x + bounds.size.width,
                 bounds.origin.y + thumb_end,
             );
-            let thumb_percentage_size = (self.thumb.end - self.thumb.start);
+            let thumb_percentage_size = self.thumb.end - self.thumb.start;
             cx.paint_quad(gpui::fill(
                 Bounds::from_corners(thumb_upper_left, thumb_lower_right),
                 thumb_background,
