@@ -651,7 +651,7 @@ impl From<FontStyle> for FontkitStyle {
     }
 }
 
-#[cfg(allow(unused))]
+#[allow(unused)]
 #[cfg(any(test, feature = "test-support"))]
 fn get_pref_langs() -> CFArray<CFString> {
     use core_foundation::{
@@ -668,7 +668,7 @@ fn get_pref_langs() -> CFArray<CFString> {
     }
 }
 
-#[cfg(allow(unused))]
+#[allow(unused)]
 #[cfg(not(any(test, feature = "test-support")))]
 fn get_pref_langs() -> CFArray<CFString> {
     use cocoa::base::id;
