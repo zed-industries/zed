@@ -1,45 +1,8 @@
-use std::path::PathBuf;
-
 use project::TaskSourceKind;
 use task::{ResolvedTask, TaskContext, TaskTemplate};
-use ui::{ViewContext, WindowContext};
+use ui::ViewContext;
 
 use crate::Workspace;
-
-pub fn task_cwd(workspace: &Workspace, cx: &mut WindowContext) -> anyhow::Result<Option<PathBuf>> {
-    let project = workspace.project().read(cx);
-    let available_worktrees = project
-        .worktrees()
-        .filter(|worktree| {
-            let worktree = worktree.read(cx);
-            worktree.is_visible()
-                && worktree.is_local()
-                && worktree.root_entry().map_or(false, |e| e.is_dir())
-        })
-        .collect::<Vec<_>>();
-    let cwd = match available_worktrees.len() {
-        0 => None,
-        1 => Some(available_worktrees[0].read(cx).abs_path()),
-        _ => {
-            let cwd_for_active_entry = project.active_entry().and_then(|entry_id| {
-                available_worktrees.into_iter().find_map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    if worktree.contains_entry(entry_id) {
-                        Some(worktree.abs_path())
-                    } else {
-                        None
-                    }
-                })
-            });
-            anyhow::ensure!(
-                cwd_for_active_entry.is_some(),
-                "Cannot determine task cwd for multiple worktrees"
-            );
-            cwd_for_active_entry
-        }
-    };
-    Ok(cwd.map(|path| path.to_path_buf()))
-}
 
 pub fn schedule_task(
     workspace: &Workspace,

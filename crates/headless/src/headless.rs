@@ -1,18 +1,15 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use client::DevServerProjectId;
 use client::{user::UserStore, Client, ClientSettings};
 use fs::Fs;
 use futures::Future;
-use gpui::{
-    AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, ModelContext, Task,
-    WeakModel,
-};
+use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, WeakModel};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use postage::stream::Stream;
-use project::{Project, WorktreeSettings};
+use project::Project;
 use rpc::{proto, ErrorCode, TypedEnvelope};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use std::{collections::HashMap, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
@@ -36,55 +33,40 @@ struct GlobalDevServer(Model<DevServer>);
 
 impl Global for GlobalDevServer {}
 
-pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) {
+pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) -> Task<Result<()>> {
     let dev_server = cx.new_model(|cx| DevServer::new(client.clone(), app_state, cx));
     cx.set_global(GlobalDevServer(dev_server.clone()));
 
-    // Dev server cannot have any private files for now
-    cx.update_global(|store: &mut SettingsStore, _| {
-        let old_settings = store.get::<WorktreeSettings>(None);
-        store.override_global(WorktreeSettings {
-            private_files: Some(vec![]),
-            ..old_settings.clone()
+    #[cfg(not(target_os = "windows"))]
+    {
+        use signal_hook::consts::{SIGINT, SIGTERM};
+        use signal_hook::iterator::Signals;
+        // Set up a handler when the dev server is shut down
+        // with ctrl-c or kill
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let mut signals = Signals::new(&[SIGTERM, SIGINT]).unwrap();
+        std::thread::spawn({
+            move || {
+                if let Some(sig) = signals.forever().next() {
+                    tx.send(sig).log_err();
+                }
+            }
         });
-    });
-
-    // Set up a handler when the dev server is shut down by the user pressing Ctrl-C
-    let (tx, rx) = futures::channel::oneshot::channel();
-    set_ctrlc_handler(move || tx.send(()).log_err().unwrap()).log_err();
-
-    cx.spawn(|cx| async move {
-        rx.await.log_err();
-        log::info!("Received interrupt signal");
-        cx.update(|cx| cx.quit()).log_err();
-    })
-    .detach();
+        cx.spawn(|cx| async move {
+            if let Ok(sig) = rx.await {
+                log::info!("received signal {sig:?}");
+                cx.update(|cx| cx.quit()).log_err();
+            }
+        })
+        .detach();
+    }
 
     let server_url = ClientSettings::get_global(&cx).server_url.clone();
     cx.spawn(|cx| async move {
-        match client.authenticate_and_connect(false, &cx).await {
-            Ok(_) => {
-                log::info!("Connected to {}", server_url);
-            }
-            Err(e) => {
-                log::error!("Error connecting to '{}': {}", server_url, e);
-                cx.update(|cx| cx.quit()).log_err();
-            }
-        }
-    })
-    .detach();
-}
-
-fn set_ctrlc_handler<F>(f: F) -> Result<(), ctrlc::Error>
-where
-    F: FnOnce() + 'static + Send,
-{
-    let f = std::sync::Mutex::new(Some(f));
-    ctrlc::set_handler(move || {
-        if let Ok(mut guard) = f.lock() {
-            let f = guard.take().expect("f can only be taken once");
-            f();
-        }
+        client
+            .authenticate_and_connect(false, &cx)
+            .await
+            .map_err(|e| anyhow!("Error connecting to '{}': {}", server_url, e))
     })
 }
 
@@ -122,7 +104,10 @@ impl DevServer {
         let request = if self.remote_shutdown {
             None
         } else {
-            Some(self.client.request(proto::ShutdownDevServer {}))
+            Some(
+                self.client
+                    .request(proto::ShutdownDevServer { reason: None }),
+            )
         };
         async move {
             if let Some(request) = request {
@@ -184,9 +169,9 @@ impl DevServer {
         let path = std::path::Path::new(&expanded);
         let fs = cx.read_model(&this, |this, _| this.app_state.fs.clone())?;
 
-        let path_exists = fs.is_dir(path).await;
+        let path_exists = fs.metadata(path).await.is_ok_and(|result| result.is_some());
         if !path_exists {
-            return Err(anyhow::anyhow!(ErrorCode::DevServerProjectPathDoesNotExist))?;
+            return Err(anyhow!(ErrorCode::DevServerProjectPathDoesNotExist))?;
         }
 
         Ok(proto::Ack {})
@@ -235,11 +220,15 @@ impl DevServer {
 
         let path = shellexpand::tilde(&dev_server_project.path).to_string();
 
-        project
+        let (worktree, _) = project
             .update(cx, |project, cx| {
                 project.find_or_create_local_worktree(&path, true, cx)
             })?
             .await?;
+
+        worktree.update(cx, |worktree, cx| {
+            worktree.as_local_mut().unwrap().share_private_files(cx)
+        })?;
 
         let worktrees =
             project.read_with(cx, |project, cx| project.worktree_metadata_protos(cx))?;

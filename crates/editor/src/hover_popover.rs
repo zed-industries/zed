@@ -1,14 +1,15 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
-    Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
-    ExcerptId, Hover, RangeToAnchorExt,
+    scroll::ScrollAmount,
+    Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
+    EditorStyle, Hover, RangeToAnchorExt,
 };
 use futures::{stream::FuturesUnordered, FutureExt};
 use gpui::{
     div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled, Task,
-    ViewContext, WeakView,
+    ParentElement, Pixels, ScrollHandle, SharedString, Size, StatefulInteractiveElement, Styled,
+    Task, ViewContext, WeakView,
 };
 use language::{markdown, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
 
@@ -48,7 +49,6 @@ pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, cx: &mut ViewContex
 }
 
 pub struct InlayHover {
-    pub excerpt: ExcerptId,
     pub range: InlayHighlight,
     pub tooltip: HoverBlock,
 }
@@ -118,6 +118,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 let hover_popover = InfoPopover {
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
+                    scroll_handle: ScrollHandle::new(),
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -317,6 +318,7 @@ fn show_hover(
                         InfoPopover {
                             symbol_range: RangeInEditor::Text(range),
                             parsed_content,
+                            scroll_handle: ScrollHandle::new(),
                         },
                     )
                 })
@@ -423,7 +425,7 @@ async fn parse_blocks(
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct HoverState {
     pub info_popovers: Vec<InfoPopover>,
     pub diagnostic_popover: Option<DiagnosticPopover>,
@@ -440,7 +442,7 @@ impl HoverState {
         &mut self,
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
-        visible_rows: Range<u32>,
+        visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
@@ -487,10 +489,11 @@ impl HoverState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct InfoPopover {
-    symbol_range: RangeInEditor,
-    parsed_content: ParsedMarkdown,
+    pub symbol_range: RangeInEditor,
+    pub parsed_content: ParsedMarkdown,
+    pub scroll_handle: ScrollHandle,
 }
 
 impl InfoPopover {
@@ -504,22 +507,32 @@ impl InfoPopover {
         div()
             .id("info_popover")
             .elevation_2(cx)
-            .p_2()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
             .max_w(max_size.width)
             .max_h(max_size.height)
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            .child(crate::render_parsed_markdown(
+            .child(div().p_2().child(crate::render_parsed_markdown(
                 "content",
                 &self.parsed_content,
                 style,
                 workspace,
                 cx,
-            ))
+            )))
             .into_any_element()
+    }
+
+    pub fn scroll(&self, amount: &ScrollAmount, cx: &mut ViewContext<Editor>) {
+        let mut current = self.scroll_handle.offset();
+        current.y -= amount.pixels(
+            cx.line_height(),
+            self.scroll_handle.bounds().size.height - px(16.),
+        ) / 2.0;
+        cx.notify();
+        self.scroll_handle.set_offset(current);
     }
 }
 
@@ -612,7 +625,8 @@ impl DiagnosticPopover {
 mod tests {
     use super::*;
     use crate::{
-        editor_tests::init_test,
+        actions::ConfirmCompletion,
+        editor_tests::{handle_completion_request, init_test},
         hover_links::update_inlay_link_and_hover_points,
         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
@@ -625,9 +639,179 @@ mod tests {
     use lsp::LanguageServerId;
     use project::{HoverBlock, HoverBlockKind};
     use smol::stream::StreamExt;
+    use std::sync::atomic;
+    use std::sync::atomic::AtomicUsize;
     use text::Bias;
     use unindent::Unindent;
     use util::test::marked_text_ranges;
+
+    #[gpui::test]
+    async fn test_mouse_hover_info_popover_with_autocomplete_popover(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        const HOVER_DELAY_MILLIS: u64 = 350;
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    resolve_provider: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        let counter = Arc::new(AtomicUsize::new(0));
+        // Basic hover delays and then pops without moving the mouse
+        cx.set_state(indoc! {"
+                oneˇ
+                two
+                three
+                fn test() { println!(); }
+            "});
+
+        //prompt autocompletion menu
+        cx.simulate_keystroke(".");
+        handle_completion_request(
+            &mut cx,
+            indoc! {"
+                        one.|<>
+                        two
+                        three
+                    "},
+            vec!["first_completion", "second_completion"],
+            counter.clone(),
+        )
+        .await;
+        cx.condition(|editor, _| editor.context_menu_visible()) // wait until completion menu is visible
+            .await;
+        assert_eq!(counter.load(atomic::Ordering::Acquire), 1); // 1 completion request
+
+        let hover_point = cx.display_point(indoc! {"
+                one.
+                two
+                three
+                fn test() { printˇln!(); }
+            "});
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let anchor = snapshot
+                .buffer_snapshot
+                .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), cx)
+        });
+        assert!(!cx.editor(|editor, _| editor.hover_state.visible()));
+
+        // After delay, hover should be visible.
+        let symbol_range = cx.lsp_range(indoc! {"
+                one.
+                two
+                three
+                fn test() { «println!»(); }
+            "});
+        let mut requests =
+            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: "some basic docs".to_string(),
+                    }),
+                    range: Some(symbol_range),
+                }))
+            });
+        cx.background_executor
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        requests.next().await;
+
+        cx.editor(|editor, _| {
+            assert!(editor.hover_state.visible());
+            assert_eq!(
+                editor.hover_state.info_popovers.len(),
+                1,
+                "Expected exactly one hover but got: {:?}",
+                editor.hover_state.info_popovers
+            );
+            let rendered = editor
+                .hover_state
+                .info_popovers
+                .first()
+                .cloned()
+                .unwrap()
+                .parsed_content;
+            assert_eq!(rendered.text, "some basic docs".to_string())
+        });
+
+        // check that the completion menu is still visible and that there still has only been 1 completion request
+        cx.editor(|editor, _| assert!(editor.context_menu_visible()));
+        assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
+        //apply a completion and check it was successfully applied
+        let _apply_additional_edits = cx.update_editor(|editor, cx| {
+            editor.context_menu_next(&Default::default(), cx);
+            editor
+                .confirm_completion(&ConfirmCompletion::default(), cx)
+                .unwrap()
+        });
+        cx.assert_editor_state(indoc! {"
+            one.second_completionˇ
+            two
+            three
+            fn test() { println!(); }
+        "});
+
+        // check that the completion menu is no longer visible and that there still has only been 1 completion request
+        cx.editor(|editor, _| assert!(!editor.context_menu_visible()));
+        assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
+        //verify the information popover is still visible and unchanged
+        cx.editor(|editor, _| {
+            assert!(editor.hover_state.visible());
+            assert_eq!(
+                editor.hover_state.info_popovers.len(),
+                1,
+                "Expected exactly one hover but got: {:?}",
+                editor.hover_state.info_popovers
+            );
+            let rendered = editor
+                .hover_state
+                .info_popovers
+                .first()
+                .cloned()
+                .unwrap()
+                .parsed_content;
+            assert_eq!(rendered.text, "some basic docs".to_string())
+        });
+
+        // Mouse moved with no hover response dismisses
+        let hover_point = cx.display_point(indoc! {"
+                one.second_completionˇ
+                two
+                three
+                fn teˇst() { println!(); }
+            "});
+        let mut request = cx
+            .lsp
+            .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let anchor = snapshot
+                .buffer_snapshot
+                .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), cx)
+        });
+        cx.background_executor
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        request.next().await;
+
+        // verify that the information popover is no longer visible
+        cx.editor(|editor, _| {
+            assert!(!editor.hover_state.visible());
+        });
+    }
 
     #[gpui::test]
     async fn test_mouse_hover_info_popover(cx: &mut gpui::TestAppContext) {

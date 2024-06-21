@@ -13,6 +13,7 @@ path = "src/call.rs"
 doctest = false
 
 [features]
+no-webrtc = ["live_kit_client/no-webrtc"]
 test-support = [
     "client/test-support",
     "collections/test-support",
@@ -50,3 +51,4 @@ language = { workspace = true, features = ["test-support"] }
 live_kit_client = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }

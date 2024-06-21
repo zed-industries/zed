@@ -4,33 +4,32 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_void, OsString},
-    mem::transmute,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
-use copypasta::{ClipboardContext, ClipboardProvider};
+use clipboard_win::{get_clipboard_string, set_clipboard_string};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
-use semantic_version::SemanticVersion;
 use smallvec::SmallVec;
 use time::UtcOffset;
 use windows::{
     core::*,
-    Wdk::System::SystemServices::*,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
-        Media::*,
         Security::Credentials::*,
-        Storage::FileSystem::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
+    },
+    UI::{
+        Color,
+        ViewManagement::{UIColorType, UISettings},
     },
 };
 
@@ -48,7 +47,6 @@ pub(crate) struct WindowsPlatform {
 
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
-    pub(crate) settings: WindowsPlatformSystemSettings,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
@@ -66,12 +64,10 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
-        let settings = WindowsPlatformSystemSettings::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
             callbacks,
-            settings,
             current_cursor,
         }
     }
@@ -114,7 +110,9 @@ impl WindowsPlatform {
                     None,
                     HRGN::default(),
                     RDW_INVALIDATE | RDW_UPDATENOW,
-                );
+                )
+                .ok()
+                .log_err();
             }
         }
     }
@@ -147,28 +145,6 @@ impl WindowsPlatform {
 
         lock.is_empty()
     }
-
-    fn update_system_settings(&self) {
-        let mut lock = self.state.borrow_mut();
-        // mouse wheel
-        {
-            let (scroll_chars, scroll_lines) = lock.settings.mouse_wheel_settings.update();
-            if let Some(scroll_chars) = scroll_chars {
-                self.post_message(
-                    MOUSE_WHEEL_SETTINGS_CHANGED,
-                    WPARAM(scroll_chars as usize),
-                    LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_CHARS_CHANGED),
-                );
-            }
-            if let Some(scroll_lines) = scroll_lines {
-                self.post_message(
-                    MOUSE_WHEEL_SETTINGS_CHANGED,
-                    WPARAM(scroll_lines as usize),
-                    LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_LINES_CHANGED),
-                );
-            }
-        }
-    }
 }
 
 impl Platform for WindowsPlatform {
@@ -186,18 +162,11 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let vsync_event = create_event().unwrap();
-        let timer_stop_event = create_event().unwrap();
-        let raw_timer_stop_event = timer_stop_event.to_raw();
-        begin_vsync_timer(vsync_event.to_raw(), timer_stop_event);
+        let vsync_event = unsafe { Owned::new(CreateEventW(None, false, false, None).unwrap()) };
+        begin_vsync(*vsync_event);
         'a: loop {
             let wait_result = unsafe {
-                MsgWaitForMultipleObjects(
-                    Some(&[vsync_event.to_raw()]),
-                    false,
-                    INFINITE,
-                    QS_ALLINPUT,
-                )
+                MsgWaitForMultipleObjects(Some(&[*vsync_event]), false, INFINITE, QS_ALLINPUT)
             };
 
             match wait_result {
@@ -217,9 +186,10 @@ impl Platform for WindowsPlatform {
                                         break 'a;
                                     }
                                 }
-                                WM_SETTINGCHANGE => self.update_system_settings(),
                                 _ => {
-                                    TranslateMessage(&msg);
+                                    // todo(windows)
+                                    // crate `windows 0.56` reports true as Err
+                                    TranslateMessage(&msg).as_bool();
                                     DispatchMessageW(&msg);
                                 }
                             }
@@ -232,7 +202,6 @@ impl Platform for WindowsPlatform {
                 }
             }
         }
-        end_vsync_timer(raw_timer_stop_event);
 
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
             callback();
@@ -314,26 +283,24 @@ impl Platform for WindowsPlatform {
         &self,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> Result<Box<dyn PlatformWindow>> {
         let lock = self.state.borrow();
         let window = WindowsWindow::new(
             handle,
             options,
             self.icon,
             self.foreground_executor.clone(),
-            lock.settings.mouse_wheel_settings,
             lock.current_cursor,
         );
         drop(lock);
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
 
-        Box::new(window)
+        Ok(Box::new(window))
     }
 
-    // todo(windows)
     fn window_appearance(&self) -> WindowAppearance {
-        WindowAppearance::Dark
+        system_appearance().log_err().unwrap_or_default()
     }
 
     fn open_url(&self, url: &str) {
@@ -463,7 +430,7 @@ impl Platform for WindowsPlatform {
                 if path.is_empty() {
                     return;
                 }
-                open_target(path);
+                open_target_in_explorer(path);
             })
             .detach();
     }
@@ -478,6 +445,7 @@ impl Platform for WindowsPlatform {
 
     // todo(windows)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
+    fn set_dock_menu(&self, menus: Vec<MenuItem>, keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
@@ -489,121 +457,6 @@ impl Platform for WindowsPlatform {
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
         self.state.borrow_mut().callbacks.validate_app_menu_command = Some(callback);
-    }
-
-    fn os_name(&self) -> &'static str {
-        "Windows"
-    }
-
-    fn os_version(&self) -> Result<SemanticVersion> {
-        let mut info = unsafe { std::mem::zeroed() };
-        let status = unsafe { RtlGetVersion(&mut info) };
-        if status.is_ok() {
-            Ok(SemanticVersion::new(
-                info.dwMajorVersion as _,
-                info.dwMinorVersion as _,
-                info.dwBuildNumber as _,
-            ))
-        } else {
-            Err(anyhow::anyhow!(
-                "unable to get Windows version: {}",
-                std::io::Error::last_os_error()
-            ))
-        }
-    }
-
-    fn app_version(&self) -> Result<SemanticVersion> {
-        let mut file_name_buffer = vec![0u16; MAX_PATH as usize];
-        let file_name = {
-            let mut file_name_buffer_capacity = MAX_PATH as usize;
-            let mut file_name_length;
-            loop {
-                file_name_length =
-                    unsafe { GetModuleFileNameW(None, &mut file_name_buffer) } as usize;
-                if file_name_length < file_name_buffer_capacity {
-                    break;
-                }
-                // buffer too small
-                file_name_buffer_capacity *= 2;
-                file_name_buffer = vec![0u16; file_name_buffer_capacity];
-            }
-            PCWSTR::from_raw(file_name_buffer[0..(file_name_length + 1)].as_ptr())
-        };
-
-        let version_info_block = {
-            let mut version_handle = 0;
-            let version_info_size =
-                unsafe { GetFileVersionInfoSizeW(file_name, Some(&mut version_handle)) } as usize;
-            if version_info_size == 0 {
-                log::error!(
-                    "unable to get version info size: {}",
-                    std::io::Error::last_os_error()
-                );
-                return Err(anyhow!("unable to get version info size"));
-            }
-            let mut version_data = vec![0u8; version_info_size + 2];
-            unsafe {
-                GetFileVersionInfoW(
-                    file_name,
-                    version_handle,
-                    version_info_size as u32,
-                    version_data.as_mut_ptr() as _,
-                )
-            }
-            .inspect_err(|_| {
-                log::error!(
-                    "unable to retrieve version info: {}",
-                    std::io::Error::last_os_error()
-                )
-            })?;
-            version_data
-        };
-
-        let version_info_raw = {
-            let mut buffer = unsafe { std::mem::zeroed() };
-            let mut size = 0;
-            let entry = "\\".encode_utf16().chain(Some(0)).collect_vec();
-            if !unsafe {
-                VerQueryValueW(
-                    version_info_block.as_ptr() as _,
-                    PCWSTR::from_raw(entry.as_ptr()),
-                    &mut buffer,
-                    &mut size,
-                )
-            }
-            .as_bool()
-            {
-                log::error!(
-                    "unable to query version info data: {}",
-                    std::io::Error::last_os_error()
-                );
-                return Err(anyhow!("the specified resource is not valid"));
-            }
-            if size == 0 {
-                log::error!(
-                    "unable to query version info data: {}",
-                    std::io::Error::last_os_error()
-                );
-                return Err(anyhow!("no value is available for the specified name"));
-            }
-            buffer
-        };
-
-        let version_info = unsafe { &*(version_info_raw as *mut VS_FIXEDFILEINFO) };
-        // https://learn.microsoft.com/en-us/windows/win32/api/verrsrc/ns-verrsrc-vs_fixedfileinfo
-        if version_info.dwSignature == 0xFEEF04BD {
-            return Ok(SemanticVersion::new(
-                ((version_info.dwProductVersionMS >> 16) & 0xFFFF) as usize,
-                (version_info.dwProductVersionMS & 0xFFFF) as usize,
-                ((version_info.dwProductVersionLS >> 16) & 0xFFFF) as usize,
-            ));
-        } else {
-            log::error!(
-                "no version info present: {}",
-                std::io::Error::last_os_error()
-            );
-            return Err(anyhow!("no version info present"));
-        }
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -636,33 +489,27 @@ impl Platform for WindowsPlatform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         let hcursor = load_cursor(style);
-        self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
-        self.state.borrow_mut().current_cursor = hcursor;
-    }
-
-    // todo(windows)
-    fn should_auto_hide_scrollbars(&self) -> bool {
-        false
-    }
-
-    fn write_to_primary(&self, _item: ClipboardItem) {}
-
-    fn write_to_clipboard(&self, item: ClipboardItem) {
-        if item.text.len() > 0 {
-            let mut ctx = ClipboardContext::new().unwrap();
-            ctx.set_contents(item.text().to_owned()).unwrap();
+        let mut lock = self.state.borrow_mut();
+        if lock.current_cursor.0 != hcursor.0 {
+            self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
+            lock.current_cursor = hcursor;
         }
     }
 
-    fn read_from_primary(&self) -> Option<ClipboardItem> {
-        None
+    fn should_auto_hide_scrollbars(&self) -> bool {
+        should_auto_hide_scrollbars().log_err().unwrap_or(false)
+    }
+
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        if item.text.len() > 0 {
+            set_clipboard_string(item.text()).unwrap();
+        }
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        let mut ctx = ClipboardContext::new().unwrap();
-        let content = ctx.get_contents().ok()?;
+        let text = get_clipboard_string().ok()?;
         Some(ClipboardItem {
-            text: content,
+            text,
             metadata: None,
         })
     }
@@ -764,6 +611,25 @@ fn open_target(target: &str) {
     }
 }
 
+fn open_target_in_explorer(target: &str) {
+    unsafe {
+        let ret = ShellExecuteW(
+            None,
+            windows::core::w!("open"),
+            windows::core::w!("explorer.exe"),
+            &HSTRING::from(format!("/select,{}", target).as_str()),
+            None,
+            SW_SHOWDEFAULT,
+        );
+        if ret.0 <= 32 {
+            log::error!(
+                "Unable to open target in explorer: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+}
+
 unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     let dialog: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)?;
     let bind_context = CreateBindCtx(0)?;
@@ -787,72 +653,13 @@ unsafe fn show_savefile_dialog(directory: PathBuf) -> Result<IFileSaveDialog> {
     Ok(dialog)
 }
 
-fn begin_vsync_timer(vsync_event: HANDLE, timer_stop_event: OwnedHandle) {
-    let vsync_fn = select_vsync_fn();
-    std::thread::spawn(move || loop {
-        if vsync_fn(timer_stop_event.to_raw()) {
-            if unsafe { SetEvent(vsync_event) }.log_err().is_none() {
-                break;
-            }
+fn begin_vsync(vsync_evnet: HANDLE) {
+    std::thread::spawn(move || unsafe {
+        loop {
+            windows::Win32::Graphics::Dwm::DwmFlush().log_err();
+            SetEvent(vsync_evnet).log_err();
         }
     });
-}
-
-fn end_vsync_timer(timer_stop_event: HANDLE) {
-    unsafe { SetEvent(timer_stop_event) }.log_err();
-}
-
-fn select_vsync_fn() -> Box<dyn Fn(HANDLE) -> bool + Send> {
-    if let Some(dcomp_fn) = load_dcomp_vsync_fn() {
-        log::info!("use DCompositionWaitForCompositorClock for vsync");
-        return Box::new(move |timer_stop_event| {
-            // will be 0 if woken up by timer_stop_event or 1 if the compositor clock ticked
-            // SEE: https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock
-            (unsafe { dcomp_fn(1, &timer_stop_event, INFINITE) }) == 1
-        });
-    }
-    log::info!("use fallback vsync function");
-    Box::new(fallback_vsync_fn())
-}
-
-fn load_dcomp_vsync_fn() -> Option<unsafe extern "system" fn(u32, *const HANDLE, u32) -> u32> {
-    static FN: OnceLock<Option<unsafe extern "system" fn(u32, *const HANDLE, u32) -> u32>> =
-        OnceLock::new();
-    *FN.get_or_init(|| {
-        let hmodule = unsafe { LoadLibraryW(windows::core::w!("dcomp.dll")) }.ok()?;
-        let address = unsafe {
-            GetProcAddress(
-                hmodule,
-                windows::core::s!("DCompositionWaitForCompositorClock"),
-            )
-        }?;
-        Some(unsafe { transmute(address) })
-    })
-}
-
-fn fallback_vsync_fn() -> impl Fn(HANDLE) -> bool + Send {
-    let freq = WindowsDisplay::primary_monitor()
-        .and_then(|monitor| monitor.frequency())
-        .unwrap_or(60);
-    log::info!("primaly refresh rate is {freq}Hz");
-
-    let interval = (1000 / freq).max(1);
-    log::info!("expected interval is {interval}ms");
-
-    unsafe { timeBeginPeriod(1) };
-
-    struct TimePeriod;
-    impl Drop for TimePeriod {
-        fn drop(&mut self) {
-            unsafe { timeEndPeriod(1) };
-        }
-    }
-    let period = TimePeriod;
-
-    move |timer_stop_event| {
-        let _ = (&period,);
-        (unsafe { WaitForSingleObject(timer_stop_event, interval) }) == WAIT_TIMEOUT
-    }
 }
 
 fn load_icon() -> Result<HICON> {
@@ -869,4 +676,29 @@ fn load_icon() -> Result<HICON> {
         .context("unable to load icon file")?
     };
     Ok(HICON(handle.0))
+}
+
+// https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/apply-windows-themes
+#[inline]
+fn system_appearance() -> Result<WindowAppearance> {
+    let ui_settings = UISettings::new()?;
+    let foreground_color = ui_settings.GetColorValue(UIColorType::Foreground)?;
+    // If the foreground is light, then is_color_light will evaluate to true,
+    // meaning Dark mode is enabled.
+    if is_color_light(&foreground_color) {
+        Ok(WindowAppearance::Dark)
+    } else {
+        Ok(WindowAppearance::Light)
+    }
+}
+
+#[inline(always)]
+fn is_color_light(color: &Color) -> bool {
+    ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
+}
+
+#[inline]
+fn should_auto_hide_scrollbars() -> Result<bool> {
+    let ui_settings = UISettings::new()?;
+    Ok(ui_settings.AutoHideScrollBars()?)
 }

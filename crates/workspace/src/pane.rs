@@ -5,21 +5,23 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleZoom, Workspace,
+    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenTerminal, OpenVisible, SplitDirection,
+    ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
-use collections::{HashMap, HashSet, VecDeque};
+use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
     AppContext, AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId,
-    EventEmitter, ExternalPaths, FocusHandle, FocusableView, KeyContext, Model, MouseButton,
-    MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle,
-    Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
+    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
+    MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
+    WindowContext,
 };
+use itertools::Itertools;
 use parking_lot::Mutex;
-use project::{Project, ProjectEntryId, ProjectPath};
+use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use std::{
@@ -40,7 +42,31 @@ use ui::{
     IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_flex, ContextMenu};
-use util::{maybe, truncate_and_remove_front, ResultExt};
+use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
+
+/// A selected entry in e.g. project panel.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SelectedEntry {
+    pub worktree_id: WorktreeId,
+    pub entry_id: ProjectEntryId,
+}
+
+/// A group of selected entries from project panel.
+#[derive(Debug)]
+pub struct DraggedSelection {
+    pub active_selection: SelectedEntry,
+    pub marked_selections: Arc<BTreeSet<SelectedEntry>>,
+}
+
+impl DraggedSelection {
+    pub fn items<'a>(&'a self) -> Box<dyn Iterator<Item = &'a SelectedEntry> + 'a> {
+        if self.marked_selections.contains(&self.active_selection) {
+            Box::new(self.marked_selections.iter())
+        } else {
+            Box::new(std::iter::once(&self.active_selection))
+        }
+    }
+}
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +140,7 @@ actions!(
         ActivatePrevItem,
         ActivateNextItem,
         ActivateLastItem,
+        AlternateFile,
         CloseCleanItems,
         CloseItemsToTheLeft,
         CloseItemsToTheRight,
@@ -183,9 +210,14 @@ impl fmt::Debug for Event {
 /// responsible for managing item tabs, focus and zoom states and drag and drop features.
 /// Can be split, see `PaneGroup` for more details.
 pub struct Pane {
+    alternate_file_items: (
+        Option<Box<dyn WeakItemHandle>>,
+        Option<Box<dyn WeakItemHandle>>,
+    ),
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
-    activation_history: Vec<EntityId>,
+    activation_history: Vec<ActivationHistoryEntry>,
+    next_activation_timestamp: Arc<AtomicUsize>,
     zoomed: bool,
     was_focused: bool,
     active_item_index: usize,
@@ -211,6 +243,12 @@ pub struct Pane {
     /// Otherwise, when `display_nav_history_buttons` is Some, it determines whether nav buttons should be displayed.
     display_nav_history_buttons: Option<bool>,
     double_click_dispatch_action: Box<dyn Action>,
+    save_modals_spawned: HashSet<EntityId>,
+}
+
+pub struct ActivationHistoryEntry {
+    pub entity_id: EntityId,
+    pub timestamp: usize,
 }
 
 pub struct ItemNavHistory {
@@ -286,9 +324,11 @@ impl Pane {
 
         let handle = cx.view().downgrade();
         Self {
+            alternate_file_items: (None, None),
             focus_handle,
             items: Vec::new(),
             activation_history: Vec::new(),
+            next_activation_timestamp: next_timestamp.clone(),
             was_focused: false,
             zoomed: false,
             active_item_index: 0,
@@ -326,8 +366,24 @@ impl Pane {
                             .on_click(cx.listener(|pane, _, cx| {
                                 let menu = ContextMenu::build(cx, |menu, _| {
                                     menu.action("New File", NewFile.boxed_clone())
-                                        .action("New Terminal", NewCenterTerminal.boxed_clone())
-                                        .action("New Search", NewSearch.boxed_clone())
+                                        .action(
+                                            "Open File",
+                                            ToggleFileFinder::default().boxed_clone(),
+                                        )
+                                        .separator()
+                                        .action(
+                                            "Search Project",
+                                            DeploySearch {
+                                                replace_enabled: false,
+                                            }
+                                            .boxed_clone(),
+                                        )
+                                        .action(
+                                            "Search Symbols",
+                                            ToggleProjectSymbols.boxed_clone(),
+                                        )
+                                        .separator()
+                                        .action("New Terminal", NewTerminal.boxed_clone())
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
                                     pane.focus(cx);
@@ -387,6 +443,40 @@ impl Pane {
             ),
             _subscriptions: subscriptions,
             double_click_dispatch_action,
+            save_modals_spawned: HashSet::default(),
+        }
+    }
+
+    fn alternate_file(&mut self, cx: &mut ViewContext<Pane>) {
+        let (_, alternative) = &self.alternate_file_items;
+        if let Some(alternative) = alternative {
+            let existing = self
+                .items()
+                .find_position(|item| item.item_id() == alternative.id());
+            if let Some((ix, _)) = existing {
+                self.activate_item(ix, true, true, cx);
+            } else {
+                if let Some(upgraded) = alternative.upgrade() {
+                    self.add_item(upgraded, true, true, None, cx);
+                }
+            }
+        }
+    }
+
+    pub fn track_alternate_file_items(&mut self) {
+        if let Some(item) = self.active_item().map(|item| item.downgrade_item()) {
+            let (current, _) = &self.alternate_file_items;
+            match current {
+                Some(current) => {
+                    if current.id() != item.id() {
+                        self.alternate_file_items =
+                            (Some(item), self.alternate_file_items.0.take());
+                    }
+                }
+                None => {
+                    self.alternate_file_items = (Some(item), None);
+                }
+            }
         }
     }
 
@@ -444,7 +534,7 @@ impl Pane {
             .map_or(false, |menu| menu.focus_handle(cx).is_focused(cx))
     }
 
-    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _event: FocusOutEvent, cx: &mut ViewContext<Self>) {
         self.was_focused = false;
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.focus_changed(false, cx);
@@ -466,7 +556,7 @@ impl Pane {
         self.active_item_index
     }
 
-    pub fn activation_history(&self) -> &Vec<EntityId> {
+    pub fn activation_history(&self) -> &[ActivationHistoryEntry] {
         &self.activation_history
     }
 
@@ -852,10 +942,13 @@ impl Pane {
 
             if let Some(newly_active_item) = self.items.get(index) {
                 self.activation_history
-                    .retain(|&previously_active_item_id| {
-                        previously_active_item_id != newly_active_item.item_id()
-                    });
-                self.activation_history.push(newly_active_item.item_id());
+                    .retain(|entry| entry.entity_id != newly_active_item.item_id());
+                self.activation_history.push(ActivationHistoryEntry {
+                    entity_id: newly_active_item.item_id(),
+                    timestamp: self
+                        .next_activation_timestamp
+                        .fetch_add(1, Ordering::SeqCst),
+                });
             }
 
             self.update_toolbar(cx);
@@ -896,6 +989,14 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
+            // Close the window when there's no active items to close, if configured
+            if WorkspaceSettings::get_global(cx)
+                .when_closing_with_no_tabs
+                .should_close()
+            {
+                cx.dispatch_action(Box::new(CloseWindow));
+            }
+
             return None;
         }
         let active_item_id = self.items[self.active_item_index].item_id();
@@ -1073,11 +1174,19 @@ impl Pane {
             }
         }
 
-        // If a buffer is open both in a singleton editor and in a multibuffer, make sure
-        // to focus the singleton buffer when prompting to save that buffer, as opposed
-        // to focusing the multibuffer, because this gives the user a more clear idea
-        // of what content they would be saving.
-        items_to_close.sort_by_key(|item| !item.is_singleton(cx));
+        let active_item_id = self.active_item().map(|item| item.item_id());
+
+        items_to_close.sort_by_key(|item| {
+            // Put the currently active item at the end, because if the currently active item is not closed last
+            // closing the currently active item will cause the focus to switch to another item
+            // This will cause Zed to expand the content of the currently active item
+            active_item_id.filter(|&id| id == item.item_id()).is_some()
+              // If a buffer is open both in a singleton editor and in a multibuffer, make sure
+              // to focus the singleton buffer when prompting to save that buffer, as opposed
+              // to focusing the multibuffer, because this gives the user a more clear idea
+              // of what content they would be saving.
+              || !item.is_singleton(cx)
+        });
 
         let workspace = self.workspace.clone();
         cx.spawn(|pane, mut cx| async move {
@@ -1171,7 +1280,7 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) {
         self.activation_history
-            .retain(|&history_entry| history_entry != self.items[item_index].item_id());
+            .retain(|entry| entry.entity_id != self.items[item_index].item_id());
 
         if item_index == self.active_item_index {
             let index_to_activate = self
@@ -1179,7 +1288,7 @@ impl Pane {
                 .pop()
                 .and_then(|last_activated_item| {
                     self.items.iter().enumerate().find_map(|(index, item)| {
-                        (item.item_id() == last_activated_item).then_some(index)
+                        (item.item_id() == last_activated_item.entity_id).then_some(index)
                     })
                 })
                 // We didn't have a valid activation history entry, so fallback
@@ -1317,20 +1426,37 @@ impl Pane {
                     ) && Self::can_autosave_item(item, cx)
                 })?;
                 if !will_autosave {
-                    let answer = pane.update(cx, |pane, cx| {
-                        pane.activate_item(item_ix, true, true, cx);
-                        let prompt = dirty_message_for(item.project_path(cx));
-                        cx.prompt(
-                            PromptLevel::Warning,
-                            &prompt,
-                            None,
-                            &["Save", "Don't Save", "Cancel"],
-                        )
+                    let item_id = item.item_id();
+                    let answer_task = pane.update(cx, |pane, cx| {
+                        if pane.save_modals_spawned.insert(item_id) {
+                            pane.activate_item(item_ix, true, true, cx);
+                            let prompt = dirty_message_for(item.project_path(cx));
+                            Some(cx.prompt(
+                                PromptLevel::Warning,
+                                &prompt,
+                                None,
+                                &["Save", "Don't Save", "Cancel"],
+                            ))
+                        } else {
+                            None
+                        }
                     })?;
-                    match answer.await {
-                        Ok(0) => {}
-                        Ok(1) => return Ok(true), // Don't save this file
-                        _ => return Ok(false),    // Cancel
+                    if let Some(answer_task) = answer_task {
+                        let answer = answer_task.await;
+                        pane.update(cx, |pane, _| {
+                            if !pane.save_modals_spawned.remove(&item_id) {
+                                debug_panic!(
+                                    "save modal was not present in spawned modals after awaiting for its answer"
+                                )
+                            }
+                        })?;
+                        match answer {
+                            Ok(0) => {}
+                            Ok(1) => return Ok(true), // Don't save this file
+                            _ => return Ok(false),    // Cancel
+                        }
+                    } else {
+                        return Ok(false);
                     }
                 }
             }
@@ -1364,8 +1490,15 @@ impl Pane {
         project: Model<Project>,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
+        let format = if let AutosaveSetting::AfterDelay { .. } =
+            WorkspaceSettings::get_global(cx).autosave
+        {
+            false
+        } else {
+            true
+        };
         if Self::can_autosave_item(item, cx) {
-            item.save(true, project, cx)
+            item.save(format, project, cx)
         } else {
             Task::ready(Ok(()))
         }
@@ -1510,7 +1643,7 @@ impl Pane {
             .drag_over::<DraggedTab>(|tab, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
             })
-            .drag_over::<ProjectEntryId>(|tab, _, cx| {
+            .drag_over::<DraggedSelection>(|tab, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
             })
             .when_some(self.can_drop_predicate.clone(), |this, p| {
@@ -1520,9 +1653,9 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_tab_drop(dragged_tab, ix, cx)
             }))
-            .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
+            .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
                 this.drag_split_direction = None;
-                this.handle_project_entry_drop(entry_id, cx)
+                this.handle_project_entry_drop(&selection.active_selection.entry_id, cx)
             }))
             .on_drop(cx.listener(move |this, paths, cx| {
                 this.drag_split_direction = None;
@@ -1701,7 +1834,11 @@ impl Pane {
             .track_scroll(self.tab_bar_scroll_handle.clone())
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
-                |tab_bar| tab_bar.start_children(vec![navigate_backward, navigate_forward]),
+                |tab_bar| {
+                    tab_bar
+                        .start_child(navigate_backward)
+                        .start_child(navigate_forward)
+                },
             )
             .when(self.has_focus(cx), |tab_bar| {
                 tab_bar.end_child({
@@ -1728,16 +1865,16 @@ impl Pane {
                     .drag_over::<DraggedTab>(|bar, _, cx| {
                         bar.bg(cx.theme().colors().drop_target_background)
                     })
-                    .drag_over::<ProjectEntryId>(|bar, _, cx| {
+                    .drag_over::<DraggedSelection>(|bar, _, cx| {
                         bar.bg(cx.theme().colors().drop_target_background)
                     })
                     .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
                         this.drag_split_direction = None;
                         this.handle_tab_drop(dragged_tab, this.items.len(), cx)
                     }))
-                    .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
+                    .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
                         this.drag_split_direction = None;
-                        this.handle_project_entry_drop(entry_id, cx)
+                        this.handle_project_entry_drop(&selection.active_selection.entry_id, cx)
                     }))
                     .on_drop(cx.listener(move |this, paths, cx| {
                         this.drag_split_direction = None;
@@ -1981,6 +2118,9 @@ impl Render for Pane {
             .size_full()
             .flex_none()
             .overflow_hidden()
+            .on_action(cx.listener(|pane, _: &AlternateFile, cx| {
+                pane.alternate_file(cx);
+            }))
             .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
             .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
             .on_action(
@@ -2084,7 +2224,7 @@ impl Render for Pane {
                     .relative()
                     .group("")
                     .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
-                    .on_drag_move::<ProjectEntryId>(cx.listener(Self::handle_drag_move))
+                    .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
                     .on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
                     .map(|div| {
                         if let Some(item) = self.active_item() {
@@ -2110,7 +2250,7 @@ impl Render for Pane {
                             .absolute()
                             .bg(cx.theme().colors().drop_target_background)
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
-                            .group_drag_over::<ProjectEntryId>("", |style| style.visible())
+                            .group_drag_over::<DraggedSelection>("", |style| style.visible())
                             .group_drag_over::<ExternalPaths>("", |style| style.visible())
                             .when_some(self.can_drop_predicate.clone(), |this, p| {
                                 this.can_drop(move |a, cx| p(a, cx))
@@ -2118,8 +2258,11 @@ impl Render for Pane {
                             .on_drop(cx.listener(move |this, dragged_tab, cx| {
                                 this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
                             }))
-                            .on_drop(cx.listener(move |this, entry_id, cx| {
-                                this.handle_project_entry_drop(entry_id, cx)
+                            .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
+                                this.handle_project_entry_drop(
+                                    &selection.active_selection.entry_id,
+                                    cx,
+                                )
                             }))
                             .on_drop(cx.listener(move |this, paths, cx| {
                                 this.handle_external_paths_drop(paths, cx)
@@ -2940,7 +3083,7 @@ mod tests {
 
 impl Render for DraggedTab {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
         let label = self.item.tab_content(
             TabContentParams {
                 detail: Some(self.detail),
@@ -2953,6 +3096,6 @@ impl Render for DraggedTab {
             .selected(self.is_active)
             .child(label)
             .render(cx)
-            .font_family(ui_font)
+            .font(ui_font)
     }
 }

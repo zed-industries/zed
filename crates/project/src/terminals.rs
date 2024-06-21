@@ -1,10 +1,19 @@
 use crate::Project;
+use anyhow::Context as _;
 use collections::HashMap;
-use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
+use gpui::{
+    AnyWindowHandle, AppContext, Context, Entity, Model, ModelContext, SharedString, WeakModel,
+};
+use itertools::Itertools;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
-use std::path::{Path, PathBuf};
-use task::SpawnInTerminal;
+use std::{
+    env,
+    fs::File,
+    io::Write,
+    path::{Path, PathBuf},
+};
+use task::{SpawnInTerminal, TerminalWorkDir};
 use terminal::{
     terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
     TaskState, TaskStatus, Terminal, TerminalBuilder,
@@ -18,29 +27,62 @@ pub struct Terminals {
     pub(crate) local_handles: Vec<WeakModel<terminal::Terminal>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConnectRemoteTerminal {
+    pub ssh_connection_string: SharedString,
+    pub project_path: SharedString,
+}
+
 impl Project {
+    pub fn terminal_work_dir_for(
+        &self,
+        pathbuf: Option<&Path>,
+        cx: &AppContext,
+    ) -> Option<TerminalWorkDir> {
+        if self.is_local() {
+            return Some(TerminalWorkDir::Local(pathbuf?.to_owned()));
+        }
+        let dev_server_project_id = self.dev_server_project_id()?;
+        let projects_store = dev_server_projects::Store::global(cx).read(cx);
+        let ssh_command = projects_store
+            .dev_server_for_project(dev_server_project_id)?
+            .ssh_connection_string
+            .as_ref()?
+            .to_string();
+
+        let path = if let Some(pathbuf) = pathbuf {
+            pathbuf.to_string_lossy().to_string()
+        } else {
+            projects_store
+                .dev_server_project(dev_server_project_id)?
+                .path
+                .to_string()
+        };
+
+        Some(TerminalWorkDir::Ssh {
+            ssh_command,
+            path: Some(path),
+        })
+    }
+
     pub fn create_terminal(
         &mut self,
-        working_directory: Option<PathBuf>,
+        working_directory: Option<TerminalWorkDir>,
         spawn_task: Option<SpawnInTerminal>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
-        anyhow::ensure!(
-            !self.is_remote(),
-            "creating terminals as a guest is not supported yet"
-        );
-
         // used only for TerminalSettings::get
         let worktree = {
-            let terminal_cwd = working_directory.as_deref();
+            let terminal_cwd = working_directory.as_ref().and_then(|cwd| cwd.local_path());
             let task_cwd = spawn_task
                 .as_ref()
-                .and_then(|spawn_task| spawn_task.cwd.as_deref());
+                .and_then(|spawn_task| spawn_task.cwd.as_ref())
+                .and_then(|cwd| cwd.local_path());
 
             terminal_cwd
-                .and_then(|terminal_cwd| self.find_local_worktree(terminal_cwd, cx))
-                .or_else(|| task_cwd.and_then(|spawn_cwd| self.find_local_worktree(spawn_cwd, cx)))
+                .and_then(|terminal_cwd| self.find_local_worktree(&terminal_cwd, cx))
+                .or_else(|| task_cwd.and_then(|spawn_cwd| self.find_local_worktree(&spawn_cwd, cx)))
         };
 
         let settings_location = worktree.as_ref().map(|(worktree, path)| SettingsLocation {
@@ -48,7 +90,10 @@ impl Project {
             path,
         });
 
-        let is_terminal = spawn_task.is_none();
+        let is_terminal = spawn_task.is_none()
+            && working_directory
+                .as_ref()
+                .map_or(true, |work_dir| work_dir.is_local());
         let settings = TerminalSettings::get(settings_location, cx);
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
@@ -57,41 +102,80 @@ impl Project {
         // Alacritty uses parent project's working directory when no working directory is provided
         // https://github.com/alacritty/alacritty/blob/fd1a3cc79192d1d03839f0fd8c72e1f8d0fce42e/extra/man/alacritty.5.scd?plain=1#L47-L52
 
+        let mut retained_script = None;
+
         let venv_base_directory = working_directory
-            .as_deref()
+            .as_ref()
+            .and_then(|cwd| cwd.local_path())
             .unwrap_or_else(|| Path::new(""));
 
-        let (spawn_task, shell) = if let Some(spawn_task) = spawn_task {
-            log::debug!("Spawning task: {spawn_task:?}");
-            env.extend(spawn_task.env);
-            // Activate minimal Python virtual environment
-            if let Some(python_settings) = &python_settings.as_option() {
-                self.set_python_venv_path_for_tasks(python_settings, venv_base_directory, &mut env);
+        let (spawn_task, shell) = match working_directory.as_ref() {
+            Some(TerminalWorkDir::Ssh { ssh_command, path }) => {
+                log::debug!("Connecting to a remote server: {ssh_command:?}");
+                let tmp_dir = tempfile::tempdir()?;
+                let ssh_shell_result = prepare_ssh_shell(
+                    &mut env,
+                    tmp_dir.path(),
+                    spawn_task.as_ref(),
+                    ssh_command,
+                    path.as_deref(),
+                );
+                retained_script = Some(tmp_dir);
+                let ssh_shell = ssh_shell_result?;
+
+                (
+                    spawn_task.map(|spawn_task| TaskState {
+                        id: spawn_task.id,
+                        full_label: spawn_task.full_label,
+                        label: spawn_task.label,
+                        command_label: spawn_task.command_label,
+                        status: TaskStatus::Running,
+                        completion_rx,
+                    }),
+                    ssh_shell,
+                )
             }
-            (
-                Some(TaskState {
-                    id: spawn_task.id,
-                    full_label: spawn_task.full_label,
-                    label: spawn_task.label,
-                    command_label: spawn_task.command_label,
-                    status: TaskStatus::Running,
-                    completion_rx,
-                }),
-                Shell::WithArguments {
-                    program: spawn_task.command,
-                    args: spawn_task.args,
-                },
-            )
-        } else {
-            (None, settings.shell.clone())
+            _ => {
+                if let Some(spawn_task) = spawn_task {
+                    log::debug!("Spawning task: {spawn_task:?}");
+                    env.extend(spawn_task.env);
+                    // Activate minimal Python virtual environment
+                    if let Some(python_settings) = &python_settings.as_option() {
+                        self.set_python_venv_path_for_tasks(
+                            python_settings,
+                            &venv_base_directory,
+                            &mut env,
+                        );
+                    }
+                    (
+                        Some(TaskState {
+                            id: spawn_task.id,
+                            full_label: spawn_task.full_label,
+                            label: spawn_task.label,
+                            command_label: spawn_task.command_label,
+                            status: TaskStatus::Running,
+                            completion_rx,
+                        }),
+                        Shell::WithArguments {
+                            program: spawn_task.command,
+                            args: spawn_task.args,
+                        },
+                    )
+                } else {
+                    (None, settings.shell.clone())
+                }
+            }
         };
 
         let terminal = TerminalBuilder::new(
-            working_directory.clone(),
+            working_directory
+                .as_ref()
+                .and_then(|cwd| cwd.local_path())
+                .map(ToOwned::to_owned),
             spawn_task,
             shell,
             env,
-            Some(settings.blinking.clone()),
+            Some(settings.blinking),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
             window,
@@ -106,6 +190,7 @@ impl Project {
 
             let id = terminal_handle.entity_id();
             cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
+                drop(retained_script);
                 let handles = &mut project.terminals.local_handles;
 
                 if let Some(index) = handles
@@ -122,7 +207,7 @@ impl Project {
             if is_terminal {
                 if let Some(python_settings) = &python_settings.as_option() {
                     if let Some(activate_script_path) =
-                        self.find_activate_script_path(python_settings, venv_base_directory)
+                        self.find_activate_script_path(python_settings, &venv_base_directory)
                     {
                         self.activate_python_virtual_environment(
                             Project::get_activate_command(python_settings),
@@ -184,19 +269,8 @@ impl Project {
                 path.to_string_lossy().to_string(),
             );
 
-            let path_bin = path.join("bin");
             // We need to set the PATH to include the virtual environment's bin directory
-            if let Some(paths) = std::env::var_os("PATH") {
-                let paths = std::iter::once(path_bin).chain(std::env::split_paths(&paths));
-                if let Some(new_path) = std::env::join_paths(paths).log_err() {
-                    env.insert("PATH".to_string(), new_path.to_string_lossy().to_string());
-                }
-            } else {
-                env.insert(
-                    "PATH".to_string(),
-                    path.join("bin").to_string_lossy().to_string(),
-                );
-            }
+            add_environment_path(env, &path.join("bin")).log_err();
         }
     }
 
@@ -231,4 +305,117 @@ impl Project {
     }
 }
 
-// TODO: Add a few tests for adding and removing terminal tabs
+fn prepare_ssh_shell(
+    env: &mut HashMap<String, String>,
+    tmp_dir: &Path,
+    spawn_task: Option<&SpawnInTerminal>,
+    ssh_command: &str,
+    path: Option<&str>,
+) -> anyhow::Result<Shell> {
+    // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
+    // to properly display colors.
+    // We do not have the luxury of assuming the host has it installed,
+    // so we set it to a default that does not break the highlighting via ssh.
+    env.entry("TERM".to_string())
+        .or_insert_with(|| "xterm-256color".to_string());
+
+    let real_ssh = which::which("ssh")?;
+    let ssh_path = tmp_dir.join("ssh");
+    let mut ssh_file = File::create(&ssh_path)?;
+
+    let to_run = if let Some(spawn_task) = spawn_task {
+        Some(shlex::try_quote(&spawn_task.command)?)
+            .into_iter()
+            .chain(
+                spawn_task
+                    .args
+                    .iter()
+                    .filter_map(|arg| shlex::try_quote(arg).ok()),
+            )
+            .join(" ")
+    } else {
+        "exec $SHELL -l".to_string()
+    };
+
+    let commands = if let Some(path) = path {
+        format!("cd {path}; {to_run}")
+    } else {
+        format!("cd; {to_run}")
+    };
+    let shell_invocation = &format!("sh -c {}", shlex::try_quote(&commands)?);
+
+    // To support things like `gh cs ssh`/`coder ssh`, we run whatever command
+    // you have configured, but place our custom script on the path so that it will
+    // be run instead.
+    write!(
+        &mut ssh_file,
+        "#!/bin/sh\nexec {} \"$@\" {} {}",
+        real_ssh.to_string_lossy(),
+        if spawn_task.is_none() { "-t" } else { "" },
+        shlex::try_quote(shell_invocation)?,
+    )?;
+
+    // todo(windows)
+    #[cfg(not(target_os = "windows"))]
+    std::fs::set_permissions(ssh_path, smol::fs::unix::PermissionsExt::from_mode(0o755))?;
+
+    add_environment_path(env, tmp_dir)?;
+
+    let mut args = shlex::split(&ssh_command).unwrap_or_default();
+    let program = args.drain(0..1).next().unwrap_or("ssh".to_string());
+    Ok(Shell::WithArguments { program, args })
+}
+
+fn add_environment_path(env: &mut HashMap<String, String>, new_path: &Path) -> anyhow::Result<()> {
+    let mut env_paths = vec![new_path.to_path_buf()];
+    if let Some(path) = env.get("PATH").or(env::var("PATH").ok().as_ref()) {
+        let mut paths = std::env::split_paths(&path).collect::<Vec<_>>();
+        env_paths.append(&mut paths);
+    }
+
+    let paths = std::env::join_paths(env_paths).context("failed to create PATH env variable")?;
+    env.insert("PATH".to_string(), paths.to_string_lossy().to_string());
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use collections::HashMap;
+
+    #[test]
+    fn test_add_environment_path_with_existing_path() {
+        let tmp_path = std::path::PathBuf::from("/tmp/new");
+        let mut env = HashMap::default();
+        let old_path = if cfg!(windows) {
+            "/usr/bin;/usr/local/bin"
+        } else {
+            "/usr/bin:/usr/local/bin"
+        };
+        env.insert("PATH".to_string(), old_path.to_string());
+        env.insert("OTHER".to_string(), "aaa".to_string());
+
+        super::add_environment_path(&mut env, &tmp_path).unwrap();
+        if cfg!(windows) {
+            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new;{}", old_path));
+        } else {
+            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new:{}", old_path));
+        }
+        assert_eq!(env.get("OTHER").unwrap(), "aaa");
+    }
+
+    #[test]
+    fn test_add_environment_path_with_empty_path() {
+        let tmp_path = std::path::PathBuf::from("/tmp/new");
+        let mut env = HashMap::default();
+        env.insert("OTHER".to_string(), "aaa".to_string());
+        let os_path = std::env::var("PATH").unwrap();
+        super::add_environment_path(&mut env, &tmp_path).unwrap();
+        if cfg!(windows) {
+            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new;{}", os_path));
+        } else {
+            assert_eq!(env.get("PATH").unwrap(), &format!("/tmp/new:{}", os_path));
+        }
+        assert_eq!(env.get("OTHER").unwrap(), "aaa");
+    }
+}

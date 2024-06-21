@@ -405,7 +405,7 @@ impl TerminalBuilder {
         let _io_thread = event_loop.spawn(); // DANGER
 
         let url_regex = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
-        let word_regex = RegexSearch::new(r#"[\$\+\w.\[\]:/@\-~]+"#).unwrap();
+        let word_regex = RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+"#).unwrap();
 
         let terminal = Terminal {
             task,
@@ -1083,6 +1083,31 @@ impl Terminal {
         }
     }
 
+    pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
+        let term = self.term.clone();
+        let terminal = term.lock_unfair();
+
+        let mut lines = Vec::new();
+        let mut current_line = terminal.bottommost_line();
+        while lines.len() < n {
+            let mut line_buffer = String::new();
+            for cell in &terminal.grid()[current_line] {
+                line_buffer.push(cell.c);
+            }
+            let line = line_buffer.trim_end();
+            if !line.is_empty() {
+                lines.push(line.to_string());
+            }
+
+            if current_line == terminal.topmost_line() {
+                break;
+            }
+            current_line = Line(current_line.0 - 1);
+        }
+        lines.reverse();
+        lines
+    }
+
     pub fn focus_in(&self) {
         if self.last_content.mode.contains(TermMode::FOCUS_IN_OUT) {
             self.write_to_pty("\x1b[I".to_string());
@@ -1195,7 +1220,7 @@ impl Terminal {
         &mut self,
         e: &MouseDownEvent,
         origin: Point<Pixels>,
-        cx: &mut ModelContext<Self>,
+        _cx: &mut ModelContext<Self>,
     ) {
         let position = e.position - origin;
         let point = grid_point(
@@ -1210,33 +1235,40 @@ impl Terminal {
             {
                 self.pty_tx.notify(bytes);
             }
-        } else if e.button == MouseButton::Left {
-            let position = e.position - origin;
-            let (point, side) = grid_point_and_side(
-                position,
-                self.last_content.size,
-                self.last_content.display_offset,
-            );
+        } else {
+            match e.button {
+                MouseButton::Left => {
+                    let position = e.position - origin;
+                    let (point, side) = grid_point_and_side(
+                        position,
+                        self.last_content.size,
+                        self.last_content.display_offset,
+                    );
 
-            let selection_type = match e.click_count {
-                0 => return, //This is a release
-                1 => Some(SelectionType::Simple),
-                2 => Some(SelectionType::Semantic),
-                3 => Some(SelectionType::Lines),
-                _ => None,
-            };
+                    let selection_type = match e.click_count {
+                        0 => return, //This is a release
+                        1 => Some(SelectionType::Simple),
+                        2 => Some(SelectionType::Semantic),
+                        3 => Some(SelectionType::Lines),
+                        _ => None,
+                    };
 
-            let selection =
-                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
+                    let selection = selection_type
+                        .map(|selection_type| Selection::new(selection_type, point, side));
 
-            if let Some(sel) = selection {
-                self.events
-                    .push_back(InternalEvent::SetSelection(Some((sel, point))));
-            }
-        } else if e.button == MouseButton::Middle {
-            if let Some(item) = cx.read_from_primary() {
-                let text = item.text().to_string();
-                self.input(text);
+                    if let Some(sel) = selection {
+                        self.events
+                            .push_back(InternalEvent::SetSelection(Some((sel, point))));
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                MouseButton::Middle => {
+                    if let Some(item) = _cx.read_from_primary() {
+                        let text = item.text().to_string();
+                        self.input(text);
+                    }
+                }
+                _ => {}
             }
         }
     }

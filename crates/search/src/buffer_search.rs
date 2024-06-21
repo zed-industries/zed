@@ -3,7 +3,7 @@ mod registrar;
 use crate::{
     search_bar::render_nav_button, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll,
     ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleWholeWord,
+    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
 };
 use any_vec::AnyVec;
 use collections::HashMap;
@@ -42,16 +42,14 @@ const MIN_INPUT_WIDTH_REMS: f32 = 10.;
 const MAX_INPUT_WIDTH_REMS: f32 = 30.;
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
-const fn true_value() -> bool {
-    true
-}
-
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
-    #[serde(default = "true_value")]
+    #[serde(default = "util::serde::default_true")]
     pub focus: bool,
     #[serde(default)]
     pub replace_enabled: bool,
+    #[serde(default)]
+    pub selection_search_enabled: bool,
 }
 
 impl_actions!(buffer_search, [Deploy]);
@@ -63,6 +61,7 @@ impl Deploy {
         Self {
             focus: true,
             replace_enabled: false,
+            selection_search_enabled: false,
         }
     }
 }
@@ -94,6 +93,7 @@ pub struct BufferSearchBar {
     search_history: SearchHistory,
     search_history_cursor: SearchHistoryCursor,
     replace_enabled: bool,
+    selection_search_enabled: bool,
     scroll_handle: ScrollHandle,
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
@@ -232,7 +232,7 @@ impl Render for BufferSearchBar {
                                 }),
                             )
                         }))
-                        .children(supported_options.word.then(|| {
+                        .children(supported_options.regex.then(|| {
                             self.render_search_option_button(
                                 SearchOptions::REGEX,
                                 cx.listener(|this, _, cx| this.toggle_regex(&ToggleRegex, cx)),
@@ -253,6 +253,26 @@ impl Render for BufferSearchBar {
                         .selected(self.replace_enabled)
                         .size(ButtonSize::Compact)
                         .tooltip(|cx| Tooltip::for_action("Toggle replace", &ToggleReplace, cx)),
+                )
+            })
+            .when(supported_options.selection, |this| {
+                this.child(
+                    IconButton::new(
+                        "buffer-search-bar-toggle-search-selection-button",
+                        IconName::SearchSelection,
+                    )
+                    .style(ButtonStyle::Subtle)
+                    .when(self.selection_search_enabled, |button| {
+                        button.style(ButtonStyle::Filled)
+                    })
+                    .on_click(cx.listener(|this, _: &ClickEvent, cx| {
+                        this.toggle_selection(&ToggleSelection, cx);
+                    }))
+                    .selected(self.selection_search_enabled)
+                    .size(ButtonSize::Compact)
+                    .tooltip(|cx| {
+                        Tooltip::for_action("Toggle search selection", &ToggleSelection, cx)
+                    }),
                 )
             })
             .child(
@@ -363,6 +383,9 @@ impl Render for BufferSearchBar {
             .when(self.supported_options().regex, |this| {
                 this.on_action(cx.listener(Self::toggle_regex))
             })
+            .when(self.supported_options().selection, |this| {
+                this.on_action(cx.listener(Self::toggle_selection))
+            })
             .gap_2()
             .child(
                 h_flex()
@@ -444,6 +467,11 @@ impl BufferSearchBar {
                 this.toggle_whole_word(action, cx);
             }
         }));
+        registrar.register_handler(ForDeployed(|this, action: &ToggleSelection, cx| {
+            if this.supported_options().selection {
+                this.toggle_selection(action, cx);
+            }
+        }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleReplace, cx| {
             if this.supported_options().replacement {
                 this.toggle_replace(action, cx);
@@ -501,6 +529,7 @@ impl BufferSearchBar {
             search_history_cursor: Default::default(),
             active_search: None,
             replace_enabled: false,
+            selection_search_enabled: false,
             scroll_handle: ScrollHandle::new(),
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
@@ -520,8 +549,11 @@ impl BufferSearchBar {
                 searchable_item.clear_matches(cx);
             }
         }
-        if let Some(active_editor) = self.active_searchable_item.as_ref() {
+        if let Some(active_editor) = self.active_searchable_item.as_mut() {
+            self.selection_search_enabled = false;
+            self.replace_enabled = false;
             active_editor.search_bar_visibility_changed(false, cx);
+            active_editor.toggle_filtered_search_ranges(false, cx);
             let handle = active_editor.focus_handle(cx);
             cx.focus(&handle);
         }
@@ -534,8 +566,12 @@ impl BufferSearchBar {
 
     pub fn deploy(&mut self, deploy: &Deploy, cx: &mut ViewContext<Self>) -> bool {
         if self.show(cx) {
+            if let Some(active_item) = self.active_searchable_item.as_mut() {
+                active_item.toggle_filtered_search_ranges(deploy.selection_search_enabled, cx);
+            }
             self.search_suggested(cx);
             self.replace_enabled = deploy.replace_enabled;
+            self.selection_search_enabled = deploy.selection_search_enabled;
             if deploy.focus {
                 let mut handle = self.query_editor.focus_handle(cx).clone();
                 let mut select_query = true;
@@ -543,9 +579,11 @@ impl BufferSearchBar {
                     handle = self.replacement_editor.focus_handle(cx).clone();
                     select_query = false;
                 };
+
                 if select_query {
                     self.select_query(cx);
                 }
+
                 cx.focus(&handle);
             }
             return true;
@@ -737,6 +775,7 @@ impl BufferSearchBar {
                 if let Some(matches) = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
+                    .filter(|matches| !matches.is_empty())
                 {
                     let new_match_index = searchable_item
                         .match_index_for_direction(matches, index, direction, count, cx);
@@ -773,7 +812,7 @@ impl BufferSearchBar {
         match event {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
-            editor::EditorEvent::Edited => {
+            editor::EditorEvent::Edited { .. } => {
                 self.clear_matches(cx);
                 let search = self.update_matches(cx);
 
@@ -827,6 +866,15 @@ impl BufferSearchBar {
         self.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
     }
 
+    fn toggle_selection(&mut self, _: &ToggleSelection, cx: &mut ViewContext<Self>) {
+        if let Some(active_item) = self.active_searchable_item.as_mut() {
+            self.selection_search_enabled = !self.selection_search_enabled;
+            active_item.toggle_filtered_search_ranges(self.selection_search_enabled, cx);
+            let _ = self.update_matches(cx);
+            cx.notify();
+        }
+    }
+
     fn toggle_regex(&mut self, _: &ToggleRegex, cx: &mut ViewContext<Self>) {
         self.toggle_search_option(SearchOptions::REGEX, cx)
     }
@@ -838,6 +886,10 @@ impl BufferSearchBar {
                 .remove(&active_searchable_item.downgrade());
             active_searchable_item.clear_matches(cx);
         }
+    }
+
+    pub fn has_active_match(&self) -> bool {
+        self.active_match_index.is_some()
     }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
@@ -876,8 +928,8 @@ impl BufferSearchBar {
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         false,
-                        Vec::new(),
-                        Vec::new(),
+                        Default::default(),
+                        Default::default(),
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
@@ -893,8 +945,8 @@ impl BufferSearchBar {
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         false,
-                        Vec::new(),
-                        Vec::new(),
+                        Default::default(),
+                        Default::default(),
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
@@ -1090,9 +1142,9 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use editor::{DisplayPoint, Editor};
+    use editor::{display_map::DisplayRow, DisplayPoint, Editor, MultiBuffer};
     use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
-    use language::Buffer;
+    use language::{Buffer, Point};
     use project::Project;
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
@@ -1157,8 +1209,8 @@ mod tests {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
-                    DisplayPoint::new(2, 17)..DisplayPoint::new(2, 19),
-                    DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
+                    DisplayPoint::new(DisplayRow(2), 17)..DisplayPoint::new(DisplayRow(2), 19),
+                    DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),
                 ]
             );
         });
@@ -1172,7 +1224,7 @@ mod tests {
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
-                &[DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),]
+                &[DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),]
             );
         });
 
@@ -1186,13 +1238,13 @@ mod tests {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
-                    DisplayPoint::new(0, 24)..DisplayPoint::new(0, 26),
-                    DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43),
-                    DisplayPoint::new(2, 71)..DisplayPoint::new(2, 73),
-                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 3),
-                    DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13),
-                    DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58),
-                    DisplayPoint::new(3, 60)..DisplayPoint::new(3, 62),
+                    DisplayPoint::new(DisplayRow(0), 24)..DisplayPoint::new(DisplayRow(0), 26),
+                    DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43),
+                    DisplayPoint::new(DisplayRow(2), 71)..DisplayPoint::new(DisplayRow(2), 73),
+                    DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 3),
+                    DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13),
+                    DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58),
+                    DisplayPoint::new(DisplayRow(3), 60)..DisplayPoint::new(DisplayRow(3), 62),
                 ]
             );
         });
@@ -1207,16 +1259,18 @@ mod tests {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
-                    DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43),
-                    DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13),
-                    DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58),
+                    DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43),
+                    DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13),
+                    DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58),
                 ]
             );
         });
 
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1224,7 +1278,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+                [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1235,7 +1289,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
+                [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1246,7 +1300,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
+                [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1257,7 +1311,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+                [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1268,7 +1322,7 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
+                [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1279,7 +1333,7 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
+                [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1290,7 +1344,7 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+                [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1301,7 +1355,9 @@ mod tests {
         // the closest match to the left.
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1309,7 +1365,7 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+                [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1320,7 +1376,9 @@ mod tests {
         // closest match to the right.
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1328,7 +1386,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
+                [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1339,7 +1397,9 @@ mod tests {
         // the last match.
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(3), 60)..DisplayPoint::new(DisplayRow(3), 60)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1347,7 +1407,7 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
+                [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1358,7 +1418,9 @@ mod tests {
         // first match.
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(3), 60)..DisplayPoint::new(DisplayRow(3), 60)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1366,7 +1428,7 @@ mod tests {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+                [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
@@ -1377,7 +1439,9 @@ mod tests {
         // selects the last match.
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+                ])
             });
         });
         search_bar.update(cx, |search_bar, cx| {
@@ -1385,12 +1449,21 @@ mod tests {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
+                [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
         search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
+    }
+
+    fn display_points_of(
+        background_highlights: Vec<(Range<DisplayPoint>, Hsla)>,
+    ) -> Vec<Range<DisplayPoint>> {
+        background_highlights
+            .into_iter()
+            .map(|(range, _)| range)
+            .collect::<Vec<_>>()
     }
 
     #[gpui::test]
@@ -1405,16 +1478,10 @@ mod tests {
             })
             .await
             .unwrap();
-        let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
-            background_highlights
-                .into_iter()
-                .map(|(range, _)| range)
-                .collect::<Vec<_>>()
-        };
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
-                &[DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),]
+                &[DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),]
             );
         });
 
@@ -1439,7 +1506,7 @@ mod tests {
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
-                &[DisplayPoint::new(0, 35)..DisplayPoint::new(0, 40),]
+                &[DisplayPoint::new(DisplayRow(0), 35)..DisplayPoint::new(DisplayRow(0), 40),]
             );
         });
 
@@ -2021,14 +2088,155 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_find_matches_in_selections_singleton_buffer_multiple_selections(
+        cx: &mut TestAppContext,
+    ) {
+        init_globals(cx);
+        let buffer = cx.new_model(|cx| {
+            Buffer::local(
+                r#"
+                aaa bbb aaa ccc
+                aaa bbb aaa ccc
+                aaa bbb aaa ccc
+                aaa bbb aaa ccc
+                aaa bbb aaa ccc
+                aaa bbb aaa ccc
+                "#
+                .unindent(),
+                cx,
+            )
+        });
+        let cx = cx.add_empty_window();
+        let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
+
+        let search_bar = cx.new_view(|cx| {
+            let mut search_bar = BufferSearchBar::new(cx);
+            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(cx);
+            search_bar
+        });
+
+        editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges(vec![Point::new(1, 0)..Point::new(2, 4)])
+            })
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            let deploy = Deploy {
+                focus: true,
+                replace_enabled: false,
+                selection_search_enabled: true,
+            };
+            search_bar.deploy(&deploy, cx);
+        });
+
+        cx.run_until_parked();
+
+        search_bar
+            .update(cx, |search_bar, cx| search_bar.search("aaa", None, cx))
+            .await
+            .unwrap();
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.search_background_highlights(cx),
+                &[
+                    Point::new(1, 0)..Point::new(1, 3),
+                    Point::new(1, 8)..Point::new(1, 11),
+                    Point::new(2, 0)..Point::new(2, 3),
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_find_matches_in_selections_multiple_excerpts_buffer_multiple_selections(
+        cx: &mut TestAppContext,
+    ) {
+        init_globals(cx);
+        let text = r#"
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            aaa bbb aaa ccc
+            "#
+        .unindent();
+
+        let cx = cx.add_empty_window();
+        let editor = cx.new_view(|cx| {
+            let multibuffer = MultiBuffer::build_multi(
+                [
+                    (
+                        &text,
+                        vec![
+                            Point::new(0, 0)..Point::new(2, 0),
+                            Point::new(4, 0)..Point::new(5, 0),
+                        ],
+                    ),
+                    (&text, vec![Point::new(9, 0)..Point::new(11, 0)]),
+                ],
+                cx,
+            );
+            Editor::for_multibuffer(multibuffer, None, false, cx)
+        });
+
+        let search_bar = cx.new_view(|cx| {
+            let mut search_bar = BufferSearchBar::new(cx);
+            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(cx);
+            search_bar
+        });
+
+        editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges(vec![
+                    Point::new(1, 0)..Point::new(1, 4),
+                    Point::new(5, 3)..Point::new(6, 4),
+                ])
+            })
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            let deploy = Deploy {
+                focus: true,
+                replace_enabled: false,
+                selection_search_enabled: true,
+            };
+            search_bar.deploy(&deploy, cx);
+        });
+
+        cx.run_until_parked();
+
+        search_bar
+            .update(cx, |search_bar, cx| search_bar.search("aaa", None, cx))
+            .await
+            .unwrap();
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.search_background_highlights(cx),
+                &[
+                    Point::new(1, 0)..Point::new(1, 3),
+                    Point::new(5, 8)..Point::new(5, 11),
+                    Point::new(6, 0)..Point::new(6, 3),
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_invalid_regexp_search_after_valid(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
-        let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
-            background_highlights
-                .into_iter()
-                .map(|(range, _)| range)
-                .collect::<Vec<_>>()
-        };
         // Search using valid regexp
         search_bar
             .update(cx, |search_bar, cx| {
@@ -2041,8 +2249,8 @@ mod tests {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(cx)),
                 &[
-                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 20),
-                    DisplayPoint::new(1, 9)..DisplayPoint::new(1, 19),
+                    DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 20),
+                    DisplayPoint::new(DisplayRow(1), 9)..DisplayPoint::new(DisplayRow(1), 19),
                 ],
             );
         });

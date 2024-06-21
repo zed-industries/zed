@@ -1,6 +1,7 @@
 use client::Client;
 use futures::channel::oneshot;
 use gpui::App;
+use http::HttpClientWithUrl;
 use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticIndex};
@@ -9,7 +10,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::http::HttpClientWithUrl;
 
 fn main() {
     env_logger::init();
@@ -26,7 +26,7 @@ fn main() {
         });
 
         let clock = Arc::new(FakeSystemClock::default());
-        let http = Arc::new(HttpClientWithUrl::new("http://localhost:11434"));
+        let http = Arc::new(HttpClientWithUrl::new("http://localhost:11434", None));
 
         let client = client::Client::new(clock, http.clone(), cx);
         Client::set_global(client.clone(), cx);

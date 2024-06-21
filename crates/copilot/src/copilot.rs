@@ -12,6 +12,8 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
     ModelContext, Task, WeakModel,
 };
+use http::github::latest_github_release;
+use http::HttpClient;
 use language::{
     language_settings::{all_language_settings, language_settings, InlineCompletionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
@@ -31,9 +33,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{
-    fs::remove_matching, github::latest_github_release, http::HttpClient, maybe, paths, ResultExt,
-};
+use util::{fs::remove_matching, maybe, ResultExt};
 
 pub use copilot_completion_provider::CopilotCompletionProvider;
 pub use sign_in::CopilotCodeVerification;
@@ -393,7 +393,7 @@ impl Copilot {
             Default::default(),
             cx.to_async(),
         );
-        let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
+        let http = http::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = FakeNodeRuntime::new();
         let this = cx.new_model(|cx| Self {
             server_id: LanguageServerId(0),
@@ -968,7 +968,7 @@ fn uri_for_buffer(buffer: &Model<Buffer>, cx: &AppContext) -> lsp::Url {
 }
 
 async fn clear_copilot_dir() {
-    remove_matching(&paths::COPILOT_DIR, |_| true).await
+    remove_matching(paths::copilot_dir(), |_| true).await
 }
 
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
@@ -979,7 +979,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         let release =
             latest_github_release("zed-industries/copilot", true, false, http.clone()).await?;
 
-        let version_dir = &*paths::COPILOT_DIR.join(format!("copilot-{}", release.tag_name));
+        let version_dir = &paths::copilot_dir().join(format!("copilot-{}", release.tag_name));
 
         fs::create_dir_all(version_dir).await?;
         let server_path = version_dir.join(SERVER_PATH);
@@ -1003,7 +1003,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
             let archive = Archive::new(decompressed_bytes);
             archive.unpack(dist_dir).await?;
 
-            remove_matching(&paths::COPILOT_DIR, |entry| entry != version_dir).await;
+            remove_matching(paths::copilot_dir(), |entry| entry != version_dir).await;
         }
 
         Ok(server_path)
@@ -1016,7 +1016,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
             // Fetch a cached binary, if it exists
             maybe!(async {
                 let mut last_version_dir = None;
-                let mut entries = fs::read_dir(paths::COPILOT_DIR.as_path()).await?;
+                let mut entries = fs::read_dir(paths::copilot_dir()).await?;
                 while let Some(entry) = entries.next().await {
                     let entry = entry?;
                     if entry.file_type().await?.is_dir() {
@@ -1044,7 +1044,6 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use language::BufferId;
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
@@ -1256,17 +1255,6 @@ mod tests {
         }
 
         fn load(&self, _: &AppContext) -> Task<Result<String>> {
-            unimplemented!()
-        }
-
-        fn buffer_reloaded(
-            &self,
-            _: BufferId,
-            _: &clock::Global,
-            _: language::LineEnding,
-            _: Option<std::time::SystemTime>,
-            _: &mut AppContext,
-        ) {
             unimplemented!()
         }
     }

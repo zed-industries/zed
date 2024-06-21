@@ -62,6 +62,7 @@ pub struct ChannelStore {
     opened_buffers: HashMap<ChannelId, OpenedModelHandle<ChannelBuffer>>,
     opened_chats: HashMap<ChannelId, OpenedModelHandle<ChannelChat>>,
     client: Arc<Client>,
+    did_subscribe: bool,
     user_store: Model<UserStore>,
     _rpc_subscriptions: [Subscription; 2],
     _watch_connection_status: Task<Option<()>>,
@@ -123,6 +124,7 @@ impl Channel {
     }
 }
 
+#[derive(Debug)]
 pub struct ChannelMembership {
     pub user: Arc<User>,
     pub kind: proto::channel_member::Kind,
@@ -242,6 +244,20 @@ impl ChannelStore {
                 .log_err();
             }),
             channel_states: Default::default(),
+            did_subscribe: false,
+        }
+    }
+
+    pub fn initialize(&mut self) {
+        if !self.did_subscribe {
+            if self
+                .client
+                .send(proto::SubscribeToChannels {})
+                .log_err()
+                .is_some()
+            {
+                self.did_subscribe = true;
+            }
         }
     }
 
@@ -815,9 +831,11 @@ impl ChannelStore {
             Ok(())
         })
     }
-    pub fn get_channel_member_details(
+    pub fn fuzzy_search_members(
         &self,
         channel_id: ChannelId,
+        query: String,
+        limit: u16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ChannelMembership>>> {
         let client = self.client.clone();
@@ -826,26 +844,24 @@ impl ChannelStore {
             let response = client
                 .request(proto::GetChannelMembers {
                     channel_id: channel_id.0,
+                    query,
+                    limit: limit as u64,
                 })
                 .await?;
-
-            let user_ids = response.members.iter().map(|m| m.user_id).collect();
-            let user_store = user_store
-                .upgrade()
-                .ok_or_else(|| anyhow!("user store dropped"))?;
-            let users = user_store
-                .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))?
-                .await?;
-
-            Ok(users
-                .into_iter()
-                .zip(response.members)
-                .map(|(user, member)| ChannelMembership {
-                    user,
-                    role: member.role(),
-                    kind: member.kind(),
-                })
-                .collect())
+            user_store.update(&mut cx, |user_store, _| {
+                user_store.insert(response.users);
+                response
+                    .members
+                    .into_iter()
+                    .filter_map(|member| {
+                        Some(ChannelMembership {
+                            user: user_store.get_cached_user(member.user_id)?,
+                            role: member.role(),
+                            kind: member.kind(),
+                        })
+                    })
+                    .collect()
+            })
         })
     }
 
@@ -1034,7 +1050,7 @@ impl ChannelStore {
 
     fn handle_disconnect(&mut self, wait_for_reconnect: bool, cx: &mut ModelContext<Self>) {
         cx.notify();
-
+        self.did_subscribe = false;
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {
             cx.spawn(move |this, mut cx| async move {
                 if wait_for_reconnect {

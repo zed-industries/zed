@@ -40,6 +40,7 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                         start: text.to_string(),
                         end: text.to_string(),
                         close: true,
+                        surround: true,
                         newline: false,
                     },
                 };
@@ -227,6 +228,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                             start: text.to_string(),
                             end: text.to_string(),
                             close: true,
+                            surround: true,
                             newline: false,
                         },
                     };
@@ -388,54 +390,63 @@ fn all_support_surround_pair() -> Vec<BracketPair> {
             start: "{".into(),
             end: "}".into(),
             close: true,
+            surround: true,
             newline: false,
         },
         BracketPair {
             start: "'".into(),
             end: "'".into(),
             close: true,
+            surround: true,
             newline: false,
         },
         BracketPair {
             start: "`".into(),
             end: "`".into(),
             close: true,
+            surround: true,
             newline: false,
         },
         BracketPair {
             start: "\"".into(),
             end: "\"".into(),
             close: true,
+            surround: true,
             newline: false,
         },
         BracketPair {
             start: "(".into(),
             end: ")".into(),
             close: true,
+            surround: true,
             newline: false,
         },
         BracketPair {
             start: "|".into(),
             end: "|".into(),
             close: true,
+            surround: true,
             newline: false,
         },
         BracketPair {
             start: "[".into(),
             end: "]".into(),
             close: true,
+            surround: true,
             newline: false,
         },
         BracketPair {
             start: "{".into(),
             end: "}".into(),
             close: true,
+            surround: true,
             newline: false,
         },
         BracketPair {
             start: "<".into(),
             end: ">".into(),
             close: true,
+            surround: true,
             newline: false,
         },
     ];
@@ -461,48 +472,56 @@ fn object_to_bracket_pair(object: Object) -> Option<BracketPair> {
             start: "'".to_string(),
             end: "'".to_string(),
             close: true,
+            surround: true,
             newline: false,
         }),
         Object::BackQuotes => Some(BracketPair {
             start: "`".to_string(),
             end: "`".to_string(),
             close: true,
+            surround: true,
             newline: false,
         }),
         Object::DoubleQuotes => Some(BracketPair {
             start: "\"".to_string(),
             end: "\"".to_string(),
             close: true,
+            surround: true,
             newline: false,
         }),
         Object::VerticalBars => Some(BracketPair {
             start: "|".to_string(),
             end: "|".to_string(),
             close: true,
+            surround: true,
             newline: false,
         }),
         Object::Parentheses => Some(BracketPair {
             start: "(".to_string(),
             end: ")".to_string(),
             close: true,
+            surround: true,
             newline: false,
         }),
         Object::SquareBrackets => Some(BracketPair {
             start: "[".to_string(),
             end: "]".to_string(),
             close: true,
+            surround: true,
             newline: false,
         }),
         Object::CurlyBrackets => Some(BracketPair {
             start: "{".to_string(),
             end: "}".to_string(),
             close: true,
+            surround: true,
             newline: false,
         }),
         Object::AngleBrackets => Some(BracketPair {
             start: "<".to_string(),
             end: ">".to_string(),
             close: true,
+            surround: true,
             newline: false,
         }),
         _ => None,
@@ -527,7 +546,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "i", "w", "{"]);
+        cx.simulate_keystrokes("y s i w {");
         cx.assert_state(
             indoc! {"
             The ˇ{ quick } brown
@@ -544,7 +563,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "i", "w", "}"]);
+        cx.simulate_keystrokes("y s i w }");
         cx.assert_state(
             indoc! {"
             The ˇ{quick} brown
@@ -561,7 +580,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "$", "}"]);
+        cx.simulate_keystrokes("y s $ }");
         cx.assert_state(
             indoc! {"
             The quˇ{ick brown}
@@ -578,7 +597,7 @@ mod test {
             the laˇzy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "i", "w", "'"]);
+        cx.simulate_keystrokes("y s i w '");
         cx.assert_state(
             indoc! {"
             The ˇ'quick' brown
@@ -595,7 +614,7 @@ mod test {
             the laˇzy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "$", "'"]);
+        cx.simulate_keystrokes("y s $ '");
         cx.assert_state(
             indoc! {"
             The quˇ'ick brown'
@@ -612,7 +631,7 @@ mod test {
             the laˇzy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "$", "1"]);
+        cx.simulate_keystrokes("y s $ 1");
         cx.assert_state(
             indoc! {"
             The quˇ1ick brown1
@@ -629,7 +648,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "s", "{"]);
+        cx.simulate_keystrokes("y s s {");
         cx.assert_state(
             indoc! {"
             ˇ{ The quick brown }
@@ -645,7 +664,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "s", "{"]);
+        cx.simulate_keystrokes("y s s {");
         cx.assert_state(
             indoc! {"
                 ˇ{ The quick brown }•
@@ -653,7 +672,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["2", "y", "s", "s", ")"]);
+        cx.simulate_keystrokes("2 y s s )");
         cx.assert_state(
             indoc! {"
                 ˇ({ The quick brown }•
@@ -675,7 +694,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.simulate_keystrokes("d s {");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -692,7 +711,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "["]);
+        cx.simulate_keystrokes("d s [");
         cx.assert_state(
             indoc! {"
             The {quˇick} brown
@@ -710,7 +729,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.simulate_keystrokes("d s {");
         cx.assert_state(
             indoc! {"
             The {quick} brˇown
@@ -727,7 +746,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.simulate_keystrokes("d s {");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -744,7 +763,7 @@ mod test {
             the [laˇzy] dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "]"]);
+        cx.simulate_keystrokes("d s ]");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -761,7 +780,7 @@ mod test {
             the [laˇzy] dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "["]);
+        cx.simulate_keystrokes("d s [");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -777,7 +796,7 @@ mod test {
             the [laˇzy ] dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "["]);
+        cx.simulate_keystrokes("d s [");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -796,7 +815,7 @@ mod test {
             the {laˇzy} dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.simulate_keystrokes("d s {");
         cx.assert_state(
             indoc! {"
             The [quick] brown
@@ -815,7 +834,7 @@ mod test {
             }"},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "}"]);
+        cx.simulate_keystrokes("d s }");
         cx.assert_state(
             indoc! {"
             fn test_surround() ˇ
@@ -838,7 +857,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "{", "["]);
+        cx.simulate_keystrokes("c s { [");
         cx.assert_state(
             indoc! {"
             The ˇ[ quick ] brown
@@ -855,7 +874,7 @@ mod test {
             the {laˇzy} dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "{", "["]);
+        cx.simulate_keystrokes("c s { [");
         cx.assert_state(
             indoc! {"
             The ˇ[ quick ] brown
@@ -872,7 +891,7 @@ mod test {
             the {laˇzy} dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "{", "["]);
+        cx.simulate_keystrokes("c s { [");
         cx.assert_state(
             indoc! {"
             The ˇ[ quick ] brown
@@ -889,7 +908,7 @@ mod test {
             the {laˇzy} dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "{", "]"]);
+        cx.simulate_keystrokes("c s { ]");
         cx.assert_state(
             indoc! {"
             The ˇ[quick] brown
@@ -906,7 +925,7 @@ mod test {
             the [laˇzy] dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "[", "'"]);
+        cx.simulate_keystrokes("c s [ '");
         cx.assert_state(
             indoc! {"
             The {quick} brown
@@ -925,7 +944,7 @@ mod test {
             };"},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["c", "s", "{", "["]);
+        cx.simulate_keystrokes("c s { [");
         cx.assert_state(
             indoc! {"
             fn test_surround() ˇ[
@@ -948,7 +967,7 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["y", "s", "i", "w", "["]);
+        cx.simulate_keystrokes("y s i w [");
         cx.assert_state(
             indoc! {"
             The ˇ[ quick ] brown
@@ -957,7 +976,7 @@ mod test {
             Mode::Normal,
         );
 
-        cx.simulate_keystrokes(["c", "s", "[", "}"]);
+        cx.simulate_keystrokes("c s [ }");
         cx.assert_state(
             indoc! {"
             The ˇ{quick} brown
@@ -966,7 +985,7 @@ mod test {
             Mode::Normal,
         );
 
-        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.simulate_keystrokes("d s {");
         cx.assert_state(
             indoc! {"
             The ˇquick brown
@@ -975,7 +994,7 @@ mod test {
             Mode::Normal,
         );
 
-        cx.simulate_keystrokes(["u"]);
+        cx.simulate_keystrokes("u");
         cx.assert_state(
             indoc! {"
             The ˇ{quick} brown

@@ -1,5 +1,6 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
+use gpui::action_as;
 use util::serde::default_true;
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -41,7 +42,7 @@ pub struct MovePageDown {
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct MoveToEndOfLine {
     #[serde(default = "default_true")]
-    pub(super) stop_at_soft_wraps: bool,
+    pub stop_at_soft_wraps: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -54,7 +55,7 @@ pub struct SelectToEndOfLine {
 pub struct ToggleCodeActions {
     // Display row from which the action was deployed.
     #[serde(default)]
-    pub deployed_from_indicator: Option<u32>,
+    pub deployed_from_indicator: Option<DisplayRow>,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -77,12 +78,12 @@ pub struct ToggleComments {
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct FoldAt {
-    pub buffer_row: u32,
+    pub buffer_row: MultiBufferRow,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct UnfoldAt {
-    pub buffer_row: u32,
+    pub buffer_row: MultiBufferRow,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -114,12 +115,31 @@ pub struct ExpandExcerpts {
     pub(super) lines: u32,
 }
 
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ExpandExcerptsUp {
+    #[serde(default)]
+    pub(super) lines: u32,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ExpandExcerptsDown {
+    #[serde(default)]
+    pub(super) lines: u32,
+}
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ShowCompletions {
+    #[serde(default)]
+    pub(super) trigger: Option<char>,
+}
+
 impl_actions!(
     editor,
     [
         ConfirmCodeAction,
         ConfirmCompletion,
         ExpandExcerpts,
+        ExpandExcerptsUp,
+        ExpandExcerptsDown,
         FoldAt,
         MoveDownByLines,
         MovePageDown,
@@ -133,6 +153,7 @@ impl_actions!(
         SelectToBeginningOfLine,
         SelectToEndOfLine,
         SelectUpByLines,
+        ShowCompletions,
         ToggleCodeActions,
         ToggleComments,
         UnfoldAt,
@@ -143,11 +164,13 @@ gpui::actions!(
     editor,
     [
         AcceptPartialCopilotSuggestion,
+        AcceptInlineCompletion,
         AcceptPartialInlineCompletion,
         AddSelectionAbove,
         AddSelectionBelow,
         Backspace,
         Cancel,
+        CancelLanguageServerWork,
         ConfirmRename,
         ContextMenuFirst,
         ContextMenuLast,
@@ -258,8 +281,9 @@ gpui::actions!(
         SelectToPreviousWordStart,
         SelectToStartOfParagraph,
         SelectUp,
+        SelectPageDown,
+        SelectPageUp,
         ShowCharacterPalette,
-        ShowCompletions,
         ShowInlineCompletion,
         ShuffleLines,
         SortLinesCaseInsensitive,
@@ -269,10 +293,13 @@ gpui::actions!(
         TabPrev,
         ToggleGitBlame,
         ToggleGitBlameInline,
+        ToggleSelectionMenu,
         ToggleHunkDiff,
         ToggleInlayHints,
         ToggleLineNumbers,
+        ToggleIndentGuides,
         ToggleSoftWrap,
+        ToggleTabBar,
         Transpose,
         Undo,
         UndoSelection,
@@ -281,3 +308,7 @@ gpui::actions!(
         UniqueLinesCaseSensitive,
     ]
 );
+
+action_as!(outline, ToggleOutline as Toggle);
+
+action_as!(go_to_line, ToggleGoToLine as Toggle);

@@ -14,7 +14,8 @@ use util::post_inc;
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
-    Anchor, DisplayPoint, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode, ToOffset,
+    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
+    ToOffset,
 };
 
 #[derive(Debug, Clone)]
@@ -255,7 +256,10 @@ impl SelectionsCollection {
     }
 
     pub fn first_anchor(&self) -> Selection<Anchor> {
-        self.disjoint[0].clone()
+        self.pending
+            .as_ref()
+            .map(|pending| pending.selection.clone())
+            .unwrap_or_else(|| self.disjoint.first().cloned().unwrap())
     }
 
     pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(
@@ -270,6 +274,13 @@ impl SelectionsCollection {
         cx: &AppContext,
     ) -> Selection<D> {
         self.all(cx).last().unwrap().clone()
+    }
+
+    pub fn disjoint_anchor_ranges(&self) -> Vec<Range<Anchor>> {
+        self.disjoint_anchors()
+            .iter()
+            .map(|s| s.start..s.end)
+            .collect()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -308,7 +319,7 @@ impl SelectionsCollection {
     pub fn build_columnar_selection(
         &mut self,
         display_map: &DisplaySnapshot,
-        row: u32,
+        row: DisplayRow,
         positions: &Range<Pixels>,
         reversed: bool,
         text_layout_details: &TextLayoutDetails,

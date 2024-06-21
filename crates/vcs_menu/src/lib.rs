@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Context, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
@@ -21,7 +21,7 @@ actions!(branches, [OpenRecent]);
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, action, cx| {
-            BranchList::toggle_modal(workspace, action, cx).log_err();
+            BranchList::open(workspace, action, cx).log_err();
         });
     })
     .detach();
@@ -43,7 +43,7 @@ impl BranchList {
             _subscription,
         }
     }
-    fn toggle_modal(
+    pub fn open(
         workspace: &mut Workspace,
         _: &OpenRecent,
         cx: &mut ViewContext<Workspace>,
@@ -77,16 +77,6 @@ impl Render for BranchList {
     }
 }
 
-pub fn build_branch_list(
-    workspace: View<Workspace>,
-    cx: &mut WindowContext<'_>,
-) -> Result<View<BranchList>> {
-    let delegate = workspace.update(cx, |workspace, cx| {
-        BranchListDelegate::new(workspace, cx.view().clone(), 29, cx)
-    })?;
-    Ok(cx.new_view(move |cx| BranchList::new(delegate, 20., cx)))
-}
-
 pub struct BranchListDelegate {
     matches: Vec<StringMatch>,
     all_branches: Vec<Branch>,
@@ -105,16 +95,11 @@ impl BranchListDelegate {
         cx: &AppContext,
     ) -> Result<Self> {
         let project = workspace.project().read(&cx);
-        let Some(worktree) = project.visible_worktrees(cx).next() else {
-            bail!("Cannot update branch list as there are no visible worktrees")
-        };
+        let repo = project
+            .get_first_worktree_root_repo(cx)
+            .context("failed to get root repository for first worktree")?;
 
-        let mut cwd = worktree.read(cx).abs_path().to_path_buf();
-        cwd.push(".git");
-        let Some(repo) = project.fs().open_repo(&cwd) else {
-            bail!("Project does not have associated git repository.")
-        };
-        let all_branches = repo.lock().branches()?;
+        let all_branches = repo.branches()?;
         Ok(Self {
             matches: vec![],
             workspace: handle,
@@ -238,24 +223,10 @@ impl PickerDelegate for BranchListDelegate {
             picker
                 .update(&mut cx, |this, cx| {
                     let project = this.delegate.workspace.read(cx).project().read(cx);
-                    let mut cwd = project
-                        .visible_worktrees(cx)
-                        .next()
-                        .ok_or_else(|| anyhow!("There are no visisible worktrees."))?
-                        .read(cx)
-                        .abs_path()
-                        .to_path_buf();
-                    cwd.push(".git");
-                    let status = project
-                        .fs()
-                        .open_repo(&cwd)
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "Could not open repository at path `{}`",
-                                cwd.as_os_str().to_string_lossy()
-                            )
-                        })?
-                        .lock()
+                    let repo = project
+                        .get_first_worktree_root_repo(cx)
+                        .context("failed to get root repository for first worktree")?;
+                    let status = repo
                         .change_branch(&current_pick);
                     if status.is_err() {
                         this.delegate.display_error_toast(format!("Failed to checkout branch '{current_pick}', check for conflicts or unstashed files"), cx);
@@ -311,7 +282,6 @@ impl PickerDelegate for BranchListDelegate {
             });
             h_flex()
                 .px_3()
-                .h_full()
                 .justify_between()
                 .child(Label::new("Branches").size(LabelSize::Small))
                 .children(match_label)
@@ -331,20 +301,9 @@ impl PickerDelegate for BranchListDelegate {
                                         picker.update(&mut cx, |this, cx| {
                                             let project = this.delegate.workspace.read(cx).project().read(cx);
                                             let current_pick = &this.delegate.last_query;
-                                            let mut cwd = project
-                                            .visible_worktrees(cx)
-                                            .next()
-                                            .ok_or_else(|| anyhow!("There are no visisible worktrees."))?
-                                            .read(cx)
-                                            .abs_path()
-                                            .to_path_buf();
-                                            cwd.push(".git");
                                             let repo = project
-                                                .fs()
-                                                .open_repo(&cwd)
-                                                .ok_or_else(|| anyhow!("Could not open repository at path `{}`", cwd.as_os_str().to_string_lossy()))?;
-                                            let repo = repo
-                                                .lock();
+                                                .get_first_worktree_root_repo(cx)
+                                                .context("failed to get root repository for first worktree")?;
                                             let status = repo
                                                 .create_branch(&current_pick);
                                             if status.is_err() {

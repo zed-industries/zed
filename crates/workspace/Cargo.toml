@@ -13,9 +13,11 @@ path = "src/workspace.rs"
 doctest = false
 
 [features]
+no-webrtc = ["call/no-webrtc"]
 test-support = [
     "call/test-support",
     "client/test-support",
+    "http/test-support",
     "db/test-support",
     "project/test-support",
     "settings/test-support",
@@ -37,6 +39,7 @@ derive_more.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http.workspace = true
 itertools.workspace = true
 language.workspace = true
 lazy_static.workspace = true
@@ -67,3 +70,4 @@ fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+http =  { workspace = true, features = ["test-support"] }

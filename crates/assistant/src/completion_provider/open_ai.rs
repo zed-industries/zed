@@ -1,45 +1,63 @@
+use crate::assistant_settings::CloudModel;
 use crate::{
     assistant_settings::OpenAiModel, CompletionProvider, LanguageModel, LanguageModelRequest, Role,
 };
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, FontStyle, FontWeight, Task, TextStyle, View, WhiteSpace};
+use gpui::{AnyView, AppContext, FontStyle, Task, TextStyle, View, WhiteSpace};
+use http::HttpClient;
 use open_ai::{stream_completion, Request, RequestMessage, Role as OpenAiRole};
 use settings::Settings;
+use std::time::Duration;
 use std::{env, sync::Arc};
+use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::prelude::*;
-use util::{http::HttpClient, ResultExt};
+use util::ResultExt;
 
 pub struct OpenAiCompletionProvider {
     api_key: Option<String>,
     api_url: String,
-    default_model: OpenAiModel,
+    model: OpenAiModel,
     http_client: Arc<dyn HttpClient>,
+    low_speed_timeout: Option<Duration>,
     settings_version: usize,
 }
 
 impl OpenAiCompletionProvider {
     pub fn new(
-        default_model: OpenAiModel,
+        model: OpenAiModel,
         api_url: String,
         http_client: Arc<dyn HttpClient>,
+        low_speed_timeout: Option<Duration>,
         settings_version: usize,
     ) -> Self {
         Self {
             api_key: None,
             api_url,
-            default_model,
+            model,
             http_client,
+            low_speed_timeout,
             settings_version,
         }
     }
 
-    pub fn update(&mut self, default_model: OpenAiModel, api_url: String, settings_version: usize) {
-        self.default_model = default_model;
+    pub fn update(
+        &mut self,
+        model: OpenAiModel,
+        api_url: String,
+        low_speed_timeout: Option<Duration>,
+        settings_version: usize,
+    ) {
+        self.model = model;
         self.api_url = api_url;
+        self.low_speed_timeout = low_speed_timeout;
         self.settings_version = settings_version;
+    }
+
+    pub fn available_models(&self) -> impl Iterator<Item = OpenAiModel> {
+        OpenAiModel::iter()
     }
 
     pub fn settings_version(&self) -> usize {
@@ -91,8 +109,8 @@ impl OpenAiCompletionProvider {
             .into()
     }
 
-    pub fn default_model(&self) -> OpenAiModel {
-        self.default_model.clone()
+    pub fn model(&self) -> OpenAiModel {
+        self.model.clone()
     }
 
     pub fn count_tokens(
@@ -112,9 +130,16 @@ impl OpenAiCompletionProvider {
         let http_client = self.http_client.clone();
         let api_key = self.api_key.clone();
         let api_url = self.api_url.clone();
+        let low_speed_timeout = self.low_speed_timeout;
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                low_speed_timeout,
+            );
             let response = request.await?;
             let stream = response
                 .filter_map(|response| async move {
@@ -131,8 +156,8 @@ impl OpenAiCompletionProvider {
 
     fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
         let model = match request.model {
-            LanguageModel::ZedDotDev(_) => self.default_model(),
             LanguageModel::OpenAi(model) => model,
+            _ => self.model(),
         };
 
         Request {
@@ -183,7 +208,17 @@ pub fn count_open_ai_tokens(
                 })
                 .collect::<Vec<_>>();
 
-            tiktoken_rs::num_tokens_from_messages(request.model.id(), &messages)
+            match request.model {
+                LanguageModel::Anthropic(_)
+                | LanguageModel::Cloud(CloudModel::Claude3Opus)
+                | LanguageModel::Cloud(CloudModel::Claude3Sonnet)
+                | LanguageModel::Cloud(CloudModel::Claude3Haiku) => {
+                    // Tiktoken doesn't yet support these models, so we manually use the
+                    // same tokenizer as GPT-4.
+                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+                }
+                _ => tiktoken_rs::num_tokens_from_messages(request.model.id(), &messages),
+            }
         })
         .boxed()
 }
@@ -243,7 +278,7 @@ impl AuthenticationPrompt {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,
@@ -301,7 +336,7 @@ impl Render for AuthenticationPrompt {
                 h_flex()
                     .gap_2()
                     .child(Label::new("Click on").size(LabelSize::Small))
-                    .child(Icon::new(IconName::Ai).size(IconSize::XSmall))
+                    .child(Icon::new(IconName::ZedAssistant).size(IconSize::XSmall))
                     .child(
                         Label::new("in the status bar to close this panel.").size(LabelSize::Small),
                     ),

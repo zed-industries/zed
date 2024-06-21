@@ -46,10 +46,13 @@ use std::{
 };
 use util::post_inc;
 use util::{measure, ResultExt};
+use uuid::Uuid;
 
 mod prompts;
 
 pub use prompts::*;
+
+pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1024.), px(700.));
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -82,11 +85,18 @@ impl DispatchPhase {
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 
-type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
+type AnyWindowFocusListener =
+    Box<dyn FnMut(&WindowFocusEvent, &mut WindowContext) -> bool + 'static>;
 
-struct FocusEvent {
+struct WindowFocusEvent {
     previous_focus_path: SmallVec<[FocusId; 8]>,
     current_focus_path: SmallVec<[FocusId; 8]>,
+}
+
+/// This is provided when subscribing for `ViewContext::on_focus_out` events.
+pub struct FocusOutEvent {
+    /// A weak focus handle representing what was blurred.
+    pub blurred: WeakFocusHandle,
 }
 
 slotmap::new_key_type! {
@@ -199,6 +209,18 @@ impl FocusHandle {
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
     pub fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
         self.id.contains(other.id, cx)
+    }
+
+    /// Dispatch an action on the element that rendered this focus handle
+    pub fn dispatch_action(&self, action: &dyn Action, cx: &mut WindowContext) {
+        if let Some(node_id) = cx
+            .window
+            .rendered_frame
+            .dispatch_tree
+            .focusable_node_id(self.id)
+        {
+            cx.dispatch_action_on_node(node_id, action)
+        }
     }
 }
 
@@ -472,10 +494,15 @@ pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
-    display_id: DisplayId,
+    display_id: Option<DisplayId>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
-    pub(crate) rem_size: Pixels,
+    rem_size: Pixels,
+    /// The stack of override values for the window's rem size.
+    ///
+    /// This is used by `with_rem_size` to allow rendering an element tree with
+    /// a given rem size.
+    rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
@@ -512,6 +539,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
 }
 
@@ -560,9 +588,8 @@ pub(crate) struct ElementStateBox {
     pub(crate) type_name: &'static str,
 }
 
-fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<DevicePixels> {
-    const DEFAULT_WINDOW_SIZE: Size<DevicePixels> = size(DevicePixels(1024), DevicePixels(700));
-    const DEFAULT_WINDOW_OFFSET: Point<DevicePixels> = point(DevicePixels(0), DevicePixels(35));
+fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<Pixels> {
+    const DEFAULT_WINDOW_OFFSET: Point<Pixels> = point(px(0.), px(35.));
 
     cx.active_window()
         .and_then(|w| w.update(cx, |_, cx| cx.bounds()).ok())
@@ -573,15 +600,8 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
                 .unwrap_or_else(|| cx.primary_display());
 
             display
-                .map(|display| {
-                    let center = display.bounds().center();
-                    let offset = DEFAULT_WINDOW_SIZE / 2;
-                    let origin = point(center.x - offset.width, center.y - offset.height);
-                    Bounds::new(origin, DEFAULT_WINDOW_SIZE)
-                })
-                .unwrap_or_else(|| {
-                    Bounds::new(point(DevicePixels(0), DevicePixels(0)), DEFAULT_WINDOW_SIZE)
-                })
+                .map(|display| display.default_bounds())
+                .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE))
         })
 }
 
@@ -590,7 +610,7 @@ impl Window {
         handle: AnyWindowHandle,
         options: WindowOptions,
         cx: &mut AppContext,
-    ) -> Self {
+    ) -> Result<Self> {
         let WindowOptions {
             window_bounds,
             titlebar,
@@ -618,8 +638,8 @@ impl Window {
                 display_id,
                 window_background,
             },
-        );
-        let display_id = platform_window.display().id();
+        )?;
+        let display_id = platform_window.display().map(|display| display.id());
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
@@ -746,7 +766,7 @@ impl Window {
             platform_window.set_app_id(&app_id);
         }
 
-        Window {
+        Ok(Window {
             handle,
             removed: false,
             platform_window,
@@ -754,6 +774,7 @@ impl Window {
             sprite_atlas,
             text_system,
             rem_size: px(16.),
+            rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
@@ -790,8 +811,9 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            pending_input_observers: SubscriberSet::new(),
             prompt: None,
-        }
+        })
     }
     fn new_focus_listener(
         &mut self,
@@ -1023,6 +1045,37 @@ impl<'a> WindowContext<'a> {
     /// Subscribe to events emitted by a model or view.
     /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
     /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
+    pub fn observe<E, T>(
+        &mut self,
+        entity: &E,
+        mut on_notify: impl FnMut(E, &mut WindowContext<'_>) + 'static,
+    ) -> Subscription
+    where
+        E: Entity<T>,
+    {
+        let entity_id = entity.entity_id();
+        let entity = entity.downgrade();
+        let window_handle = self.window.handle;
+        self.app.new_observer(
+            entity_id,
+            Box::new(move |cx| {
+                window_handle
+                    .update(cx, |_, cx| {
+                        if let Some(handle) = E::upgrade_from(&entity) {
+                            on_notify(handle, cx);
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false)
+            }),
+        )
+    }
+
+    /// Subscribe to events emitted by a model or view.
+    /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
+    /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
     pub fn subscribe<Emitter, E, Evt>(
         &mut self,
         entity: &E,
@@ -1083,7 +1136,12 @@ impl<'a> WindowContext<'a> {
     fn bounds_changed(&mut self) {
         self.window.scale_factor = self.window.platform_window.scale_factor();
         self.window.viewport_size = self.window.platform_window.content_size();
-        self.window.display_id = self.window.platform_window.display().id();
+        self.window.display_id = self
+            .window
+            .platform_window
+            .display()
+            .map(|display| display.id());
+
         self.refresh();
 
         self.window
@@ -1093,7 +1151,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
-    pub fn bounds(&self) -> Bounds<DevicePixels> {
+    pub fn bounds(&self) -> Bounds<Pixels> {
         self.window.platform_window.bounds()
     }
 
@@ -1102,7 +1160,7 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_fullscreen()
     }
 
-    fn appearance_changed(&mut self) {
+    pub(crate) fn appearance_changed(&mut self) {
         self.window.appearance = self.window.platform_window.appearance();
 
         self.window
@@ -1129,6 +1187,23 @@ impl<'a> WindowContext<'a> {
     /// Toggle zoom on the window.
     pub fn zoom_window(&self) {
         self.window.platform_window.zoom();
+    }
+
+    /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
+    pub fn show_window_menu(&self, position: Point<Pixels>) {
+        self.window.platform_window.show_window_menu(position)
+    }
+
+    /// Tells the compositor to take control of window movement (Wayland and X11)
+    ///
+    /// Events may not be received during a move operation.
+    pub fn start_system_move(&self) {
+        self.window.platform_window.start_system_move()
+    }
+
+    /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
+    pub fn should_render_window_controls(&self) -> bool {
+        self.window.platform_window.should_render_window_controls()
     }
 
     /// Updates the window's title at the platform level.
@@ -1158,7 +1233,7 @@ impl<'a> WindowContext<'a> {
         self.platform
             .displays()
             .into_iter()
-            .find(|display| display.id() == self.window.display_id)
+            .find(|display| Some(display.id()) == self.window.display_id)
     }
 
     /// Show the platform character palette.
@@ -1176,13 +1251,42 @@ impl<'a> WindowContext<'a> {
     /// The size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn rem_size(&self) -> Pixels {
-        self.window.rem_size
+        self.window
+            .rem_size_override_stack
+            .last()
+            .copied()
+            .unwrap_or(self.window.rem_size)
     }
 
     /// Sets the size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
         self.window.rem_size = rem_size.into();
+    }
+
+    /// Executes the provided function with the specified rem size.
+    ///
+    /// This method must only be called as part of element drawing.
+    pub fn with_rem_size<F, R>(&mut self, rem_size: Option<impl Into<Pixels>>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during request_layout, prepaint, or paint"
+        );
+
+        if let Some(rem_size) = rem_size {
+            self.window.rem_size_override_stack.push(rem_size.into());
+            let result = f(self);
+            self.window.rem_size_override_stack.pop();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// The line height associated with the current text style.
@@ -1302,7 +1406,7 @@ impl<'a> WindowContext<'a> {
                     .retain(&(), |listener| listener(self));
             }
 
-            let event = FocusEvent {
+            let event = WindowFocusEvent {
                 previous_focus_path: if previous_window_active {
                     previous_focus_path
                 } else {
@@ -2285,13 +2389,14 @@ impl<'a> WindowContext<'a> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let tile =
-                self.window
-                    .sprite_atlas
-                    .get_or_insert_with(&params.clone().into(), &mut || {
-                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                        Ok((size, Cow::Owned(bytes)))
-                    })?;
+            let tile = self
+                .window
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                    Ok(Some((size, Cow::Owned(bytes))))
+                })?
+                .expect("Callback above only errors or returns Some");
             let bounds = Bounds {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
@@ -2348,13 +2453,15 @@ impl<'a> WindowContext<'a> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let tile =
-                self.window
-                    .sprite_atlas
-                    .get_or_insert_with(&params.clone().into(), &mut || {
-                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                        Ok((size, Cow::Owned(bytes)))
-                    })?;
+            let tile = self
+                .window
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                    Ok(Some((size, Cow::Owned(bytes))))
+                })?
+                .expect("Callback above only errors or returns Some");
+
             let bounds = Bounds {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
@@ -2402,13 +2509,18 @@ impl<'a> WindowContext<'a> {
                 .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
         };
 
-        let tile =
+        let Some(tile) =
             self.window
                 .sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
-                    let bytes = self.svg_renderer.render(&params)?;
-                    Ok((params.size, Cow::Owned(bytes)))
-                })?;
+                    let Some(bytes) = self.svg_renderer.render(&params)? else {
+                        return Ok(None);
+                    };
+                    Ok(Some((params.size, Cow::Owned(bytes))))
+                })?
+        else {
+            return Ok(());
+        };
         let content_mask = self.content_mask().scale(scale_factor);
 
         self.window
@@ -2451,8 +2563,9 @@ impl<'a> WindowContext<'a> {
             .window
             .sprite_atlas
             .get_or_insert_with(&params.clone().into(), &mut || {
-                Ok((data.size(), Cow::Borrowed(data.as_bytes())))
-            })?;
+                Ok(Some((data.size(), Cow::Borrowed(data.as_bytes()))))
+            })?
+            .expect("Callback above only returns Some");
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
 
@@ -3017,16 +3130,20 @@ impl<'a> WindowContext<'a> {
                         let Some(currently_pending) = cx.window.pending_input.take() else {
                             return;
                         };
-                        cx.replay_pending_input(currently_pending)
+                        cx.pending_input_changed();
+                        cx.replay_pending_input(currently_pending);
                     })
                     .log_err();
                 }));
 
                 self.window.pending_input = Some(currently_pending);
+                self.pending_input_changed();
 
                 self.propagate_event = false;
+
                 return;
             } else if let Some(currently_pending) = self.window.pending_input.take() {
+                self.pending_input_changed();
                 if bindings
                     .iter()
                     .all(|binding| !currently_pending.used_by_binding(binding))
@@ -3060,6 +3177,13 @@ impl<'a> WindowContext<'a> {
         }
 
         self.dispatch_keystroke_observers(event, None);
+    }
+
+    fn pending_input_changed(&mut self) {
+        self.window
+            .pending_input_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
     }
 
     fn dispatch_key_down_up_event(
@@ -3117,6 +3241,14 @@ impl<'a> WindowContext<'a> {
             .rendered_frame
             .dispatch_tree
             .has_pending_keystrokes()
+    }
+
+    /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
+    pub fn pending_input_keystrokes(&self) -> Option<&[Keystroke]> {
+        self.window
+            .pending_input
+            .as_ref()
+            .map(|pending_input| pending_input.keystrokes.as_slice())
     }
 
     fn replay_pending_input(&mut self, currently_pending: PendingInput) {
@@ -3926,6 +4058,20 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
+    /// Register a callback to be invoked when the window's pending input changes.
+    pub fn observe_pending_input(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let (subscription, activate) = self.window.pending_input_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        );
+        activate();
+        subscription
+    }
+
     /// Register a listener to be called when the given focus handle receives focus.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus(
@@ -3951,6 +4097,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
+    /// This does not fire if the given focus handle - or one of its descendants - was previously focused.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus_in(
         &mut self,
@@ -4020,17 +4167,25 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn on_focus_out(
         &mut self,
         handle: &FocusHandle,
-        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+        mut listener: impl FnMut(&mut V, FocusOutEvent, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
         let (subscription, activate) =
             self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if event.previous_focus_path.contains(&focus_id)
-                        && !event.current_focus_path.contains(&focus_id)
-                    {
-                        listener(view, cx)
+                    if let Some(blurred_id) = event.previous_focus_path.last().copied() {
+                        if event.previous_focus_path.contains(&focus_id)
+                            && !event.current_focus_path.contains(&focus_id)
+                        {
+                            let event = FocusOutEvent {
+                                blurred: WeakFocusHandle {
+                                    id: blurred_id,
+                                    handles: Arc::downgrade(&cx.window.focus_handles),
+                                },
+                            };
+                            listener(view, event, cx)
+                        }
                     }
                 })
                 .is_ok()
@@ -4089,7 +4244,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             });
     }
 
-    /// Emit an event to be handled any other views that have subscribed via [ViewContext::subscribe].
+    /// Emit an event to be handled by any other views that have subscribed via [ViewContext::subscribe].
     pub fn emit<Evt>(&mut self, event: Evt)
     where
         Evt: 'static,
@@ -4382,6 +4537,9 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
     }
 }
 
+unsafe impl<V> Send for WindowHandle<V> {}
+unsafe impl<V> Sync for WindowHandle<V> {}
+
 /// A handle to a window with any root view type, which can be downcast to a window with a specific root view type.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct AnyWindowHandle {
@@ -4450,6 +4608,8 @@ pub enum ElementId {
     Integer(usize),
     /// A string based ID.
     Name(SharedString),
+    /// A UUID.
+    Uuid(Uuid),
     /// An ID that's equated with a focus handle.
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
@@ -4464,6 +4624,7 @@ impl Display for ElementId {
             ElementId::Name(name) => write!(f, "{}", name)?,
             ElementId::FocusHandle(_) => write!(f, "FocusHandle")?,
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
+            ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
         }
 
         Ok(())
@@ -4526,6 +4687,18 @@ impl From<(&'static str, usize)> for ElementId {
 
 impl From<(&'static str, u64)> for ElementId {
     fn from((name, id): (&'static str, u64)) -> Self {
+        ElementId::NamedInteger(name.into(), id as usize)
+    }
+}
+
+impl From<Uuid> for ElementId {
+    fn from(value: Uuid) -> Self {
+        Self::Uuid(value)
+    }
+}
+
+impl From<(&'static str, u32)> for ElementId {
+    fn from((name, id): (&'static str, u32)) -> Self {
         ElementId::NamedInteger(name.into(), id as usize)
     }
 }

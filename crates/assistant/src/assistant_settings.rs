@@ -1,6 +1,8 @@
 use std::fmt;
 
+pub use anthropic::Model as AnthropicModel;
 use gpui::Pixels;
+pub use ollama::Model as OllamaModel;
 pub use open_ai::Model as OpenAiModel;
 use schemars::{
     schema::{InstanceType, Metadata, Schema, SchemaObject},
@@ -11,20 +13,24 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use settings::{Settings, SettingsSources};
+use strum::{EnumIter, IntoEnumIterator};
 
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum ZedDotDevModel {
+use crate::{preprocess_anthropic_request, LanguageModel, LanguageModelRequest};
+
+#[derive(Clone, Debug, Default, PartialEq, EnumIter)]
+pub enum CloudModel {
     Gpt3Point5Turbo,
     Gpt4,
-    #[default]
     Gpt4Turbo,
+    #[default]
+    Gpt4Omni,
     Claude3Opus,
     Claude3Sonnet,
     Claude3Haiku,
     Custom(String),
 }
 
-impl Serialize for ZedDotDevModel {
+impl Serialize for CloudModel {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -33,7 +39,7 @@ impl Serialize for ZedDotDevModel {
     }
 }
 
-impl<'de> Deserialize<'de> for ZedDotDevModel {
+impl<'de> Deserialize<'de> for CloudModel {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -41,7 +47,7 @@ impl<'de> Deserialize<'de> for ZedDotDevModel {
         struct ZedDotDevModelVisitor;
 
         impl<'de> Visitor<'de> for ZedDotDevModelVisitor {
-            type Value = ZedDotDevModel;
+            type Value = CloudModel;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("a string for a ZedDotDevModel variant or a custom model")
@@ -51,12 +57,10 @@ impl<'de> Deserialize<'de> for ZedDotDevModel {
             where
                 E: de::Error,
             {
-                match value {
-                    "gpt-3.5-turbo" => Ok(ZedDotDevModel::Gpt3Point5Turbo),
-                    "gpt-4" => Ok(ZedDotDevModel::Gpt4),
-                    "gpt-4-turbo-preview" => Ok(ZedDotDevModel::Gpt4Turbo),
-                    _ => Ok(ZedDotDevModel::Custom(value.to_owned())),
-                }
+                let model = CloudModel::iter()
+                    .find(|model| model.id() == value)
+                    .unwrap_or_else(|| CloudModel::Custom(value.to_string()));
+                Ok(model)
             }
         }
 
@@ -64,29 +68,29 @@ impl<'de> Deserialize<'de> for ZedDotDevModel {
     }
 }
 
-impl JsonSchema for ZedDotDevModel {
+impl JsonSchema for CloudModel {
     fn schema_name() -> String {
         "ZedDotDevModel".to_owned()
     }
 
     fn json_schema(_generator: &mut schemars::gen::SchemaGenerator) -> Schema {
-        let variants = vec![
-            "gpt-3.5-turbo".to_owned(),
-            "gpt-4".to_owned(),
-            "gpt-4-turbo-preview".to_owned(),
-        ];
+        let variants = CloudModel::iter()
+            .filter_map(|model| {
+                let id = model.id();
+                if id.is_empty() {
+                    None
+                } else {
+                    Some(id.to_string())
+                }
+            })
+            .collect::<Vec<_>>();
         Schema::Object(SchemaObject {
             instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(variants.into_iter().map(|s| s.into()).collect()),
+            enum_values: Some(variants.iter().map(|s| s.clone().into()).collect()),
             metadata: Some(Box::new(Metadata {
                 title: Some("ZedDotDevModel".to_owned()),
-                default: Some(serde_json::json!("gpt-4-turbo-preview")),
-                examples: vec![
-                    serde_json::json!("gpt-3.5-turbo"),
-                    serde_json::json!("gpt-4"),
-                    serde_json::json!("gpt-4-turbo-preview"),
-                    serde_json::json!("custom-model-name"),
-                ],
+                default: Some(CloudModel::default().id().into()),
+                examples: variants.into_iter().map(Into::into).collect(),
                 ..Default::default()
             })),
             ..Default::default()
@@ -94,12 +98,13 @@ impl JsonSchema for ZedDotDevModel {
     }
 }
 
-impl ZedDotDevModel {
+impl CloudModel {
     pub fn id(&self) -> &str {
         match self {
             Self::Gpt3Point5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
             Self::Gpt4Turbo => "gpt-4-turbo-preview",
+            Self::Gpt4Omni => "gpt-4o",
             Self::Claude3Opus => "claude-3-opus",
             Self::Claude3Sonnet => "claude-3-sonnet",
             Self::Claude3Haiku => "claude-3-haiku",
@@ -112,6 +117,7 @@ impl ZedDotDevModel {
             Self::Gpt3Point5Turbo => "GPT 3.5 Turbo",
             Self::Gpt4 => "GPT 4",
             Self::Gpt4Turbo => "GPT 4 Turbo",
+            Self::Gpt4Omni => "GPT 4 Omni",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
@@ -123,9 +129,18 @@ impl ZedDotDevModel {
         match self {
             Self::Gpt3Point5Turbo => 2048,
             Self::Gpt4 => 4096,
-            Self::Gpt4Turbo => 128000,
+            Self::Gpt4Turbo | Self::Gpt4Omni => 128000,
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 200000,
             Self::Custom(_) => 4096, // TODO: Make this configurable
+        }
+    }
+
+    pub fn preprocess_request(&self, request: &mut LanguageModelRequest) {
+        match self {
+            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => {
+                preprocess_anthropic_request(request)
+            }
+            _ => {}
         }
     }
 }
@@ -139,36 +154,64 @@ pub enum AssistantDockPosition {
     Bottom,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(tag = "name", rename_all = "snake_case")]
+#[derive(Debug, PartialEq)]
 pub enum AssistantProvider {
-    #[serde(rename = "zed.dev")]
     ZedDotDev {
-        #[serde(default)]
-        default_model: ZedDotDevModel,
+        model: CloudModel,
     },
-    #[serde(rename = "openai")]
     OpenAi {
-        #[serde(default)]
-        default_model: OpenAiModel,
-        #[serde(default = "open_ai_url")]
+        model: OpenAiModel,
         api_url: String,
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
+    Anthropic {
+        model: AnthropicModel,
+        api_url: String,
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
+    Ollama {
+        model: OllamaModel,
+        api_url: String,
+        low_speed_timeout_in_seconds: Option<u64>,
     },
 }
 
 impl Default for AssistantProvider {
     fn default() -> Self {
-        Self::ZedDotDev {
-            default_model: ZedDotDevModel::default(),
+        Self::OpenAi {
+            model: OpenAiModel::default(),
+            api_url: open_ai::OPEN_AI_API_URL.into(),
+            low_speed_timeout_in_seconds: None,
         }
     }
 }
 
-fn open_ai_url() -> String {
-    "https://api.openai.com/v1".into()
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(tag = "name", rename_all = "snake_case")]
+pub enum AssistantProviderContent {
+    #[serde(rename = "zed.dev")]
+    ZedDotDev { default_model: Option<CloudModel> },
+    #[serde(rename = "openai")]
+    OpenAi {
+        default_model: Option<OpenAiModel>,
+        api_url: Option<String>,
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
+    #[serde(rename = "anthropic")]
+    Anthropic {
+        default_model: Option<AnthropicModel>,
+        api_url: Option<String>,
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
+    #[serde(rename = "ollama")]
+    Ollama {
+        default_model: Option<OllamaModel>,
+        api_url: Option<String>,
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
 }
 
-#[derive(Default, Debug, Deserialize, Serialize)]
+#[derive(Debug, Default)]
 pub struct AssistantSettings {
     pub enabled: bool,
     pub button: bool,
@@ -219,15 +262,17 @@ impl AssistantSettingsContent {
                 default_width: settings.default_width,
                 default_height: settings.default_height,
                 provider: if let Some(open_ai_api_url) = settings.openai_api_url.as_ref() {
-                    Some(AssistantProvider::OpenAi {
-                        default_model: settings.default_open_ai_model.clone().unwrap_or_default(),
-                        api_url: open_ai_api_url.clone(),
+                    Some(AssistantProviderContent::OpenAi {
+                        default_model: settings.default_open_ai_model.clone(),
+                        api_url: Some(open_ai_api_url.clone()),
+                        low_speed_timeout_in_seconds: None,
                     })
                 } else {
                     settings.default_open_ai_model.clone().map(|open_ai_model| {
-                        AssistantProvider::OpenAi {
-                            default_model: open_ai_model,
-                            api_url: open_ai_url(),
+                        AssistantProviderContent::OpenAi {
+                            default_model: Some(open_ai_model),
+                            api_url: None,
+                            low_speed_timeout_in_seconds: None,
                         }
                     })
                 },
@@ -244,6 +289,71 @@ impl AssistantSettingsContent {
             },
             AssistantSettingsContent::Legacy(settings) => {
                 settings.dock = Some(dock);
+            }
+        }
+    }
+
+    pub fn set_model(&mut self, new_model: LanguageModel) {
+        match self {
+            AssistantSettingsContent::Versioned(settings) => match settings {
+                VersionedAssistantSettingsContent::V1(settings) => match &mut settings.provider {
+                    Some(AssistantProviderContent::ZedDotDev {
+                        default_model: model,
+                    }) => {
+                        if let LanguageModel::Cloud(new_model) = new_model {
+                            *model = Some(new_model);
+                        }
+                    }
+                    Some(AssistantProviderContent::OpenAi {
+                        default_model: model,
+                        ..
+                    }) => {
+                        if let LanguageModel::OpenAi(new_model) = new_model {
+                            *model = Some(new_model);
+                        }
+                    }
+                    Some(AssistantProviderContent::Anthropic {
+                        default_model: model,
+                        ..
+                    }) => {
+                        if let LanguageModel::Anthropic(new_model) = new_model {
+                            *model = Some(new_model);
+                        }
+                    }
+                    provider => match new_model {
+                        LanguageModel::Cloud(model) => {
+                            *provider = Some(AssistantProviderContent::ZedDotDev {
+                                default_model: Some(model),
+                            })
+                        }
+                        LanguageModel::OpenAi(model) => {
+                            *provider = Some(AssistantProviderContent::OpenAi {
+                                default_model: Some(model),
+                                api_url: None,
+                                low_speed_timeout_in_seconds: None,
+                            })
+                        }
+                        LanguageModel::Anthropic(model) => {
+                            *provider = Some(AssistantProviderContent::Anthropic {
+                                default_model: Some(model),
+                                api_url: None,
+                                low_speed_timeout_in_seconds: None,
+                            })
+                        }
+                        LanguageModel::Ollama(model) => {
+                            *provider = Some(AssistantProviderContent::Ollama {
+                                default_model: Some(model),
+                                api_url: None,
+                                low_speed_timeout_in_seconds: None,
+                            })
+                        }
+                    },
+                },
+            },
+            AssistantSettingsContent::Legacy(settings) => {
+                if let LanguageModel::OpenAi(model) = new_model {
+                    settings.default_open_ai_model = Some(model);
+                }
             }
         }
     }
@@ -295,7 +405,7 @@ pub struct AssistantSettingsContentV1 {
     ///
     /// This can either be the internal `zed.dev` service or an external `openai` service,
     /// each with their respective default models and configurations.
-    provider: Option<AssistantProvider>,
+    provider: Option<AssistantProviderContent>,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -316,11 +426,11 @@ pub struct LegacyAssistantSettingsContent {
     ///
     /// Default: 320
     pub default_height: Option<f32>,
-    /// The default OpenAI model to use when starting new conversations.
+    /// The default OpenAI model to use when creating new contexts.
     ///
     /// Default: gpt-4-1106-preview
     pub default_open_ai_model: Option<OpenAiModel>,
-    /// OpenAI API base URL to use when starting new conversations.
+    /// OpenAI API base URL to use when creating new contexts.
     ///
     /// Default: https://api.openai.com/v1
     pub openai_api_url: Option<String>,
@@ -353,28 +463,112 @@ impl Settings for AssistantSettings {
             if let Some(provider) = value.provider.clone() {
                 match (&mut settings.provider, provider) {
                     (
-                        AssistantProvider::ZedDotDev { default_model },
-                        AssistantProvider::ZedDotDev {
-                            default_model: default_model_override,
+                        AssistantProvider::ZedDotDev { model },
+                        AssistantProviderContent::ZedDotDev {
+                            default_model: model_override,
                         },
                     ) => {
-                        *default_model = default_model_override;
+                        merge(model, model_override);
                     }
                     (
                         AssistantProvider::OpenAi {
-                            default_model,
+                            model,
                             api_url,
+                            low_speed_timeout_in_seconds,
                         },
-                        AssistantProvider::OpenAi {
-                            default_model: default_model_override,
+                        AssistantProviderContent::OpenAi {
+                            default_model: model_override,
                             api_url: api_url_override,
+                            low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
                         },
                     ) => {
-                        *default_model = default_model_override;
-                        *api_url = api_url_override;
+                        merge(model, model_override);
+                        merge(api_url, api_url_override);
+                        if let Some(low_speed_timeout_in_seconds_override) =
+                            low_speed_timeout_in_seconds_override
+                        {
+                            *low_speed_timeout_in_seconds =
+                                Some(low_speed_timeout_in_seconds_override);
+                        }
                     }
-                    (merged, provider_override) => {
-                        *merged = provider_override;
+                    (
+                        AssistantProvider::Ollama {
+                            model,
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                        },
+                        AssistantProviderContent::Ollama {
+                            default_model: model_override,
+                            api_url: api_url_override,
+                            low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
+                        },
+                    ) => {
+                        merge(model, model_override);
+                        merge(api_url, api_url_override);
+                        if let Some(low_speed_timeout_in_seconds_override) =
+                            low_speed_timeout_in_seconds_override
+                        {
+                            *low_speed_timeout_in_seconds =
+                                Some(low_speed_timeout_in_seconds_override);
+                        }
+                    }
+                    (
+                        AssistantProvider::Anthropic {
+                            model,
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                        },
+                        AssistantProviderContent::Anthropic {
+                            default_model: model_override,
+                            api_url: api_url_override,
+                            low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
+                        },
+                    ) => {
+                        merge(model, model_override);
+                        merge(api_url, api_url_override);
+                        if let Some(low_speed_timeout_in_seconds_override) =
+                            low_speed_timeout_in_seconds_override
+                        {
+                            *low_speed_timeout_in_seconds =
+                                Some(low_speed_timeout_in_seconds_override);
+                        }
+                    }
+                    (provider, provider_override) => {
+                        *provider = match provider_override {
+                            AssistantProviderContent::ZedDotDev {
+                                default_model: model,
+                            } => AssistantProvider::ZedDotDev {
+                                model: model.unwrap_or_default(),
+                            },
+                            AssistantProviderContent::OpenAi {
+                                default_model: model,
+                                api_url,
+                                low_speed_timeout_in_seconds,
+                            } => AssistantProvider::OpenAi {
+                                model: model.unwrap_or_default(),
+                                api_url: api_url.unwrap_or_else(|| open_ai::OPEN_AI_API_URL.into()),
+                                low_speed_timeout_in_seconds,
+                            },
+                            AssistantProviderContent::Anthropic {
+                                default_model: model,
+                                api_url,
+                                low_speed_timeout_in_seconds,
+                            } => AssistantProvider::Anthropic {
+                                model: model.unwrap_or_default(),
+                                api_url: api_url
+                                    .unwrap_or_else(|| anthropic::ANTHROPIC_API_URL.into()),
+                                low_speed_timeout_in_seconds,
+                            },
+                            AssistantProviderContent::Ollama {
+                                default_model: model,
+                                api_url,
+                                low_speed_timeout_in_seconds,
+                            } => AssistantProvider::Ollama {
+                                model: model.unwrap_or_default(),
+                                api_url: api_url.unwrap_or_else(|| ollama::OLLAMA_API_URL.into()),
+                                low_speed_timeout_in_seconds,
+                            },
+                        };
                     }
                 }
             }
@@ -384,7 +578,7 @@ impl Settings for AssistantSettings {
     }
 }
 
-fn merge<T: Copy>(target: &mut T, value: Option<T>) {
+fn merge<T>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
     }
@@ -392,7 +586,7 @@ fn merge<T: Copy>(target: &mut T, value: Option<T>) {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext, BorrowAppContext};
+    use gpui::{AppContext, UpdateGlobal};
     use settings::SettingsStore;
 
     use super::*;
@@ -407,13 +601,14 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::OpenAi {
-                default_model: OpenAiModel::FourTurbo,
-                api_url: open_ai_url()
+                model: OpenAiModel::FourOmni,
+                api_url: open_ai::OPEN_AI_API_URL.into(),
+                low_speed_timeout_in_seconds: None,
             }
         );
 
         // Ensure backward-compatibility.
-        cx.update_global::<SettingsStore, _>(|store, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store
                 .set_user_settings(
                     r#"{
@@ -428,11 +623,12 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::OpenAi {
-                default_model: OpenAiModel::FourTurbo,
-                api_url: "test-url".into()
+                model: OpenAiModel::FourOmni,
+                api_url: "test-url".into(),
+                low_speed_timeout_in_seconds: None,
             }
         );
-        cx.update_global::<SettingsStore, _>(|store, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store
                 .set_user_settings(
                     r#"{
@@ -447,13 +643,14 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::OpenAi {
-                default_model: OpenAiModel::Four,
-                api_url: open_ai_url()
+                model: OpenAiModel::Four,
+                api_url: open_ai::OPEN_AI_API_URL.into(),
+                low_speed_timeout_in_seconds: None,
             }
         );
 
         // The new version supports setting a custom model when using zed.dev.
-        cx.update_global::<SettingsStore, _>(|store, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
             store
                 .set_user_settings(
                     r#"{
@@ -472,7 +669,7 @@ mod tests {
         assert_eq!(
             AssistantSettings::get_global(cx).provider,
             AssistantProvider::ZedDotDev {
-                default_model: ZedDotDevModel::Custom("custom".into())
+                model: CloudModel::Custom("custom".into())
             }
         );
     }

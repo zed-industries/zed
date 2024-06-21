@@ -2,9 +2,6 @@
 
 set -ex
 
-# Install our submodule dependencies
-git submodule update --init --recursive
-
 # install the wasm toolchain
 which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
@@ -23,9 +20,16 @@ if [[ -n $apt ]]; then
     libwayland-dev
     libxkbcommon-x11-dev
     libssl-dev
+    libstdc++-12-dev
     libzstd-dev
     libvulkan1
     libgit2-dev
+    make
+    clang
+    mold
+    jq
+    gettext-base
+    elfutils
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -38,12 +42,19 @@ if [[ -n $dnf ]]; then
   deps=(
     gcc
     g++
+    clang
+    mold
     alsa-lib-devel
     fontconfig-devel
     wayland-devel
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
+    # Perl dependencies are needed for openssl-sys crate see https://docs.rs/openssl/latest/openssl/
+    perl-FindBin
+    perl-IPC-Cmd
+    perl-File-Compare
+    perl-File-Copy
     vulkan-loader
   )
 
@@ -56,18 +67,23 @@ if [[ -n $dnf ]]; then
   exit 0
 fi
 
-# openSuse
+# openSUSE
 # https://software.opensuse.org/
 zyp=$(command -v zypper || true)
 if [[ -n $zyp ]]; then
   deps=(
+    gcc
+    gcc-c++
+    clang
+    make
     alsa-devel
     fontconfig-devel
     wayland-devel
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
-    vulkan-loader
+    libvulkan1
+    mold
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
@@ -78,13 +94,17 @@ fi
 pacman=$(command -v pacman || true)
 if [[ -n $pacman ]]; then
   deps=(
+    gcc
+    clang
     alsa-lib
     fontconfig
     wayland
+    libgit2
     libxkbcommon-x11
     openssl
     zstd
     pkgconf
+    mold
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
@@ -103,6 +123,7 @@ if [[ -n $xbps ]]; then
     openssl-devel
     wayland-devel
     vulkan-loader
+    mold
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
   exit 0
@@ -121,6 +142,7 @@ if [[ -n $emerge ]]; then
     media-libs/vulkan-loader
     x11-libs/libxcb
     x11-libs/libxkbcommon
+    sys-devel/mold
   )
   $maysudo "$emerge" -u "${deps[@]}"
   exit 0

@@ -1,5 +1,6 @@
 use gpui::{actions, AppContext, ClipboardItem, PromptLevel};
 use system_specs::SystemSpecs;
+use util::ResultExt;
 use workspace::Workspace;
 
 pub mod feedback_modal;
@@ -23,12 +24,12 @@ const fn zed_repo_url() -> &'static str {
 }
 
 const fn request_feature_url() -> &'static str {
-    "https://github.com/zed-industries/zed/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml"
+    "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cenhancement&projects=&template=0_feature_request.yml"
 }
 
 fn file_bug_report_url(specs: &SystemSpecs) -> String {
     format!(
-        "https://github.com/zed-industries/zed/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}",
+        "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cdefect&projects=&template=1_bug_report.yml&environment={}",
         urlencoding::encode(&specs.to_string())
     )
 }
@@ -38,25 +39,38 @@ pub fn init(cx: &mut AppContext) {
         feedback_modal::FeedbackModal::register(workspace, cx);
         workspace
             .register_action(|_, _: &CopySystemSpecsIntoClipboard, cx| {
-                let specs = SystemSpecs::new(&cx).to_string();
+                let specs = SystemSpecs::new(&cx);
 
-                let prompt = cx.prompt(
-                    PromptLevel::Info,
-                    "Copied into clipboard",
-                    Some(&specs),
-                    &["OK"],
-                );
-                cx.spawn(|_, _cx| async move {
-                    prompt.await.ok();
+                cx.spawn(|_, mut cx| async move {
+                    let specs = specs.await.to_string();
+
+                    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new(specs.clone())))
+                        .log_err();
+
+                    cx.prompt(
+                        PromptLevel::Info,
+                        "Copied into clipboard",
+                        Some(&specs),
+                        &["OK"],
+                    )
+                    .await
+                    .ok();
                 })
                 .detach();
-                cx.write_to_clipboard(ClipboardItem::new(specs.clone()));
             })
             .register_action(|_, _: &RequestFeature, cx| {
                 cx.open_url(request_feature_url());
             })
             .register_action(move |_, _: &FileBugReport, cx| {
-                cx.open_url(&file_bug_report_url(&SystemSpecs::new(&cx)));
+                let specs = SystemSpecs::new(&cx);
+                cx.spawn(|_, mut cx| async move {
+                    let specs = specs.await;
+                    cx.update(|cx| {
+                        cx.open_url(&file_bug_report_url(&specs));
+                    })
+                    .log_err();
+                })
+                .detach();
             })
             .register_action(move |_, _: &OpenZedRepo, cx| {
                 cx.open_url(zed_repo_url());

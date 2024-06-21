@@ -27,7 +27,7 @@ export ZED_BUNDLE=true
 
 channel=$(<crates/zed/RELEASE_CHANNEL)
 
-version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
+version="$(script/get-crate-version zed)"
 # Set RELEASE_VERSION so it's compiled into GPUI and it knows about the version.
 export RELEASE_VERSION="${version}"
 
@@ -38,11 +38,13 @@ host_line=$(echo "$version_info" | grep host)
 target_triple=${host_line#*: }
 
 # Build binary in release mode
-cargo build --release --target "${target_triple}" --package zed
+export RUSTFLAGS="-C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
+cargo build --release --target "${target_triple}" --package zed --package cli
 
 # Strip the binary of all debug symbols
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
-strip "target/${target_triple}/release/Zed"
+strip --strip-debug "target/${target_triple}/release/zed"
+strip --strip-debug "target/${target_triple}/release/cli"
 
 suffix=""
 if [ "$channel" != "stable" ]; then
@@ -55,8 +57,20 @@ temp_dir=$(mktemp -d)
 zed_dir="${temp_dir}/zed$suffix.app"
 
 # Binary
-mkdir -p "${zed_dir}/bin"
-cp "target/${target_triple}/release/Zed" "${zed_dir}/bin/zed"
+mkdir -p "${zed_dir}/bin" "${zed_dir}/libexec"
+cp "target/${target_triple}/release/zed" "${zed_dir}/libexec/zed-editor"
+cp "target/${target_triple}/release/cli" "${zed_dir}/bin/zed"
+
+# Libs
+find_libs() {
+    ldd target/${target_triple}/release/zed |\
+    cut -d' ' -f3 |\
+    grep -v '\<\(libstdc++.so\|libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\)'
+}
+
+mkdir -p "${zed_dir}/lib"
+rm -rf "${zed_dir}/lib/*"
+cp $(find_libs) "${zed_dir}/lib"
 
 # Icons
 mkdir -p "${zed_dir}/share/icons/hicolor/512x512/apps"
@@ -65,27 +79,35 @@ mkdir -p "${zed_dir}/share/icons/hicolor/1024x1024/apps"
 cp "crates/zed/resources/app-icon$suffix@2x.png" "${zed_dir}/share/icons/hicolor/1024x1024/apps/zed.png"
 
 # .desktop
-mkdir -p "${zed_dir}/share/applications"
-cp "crates/zed/resources/zed.desktop" "${zed_dir}/share/applications/zed$suffix.desktop"
+export DO_STARTUP_NOTIFY="true"
+export APP_CLI="zed"
+export APP_ICON="zed"
 if [[ "$channel" == "preview" ]]; then
-    sed -i "s|Name=Zed|Name=Zed Preview|g" "${zed_dir}/share/applications/zed$suffix.desktop"
+  export APP_NAME="Zed Preview"
 elif [[ "$channel" == "nightly" ]]; then
-    sed -i "s|Name=Zed|Name=Zed Nightly|g" "${zed_dir}/share/applications/zed$suffix.desktop"
+  export APP_NAME="Zed Nightly"
+elif [[ "$channel" == "dev" ]]; then
+  export APP_NAME="Zed Devel"
+else
+  export APP_NAME="Zed"
 fi
 
+mkdir -p "${zed_dir}/share/applications"
+envsubst < "crates/zed/resources/zed.desktop.in" > "${zed_dir}/share/applications/zed$suffix.desktop"
+
 # Licenses
+script/generate-licenses
 cp "assets/licenses.md" "${zed_dir}/licenses.md"
 
 # Create archive out of everything that's in the temp directory
 target="linux-$(uname -m)"
-
-if [[ "$channel" == "nightly" ]]; then
-  archive="zed-${target}.tar.gz"
-elif  [[ "$channel" == "dev" ]]; then
+if  [[ "$channel" == "dev" ]]; then
   archive="zed-${commit}-${target}.tar.gz"
 else
   archive="zed-${target}.tar.gz"
 fi
 
 rm -rf "${archive}"
-tar -czvf $archive -C ${temp_dir} "zed$suffix.app"
+remove_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
+ls target/release | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f target/release/{} || true
+tar -czvf target/release/$archive -C ${temp_dir} "zed$suffix.app"

@@ -11,7 +11,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use util::post_inc;
 
@@ -32,6 +32,7 @@ struct TestDispatcherState {
     background: Vec<Runnable>,
     deprioritized_background: Vec<Runnable>,
     delayed: Vec<(Duration, Runnable)>,
+    start_time: Instant,
     time: Duration,
     is_main_thread: bool,
     next_id: TestDispatcherId,
@@ -52,6 +53,7 @@ impl TestDispatcher {
             deprioritized_background: Vec::new(),
             delayed: Vec::new(),
             time: Duration::ZERO,
+            start_time: Instant::now(),
             is_main_thread: true,
             next_id: TestDispatcherId(1),
             allow_parking: false,
@@ -109,6 +111,68 @@ impl TestDispatcher {
         YieldNow {
             count: self.state.lock().random.gen_range(0..10),
         }
+    }
+
+    pub fn tick(&self, background_only: bool) -> bool {
+        let mut state = self.state.lock();
+
+        while let Some((deadline, _)) = state.delayed.first() {
+            if *deadline > state.time {
+                break;
+            }
+            let (_, runnable) = state.delayed.remove(0);
+            state.background.push(runnable);
+        }
+
+        let foreground_len: usize = if background_only {
+            0
+        } else {
+            state
+                .foreground
+                .values()
+                .map(|runnables| runnables.len())
+                .sum()
+        };
+        let background_len = state.background.len();
+
+        let runnable;
+        let main_thread;
+        if foreground_len == 0 && background_len == 0 {
+            let deprioritized_background_len = state.deprioritized_background.len();
+            if deprioritized_background_len == 0 {
+                return false;
+            }
+            let ix = state.random.gen_range(0..deprioritized_background_len);
+            main_thread = false;
+            runnable = state.deprioritized_background.swap_remove(ix);
+        } else {
+            main_thread = state.random.gen_ratio(
+                foreground_len as u32,
+                (foreground_len + background_len) as u32,
+            );
+            if main_thread {
+                let state = &mut *state;
+                runnable = state
+                    .foreground
+                    .values_mut()
+                    .filter(|runnables| !runnables.is_empty())
+                    .choose(&mut state.random)
+                    .unwrap()
+                    .pop_front()
+                    .unwrap();
+            } else {
+                let ix = state.random.gen_range(0..background_len);
+                runnable = state.background.swap_remove(ix);
+            };
+        };
+
+        let was_main_thread = state.is_main_thread;
+        state.is_main_thread = main_thread;
+        drop(state);
+        runnable.run();
+        self.state.lock().is_main_thread = was_main_thread;
+
+        true
     }
 
     pub fn deprioritize(&self, task_label: TaskLabel) {
@@ -189,6 +253,11 @@ impl PlatformDispatcher for TestDispatcher {
         self.state.lock().is_main_thread
     }
 
+    fn now(&self) -> Instant {
+        let state = self.state.lock();
+        state.start_time + state.time
+    }
+
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {
         {
             let mut state = self.state.lock();
@@ -221,71 +290,9 @@ impl PlatformDispatcher for TestDispatcher {
         };
         state.delayed.insert(ix, (next_time, runnable));
     }
-
-    fn tick(&self, background_only: bool) -> bool {
-        let mut state = self.state.lock();
-
-        while let Some((deadline, _)) = state.delayed.first() {
-            if *deadline > state.time {
-                break;
-            }
-            let (_, runnable) = state.delayed.remove(0);
-            state.background.push(runnable);
-        }
-
-        let foreground_len: usize = if background_only {
-            0
-        } else {
-            state
-                .foreground
-                .values()
-                .map(|runnables| runnables.len())
-                .sum()
-        };
-        let background_len = state.background.len();
-
-        let runnable;
-        let main_thread;
-        if foreground_len == 0 && background_len == 0 {
-            let deprioritized_background_len = state.deprioritized_background.len();
-            if deprioritized_background_len == 0 {
-                return false;
-            }
-            let ix = state.random.gen_range(0..deprioritized_background_len);
-            main_thread = false;
-            runnable = state.deprioritized_background.swap_remove(ix);
-        } else {
-            main_thread = state.random.gen_ratio(
-                foreground_len as u32,
-                (foreground_len + background_len) as u32,
-            );
-            if main_thread {
-                let state = &mut *state;
-                runnable = state
-                    .foreground
-                    .values_mut()
-                    .filter(|runnables| !runnables.is_empty())
-                    .choose(&mut state.random)
-                    .unwrap()
-                    .pop_front()
-                    .unwrap();
-            } else {
-                let ix = state.random.gen_range(0..background_len);
-                runnable = state.background.swap_remove(ix);
-            };
-        };
-
-        let was_main_thread = state.is_main_thread;
-        state.is_main_thread = main_thread;
-        drop(state);
-        runnable.run();
-        self.state.lock().is_main_thread = was_main_thread;
-
-        true
-    }
-
-    fn park(&self) {
+    fn park(&self, _: Option<std::time::Duration>) -> bool {
         self.parker.lock().park();
+        true
     }
 
     fn unparker(&self) -> Unparker {

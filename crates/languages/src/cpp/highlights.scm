@@ -91,6 +91,7 @@
   "volatile"
   "while"
   (primitive_type)
+  (sized_type_specifier)
   (type_qualifier)
 ] @keyword
 
@@ -112,7 +113,7 @@
   (true)
   (false)
   (null)
-  (nullptr)
+  ("nullptr")
 ] @constant
 
 (number_literal) @number

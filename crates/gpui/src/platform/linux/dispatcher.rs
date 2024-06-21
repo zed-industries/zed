@@ -1,9 +1,3 @@
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-// todo(linux): remove
-#![allow(unused_variables)]
-
 use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use calloop::{
@@ -63,7 +57,7 @@ impl LinuxDispatcher {
                         timer_handle
                             .insert_source(
                                 calloop::timer::Timer::from_duration(timer.duration),
-                                move |e, _, _| {
+                                move |_, _, _| {
                                     if let Some(runnable) = runnable.take() {
                                         runnable.run();
                                     }
@@ -110,12 +104,13 @@ impl PlatformDispatcher for LinuxDispatcher {
             .ok();
     }
 
-    fn tick(&self, background_only: bool) -> bool {
-        false
-    }
-
-    fn park(&self) {
-        self.parker.lock().park();
+    fn park(&self, timeout: Option<Duration>) -> bool {
+        if let Some(timeout) = timeout {
+            self.parker.lock().park_timeout(timeout)
+        } else {
+            self.parker.lock().park();
+            true
+        }
     }
 
     fn unparker(&self) -> Unparker {

@@ -1,15 +1,14 @@
 pub mod arc_cow;
 pub mod fs;
-pub mod github;
-pub mod http;
 pub mod paths;
 pub mod serde;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
 use futures::Future;
-use lazy_static::lazy_static;
 use rand::{seq::SliceRandom, Rng};
+use regex::Regex;
+use std::sync::OnceLock;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -36,33 +35,147 @@ macro_rules! debug_panic {
     };
 }
 
+#[macro_export]
+macro_rules! with_clone {
+    ($i:ident, move ||$l:expr) => {{
+        let $i = $i.clone();
+        move || {
+            $l
+        }
+    }};
+    ($i:ident, move |$($k:pat_param),*|$l:expr) => {{
+        let $i = $i.clone();
+        move |$( $k ),*| {
+            $l
+        }
+    }};
+
+    (($($i:ident),+), move ||$l:expr) => {{
+        let ($($i),+) = ($($i.clone()),+);
+        move || {
+            $l
+        }
+    }};
+    (($($i:ident),+), move |$($k:pat_param),*|$l:expr) => {{
+        let ($($i),+) = ($($i.clone()),+);
+        move |$( $k ),*| {
+            $l
+        }
+    }};
+}
+
+mod test_with_clone {
+
+    // If this test compiles, it works
+    #[test]
+    fn test() {
+        let x = "String".to_string();
+        let y = std::sync::Arc::new(5);
+
+        fn no_arg(f: impl FnOnce()) {
+            f()
+        }
+
+        no_arg(with_clone!(x, move || {
+            drop(x);
+        }));
+
+        no_arg(with_clone!((x, y), move || {
+            drop(x);
+            drop(y);
+        }));
+
+        fn one_arg(f: impl FnOnce(usize)) {
+            f(1)
+        }
+
+        one_arg(with_clone!(x, move |_| {
+            drop(x);
+        }));
+        one_arg(with_clone!((x, y), move |b| {
+            drop(x);
+            drop(y);
+            println!("{}", b);
+        }));
+
+        fn two_arg(f: impl FnOnce(usize, bool)) {
+            f(5, true)
+        }
+
+        two_arg(with_clone!((x, y), move |a, b| {
+            drop(x);
+            drop(y);
+            println!("{}{}", a, b)
+        }));
+        two_arg(with_clone!((x, y), move |a, _| {
+            drop(x);
+            drop(y);
+            println!("{}", a)
+        }));
+        two_arg(with_clone!((x, y), move |_, b| {
+            drop(x);
+            drop(y);
+            println!("{}", b)
+        }));
+
+        struct Example {
+            z: usize,
+        }
+
+        fn destructuring_example(f: impl FnOnce(Example)) {
+            f(Example { z: 10 })
+        }
+
+        destructuring_example(with_clone!(x, move |Example { z }| {
+            drop(x);
+            println!("{}", z);
+        }));
+
+        let a_long_variable_1 = "".to_string();
+        let a_long_variable_2 = "".to_string();
+        let a_long_variable_3 = "".to_string();
+        let a_long_variable_4 = "".to_string();
+        two_arg(with_clone!(
+            (
+                x,
+                y,
+                a_long_variable_1,
+                a_long_variable_2,
+                a_long_variable_3,
+                a_long_variable_4
+            ),
+            move |a, b| {
+                drop(x);
+                drop(y);
+                drop(a_long_variable_1);
+                drop(a_long_variable_2);
+                drop(a_long_variable_3);
+                drop(a_long_variable_4);
+                println!("{}{}", a, b)
+            }
+        ));
+
+        fn single_expression_body(f: impl FnOnce(usize) -> usize) -> usize {
+            f(20)
+        }
+
+        let _result = single_expression_body(with_clone!(y, move |z| *y + z));
+
+        // Explicitly move all variables
+        drop(x);
+        drop(y);
+        drop(a_long_variable_1);
+        drop(a_long_variable_2);
+        drop(a_long_variable_3);
+        drop(a_long_variable_4);
+    }
+}
+
 pub fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
         None => s,
         Some((idx, _)) => &s[..idx],
     }
-}
-
-pub fn http_proxy_from_env() -> Option<isahc::http::Uri> {
-    macro_rules! try_env {
-        ($($env:literal),+) => {
-            $(
-                if let Ok(env) = std::env::var($env) {
-                    return env.parse::<isahc::http::Uri>().ok();
-                }
-            )+
-        };
-    }
-
-    try_env!(
-        "ALL_PROXY",
-        "all_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "HTTP_PROXY",
-        "http_proxy"
-    );
-    None
 }
 
 /// Removes characters from the end of the string if its length is greater than `max_chars` and
@@ -197,13 +310,14 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
 }
 
 pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
-    lazy_static! {
-        pub static ref ZED_MEASUREMENTS: bool = env::var("ZED_MEASUREMENTS")
+    static ZED_MEASUREMENTS: OnceLock<bool> = OnceLock::new();
+    let zed_measurements = ZED_MEASUREMENTS.get_or_init(|| {
+        env::var("ZED_MEASUREMENTS")
             .map(|measurements| measurements == "1" || measurements == "true")
-            .unwrap_or(false);
-    }
+            .unwrap_or(false)
+    });
 
-    if *ZED_MEASUREMENTS {
+    if *zed_measurements {
         let start = Instant::now();
         let result = f();
         let elapsed = start.elapsed();
@@ -455,16 +569,6 @@ pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
     }
 }
 
-// copy unstable standard feature option unzip
-// https://github.com/rust-lang/rust/issues/87800
-// Remove when this ship in Rust 1.66 or 1.67
-pub fn unzip_option<T, U>(option: Option<(T, U)>) -> (Option<T>, Option<U>) {
-    match option {
-        Some((a, b)) => (Some(a), Some(b)),
-        None => (None, None),
-    }
-}
-
 /// Expands to an immediately-invoked function expression. Good for using the ? operator
 /// in functions which do not return an Option or Result.
 ///
@@ -560,15 +664,17 @@ impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
         Some(self.cmp(other))
     }
 }
-lazy_static! {
-    static ref EMOJI_REGEX: regex::Regex = regex::Regex::new("(\\p{Emoji}|\u{200D})").unwrap();
+
+fn emoji_regex() -> &'static Regex {
+    static EMOJI_REGEX: OnceLock<Regex> = OnceLock::new();
+    EMOJI_REGEX.get_or_init(|| Regex::new("(\\p{Emoji}|\u{200D})").unwrap())
 }
 
 /// Returns true if the given string consists of emojis only.
 /// E.g. "👨‍👩‍👧‍👧👋" will return true, but "👋!" will return false.
 pub fn word_consists_of_emojis(s: &str) -> bool {
     let mut prev_end = 0;
-    for capture in EMOJI_REGEX.find_iter(s) {
+    for capture in emoji_regex().find_iter(s) {
         if capture.start() != prev_end {
             return false;
         }

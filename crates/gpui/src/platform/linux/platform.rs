@@ -8,6 +8,7 @@ use std::io::Read;
 use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::panic::Location;
+use std::rc::Weak;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -21,12 +22,12 @@ use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use async_task::Runnable;
 use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
-use copypasta::ClipboardProvider;
 use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use time::UtcOffset;
+use util::ResultExt;
 use wayland_client::Connection;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
@@ -34,10 +35,10 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::platform::linux::wayland::WaylandClient;
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
-    DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, Modifiers,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
-    PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task, WindowAppearance,
-    WindowOptions, WindowParams,
+    DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
+    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler,
+    PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, SharedString,
+    Size, Task, WindowAppearance, WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
@@ -51,21 +52,24 @@ pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
 pub trait LinuxClient {
+    fn compositor_name(&self) -> &'static str;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Box<dyn PlatformWindow>;
+    ) -> anyhow::Result<Box<dyn PlatformWindow>>;
     fn set_cursor_style(&self, style: CursorStyle);
     fn open_uri(&self, uri: &str);
     fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
+    fn active_window(&self) -> Option<AnyWindowHandle>;
     fn run(&self);
 }
 
@@ -83,8 +87,11 @@ pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<CosmicTextSystem>,
+    pub(crate) appearance: WindowAppearance,
+    pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
+    pub(crate) menus: Vec<OwnedMenu>,
 }
 
 impl LinuxCommon {
@@ -93,14 +100,19 @@ impl LinuxCommon {
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
 
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
+
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
 
         let common = LinuxCommon {
-            background_executor: BackgroundExecutor::new(dispatcher.clone()),
+            background_executor,
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
+            appearance: WindowAppearance::Light,
+            auto_hide_scrollbars: false,
             callbacks,
             signal,
+            menus: Vec::new(),
         };
 
         (common, main_receiver)
@@ -134,6 +146,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn quit(&self) {
         self.with_common(|common| common.signal.stop());
+    }
+
+    fn compositor_name(&self) -> &'static str {
+        self.compositor_name()
     }
 
     fn restart(&self, binary_path: Option<PathBuf>) {
@@ -189,18 +205,21 @@ impl<P: LinuxClient + 'static> Platform for P {
         }
     }
 
-    // todo(linux)
-    fn activate(&self, ignoring_other_apps: bool) {}
-
-    // todo(linux)
-    fn hide(&self) {}
-
-    fn hide_other_apps(&self) {
-        log::warn!("hide_other_apps is not implemented on Linux, ignoring the call")
+    fn activate(&self, ignoring_other_apps: bool) {
+        log::info!("activate is not implemented on Linux, ignoring the call")
     }
 
-    // todo(linux)
-    fn unhide_other_apps(&self) {}
+    fn hide(&self) {
+        log::info!("hide is not implemented on Linux, ignoring the call")
+    }
+
+    fn hide_other_apps(&self) {
+        log::info!("hide_other_apps is not implemented on Linux, ignoring the call")
+    }
+
+    fn unhide_other_apps(&self) {
+        log::info!("unhide_other_apps is not implemented on Linux, ignoring the call")
+    }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.primary_display()
@@ -210,16 +229,15 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
-    // todo(linux)
     fn active_window(&self) -> Option<AnyWindowHandle> {
-        None
+        self.active_window()
     }
 
     fn open_window(
         &self,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         self.open_window(handle, options)
     }
 
@@ -305,12 +323,12 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn reveal_path(&self, path: &Path) {
         if path.is_dir() {
-            open::that(path);
+            open::that_detached(path);
             return;
         }
         // If `path` is a file, the system may try to open it in a text editor
         let dir = path.parent().unwrap_or(Path::new(""));
-        open::that(dir);
+        open::that_detached(dir);
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
@@ -343,37 +361,28 @@ impl<P: LinuxClient + 'static> Platform for P {
         });
     }
 
-    fn os_name(&self) -> &'static str {
-        "Linux"
-    }
-
-    fn os_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion::new(1, 0, 0))
-    }
-
-    fn app_version(&self) -> Result<SemanticVersion> {
-        const VERSION: Option<&str> = option_env!("RELEASE_VERSION");
-        if let Some(version) = VERSION {
-            version.parse()
-        } else {
-            Ok(SemanticVersion::new(1, 0, 0))
-        }
-    }
-
     fn app_path(&self) -> Result<PathBuf> {
         // get the path of the executable of the current process
         let exe_path = std::env::current_exe()?;
         Ok(exe_path)
     }
 
-    // todo(linux)
-    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
+    fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
+        self.with_common(|common| {
+            common.menus = menus.into_iter().map(|menu| menu.owned()).collect();
+        })
+    }
+
+    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
+        self.with_common(|common| Some(common.menus.clone()))
+    }
+
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {}
 
     fn local_timezone(&self) -> UtcOffset {
         UtcOffset::UTC
     }
 
-    //todo(linux)
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
@@ -384,9 +393,8 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.set_cursor_style(style)
     }
 
-    // todo(linux)
     fn should_auto_hide_scrollbars(&self) -> bool {
-        false
+        self.with_common(|common| common.auto_hide_scrollbars)
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -454,8 +462,8 @@ impl<P: LinuxClient + 'static> Platform for P {
         })
     }
 
-    fn window_appearance(&self) -> crate::WindowAppearance {
-        crate::WindowAppearance::Light
+    fn window_appearance(&self) -> WindowAppearance {
+        self.with_common(|common| common.appearance)
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
@@ -477,6 +485,8 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.read_from_clipboard()
     }
+
+    fn add_recent_document(&self, _path: &Path) {}
 }
 
 pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
@@ -485,7 +495,7 @@ pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
         if let Some(token) = activation_token {
             command.env("XDG_ACTIVATION_TOKEN", token);
         }
-        match command.status() {
+        match command.spawn() {
             Ok(_) => return,
             Err(err) => last_err = Some(err),
         }
@@ -528,7 +538,6 @@ impl CursorStyle {
             CursorStyle::ResizeUpDown => Shape::NsResize,
             CursorStyle::ResizeColumn => Shape::ColResize,
             CursorStyle::ResizeRow => Shape::RowResize,
-            CursorStyle::DisappearingItem => Shape::Grabbing, // todo(linux) - couldn't find equivalent icon in linux
             CursorStyle::IBeamCursorForVerticalLayout => Shape::VerticalText,
             CursorStyle::OperationNotAllowed => Shape::NotAllowed,
             CursorStyle::DragLink => Shape::Alias,
@@ -556,7 +565,6 @@ impl CursorStyle {
             CursorStyle::ResizeUpDown => "ns-resize",
             CursorStyle::ResizeColumn => "col-resize",
             CursorStyle::ResizeRow => "row-resize",
-            CursorStyle::DisappearingItem => "grabbing", // todo(linux) - couldn't find equivalent icon in linux
             CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
             CursorStyle::OperationNotAllowed => "not-allowed",
             CursorStyle::DragLink => "alias",
@@ -653,6 +661,68 @@ impl Keystroke {
             modifiers,
             key,
             ime_key,
+        }
+    }
+
+    /**
+     * Returns which symbol the dead key represents
+     * https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux
+     */
+    pub fn underlying_dead_key(keysym: Keysym) -> Option<String> {
+        match keysym {
+            Keysym::dead_grave => Some("`".to_owned()),
+            Keysym::dead_acute => Some("´".to_owned()),
+            Keysym::dead_circumflex => Some("^".to_owned()),
+            Keysym::dead_tilde => Some("~".to_owned()),
+            Keysym::dead_perispomeni => Some("͂".to_owned()),
+            Keysym::dead_macron => Some("¯".to_owned()),
+            Keysym::dead_breve => Some("˘".to_owned()),
+            Keysym::dead_abovedot => Some("˙".to_owned()),
+            Keysym::dead_diaeresis => Some("¨".to_owned()),
+            Keysym::dead_abovering => Some("˚".to_owned()),
+            Keysym::dead_doubleacute => Some("˝".to_owned()),
+            Keysym::dead_caron => Some("ˇ".to_owned()),
+            Keysym::dead_cedilla => Some("¸".to_owned()),
+            Keysym::dead_ogonek => Some("˛".to_owned()),
+            Keysym::dead_iota => Some("ͅ".to_owned()),
+            Keysym::dead_voiced_sound => Some("゙".to_owned()),
+            Keysym::dead_semivoiced_sound => Some("゚".to_owned()),
+            Keysym::dead_belowdot => Some("̣̣".to_owned()),
+            Keysym::dead_hook => Some("̡".to_owned()),
+            Keysym::dead_horn => Some("̛".to_owned()),
+            Keysym::dead_stroke => Some("̶̶".to_owned()),
+            Keysym::dead_abovecomma => Some("̓̓".to_owned()),
+            Keysym::dead_psili => Some("᾿".to_owned()),
+            Keysym::dead_abovereversedcomma => Some("ʽ".to_owned()),
+            Keysym::dead_dasia => Some("῾".to_owned()),
+            Keysym::dead_doublegrave => Some("̏".to_owned()),
+            Keysym::dead_belowring => Some("˳".to_owned()),
+            Keysym::dead_belowmacron => Some("̱".to_owned()),
+            Keysym::dead_belowcircumflex => Some("ꞈ".to_owned()),
+            Keysym::dead_belowtilde => Some("̰".to_owned()),
+            Keysym::dead_belowbreve => Some("̮".to_owned()),
+            Keysym::dead_belowdiaeresis => Some("̤".to_owned()),
+            Keysym::dead_invertedbreve => Some("̯".to_owned()),
+            Keysym::dead_belowcomma => Some("̦".to_owned()),
+            Keysym::dead_currency => None,
+            Keysym::dead_lowline => None,
+            Keysym::dead_aboveverticalline => None,
+            Keysym::dead_belowverticalline => None,
+            Keysym::dead_longsolidusoverlay => None,
+            Keysym::dead_a => None,
+            Keysym::dead_A => None,
+            Keysym::dead_e => None,
+            Keysym::dead_E => None,
+            Keysym::dead_i => None,
+            Keysym::dead_I => None,
+            Keysym::dead_o => None,
+            Keysym::dead_O => None,
+            Keysym::dead_u => None,
+            Keysym::dead_U => None,
+            Keysym::dead_small_schwa => Some("ə".to_owned()),
+            Keysym::dead_capital_schwa => Some("Ə".to_owned()),
+            Keysym::dead_greek => None,
+            _ => None,
         }
     }
 }

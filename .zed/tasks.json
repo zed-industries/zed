@@ -1,12 +1,7 @@
 [
   {
     "label": "clippy",
-    "command": "cargo",
-    "args": ["xtask", "clippy"]
-  },
-  {
-    "label": "assistant2",
-    "command": "cargo",
-    "args": ["run", "-p", "assistant2", "--example", "assistant_example"]
+    "command": "./script/clippy",
+    "args": []
   }
 ]

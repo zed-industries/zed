@@ -21,14 +21,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
           fetch-depth: 0
 
       - name: Run style checks
         uses: ./.github/actions/check_style
 
       - name: Run clippy
-        run: cargo xtask clippy
+        run: ./script/clippy
 
   tests:
     name: Run tests
@@ -41,7 +40,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
           fetch-depth: 0
 
       - name: Install cargo nextest
@@ -76,7 +74,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-          submodules: "recursive"
+
+      - name: Set up default .cargo/config.toml
+        run: cp ./.cargo/collab-config.toml ./.cargo/config.toml
 
       - name: Build docker image
         run: docker build . --build-arg GITHUB_SHA=$GITHUB_SHA --tag registry.digitalocean.com/zed/collab:$GITHUB_SHA

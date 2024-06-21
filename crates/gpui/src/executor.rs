@@ -1,5 +1,5 @@
 use crate::{AppContext, PlatformDispatcher};
-use futures::{channel::mpsc, pin_mut, FutureExt};
+use futures::channel::mpsc;
 use smol::prelude::*;
 use std::{
     fmt::Debug,
@@ -9,11 +9,11 @@ use std::{
     pin::Pin,
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use util::TryFutureExt;
 use waker_fn::waker_fn;
@@ -25,14 +25,16 @@ use rand::rngs::StdRng;
 /// for spawning background tasks.
 #[derive(Clone)]
 pub struct BackgroundExecutor {
-    dispatcher: Arc<dyn PlatformDispatcher>,
+    #[doc(hidden)]
+    pub dispatcher: Arc<dyn PlatformDispatcher>,
 }
 
 /// A pointer to the executor that is currently running,
 /// for spawning tasks on the main thread.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
-    dispatcher: Arc<dyn PlatformDispatcher>,
+    #[doc(hidden)]
+    pub dispatcher: Arc<dyn PlatformDispatcher>,
     not_send: PhantomData<Rc<()>>,
 }
 
@@ -164,7 +166,7 @@ impl BackgroundExecutor {
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
     pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
-        if let Ok(value) = self.block_internal(false, future, usize::MAX) {
+        if let Ok(value) = self.block_internal(false, future, None) {
             value
         } else {
             unreachable!()
@@ -174,24 +176,75 @@ impl BackgroundExecutor {
     /// Block the current thread until the given future resolves.
     /// Consider using `block_with_timeout` instead.
     pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
-        if let Ok(value) = self.block_internal(true, future, usize::MAX) {
+        if let Ok(value) = self.block_internal(true, future, None) {
             value
         } else {
             unreachable!()
         }
     }
 
+    #[cfg(not(any(test, feature = "test-support")))]
+    pub(crate) fn block_internal<R>(
+        &self,
+        _background_only: bool,
+        future: impl Future<Output = R>,
+        timeout: Option<Duration>,
+    ) -> Result<R, impl Future<Output = R>> {
+        use std::time::Instant;
+
+        let mut future = Box::pin(future);
+        if timeout == Some(Duration::ZERO) {
+            return Err(future);
+        }
+        let deadline = timeout.map(|timeout| Instant::now() + timeout);
+
+        let unparker = self.dispatcher.unparker();
+        let waker = waker_fn(move || {
+            unparker.unpark();
+        });
+        let mut cx = std::task::Context::from_waker(&waker);
+
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(result) => return Ok(result),
+                Poll::Pending => {
+                    let timeout =
+                        deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+                    if !self.dispatcher.park(timeout) {
+                        if deadline.is_some_and(|deadline| deadline < Instant::now()) {
+                            return Err(future);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
     pub(crate) fn block_internal<R>(
         &self,
         background_only: bool,
         future: impl Future<Output = R>,
-        mut max_ticks: usize,
-    ) -> Result<R, ()> {
-        pin_mut!(future);
+        timeout: Option<Duration>,
+    ) -> Result<R, impl Future<Output = R>> {
+        use std::sync::atomic::AtomicBool;
+
+        let mut future = Box::pin(future);
+        if timeout == Some(Duration::ZERO) {
+            return Err(future);
+        }
+        let Some(dispatcher) = self.dispatcher.as_test() else {
+            return Err(future);
+        };
+
+        let mut max_ticks = if timeout.is_some() {
+            dispatcher.gen_block_on_ticks()
+        } else {
+            usize::MAX
+        };
         let unparker = self.dispatcher.unparker();
         let awoken = Arc::new(AtomicBool::new(false));
-
         let waker = waker_fn({
             let awoken = awoken.clone();
             move || {
@@ -206,34 +259,30 @@ impl BackgroundExecutor {
                 Poll::Ready(result) => return Ok(result),
                 Poll::Pending => {
                     if max_ticks == 0 {
-                        return Err(());
+                        return Err(future);
                     }
                     max_ticks -= 1;
 
-                    if !self.dispatcher.tick(background_only) {
+                    if !dispatcher.tick(background_only) {
                         if awoken.swap(false, SeqCst) {
                             continue;
                         }
 
-                        #[cfg(any(test, feature = "test-support"))]
-                        if let Some(test) = self.dispatcher.as_test() {
-                            if !test.parking_allowed() {
-                                let mut backtrace_message = String::new();
-                                let mut waiting_message = String::new();
-                                if let Some(backtrace) = test.waiting_backtrace() {
-                                    backtrace_message =
-                                        format!("\nbacktrace of waiting future:\n{:?}", backtrace);
-                                }
-                                if let Some(waiting_hint) = test.waiting_hint() {
-                                    waiting_message = format!("\n  waiting on: {}\n", waiting_hint);
-                                }
-                                panic!(
+                        if !dispatcher.parking_allowed() {
+                            let mut backtrace_message = String::new();
+                            let mut waiting_message = String::new();
+                            if let Some(backtrace) = dispatcher.waiting_backtrace() {
+                                backtrace_message =
+                                    format!("\nbacktrace of waiting future:\n{:?}", backtrace);
+                            }
+                            if let Some(waiting_hint) = dispatcher.waiting_hint() {
+                                waiting_message = format!("\n  waiting on: {}\n", waiting_hint);
+                            }
+                            panic!(
                                     "parked with nothing left to run{waiting_message}{backtrace_message}",
                                 )
-                            }
                         }
-
-                        self.dispatcher.park();
+                        self.dispatcher.park(None);
                     }
                 }
             }
@@ -247,31 +296,7 @@ impl BackgroundExecutor {
         duration: Duration,
         future: impl Future<Output = R>,
     ) -> Result<R, impl Future<Output = R>> {
-        let mut future = Box::pin(future.fuse());
-        if duration.is_zero() {
-            return Err(future);
-        }
-
-        #[cfg(any(test, feature = "test-support"))]
-        let max_ticks = self
-            .dispatcher
-            .as_test()
-            .map_or(usize::MAX, |dispatcher| dispatcher.gen_block_on_ticks());
-        #[cfg(not(any(test, feature = "test-support")))]
-        let max_ticks = usize::MAX;
-
-        let mut timer = self.timer(duration).fuse();
-
-        let timeout = async {
-            futures::select_biased! {
-                value = future => Ok(value),
-                _ = timer => Err(()),
-            }
-        };
-        match self.block_internal(true, timeout, max_ticks) {
-            Ok(Ok(value)) => Ok(value),
-            _ => Err(future),
-        }
+        self.block_internal(true, future, Some(duration))
     }
 
     /// Scoped lets you start a number of tasks and waits
@@ -289,6 +314,14 @@ impl BackgroundExecutor {
         for task in spawned {
             task.await;
         }
+    }
+
+    /// Get the current time.
+    ///
+    /// Calling this instead of `std::time::Instant::now` allows the use
+    /// of fake timers in tests.
+    pub fn now(&self) -> Instant {
+        self.dispatcher.now()
     }
 
     /// Returns a task that will complete after the given duration.

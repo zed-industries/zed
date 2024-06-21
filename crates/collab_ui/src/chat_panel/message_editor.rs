@@ -1,12 +1,12 @@
-use anyhow::Result;
-use channel::{ChannelMembership, ChannelStore, MessageParams};
-use client::{ChannelId, UserId};
-use collections::{HashMap, HashSet};
+use anyhow::{Context, Result};
+use channel::{ChannelChat, ChannelStore, MessageParams};
+use client::{UserId, UserStore};
+use collections::HashSet;
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AsyncWindowContext, FocusableView, FontStyle, FontWeight, HighlightStyle, IntoElement, Model,
-    Render, SharedString, Task, TextStyle, View, ViewContext, WeakView, WhiteSpace,
+    Render, Task, TextStyle, View, ViewContext, WeakView, WhiteSpace,
 };
 use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, Language,
@@ -25,17 +25,23 @@ use crate::panel_settings::MessageEditorSettings;
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
 lazy_static! {
-    static ref MENTIONS_SEARCH: SearchQuery =
-        SearchQuery::regex("@[-_\\w]+", false, false, false, Vec::new(), Vec::new()).unwrap();
+    static ref MENTIONS_SEARCH: SearchQuery = SearchQuery::regex(
+        "@[-_\\w]+",
+        false,
+        false,
+        false,
+        Default::default(),
+        Default::default()
+    )
+    .unwrap();
 }
 
 pub struct MessageEditor {
     pub editor: View<Editor>,
-    channel_store: Model<ChannelStore>,
-    channel_members: HashMap<String, UserId>,
+    user_store: Model<UserStore>,
+    channel_chat: Option<Model<ChannelChat>>,
     mentions: Vec<UserId>,
     mentions_task: Option<Task<()>>,
-    channel_id: Option<ChannelId>,
     reply_to_message_id: Option<u64>,
     edit_message_id: Option<u64>,
 }
@@ -47,6 +53,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         &self,
         buffer: &Model<Buffer>,
         buffer_position: language::Anchor,
+        _: editor::CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<Vec<Completion>>> {
         let Some(handle) = self.0.upgrade() else {
@@ -76,12 +83,24 @@ impl CompletionProvider for MessageEditorCompletionProvider {
     ) -> Task<Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
     }
+
+    fn is_completion_trigger(
+        &self,
+        _buffer: &Model<Buffer>,
+        _position: language::Anchor,
+        text: &str,
+        _trigger_in_words: bool,
+        _cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        text == "@"
+    }
 }
 
 impl MessageEditor {
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
-        channel_store: Model<ChannelStore>,
+        user_store: Model<UserStore>,
+        channel_chat: Option<Model<ChannelChat>>,
         editor: View<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -89,6 +108,9 @@ impl MessageEditor {
         editor.update(cx, |editor, cx| {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_use_autoclose(false);
+            editor.set_show_gutter(false, cx);
+            editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Box::new(MessageEditorCompletionProvider(this)));
             editor.set_auto_replace_emoji_shortcode(
                 MessageEditorSettings::get_global(cx)
@@ -118,7 +140,7 @@ impl MessageEditor {
 
         let markdown = language_registry.language_for_name("Markdown");
         cx.spawn(|_, mut cx| async move {
-            let markdown = markdown.await?;
+            let markdown = markdown.await.context("failed to load Markdown language")?;
             buffer.update(&mut cx, |buffer, cx| {
                 buffer.set_language(Some(markdown), cx)
             })
@@ -127,9 +149,8 @@ impl MessageEditor {
 
         Self {
             editor,
-            channel_store,
-            channel_members: HashMap::default(),
-            channel_id: None,
+            user_store,
+            channel_chat,
             mentions: Vec::new(),
             mentions_task: None,
             reply_to_message_id: None,
@@ -161,12 +182,13 @@ impl MessageEditor {
         self.edit_message_id = None;
     }
 
-    pub fn set_channel(
-        &mut self,
-        channel_id: ChannelId,
-        channel_name: Option<SharedString>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn set_channel_chat(&mut self, chat: Model<ChannelChat>, cx: &mut ViewContext<Self>) {
+        let channel_id = chat.read(cx).channel_id;
+        self.channel_chat = Some(chat);
+        let channel_name = ChannelStore::global(cx)
+            .read(cx)
+            .channel_for_id(channel_id)
+            .map(|channel| channel.name.clone());
         self.editor.update(cx, |editor, cx| {
             if let Some(channel_name) = channel_name {
                 editor.set_placeholder_text(format!("Message #{channel_name}"), cx);
@@ -174,31 +196,6 @@ impl MessageEditor {
                 editor.set_placeholder_text("Message Channel", cx);
             }
         });
-        self.channel_id = Some(channel_id);
-        self.refresh_users(cx);
-    }
-
-    pub fn refresh_users(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(channel_id) = self.channel_id {
-            let members = self.channel_store.update(cx, |store, cx| {
-                store.get_channel_member_details(channel_id, cx)
-            });
-            cx.spawn(|this, mut cx| async move {
-                let members = members.await?;
-                this.update(&mut cx, |this, cx| this.set_members(members, cx))?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        }
-    }
-
-    pub fn set_members(&mut self, members: Vec<ChannelMembership>, _: &mut ViewContext<Self>) {
-        self.channel_members.clear();
-        self.channel_members.extend(
-            members
-                .into_iter()
-                .map(|member| (member.user.github_login.clone(), member.user.id)),
-        );
     }
 
     pub fn take_message(&mut self, cx: &mut ViewContext<Self>) -> MessageParams {
@@ -316,6 +313,8 @@ impl MessageEditor {
                     documentation: None,
                     server_id: LanguageServerId(0), // TODO: Make this optional or something?
                     lsp_completion: Default::default(), // TODO: Make this optional or something?
+                    confirm: None,
+                    show_new_completions_on_confirm: false,
                 }
             })
             .collect()
@@ -368,12 +367,18 @@ impl MessageEditor {
         let start_anchor = buffer.read(cx).anchor_before(start_offset);
 
         let mut names = HashSet::default();
-        for (github_login, _) in self.channel_members.iter() {
-            names.insert(github_login.clone());
-        }
-        if let Some(channel_id) = self.channel_id {
-            for participant in self.channel_store.read(cx).channel_participants(channel_id) {
+        if let Some(chat) = self.channel_chat.as_ref() {
+            let chat = chat.read(cx);
+            for participant in ChannelStore::global(cx)
+                .read(cx)
+                .channel_participants(chat.channel_id)
+            {
                 names.insert(participant.github_login.clone());
+            }
+            for message in chat
+                .messages_in_range(chat.message_count().saturating_sub(100)..chat.message_count())
+            {
+                names.insert(message.sender.github_login.clone());
             }
         }
 
@@ -481,11 +486,15 @@ impl MessageEditor {
                     text.clear();
                     text.extend(buffer.text_for_range(range.clone()));
                     if let Some(username) = text.strip_prefix('@') {
-                        if let Some(user_id) = this.channel_members.get(username) {
+                        if let Some(user) = this
+                            .user_store
+                            .read(cx)
+                            .cached_user_by_github_login(username)
+                        {
                             let start = multi_buffer.anchor_after(range.start);
                             let end = multi_buffer.anchor_after(range.end);
 
-                            mentioned_user_ids.push(*user_id);
+                            mentioned_user_ids.push(user.id);
                             anchor_ranges.push(start..end);
                         }
                     }
@@ -525,7 +534,7 @@ impl Render for MessageEditor {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_size: TextSize::Small.rems(cx).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,
@@ -548,107 +557,5 @@ impl Render for MessageEditor {
                     ..Default::default()
                 },
             ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use client::{Client, User, UserStore};
-    use clock::FakeSystemClock;
-    use gpui::TestAppContext;
-    use language::{Language, LanguageConfig};
-    use project::Project;
-    use rpc::proto;
-    use settings::SettingsStore;
-    use util::{http::FakeHttpClient, test::marked_text_ranges};
-
-    #[gpui::test]
-    async fn test_message_editor(cx: &mut TestAppContext) {
-        let language_registry = init_test(cx);
-
-        let (editor, cx) = cx.add_window_view(|cx| {
-            MessageEditor::new(
-                language_registry,
-                ChannelStore::global(cx),
-                cx.new_view(|cx| Editor::auto_height(4, cx)),
-                cx,
-            )
-        });
-        cx.executor().run_until_parked();
-
-        editor.update(cx, |editor, cx| {
-            editor.set_members(
-                vec![
-                    ChannelMembership {
-                        user: Arc::new(User {
-                            github_login: "a-b".into(),
-                            id: 101,
-                            avatar_uri: "avatar_a-b".into(),
-                        }),
-                        kind: proto::channel_member::Kind::Member,
-                        role: proto::ChannelRole::Member,
-                    },
-                    ChannelMembership {
-                        user: Arc::new(User {
-                            github_login: "C_D".into(),
-                            id: 102,
-                            avatar_uri: "avatar_C_D".into(),
-                        }),
-                        kind: proto::channel_member::Kind::Member,
-                        role: proto::ChannelRole::Member,
-                    },
-                ],
-                cx,
-            );
-
-            editor.editor.update(cx, |editor, cx| {
-                editor.set_text("Hello, @a-b! Have you met @C_D?", cx)
-            });
-        });
-
-        cx.executor().advance_clock(MENTIONS_DEBOUNCE_INTERVAL);
-
-        editor.update(cx, |editor, cx| {
-            let (text, ranges) = marked_text_ranges("Hello, «@a-b»! Have you met «@C_D»?", false);
-            assert_eq!(
-                editor.take_message(cx),
-                MessageParams {
-                    text,
-                    mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
-                    reply_to_message_id: None
-                }
-            );
-        });
-    }
-
-    fn init_test(cx: &mut TestAppContext) -> Arc<LanguageRegistry> {
-        cx.update(|cx| {
-            let settings = SettingsStore::test(cx);
-            cx.set_global(settings);
-
-            let clock = Arc::new(FakeSystemClock::default());
-            let http = FakeHttpClient::with_404_response();
-            let client = Client::new(clock, http.clone(), cx);
-            let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
-            theme::init(theme::LoadThemes::JustBase, cx);
-            Project::init_settings(cx);
-            language::init(cx);
-            editor::init(cx);
-            client::init(&client, cx);
-            channel::init(&client, user_store, cx);
-
-            MessageEditorSettings::register(cx);
-        });
-
-        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        language_registry.add(Arc::new(Language::new(
-            LanguageConfig {
-                name: "Markdown".into(),
-                ..Default::default()
-            },
-            Some(tree_sitter_markdown::language()),
-        )));
-        language_registry
     }
 }

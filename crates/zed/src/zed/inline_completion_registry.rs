@@ -74,23 +74,30 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut ViewContex
                 editor.show_inline_completion(&Default::default(), cx);
             },
         ))
+        .detach();
+    editor
         .register_action(cx.listener(
             |editor, _: &copilot::NextSuggestion, cx: &mut ViewContext<Editor>| {
                 editor.next_inline_completion(&Default::default(), cx);
             },
         ))
+        .detach();
+    editor
         .register_action(cx.listener(
             |editor, _: &copilot::PreviousSuggestion, cx: &mut ViewContext<Editor>| {
                 editor.previous_inline_completion(&Default::default(), cx);
             },
         ))
+        .detach();
+    editor
         .register_action(cx.listener(
             |editor,
              _: &editor::actions::AcceptPartialCopilotSuggestion,
              cx: &mut ViewContext<Editor>| {
                 editor.accept_partial_inline_completion(&Default::default(), cx);
             },
-        ));
+        ))
+        .detach();
 }
 
 fn assign_inline_completion_provider(
@@ -118,7 +125,9 @@ fn assign_inline_completion_provider(
         }
         language::language_settings::InlineCompletionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
-                let provider = cx.new_model(|_| SupermavenCompletionProvider::new(supermaven));
+                let provider = cx.new_model(|_| {
+                    SupermavenCompletionProvider::new(supermaven).with_telemetry(telemetry.clone())
+                });
                 editor.set_inline_completion_provider(Some(provider), cx);
             }
         }

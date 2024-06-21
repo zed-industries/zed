@@ -3,7 +3,7 @@ pub mod cursor_position;
 use cursor_position::LineIndicatorFormat;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
 };
 use settings::Settings;
@@ -12,8 +12,6 @@ use theme::ActiveTheme;
 use ui::{h_flex, prelude::*, v_flex, Label};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::ModalView;
-
-actions!(go_to_line, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
     LineIndicatorFormat::register(cx);
@@ -42,17 +40,19 @@ enum GoToLineRowHighlights {}
 impl GoToLine {
     fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         let handle = cx.view().downgrade();
-        editor.register_action(move |_: &Toggle, cx| {
-            let Some(editor) = handle.upgrade() else {
-                return;
-            };
-            let Some(workspace) = editor.read(cx).workspace() else {
-                return;
-            };
-            workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
+        editor
+            .register_action(move |_: &editor::actions::ToggleGoToLine, cx| {
+                let Some(editor) = handle.upgrade() else {
+                    return;
+                };
+                let Some(workspace) = editor.read(cx).workspace() else {
+                    return;
+                };
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
+                })
             })
-        });
+            .detach();
     }
 
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
@@ -122,6 +122,7 @@ impl GoToLine {
                 active_editor.highlight_rows::<GoToLineRowHighlights>(
                     anchor..=anchor,
                     Some(cx.theme().colors().editor_highlighted_line_background),
+                    true,
                     cx,
                 );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
@@ -219,16 +220,13 @@ impl Render for GoToLine {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use collections::HashSet;
+    use super::*;
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
     use project::{FakeFs, Project};
     use serde_json::json;
+    use std::sync::Arc;
     use workspace::{AppState, Workspace};
-
-    use super::*;
 
     #[gpui::test]
     async fn test_go_to_line_view_row_highlights(cx: &mut TestAppContext) {
@@ -341,7 +339,7 @@ mod tests {
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
     ) -> View<GoToLine> {
-        cx.dispatch_action(Toggle);
+        cx.dispatch_action(editor::actions::ToggleGoToLine);
         workspace.update(cx, |workspace, cx| {
             workspace.active_modal::<GoToLine>(cx).unwrap().clone()
         })
@@ -350,8 +348,9 @@ mod tests {
     fn highlighted_display_rows(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
         editor.update(cx, |editor, cx| {
             editor
-                .highlighted_display_rows(HashSet::default(), cx)
+                .highlighted_display_rows(cx)
                 .into_keys()
+                .map(|r| r.0)
                 .collect()
         })
     }

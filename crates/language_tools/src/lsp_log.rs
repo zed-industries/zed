@@ -11,7 +11,7 @@ use language::{LanguageServerId, LanguageServerName};
 use lsp::{IoKind, LanguageServer};
 use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
-use ui::{popover_menu, prelude::*, Button, Checkbox, ContextMenu, Label, Selection};
+use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, Selection};
 use workspace::{
     item::{Item, ItemHandle, TabContentParams},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
@@ -129,9 +129,8 @@ impl LogStore {
 
         let copilot_subscription = Copilot::global(cx).map(|copilot| {
             let copilot = &copilot;
-            cx.subscribe(
-                copilot,
-                |this, copilot, copilot_event, cx| match copilot_event {
+            cx.subscribe(copilot, |this, copilot, inline_completion_event, cx| {
+                match inline_completion_event {
                     copilot::Event::CopilotLanguageServerStarted => {
                         if let Some(server) = copilot.read(cx).language_server() {
                             let server_id = server.server_id();
@@ -159,8 +158,8 @@ impl LogStore {
                             );
                         }
                     }
-                },
-            )
+                }
+            })
         });
 
         let this = Self {
@@ -766,6 +765,7 @@ impl SearchableItem for LspLogView {
             regex: true,
             // LSP log is read-only.
             replacement: false,
+            selection: false,
         }
     }
     fn active_match_index(
@@ -821,7 +821,7 @@ impl Render for LspLogToolbarItemView {
         });
 
         let log_toolbar_view = cx.view().clone();
-        let lsp_menu = popover_menu("LspLogView")
+        let lsp_menu = PopoverMenu::new("LspLogView")
             .anchor(AnchorCorner::TopLeft)
             .trigger(Button::new(
                 "language_server_menu_header",

@@ -4,7 +4,7 @@ members = [
     "crates/anthropic",
     "crates/assets",
     "crates/assistant",
-    "crates/assistant2",
+    "crates/assistant_slash_command",
     "crates/assistant_tooling",
     "crates/audio",
     "crates/auto_update",
@@ -41,6 +41,8 @@ members = [
     "crates/gpui",
     "crates/gpui_macros",
     "crates/headless",
+    "crates/html_to_markdown",
+    "crates/http",
     "crates/image_viewer",
     "crates/inline_completion_button",
     "crates/install_cli",
@@ -59,22 +61,28 @@ members = [
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",
+    "crates/ollama",
     "crates/open_ai",
     "crates/outline",
+    "crates/outline_panel",
+    "crates/paths",
     "crates/picker",
     "crates/prettier",
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
+    "crates/proto",
     "crates/quick_action_bar",
     "crates/recent_projects",
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
     "crates/dev_server_projects",
+    "crates/repl",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
+    "crates/rustdoc",
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
@@ -127,6 +135,8 @@ members = [
     "extensions/php",
     "extensions/prisma",
     "extensions/purescript",
+    "extensions/ruby",
+    "extensions/snippets",
     "extensions/svelte",
     "extensions/terraform",
     "extensions/toml",
@@ -145,8 +155,9 @@ ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
-assistant2 = { path = "crates/assistant2" }
+assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tooling = { path = "crates/assistant_tooling" }
+async-watch = "0.3.1"
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 base64 = "0.13"
@@ -159,10 +170,10 @@ clock = { path = "crates/clock" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
-color = { path = "crates/color" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
+dashmap = "5.5.3"
 db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
@@ -182,6 +193,8 @@ google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
+html_to_markdown = { path = "crates/html_to_markdown" }
+http = { path = "crates/http" }
 install_cli = { path = "crates/install_cli" }
 image_viewer = { path = "crates/image_viewer" }
 inline_completion_button = { path = "crates/inline_completion_button" }
@@ -200,13 +213,17 @@ menu = { path = "crates/menu" }
 multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
+ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
+outline_panel = { path = "crates/outline_panel" }
+paths = { path = "crates/paths" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
+proto = { path = "crates/proto" }
 worktree = { path = "crates/worktree" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
@@ -214,9 +231,11 @@ quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
 dev_server_projects = { path = "crates/dev_server_projects" }
+repl = { path = "crates/repl" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
+rustdoc = { path = "crates/rustdoc" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
@@ -250,38 +269,47 @@ workspace = { path = "crates/workspace" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
+alacritty_terminal = "0.23"
 anyhow = "1.0.57"
 any_vec = "0.13"
+ashpd = "0.8.0"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-dispatcher = { version = "0.1"}
 async-fs = "1.6"
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e35b2d41f221a48b75f7cf2e78a81e7ecb7a383c" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
+blade-macros = { git = "https://github.com/kvark/blade", rev =  "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"  }
 cap-std = "3.0"
+cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
+cocoa = "0.25"
 ctor = "0.2.6"
-ctrlc = "3.4.4"
 core-foundation = { version = "0.9.3" }
 core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
+dirs = "4.0"
 emojis = "0.6.1"
 env_logger = "0.9"
+exec = "0.3.1"
+fork = "0.1.23"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-git2 = { version = "0.18", default-features = false }
+git2 = { version = "0.19", default-features = false }
 globset = "0.4"
-heed = { git = "https://github.com/meilisearch/heed", rev = "036ac23f73a021894974b9adc815bc95b3e0482a", features = [
-    "read-txn-no-tls",
-] }
+heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
+html5ever = "0.27.0"
 ignore = "0.4.22"
+image = "0.23"
+indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "1"
 # We explicitly disable http2 support in isahc.
 isahc = { version = "1.7.2", default-features = false, features = [
@@ -290,13 +318,18 @@ isahc = { version = "1.7.2", default-features = false, features = [
 ] }
 itertools = "0.11.0"
 lazy_static = "1.4.0"
+libc = "0.2"
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
 nix = "0.28"
+num-format = "0.4.4"
+once_cell = "1.19.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
+pathdiff = "0.2"
 profiling = "1"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = "1.3.0"
@@ -308,8 +341,9 @@ rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
 regex = "1.5"
 repair_json = "0.1.0"
+runtimelib = { version="0.12", default-features = false, features = ["async-dispatcher-runtime"] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
-rust-embed = { version = "8.0", features = ["include-exclude"] }
+rust-embed = { version = "8.4", features = ["include-exclude"] }
 schemars = "0.8"
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -322,6 +356,9 @@ serde_json_lenient = { version = "0.1", features = [
 serde_repr = "0.1"
 sha2 = "0.10"
 shellexpand = "2.1.0"
+shlex = "1.3.0"
+signal-hook = "0.3.17"
+similar = "1.3"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
@@ -329,7 +366,7 @@ subtle = "2.5.0"
 sysinfo = "0.30.7"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
-tiktoken-rs = "0.5.7"
+tiktoken-rs = "0.5.9"
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -341,33 +378,33 @@ toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.20", features = ["wasm"] }
-tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
+tree-sitter-bash = "0.20.5"
 tree-sitter-c = "0.20.1"
-tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
-tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
-tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
+tree-sitter-cpp = "0.20.5"
+tree-sitter-css = "0.20"
+tree-sitter-elixir = "0.1.1"
 tree-sitter-embedded-template = "0.20.0"
-tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
-tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" }
+tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "b82ab803d887002a0af11f6ce63d72884580bf33" }
+tree-sitter-gomod = "1.0.1"
 tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
 rustc-demangle = "0.1.23"
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
 tree-sitter-html = "0.19.0"
 tree-sitter-jsdoc = { git = "https://github.com/tree-sitter/tree-sitter-jsdoc", rev = "6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55" }
-tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }
+tree-sitter-json = "0.20.2"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
 tree-sitter-python = "0.20.2"
 tree-sitter-regex = "0.20.0"
 tree-sitter-ruby = "0.20.0"
 tree-sitter-rust = "0.20.3"
-tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
-tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
+tree-sitter-typescript = "0.20.5"
+tree-sitter-yaml = "0.0.1"
 unindent = "0.1.7"
 unicase = "2.6"
 unicode-segmentation = "1.10"
 url = "2.2"
-uuid = { version = "1.1.2", features = ["v4", "v5"] }
+uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
 wasmparser = "0.201"
 wasm-encoder = "0.201"
 wasmtime = { version = "19.0.0", default-features = false, features = [
@@ -383,22 +420,23 @@ wit-component = "0.201"
 sys-locale = "0.3.1"
 
 [workspace.dependencies.windows]
-version = "0.53.0"
+version = "0.57"
 features = [
     "implement",
     "Foundation_Numerics",
     "System",
     "System_Threading",
+    "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
     "Win32_Graphics_Direct2D",
     "Win32_Graphics_Direct2D_Common",
     "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
     "Win32_Graphics_Imaging_D2D",
-    "Win32_Media",
     "Win32_Security",
     "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",

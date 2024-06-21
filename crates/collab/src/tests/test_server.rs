@@ -19,6 +19,7 @@ use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
 use git::GitHostingProviderRegistry;
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
+use http::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 use notifications::NotificationStore;
@@ -41,8 +42,7 @@ use std::{
         Arc,
     },
 };
-use util::http::FakeHttpClient;
-use workspace::{Workspace, WorkspaceId, WorkspaceStore};
+use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
@@ -161,7 +161,7 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
             client::init_settings(cx);
         });
 
@@ -277,11 +277,7 @@ impl TestServer {
             node_runtime: FakeNodeRuntime::new(),
         });
 
-        let os_keymap = if cfg!(target_os = "linux") {
-            "keymaps/default-linux.json"
-        } else {
-            "keymaps/default-macos.json"
-        };
+        let os_keymap = "keymaps/default-macos.json";
 
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
@@ -327,7 +323,7 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
             client::init_settings(cx);
         });
         let (dev_server_id, _) = split_dev_server_token(&access_token).unwrap();
@@ -428,8 +424,10 @@ impl TestServer {
                     node_runtime: app_state.node_runtime.clone(),
                 },
                 cx,
-            );
-        });
+            )
+        })
+        .await
+        .unwrap();
 
         TestClient {
             app_state,
@@ -904,12 +902,7 @@ impl TestClient {
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(
-                WorkspaceId::default(),
-                project.clone(),
-                self.app_state.clone(),
-                cx,
-            )
+            Workspace::new(None, project.clone(), self.app_state.clone(), cx)
         })
     }
 
@@ -920,12 +913,7 @@ impl TestClient {
         let project = self.build_test_project(cx).await;
         cx.add_window_view(|cx| {
             cx.activate_window();
-            Workspace::new(
-                WorkspaceId::default(),
-                project.clone(),
-                self.app_state.clone(),
-                cx,
-            )
+            Workspace::new(None, project.clone(), self.app_state.clone(), cx)
         })
     }
 

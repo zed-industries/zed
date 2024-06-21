@@ -32,9 +32,9 @@ use crate::*;
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
 
 pub struct WindowsWindowState {
-    pub origin: Point<DevicePixels>,
-    pub physical_size: Size<DevicePixels>,
-    pub fullscreen_restore_bounds: Bounds<DevicePixels>,
+    pub origin: Point<Pixels>,
+    pub logical_size: Size<Pixels>,
+    pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub scale_factor: f32,
 
     pub callbacks: Callbacks,
@@ -43,8 +43,9 @@ pub struct WindowsWindowState {
     pub renderer: BladeRenderer,
 
     pub click_state: ClickState,
-    pub mouse_wheel_settings: MouseWheelSettings,
+    pub system_settings: WindowsSystemSettings,
     pub current_cursor: HCURSOR,
+    pub nc_button_pressed: Option<u32>,
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
@@ -64,37 +65,42 @@ impl WindowsWindowState {
         hwnd: HWND,
         transparent: bool,
         cs: &CREATESTRUCTW,
-        mouse_wheel_settings: MouseWheelSettings,
         current_cursor: HCURSOR,
         display: WindowsDisplay,
     ) -> Self {
-        let origin = point(cs.x.into(), cs.y.into());
-        let physical_size = size(cs.cx.into(), cs.cy.into());
-        let fullscreen_restore_bounds = Bounds {
-            origin,
-            size: physical_size,
-        };
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
+        };
+        let origin = logical_point(cs.x as f32, cs.y as f32, scale_factor);
+        let logical_size = {
+            let physical_size = size(DevicePixels(cs.cx), DevicePixels(cs.cy));
+            physical_size.to_pixels(scale_factor)
+        };
+        let fullscreen_restore_bounds = Bounds {
+            origin,
+            size: logical_size,
         };
         let renderer = windows_renderer::windows_renderer(hwnd, transparent);
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
+        let system_settings = WindowsSystemSettings::new();
+        let nc_button_pressed = None;
         let fullscreen = None;
 
         Self {
             origin,
-            physical_size,
+            logical_size,
             fullscreen_restore_bounds,
             scale_factor,
             callbacks,
             input_handler,
             renderer,
             click_state,
-            mouse_wheel_settings,
+            system_settings,
             current_cursor,
+            nc_button_pressed,
             display,
             fullscreen,
             hwnd,
@@ -110,10 +116,10 @@ impl WindowsWindowState {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         Bounds {
             origin: self.origin,
-            size: self.physical_size,
+            size: self.logical_size,
         }
     }
 
@@ -126,15 +132,17 @@ impl WindowsWindowState {
             GetWindowPlacement(self.hwnd, &mut placement).log_err();
             placement
         };
+        let physical_size = size(
+            DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
+            DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
+        );
         let bounds = Bounds {
-            origin: point(
-                DevicePixels(placement.rcNormalPosition.left),
-                DevicePixels(placement.rcNormalPosition.top),
+            origin: logical_point(
+                placement.rcNormalPosition.left as f32,
+                placement.rcNormalPosition.top as f32,
+                self.scale_factor,
             ),
-            size: size(
-                DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
-                DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
-            ),
+            size: physical_size.to_pixels(self.scale_factor),
         };
 
         if self.is_fullscreen() {
@@ -151,7 +159,7 @@ impl WindowsWindowState {
     /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
-        logical_size(self.physical_size, self.scale_factor)
+        self.logical_size
     }
 
     fn title_bar_padding(&self) -> Pixels {
@@ -195,7 +203,6 @@ impl WindowsWindowStatePtr {
             hwnd,
             context.transparent,
             cs,
-            context.mouse_wheel_settings,
             context.current_cursor,
             context.display,
         ));
@@ -229,7 +236,6 @@ struct WindowCreateContext {
     display: WindowsDisplay,
     transparent: bool,
     executor: ForegroundExecutor,
-    mouse_wheel_settings: MouseWheelSettings,
     current_cursor: HCURSOR,
 }
 
@@ -239,7 +245,6 @@ impl WindowsWindow {
         params: WindowParams,
         icon: HICON,
         executor: ForegroundExecutor,
-        mouse_wheel_settings: MouseWheelSettings,
         current_cursor: HCURSOR,
     ) -> Self {
         let classname = register_wnd_class(icon);
@@ -258,16 +263,19 @@ impl WindowsWindow {
         );
         let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
         let hinstance = get_module_handle();
+        let display = if let Some(display_id) = params.display_id {
+            // if we obtain a display_id, then this ID must be valid.
+            WindowsDisplay::new(display_id).unwrap()
+        } else {
+            WindowsDisplay::primary_monitor().unwrap()
+        };
         let mut context = WindowCreateContext {
             inner: None,
             handle,
             hide_title_bar,
-            // todo(windows) move window to target monitor
-            // options.display_id
-            display: WindowsDisplay::primary_monitor().unwrap(),
+            display,
             transparent: params.window_background != WindowBackgroundAppearance::Opaque,
             executor,
-            mouse_wheel_settings,
             current_cursor,
         };
         let lpparam = Some(&context as *const _ as *const _);
@@ -297,13 +305,20 @@ impl WindowsWindow {
                 ..Default::default()
             };
             GetWindowPlacement(raw_hwnd, &mut placement).log_err();
-            placement.rcNormalPosition.left = params.bounds.left().0;
-            placement.rcNormalPosition.right = params.bounds.right().0;
-            placement.rcNormalPosition.top = params.bounds.top().0;
-            placement.rcNormalPosition.bottom = params.bounds.bottom().0;
+            // the bounds may be not inside the display
+            let bounds = if display.check_given_bounds(params.bounds) {
+                params.bounds
+            } else {
+                display.default_bounds()
+            };
+            let bounds = bounds.to_device_pixels(wnd.0.state.borrow().scale_factor);
+            placement.rcNormalPosition.left = bounds.left().0;
+            placement.rcNormalPosition.right = bounds.right().0;
+            placement.rcNormalPosition.top = bounds.top().0;
+            placement.rcNormalPosition.bottom = bounds.bottom().0;
             SetWindowPlacement(raw_hwnd, &placement).log_err();
         }
-        unsafe { ShowWindow(raw_hwnd, SW_SHOW) };
+        unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
 
         wnd
     }
@@ -344,7 +359,7 @@ impl Drop for WindowsWindow {
 }
 
 impl PlatformWindow for WindowsWindow {
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.0.state.borrow().bounds()
     }
 
@@ -373,8 +388,8 @@ impl PlatformWindow for WindowsWindow {
         WindowAppearance::Dark
     }
 
-    fn display(&self) -> Rc<dyn PlatformDisplay> {
-        Rc::new(self.0.state.borrow().display)
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(Rc::new(self.0.state.borrow().display))
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -384,7 +399,7 @@ impl PlatformWindow for WindowsWindow {
             GetCursorPos(&mut point)
                 .context("unable to get cursor position")
                 .log_err();
-            ScreenToClient(self.0.hwnd, &mut point);
+            ScreenToClient(self.0.hwnd, &mut point).ok().log_err();
             point
         };
         logical_point(point.x as f32, point.y as f32, scale_factor)
@@ -437,7 +452,7 @@ impl PlatformWindow for WindowsWindow {
                             title = windows::core::w!("Warning");
                             main_icon = TD_WARNING_ICON;
                         }
-                        crate::PromptLevel::Critical | crate::PromptLevel::Destructive => {
+                        crate::PromptLevel::Critical => {
                             title = windows::core::w!("Critical");
                             main_icon = TD_ERROR_ICON;
                         }
@@ -481,7 +496,9 @@ impl PlatformWindow for WindowsWindow {
         let hwnd = self.0.hwnd;
         unsafe { SetActiveWindow(hwnd) };
         unsafe { SetFocus(hwnd) };
-        unsafe { SetForegroundWindow(hwnd) };
+        // todo(windows)
+        // crate `windows 0.56` reports true as Err
+        unsafe { SetForegroundWindow(hwnd).as_bool() };
     }
 
     fn is_active(&self) -> bool {
@@ -511,11 +528,11 @@ impl PlatformWindow for WindowsWindow {
     fn show_character_palette(&self) {}
 
     fn minimize(&self) {
-        unsafe { ShowWindowAsync(self.0.hwnd, SW_MINIMIZE) };
+        unsafe { ShowWindowAsync(self.0.hwnd, SW_MINIMIZE).ok().log_err() };
     }
 
     fn zoom(&self) {
-        unsafe { ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE) };
+        unsafe { ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err() };
     }
 
     fn toggle_fullscreen(&self) {
@@ -526,7 +543,7 @@ impl PlatformWindow for WindowsWindow {
                 let mut lock = state_ptr.state.borrow_mut();
                 lock.fullscreen_restore_bounds = Bounds {
                     origin: lock.origin,
-                    size: lock.physical_size,
+                    size: lock.logical_size,
                 };
                 let StyleAndBounds {
                     style,
@@ -554,13 +571,13 @@ impl PlatformWindow for WindowsWindow {
                             | WS_MAXIMIZEBOX
                             | WS_MINIMIZEBOX
                             | WS_CAPTION);
-                    let bounds = lock.display.bounds();
+                    let physical_bounds = lock.display.physical_bounds();
                     StyleAndBounds {
                         style,
-                        x: bounds.left().0,
-                        y: bounds.top().0,
-                        cx: bounds.size.width.0,
-                        cy: bounds.size.height.0,
+                        x: physical_bounds.left().0,
+                        y: physical_bounds.top().0,
+                        cx: physical_bounds.size.width.0,
+                        cy: physical_bounds.size.height.0,
                     }
                 };
                 drop(lock);
@@ -628,6 +645,14 @@ impl PlatformWindow for WindowsWindow {
     fn get_raw_handle(&self) -> HWND {
         self.0.hwnd
     }
+
+    fn show_window_menu(&self, _position: Point<Pixels>) {}
+
+    fn start_system_move(&self) {}
+
+    fn should_render_window_controls(&self) -> bool {
+        false
+    }
 }
 
 #[implement(IDropTarget)]
@@ -694,7 +719,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                 }
                 ReleaseStgMedium(&mut idata);
                 let mut cursor_position = POINT { x: pt.x, y: pt.y };
-                ScreenToClient(self.0.hwnd, &mut cursor_position);
+                ScreenToClient(self.0.hwnd, &mut cursor_position)
+                    .ok()
+                    .log_err();
                 let scale_factor = self.0.state.borrow().scale_factor;
                 let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                     position: logical_point(
@@ -720,7 +747,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     ) -> windows::core::Result<()> {
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
-            ScreenToClient(self.0.hwnd, &mut cursor_position);
+            ScreenToClient(self.0.hwnd, &mut cursor_position)
+                .ok()
+                .log_err();
         }
         let scale_factor = self.0.state.borrow().scale_factor;
         let input = PlatformInput::FileDrop(FileDropEvent::Pending {
@@ -751,7 +780,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     ) -> windows::core::Result<()> {
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
-            ScreenToClient(self.0.hwnd, &mut cursor_position);
+            ScreenToClient(self.0.hwnd, &mut cursor_position)
+                .ok()
+                .log_err();
         }
         let scale_factor = self.0.state.borrow().scale_factor;
         let input = PlatformInput::FileDrop(FileDropEvent::Submit {

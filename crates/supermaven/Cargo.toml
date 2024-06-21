@@ -39,3 +39,4 @@ project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+http = { workspace = true, features = ["test-support"] }

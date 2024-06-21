@@ -17,6 +17,7 @@ chrono.workspace = true
 gpui.workspace = true
 itertools = { workspace = true, optional = true }
 menu.workspace = true
+serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }

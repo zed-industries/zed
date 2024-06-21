@@ -25,8 +25,9 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use futures::Future;
-use gpui::{AppContext, AsyncAppContext, Model, Task};
+use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
+use http::HttpClient;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::Mutex;
@@ -57,12 +58,10 @@ use std::{
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
-pub use task_context::{
-    BasicContextProvider, ContextProvider, ContextProviderWithTasks, RunnableRange,
-};
+pub use task_context::{ContextProvider, RunnableRange};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
-use util::http::HttpClient;
+use util::serde::default_true;
 
 pub use buffer::Operation;
 pub use buffer::*;
@@ -72,9 +71,9 @@ pub use language_registry::{
     PendingLanguageServer, QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::LanguageServerId;
-pub use outline::{Outline, OutlineItem};
+pub use outline::{render_item, Outline, OutlineItem};
 pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
-pub use text::LineEnding;
+pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 
 /// Initializes the `language` crate.
@@ -545,7 +544,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     binary
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CodeLabel {
     /// The text to display.
     pub text: String,
@@ -610,13 +609,6 @@ pub struct LanguageConfig {
     /// or a whole-word search in buffer search.
     #[serde(default)]
     pub word_characters: HashSet<char>,
-    /// The name of a Prettier parser that should be used for this language.
-    #[serde(default)]
-    pub prettier_parser_name: Option<String>,
-    /// The names of any Prettier plugins that should be used for this language.
-    #[serde(default)]
-    pub prettier_plugins: Vec<Arc<str>>,
-
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
     #[serde(default)]
@@ -627,6 +619,10 @@ pub struct LanguageConfig {
     /// How to soft-wrap long lines of text.
     #[serde(default)]
     pub soft_wrap: Option<SoftWrap>,
+    /// The name of a Prettier parser that will be used for this language when no file path is available.
+    /// If there's a parser name in the language settings, that will be used instead.
+    #[serde(default)]
+    pub prettier_parser_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -708,12 +704,11 @@ impl Default for LanguageConfig {
             scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
             word_characters: Default::default(),
-            prettier_parser_name: None,
-            prettier_plugins: Default::default(),
             collapsed_placeholder: Default::default(),
-            hard_tabs: Default::default(),
-            tab_size: Default::default(),
-            soft_wrap: Default::default(),
+            hard_tabs: None,
+            tab_size: None,
+            soft_wrap: None,
+            prettier_parser_name: None,
         }
     }
 }
@@ -817,6 +812,9 @@ pub struct BracketPair {
     pub end: String,
     /// True if `end` should be automatically inserted right after `start` characters.
     pub close: bool,
+    /// True if selected text should be surrounded by `start` and `end` characters.
+    #[serde(default = "default_true")]
+    pub surround: bool,
     /// True if an extra newline should be inserted while the cursor is in the middle
     /// of that bracket pair.
     pub newline: bool,
@@ -901,12 +899,16 @@ struct RedactionConfig {
     pub redaction_capture_ix: u32,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum RunnableCapture {
+    Named(SharedString),
+    Run,
+}
+
 struct RunnableConfig {
     pub query: Query,
-    /// A mapping from captures indices to known test tags
-    pub runnable_tags: HashMap<u32, RunnableTag>,
-    /// index of the capture that corresponds to @run
-    pub run_capture_ix: u32,
+    /// A mapping from capture indice to capture kind
+    pub extra_captures: Vec<RunnableCapture>,
 }
 
 struct OverrideConfig {
@@ -1028,23 +1030,21 @@ impl Language {
             .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
 
         let query = Query::new(&grammar.ts_language, source)?;
-        let mut run_capture_index = None;
-        let mut runnable_tags = HashMap::default();
-        for (ix, name) in query.capture_names().iter().enumerate() {
-            if *name == "run" {
-                run_capture_index = Some(ix as u32);
-            } else if !name.starts_with('_') {
-                runnable_tags.insert(ix as u32, RunnableTag(name.to_string().into()));
-            }
+        let mut extra_captures = Vec::with_capacity(query.capture_names().len());
+
+        for name in query.capture_names().iter() {
+            let kind = if *name == "run" {
+                RunnableCapture::Run
+            } else {
+                RunnableCapture::Named(name.to_string().into())
+            };
+            extra_captures.push(kind);
         }
 
-        if let Some(run_capture_ix) = run_capture_index {
-            grammar.runnable_config = Some(RunnableConfig {
-                query,
-                run_capture_ix,
-                runnable_tags,
-            });
-        }
+        grammar.runnable_config = Some(RunnableConfig {
+            extra_captures,
+            query,
+        });
 
         Ok(self)
     }
@@ -1383,19 +1383,15 @@ impl Language {
         }
     }
 
-    pub fn prettier_parser_name(&self) -> Option<&str> {
-        self.config.prettier_parser_name.as_deref()
-    }
-
-    pub fn prettier_plugins(&self) -> &Vec<Arc<str>> {
-        &self.config.prettier_plugins
-    }
-
     pub fn lsp_id(&self) -> String {
         match self.config.name.as_ref() {
             "Plain Text" => "plaintext".to_string(),
             language_name => language_name.to_lowercase(),
         }
+    }
+
+    pub fn prettier_parser_name(&self) -> Option<&str> {
+        self.config.prettier_parser_name.as_deref()
     }
 }
 
@@ -1555,6 +1551,15 @@ impl CodeLabel {
             }
         }
         result
+    }
+
+    pub fn push_str(&mut self, text: &str, highlight: Option<HighlightId>) {
+        let start_ix = self.text.len();
+        self.text.push_str(text);
+        let end_ix = self.text.len();
+        if let Some(highlight) = highlight {
+            self.runs.push((start_ix..end_ix, highlight));
+        }
     }
 }
 

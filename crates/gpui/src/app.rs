@@ -19,19 +19,17 @@ use time::UtcOffset;
 pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
 pub use entity_map::*;
+use http::{self, HttpClient};
 pub use model_context::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
-use util::{
-    http::{self, HttpClient},
-    ResultExt,
-};
+use util::ResultExt;
 
 use crate::{
     current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
+    AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
+    Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
+    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
     PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
     Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
@@ -117,7 +115,7 @@ impl App {
         Self(AppContext::new(
             current_platform(),
             Arc::new(()),
-            http::client(),
+            http::client(None),
         ))
     }
 
@@ -170,11 +168,6 @@ impl App {
         self
     }
 
-    /// Returns metadata associated with the application
-    pub fn metadata(&self) -> AppMetadata {
-        self.0.borrow().app_metadata.clone()
-    }
-
     /// Returns a handle to the [`BackgroundExecutor`] associated with this app, which can be used to spawn futures in the background.
     pub fn background_executor(&self) -> BackgroundExecutor {
         self.0.borrow().background_executor.clone()
@@ -209,7 +202,6 @@ type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
 pub struct AppContext {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
-    app_metadata: AppMetadata,
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
@@ -262,17 +254,10 @@ impl AppContext {
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
 
-        let app_metadata = AppMetadata {
-            os_name: platform.os_name(),
-            os_version: platform.os_version().ok(),
-            app_version: platform.app_version().ok(),
-        };
-
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(AppContext {
                 this: this.clone(),
                 platform: platform.clone(),
-                app_metadata,
                 text_system,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
@@ -345,11 +330,6 @@ impl AppContext {
     /// Gracefully quit the application via the platform's standard routine.
     pub fn quit(&mut self) {
         self.platform.quit();
-    }
-
-    /// Get metadata about the app and platform.
-    pub fn app_metadata(&self) -> AppMetadata {
-        self.app_metadata.clone()
     }
 
     /// Schedules all windows in the application to be redrawn. This can be called
@@ -491,16 +471,24 @@ impl AppContext {
         &mut self,
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
-    ) -> WindowHandle<V> {
+    ) -> anyhow::Result<WindowHandle<V>> {
         self.update(|cx| {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
-            let mut window = Window::new(handle.into(), options, cx);
-            let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
-            window.root_view.replace(root_view.into());
-            cx.window_handles.insert(id, window.handle);
-            cx.windows.get_mut(id).unwrap().replace(window);
-            handle
+            match Window::new(handle.into(), options, cx) {
+                Ok(mut window) => {
+                    let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
+                    window.root_view.replace(root_view.into());
+                    WindowContext::new(cx, &mut window).defer(|cx| cx.appearance_changed());
+                    cx.window_handles.insert(id, window.handle);
+                    cx.windows.get_mut(id).unwrap().replace(window);
+                    Ok(handle)
+                }
+                Err(e) => {
+                    cx.windows.remove(id);
+                    return Err(e);
+                }
+            }
         })
     }
 
@@ -549,6 +537,7 @@ impl AppContext {
 
     /// Writes data to the primary selection buffer.
     /// Only available on Linux.
+    #[cfg(target_os = "linux")]
     pub fn write_to_primary(&self, item: ClipboardItem) {
         self.platform.write_to_primary(item)
     }
@@ -560,6 +549,7 @@ impl AppContext {
 
     /// Reads data from the primary selection buffer.
     /// Only available on Linux.
+    #[cfg(target_os = "linux")]
     pub fn read_from_primary(&self) -> Option<ClipboardItem> {
         self.platform.read_from_primary()
     }
@@ -608,6 +598,12 @@ impl AppContext {
         self.platform.app_path()
     }
 
+    /// On Linux, returns the name of the compositor in use.
+    /// Is blank on other platforms.
+    pub fn compositor_name(&self) -> &'static str {
+        self.platform.compositor_name()
+    }
+
     /// Returns the file URL of the executable with the specified name in the application bundle
     pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         self.platform.path_for_auxiliary_executable(name)
@@ -649,6 +645,11 @@ impl AppContext {
     /// Returns the local timezone at the platform level.
     pub fn local_timezone(&self) -> UtcOffset {
         self.platform.local_timezone()
+    }
+
+    /// Updates the http client assigned to GPUI
+    pub fn update_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
+        self.http_client = new_client;
     }
 
     /// Returns the http client assigned to GPUI
@@ -1153,6 +1154,16 @@ impl AppContext {
     /// Sets the menu bar for this application. This will replace any existing menu bar.
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
         self.platform.set_menus(menus, &self.keymap.borrow());
+    }
+
+    /// Gets the menu bar for this application.
+    pub fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
+        self.platform.get_menus()
+    }
+
+    /// Sets the right click menu for the app icon in the dock
+    pub fn set_dock_menu(&mut self, menus: Vec<MenuItem>) {
+        self.platform.set_dock_menu(menus, &self.keymap.borrow());
     }
 
     /// Adds given path to the bottom of the list of recent paths for the application.

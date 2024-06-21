@@ -74,6 +74,8 @@ pub struct ExtensionManifest {
     pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
     #[serde(default)]
     pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
+    #[serde(default)]
+    pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -126,6 +128,13 @@ impl LanguageServerManifestEntry {
         };
         self.languages.iter().cloned().chain(language)
     }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct SlashCommandManifestEntry {
+    pub description: String,
+    pub tooltip_text: String,
+    pub requires_argument: bool,
 }
 
 impl ExtensionManifest {
@@ -190,5 +199,6 @@ fn manifest_from_old_manifest(
             .map(|grammar_name| (grammar_name, Default::default()))
             .collect(),
         language_servers: Default::default(),
+        slash_commands: BTreeMap::default(),
     }
 }

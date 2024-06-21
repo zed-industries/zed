@@ -14,16 +14,15 @@ workspace = true
 
 [features]
 test-support = [
-    "client/test-support",
     "language/test-support",
     "settings/test-support",
     "text/test-support",
     "gpui/test-support",
+    "http/test-support",
 ]
 
 [dependencies]
 anyhow.workspace = true
-client.workspace = true
 clock.workspace = true
 collections.workspace = true
 fs.workspace = true
@@ -32,10 +31,8 @@ fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true
 ignore.workspace = true
-itertools.workspace = true
 language.workspace = true
 log.workspace = true
-lsp.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rpc.workspace = true
@@ -51,8 +48,10 @@ util.workspace = true
 [dev-dependencies]
 clock = {workspace = true, features = ["test-support"]}
 collections = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
 git2.workspace = true
 gpui = {workspace = true, features = ["test-support"]}
+http.workspace = true
 rand.workspace = true
 settings = {workspace = true, features = ["test-support"]}
 pretty_assertions.workspace = true

@@ -17,9 +17,9 @@ use futures::{
     TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
-    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, BorrowAppContext, Global, Model,
-    Task, WeakModel,
+    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
+use http::{HttpClient, HttpClientWithUrl};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
@@ -28,7 +28,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsStore};
+use settings::{Settings, SettingsSources};
 use std::fmt;
 use std::pin::Pin;
 use std::{
@@ -47,7 +47,6 @@ use std::{
 use telemetry::Telemetry;
 use thiserror::Error;
 use url::Url;
-use util::http::{HttpClient, HttpClientWithUrl};
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
@@ -85,8 +84,9 @@ lazy_static! {
         std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty());
 }
 
-pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
-pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
+pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
+pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 actions!(client, [SignIn, SignOut, Reconnect]);
 
@@ -114,11 +114,35 @@ impl Settings for ClientSettings {
     }
 }
 
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProxySettingsContent {
+    proxy: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ProxySettings {
+    pub proxy: Option<String>,
+}
+
+impl Settings for ProxySettings {
+    const KEY: Option<&'static str> = None;
+
+    type FileContent = ProxySettingsContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        Ok(Self {
+            proxy: sources
+                .user
+                .and_then(|value| value.proxy.clone())
+                .or(sources.default.proxy.clone()),
+        })
+    }
+}
+
 pub fn init_settings(cx: &mut AppContext) {
     TelemetrySettings::register(cx);
-    cx.update_global(|store: &mut SettingsStore, cx| {
-        store.register_setting::<ClientSettings>(cx);
-    });
+    ClientSettings::register(cx);
+    ProxySettings::register(cx);
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
@@ -204,7 +228,7 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] util::http::Error),
+    Http(#[from] http::Error),
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -264,7 +288,6 @@ struct ClientState {
     status: (watch::Sender<Status>, watch::Receiver<Status>),
     entity_id_extractors: HashMap<TypeId, fn(&dyn AnyTypedEnvelope) -> u64>,
     _reconnect_task: Option<Task<()>>,
-    reconnect_interval: Duration,
     entities_by_type_and_remote_id: HashMap<(TypeId, u64), WeakSubscriber>,
     models_by_message_type: HashMap<TypeId, AnyWeakModel>,
     entity_types_by_message_type: HashMap<TypeId, TypeId>,
@@ -340,7 +363,6 @@ impl Default for ClientState {
             status: watch::channel_with(Status::SignedOut),
             entity_id_extractors: Default::default(),
             _reconnect_task: None,
-            reconnect_interval: Duration::from_secs(5),
             models_by_message_type: Default::default(),
             entities_by_type_and_remote_id: Default::default(),
             entity_types_by_message_type: Default::default(),
@@ -487,7 +509,7 @@ impl Client {
         let credentials_provider: Arc<dyn CredentialsProvider + Send + Sync + 'static> =
             if use_zed_development_auth {
                 Arc::new(DevelopmentCredentialsProvider {
-                    path: util::paths::CONFIG_DIR.join("development_auth"),
+                    path: paths::config_dir().join("development_auth"),
                 })
             } else {
                 Arc::new(KeychainCredentialsProvider)
@@ -512,6 +534,7 @@ impl Client {
         let clock = Arc::new(clock::RealSystemClock);
         let http = Arc::new(HttpClientWithUrl::new(
             &ClientSettings::get_global(cx).server_url,
+            ProxySettings::get_global(cx).proxy.clone(),
         ));
         Self::new(clock, http.clone(), cx)
     }
@@ -599,7 +622,6 @@ impl Client {
             }
             Status::ConnectionLost => {
                 let this = self.clone();
-                let reconnect_interval = state.reconnect_interval;
                 state._reconnect_task = Some(cx.spawn(move |cx| async move {
                     #[cfg(any(test, feature = "test-support"))]
                     let mut rng = StdRng::seed_from_u64(0);
@@ -618,8 +640,9 @@ impl Client {
                             );
                             cx.background_executor().timer(delay).await;
                             delay = delay
-                                .mul_f32(rng.gen_range(1.0..=2.0))
-                                .min(reconnect_interval);
+                                .mul_f32(rng.gen_range(0.5..=2.5))
+                                .max(INITIAL_RECONNECTION_DELAY)
+                                .min(MAX_RECONNECTION_DELAY);
                         } else {
                             break;
                         }
@@ -1406,6 +1429,31 @@ impl Client {
         }
     }
 
+    pub fn request_dynamic(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> impl Future<Output = Result<proto::Envelope>> {
+        let client_id = self.id();
+        log::debug!(
+            "rpc request start. client_id:{}. name:{}",
+            client_id,
+            request_type
+        );
+        let response = self
+            .connection_id()
+            .map(|conn_id| self.peer.request_dynamic(conn_id, envelope, request_type));
+        async move {
+            let response = response?.await;
+            log::debug!(
+                "rpc request finish. client_id:{}. name:{}",
+                client_id,
+                request_type
+            );
+            Ok(response?.0)
+        }
+    }
+
     fn respond<T: RequestMessage>(&self, receipt: Receipt<T>, response: T::Response) -> Result<()> {
         log::debug!("rpc respond. client_id:{}. name:{}", self.id(), T::NAME);
         self.peer.respond(receipt, response)
@@ -1679,10 +1727,11 @@ mod tests {
 
     use clock::FakeSystemClock;
     use gpui::{BackgroundExecutor, Context, TestAppContext};
+    use http::FakeHttpClient;
     use parking_lot::Mutex;
+    use proto::TypedEnvelope;
     use settings::SettingsStore;
     use std::future;
-    use util::http::FakeHttpClient;
 
     #[gpui::test(iterations = 10)]
     async fn test_reconnection(cx: &mut TestAppContext) {

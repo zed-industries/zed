@@ -57,6 +57,7 @@ impl VsCodeThemeConverter {
             appearance,
             style: ThemeStyleContent {
                 window_background_appearance: Some(theme::WindowBackgroundContent::Opaque),
+                accents: Vec::new(), //TODO can we read this from the theme?
                 colors: theme_colors,
                 status: status_colors,
                 players: Vec::new(),
@@ -240,6 +241,7 @@ impl VsCodeThemeConverter {
 
             let highlight_style = HighlightStyleContent {
                 color: token_color.settings.foreground.clone(),
+                background_color: token_color.settings.background.clone(),
                 font_style: token_color
                     .settings
                     .font_style

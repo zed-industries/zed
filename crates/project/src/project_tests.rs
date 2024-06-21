@@ -1,23 +1,22 @@
 use crate::{Event, *};
 use fs::FakeFs;
 use futures::{future, StreamExt};
-use gpui::AppContext;
+use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
-use lsp::Url;
+use lsp::NumberOrString;
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
 use std::task::Poll;
-use task::{TaskContext, TaskTemplate, TaskTemplates};
+use task::{ResolvedTask, TaskContext, TaskTemplate, TaskTemplates};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
-use worktree::WorktreeModelHandle as _;
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -25,7 +24,7 @@ async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
 
     let (tx, mut rx) = futures::channel::mpsc::unbounded();
     let _thread = std::thread::spawn(move || {
-        std::fs::metadata("/Users").unwrap();
+        std::fs::metadata("/tmp").unwrap();
         std::thread::sleep(Duration::from_millis(1000));
         tx.unbounded_send(1).unwrap();
     });
@@ -129,101 +128,91 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     let task_context = TaskContext::default();
 
     cx.executor().run_until_parked();
-    let workree_id = cx.update(|cx| {
+    let worktree_id = cx.update(|cx| {
         project.update(cx, |project, cx| {
             project.worktrees().next().unwrap().read(cx).id()
         })
     });
     let global_task_source_kind = TaskSourceKind::Worktree {
-        id: workree_id,
+        id: worktree_id,
         abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
-        id_base: "local_tasks_for_worktree",
+        id_base: "local_tasks_for_worktree".into(),
     };
-    cx.update(|cx| {
-        let tree = worktree.read(cx);
 
-        let settings_a = language_settings(
-            None,
-            Some(
-                &(File::for_entry(
-                    tree.entry_for_path("a/a.rs").unwrap().clone(),
-                    worktree.clone(),
-                ) as _),
-            ),
-            cx,
-        );
-        let settings_b = language_settings(
-            None,
-            Some(
-                &(File::for_entry(
-                    tree.entry_for_path("b/b.rs").unwrap().clone(),
-                    worktree.clone(),
-                ) as _),
-            ),
-            cx,
-        );
+    let all_tasks = cx
+        .update(|cx| {
+            let tree = worktree.read(cx);
 
-        assert_eq!(settings_a.tab_size.get(), 8);
-        assert_eq!(settings_b.tab_size.get(), 2);
-
-        let all_tasks = project
-            .update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, _| {
-                    let (mut old, new) = inventory.used_and_current_resolved_tasks(
-                        None,
-                        Some(workree_id),
-                        &task_context,
-                    );
-                    old.extend(new);
-                    old
-                })
-            })
-            .into_iter()
-            .map(|(source_kind, task)| {
-                let resolved = task.resolved.unwrap();
-                (
-                    source_kind,
-                    task.resolved_label,
-                    resolved.args,
-                    resolved.env,
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            all_tasks,
-            vec![
-                (
-                    global_task_source_kind.clone(),
-                    "cargo check".to_string(),
-                    vec!["check".to_string(), "--all".to_string()],
-                    HashMap::default(),
+            let settings_a = language_settings(
+                None,
+                Some(
+                    &(File::for_entry(
+                        tree.entry_for_path("a/a.rs").unwrap().clone(),
+                        worktree.clone(),
+                    ) as _),
                 ),
-                (
-                    TaskSourceKind::Worktree {
-                        id: workree_id,
-                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
-                        id_base: "local_tasks_for_worktree",
-                    },
-                    "cargo check".to_string(),
-                    vec!["check".to_string()],
-                    HashMap::default(),
+                cx,
+            );
+            let settings_b = language_settings(
+                None,
+                Some(
+                    &(File::for_entry(
+                        tree.entry_for_path("b/b.rs").unwrap().clone(),
+                        worktree.clone(),
+                    ) as _),
                 ),
-            ]
-        );
-    });
+                cx,
+            );
 
-    project.update(cx, |project, cx| {
-        let inventory = project.task_inventory();
-        inventory.update(cx, |inventory, _| {
-            let (mut old, new) =
-                inventory.used_and_current_resolved_tasks(None, Some(workree_id), &task_context);
-            old.extend(new);
-            let (_, resolved_task) = old
-                .into_iter()
-                .find(|(source_kind, _)| source_kind == &global_task_source_kind)
-                .expect("should have one global task");
-            inventory.task_scheduled(global_task_source_kind.clone(), resolved_task);
+            assert_eq!(settings_a.tab_size.get(), 8);
+            assert_eq!(settings_b.tab_size.get(), 2);
+
+            get_all_tasks(&project, Some(worktree_id), &task_context, cx)
         })
+        .await
+        .into_iter()
+        .map(|(source_kind, task)| {
+            let resolved = task.resolved.unwrap();
+            (
+                source_kind,
+                task.resolved_label,
+                resolved.args,
+                resolved.env,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        all_tasks,
+        vec![
+            (
+                global_task_source_kind.clone(),
+                "cargo check".to_string(),
+                vec!["check".to_string(), "--all".to_string()],
+                HashMap::default(),
+            ),
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_id,
+                    abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                    id_base: "local_tasks_for_worktree".into(),
+                },
+                "cargo check".to_string(),
+                vec!["check".to_string()],
+                HashMap::default(),
+            ),
+        ]
+    );
+
+    let (_, resolved_task) = cx
+        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_context, cx))
+        .await
+        .into_iter()
+        .find(|(source_kind, _)| source_kind == &global_task_source_kind)
+        .expect("should have one global task");
+    project.update(cx, |project, cx| {
+        project.task_inventory().update(cx, |inventory, _| {
+            inventory.task_scheduled(global_task_source_kind.clone(), resolved_task);
+        });
     });
 
     let tasks = serde_json::to_string(&TaskTemplates(vec![TaskTemplate {
@@ -242,72 +231,67 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     }]))
     .unwrap();
     let (tx, rx) = futures::channel::mpsc::unbounded();
-
-    let templates = cx.update(|cx| TrackedFile::new(rx, cx));
+    cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project.task_inventory().update(cx, |inventory, cx| {
+                inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
+                inventory.add_source(
+                    global_task_source_kind.clone(),
+                    |tx, cx| StaticSource::new(TrackedFile::new(rx, tx, cx)),
+                    cx,
+                );
+            });
+        })
+    });
     tx.unbounded_send(tasks).unwrap();
 
-    let source = StaticSource::new(templates);
     cx.run_until_parked();
-
-    cx.update(|cx| {
-        let all_tasks = project
-            .update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, cx| {
-                    inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
-                    inventory.add_source(global_task_source_kind.clone(), source, cx);
-                    let (mut old, new) = inventory.used_and_current_resolved_tasks(
-                        None,
-                        Some(workree_id),
-                        &task_context,
-                    );
-                    old.extend(new);
-                    old
-                })
-            })
-            .into_iter()
-            .map(|(source_kind, task)| {
-                let resolved = task.resolved.unwrap();
-                (
-                    source_kind,
-                    task.resolved_label,
-                    resolved.args,
-                    resolved.env,
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            all_tasks,
-            vec![
-                (
-                    TaskSourceKind::Worktree {
-                        id: workree_id,
-                        abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
-                        id_base: "local_tasks_for_worktree",
-                    },
-                    "cargo check".to_string(),
-                    vec![
-                        "check".to_string(),
-                        "--all".to_string(),
-                        "--all-targets".to_string()
-                    ],
-                    HashMap::from_iter(Some((
-                        "RUSTFLAGS".to_string(),
-                        "-Zunstable-options".to_string()
-                    ))),
-                ),
-                (
-                    TaskSourceKind::Worktree {
-                        id: workree_id,
-                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
-                        id_base: "local_tasks_for_worktree",
-                    },
-                    "cargo check".to_string(),
-                    vec!["check".to_string()],
-                    HashMap::default(),
-                ),
-            ]
-        );
-    });
+    let all_tasks = cx
+        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_context, cx))
+        .await
+        .into_iter()
+        .map(|(source_kind, task)| {
+            let resolved = task.resolved.unwrap();
+            (
+                source_kind,
+                task.resolved_label,
+                resolved.args,
+                resolved.env,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        all_tasks,
+        vec![
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_id,
+                    abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
+                    id_base: "local_tasks_for_worktree".into(),
+                },
+                "cargo check".to_string(),
+                vec![
+                    "check".to_string(),
+                    "--all".to_string(),
+                    "--all-targets".to_string()
+                ],
+                HashMap::from_iter(Some((
+                    "RUSTFLAGS".to_string(),
+                    "-Zunstable-options".to_string()
+                ))),
+            ),
+            (
+                TaskSourceKind::Worktree {
+                    id: worktree_id,
+                    abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                    id_base: "local_tasks_for_worktree".into(),
+                },
+                "cargo check".to_string(),
+                vec!["check".to_string()],
+                HashMap::default(),
+            ),
+        ]
+    );
 }
 
 #[gpui::test]
@@ -743,7 +727,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             worktree
                 .read(cx)
                 .snapshot()
-                .entries(true)
+                .entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
@@ -817,7 +801,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             worktree
                 .read(cx)
                 .snapshot()
-                .entries(true)
+                .entries(true, 0)
                 .map(|entry| (entry.path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
@@ -1310,7 +1294,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             project
                 .language_servers_running_disk_based_diagnostics()
                 .collect::<Vec<_>>(),
-            [LanguageServerId(0); 0]
+            [] as [language::LanguageServerId; 0]
         );
     });
 }
@@ -1435,6 +1419,69 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
 }
 
 #[gpui::test]
+async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let progress_token = "the-progress-token";
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            disk_based_diagnostics_sources: vec!["disk".into()],
+            disk_based_diagnostics_progress_token: Some(progress_token.into()),
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    // Simulate diagnostics starting to update.
+    let mut fake_server = fake_servers.next().await.unwrap();
+    fake_server
+        .start_progress_with(
+            "another-token",
+            lsp::WorkDoneProgressBegin {
+                cancellable: Some(false),
+                ..Default::default()
+            },
+        )
+        .await;
+    fake_server
+        .start_progress_with(
+            progress_token,
+            lsp::WorkDoneProgressBegin {
+                cancellable: Some(true),
+                ..Default::default()
+            },
+        )
+        .await;
+    cx.executor().run_until_parked();
+
+    project.update(cx, |project, cx| {
+        project.cancel_language_server_work_for_buffers([buffer.clone()], cx)
+    });
+
+    let cancel_notification = fake_server
+        .receive_notification::<lsp::notification::WorkDoneProgressCancel>()
+        .await;
+    assert_eq!(
+        cancel_notification.token,
+        NumberOrString::String(progress_token.into())
+    );
+}
+
+#[gpui::test]
 async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -1495,7 +1542,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
 
     // Disable Rust language server, ensuring only that server gets stopped.
     cx.update(|cx| {
-        cx.update_global(|settings: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.languages.insert(
                     Arc::from("Rust"),
@@ -1514,7 +1561,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     // Enable Rust and disable JavaScript language servers, ensuring that the
     // former gets started again and that the latter stops.
     cx.update(|cx| {
-        cx.update_global(|settings: &mut SettingsStore, cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.languages.insert(
                     Arc::from("Rust"),
@@ -2403,7 +2450,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         assert_eq!(definition.target.range.to_offset(target_buffer), 9..10);
         assert_eq!(
             list_worktrees(&project, cx),
-            [("/dir/b.rs".as_ref(), true), ("/dir/a.rs".as_ref(), false)]
+            [("/dir/a.rs".as_ref(), false), ("/dir/b.rs".as_ref(), true)],
         );
 
         drop(definition);
@@ -2471,7 +2518,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     let text = "let a = b.fqn";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len(), cx)
+        project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server
@@ -2498,7 +2545,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     let text = "let a = \"atoms/cmp\"";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len() - 1, cx)
+        project.completions(&buffer, text.len() - 1, DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server
@@ -2563,7 +2610,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
     let text = "let a = b.fqn";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
-        project.completions(&buffer, text.len(), cx)
+        project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
     });
 
     fake_server
@@ -2952,6 +2999,8 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test(retries = 5)]
 async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
+    use worktree::WorktreeModelHandle as _;
+
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -2970,7 +3019,6 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     }));
 
     let project = Project::test(Arc::new(RealFs::default()), [dir.path()], cx).await;
-    let rpc = project.update(cx, |p, _| p.client.clone());
 
     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
         let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
@@ -2997,21 +3045,26 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
 
     // Create a remote copy of this worktree.
     let tree = project.update(cx, |project, _| project.worktrees().next().unwrap());
-
-    let metadata = tree.update(cx, |tree, _| tree.as_local().unwrap().metadata_proto());
+    let metadata = tree.update(cx, |tree, _| tree.metadata_proto());
 
     let updates = Arc::new(Mutex::new(Vec::new()));
     tree.update(cx, |tree, cx| {
-        let _ = tree.as_local_mut().unwrap().observe_updates(0, cx, {
-            let updates = updates.clone();
-            move |update| {
-                updates.lock().push(update);
-                async { true }
-            }
+        let updates = updates.clone();
+        tree.observe_updates(0, cx, move |update| {
+            updates.lock().push(update);
+            async { true }
         });
     });
 
-    let remote = cx.update(|cx| Worktree::remote(1, 1, metadata, rpc.clone(), cx));
+    let remote = cx.update(|cx| {
+        Worktree::remote(
+            0,
+            1,
+            metadata,
+            Box::new(CollabRemoteWorktreeClient(project.read(cx).client())),
+            cx,
+        )
+    });
 
     cx.executor().run_until_parked();
 
@@ -3142,6 +3195,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
         })
         .unwrap()
         .await
+        .to_included()
         .unwrap();
     cx.executor().run_until_parked();
 
@@ -3724,6 +3778,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_rename(cx: &mut gpui::TestAppContext) {
+    // hi
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -3874,7 +3929,15 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text("TWO", false, true, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                "TWO",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -3899,7 +3962,15 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text("TWO", false, true, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                "TWO",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -3939,8 +4010,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.odd").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -3959,8 +4030,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.rs").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -3982,11 +4053,10 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
-                Vec::new()
+
+                    PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
+                Default::default(),
             ).unwrap(),
             cx
         )
@@ -4007,12 +4077,10 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.rs").unwrap(),
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
-                Vec::new()
+
+                    PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
+               Default::default(),
             ).unwrap(),
             cx
         )
@@ -4055,8 +4123,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![PathMatcher::new("*.odd").unwrap()],
+                Default::default(),
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4080,8 +4148,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![PathMatcher::new("*.rs").unwrap()],
+                Default::default(),
+                PathMatcher::new(&["*.rs".to_owned()]).unwrap()
             )
             .unwrap(),
             cx
@@ -4103,11 +4171,10 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
+                Default::default(),
+
+                    PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
             ).unwrap(),
             cx
         )
@@ -4128,12 +4195,10 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![
-                    PathMatcher::new("*.rs").unwrap(),
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
+                 Default::default(),
+
+                    PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
             ).unwrap(),
             cx
         )
@@ -4170,8 +4235,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.odd").unwrap()],
-                vec![PathMatcher::new("*.odd").unwrap()],
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4190,8 +4255,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.ts").unwrap()],
-                vec![PathMatcher::new("*.ts").unwrap()],
+                PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
             ).unwrap(),
             cx
         )
@@ -4209,14 +4274,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4235,14 +4294,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
-                vec![
-                    PathMatcher::new("*.rs").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.rs".to_owned(), "*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4294,8 +4347,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("worktree-a/*.rs").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["worktree-a/*.rs".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -4313,8 +4366,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("worktree-b/*.rs").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["worktree-b/*.rs".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -4333,8 +4386,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.ts").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -4382,7 +4435,15 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text(query, false, false, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                query,
+                false,
+                false,
+                false,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4395,7 +4456,15 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text(query, false, false, true, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                query,
+                false,
+                false,
+                true,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4420,8 +4489,8 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         "Unrestricted search with ignored directories should find every file with the query"
     );
 
-    let files_to_include = vec![PathMatcher::new("/dir/node_modules/prettier/**").unwrap()];
-    let files_to_exclude = vec![PathMatcher::new("*.ts").unwrap()];
+    let files_to_include = PathMatcher::new(&["/dir/node_modules/prettier/**".to_owned()]).unwrap();
+    let files_to_exclude = PathMatcher::new(&["*.ts".to_owned()]).unwrap();
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     assert_eq!(
         search(
@@ -4480,6 +4549,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
         })
         .unwrap()
         .await
+        .to_included()
         .unwrap();
 
     // Can't create paths outside the project
@@ -4903,6 +4973,204 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.rs": "let a = 1;",
+            "b.rs": "let b = 2;",
+            "c.rs": "let c = 2;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs,
+        [
+            "/dir/a.rs".as_ref(),
+            "/dir/b.rs".as_ref(),
+            "/dir/c.rs".as_ref(),
+        ],
+        cx,
+    )
+    .await;
+
+    // check the initial state and get the worktrees
+    let (worktree_a, worktree_b, worktree_c) = project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 3);
+
+        let worktree_a = worktrees[0].read(cx);
+        let worktree_b = worktrees[1].read(cx);
+        let worktree_c = worktrees[2].read(cx);
+
+        // check they start in the right order
+        assert_eq!(worktree_a.abs_path().to_str().unwrap(), "/dir/a.rs");
+        assert_eq!(worktree_b.abs_path().to_str().unwrap(), "/dir/b.rs");
+        assert_eq!(worktree_c.abs_path().to_str().unwrap(), "/dir/c.rs");
+
+        (
+            worktrees[0].clone(),
+            worktrees[1].clone(),
+            worktrees[2].clone(),
+        )
+    });
+
+    // move first worktree to after the second
+    // [a, b, c] -> [b, a, c]
+    project
+        .update(cx, |project, cx| {
+            let first = worktree_a.read(cx);
+            let second = worktree_b.read(cx);
+            project.move_worktree(first.id(), second.id(), cx)
+        })
+        .expect("moving first after second");
+
+    // check the state after moving
+    project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 3);
+
+        let first = worktrees[0].read(cx);
+        let second = worktrees[1].read(cx);
+        let third = worktrees[2].read(cx);
+
+        // check they are now in the right order
+        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/b.rs");
+        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/a.rs");
+        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
+    });
+
+    // move the second worktree to before the first
+    // [b, a, c] -> [a, b, c]
+    project
+        .update(cx, |project, cx| {
+            let second = worktree_a.read(cx);
+            let first = worktree_b.read(cx);
+            project.move_worktree(first.id(), second.id(), cx)
+        })
+        .expect("moving second before first");
+
+    // check the state after moving
+    project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 3);
+
+        let first = worktrees[0].read(cx);
+        let second = worktrees[1].read(cx);
+        let third = worktrees[2].read(cx);
+
+        // check they are now in the right order
+        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
+        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
+        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
+    });
+
+    // move the second worktree to after the third
+    // [a, b, c] -> [a, c, b]
+    project
+        .update(cx, |project, cx| {
+            let second = worktree_b.read(cx);
+            let third = worktree_c.read(cx);
+            project.move_worktree(second.id(), third.id(), cx)
+        })
+        .expect("moving second after third");
+
+    // check the state after moving
+    project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 3);
+
+        let first = worktrees[0].read(cx);
+        let second = worktrees[1].read(cx);
+        let third = worktrees[2].read(cx);
+
+        // check they are now in the right order
+        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
+        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/c.rs");
+        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/b.rs");
+    });
+
+    // move the third worktree to before the second
+    // [a, c, b] -> [a, b, c]
+    project
+        .update(cx, |project, cx| {
+            let third = worktree_c.read(cx);
+            let second = worktree_b.read(cx);
+            project.move_worktree(third.id(), second.id(), cx)
+        })
+        .expect("moving third before second");
+
+    // check the state after moving
+    project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 3);
+
+        let first = worktrees[0].read(cx);
+        let second = worktrees[1].read(cx);
+        let third = worktrees[2].read(cx);
+
+        // check they are now in the right order
+        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
+        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
+        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
+    });
+
+    // move the first worktree to after the third
+    // [a, b, c] -> [b, c, a]
+    project
+        .update(cx, |project, cx| {
+            let first = worktree_a.read(cx);
+            let third = worktree_c.read(cx);
+            project.move_worktree(first.id(), third.id(), cx)
+        })
+        .expect("moving first after third");
+
+    // check the state after moving
+    project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 3);
+
+        let first = worktrees[0].read(cx);
+        let second = worktrees[1].read(cx);
+        let third = worktrees[2].read(cx);
+
+        // check they are now in the right order
+        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/b.rs");
+        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/c.rs");
+        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/a.rs");
+    });
+
+    // move the third worktree to before the first
+    // [b, c, a] -> [a, b, c]
+    project
+        .update(cx, |project, cx| {
+            let third = worktree_a.read(cx);
+            let first = worktree_b.read(cx);
+            project.move_worktree(third.id(), first.id(), cx)
+        })
+        .expect("moving third before first");
+
+    // check the state after moving
+    project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 3);
+
+        let first = worktrees[0].read(cx);
+        let second = worktrees[1].read(cx);
+        let third = worktrees[2].read(cx);
+
+        // check they are now in the right order
+        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
+        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
+        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
+    });
+}
+
 async fn search(
     project: &Model<Project>,
     query: SearchQuery,
@@ -4946,7 +5214,7 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        release_channel::init("0.0.0", cx);
+        release_channel::init(SemanticVersion::default(), cx);
         language::init(cx);
         Project::init_settings(cx);
     });
@@ -5020,4 +5288,24 @@ fn tsx_lang() -> Arc<Language> {
         },
         Some(tree_sitter_typescript::language_tsx()),
     ))
+}
+
+fn get_all_tasks(
+    project: &Model<Project>,
+    worktree_id: Option<WorktreeId>,
+    task_context: &TaskContext,
+    cx: &mut AppContext,
+) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
+    let resolved_tasks = project.update(cx, |project, cx| {
+        project
+            .task_inventory()
+            .read(cx)
+            .used_and_current_resolved_tasks(None, worktree_id, None, task_context, cx)
+    });
+
+    cx.spawn(|_| async move {
+        let (mut old, new) = resolved_tasks.await;
+        old.extend(new);
+        old
+    })
 }

@@ -2,17 +2,14 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncAppContext;
+use http::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::LanguageServerBinary;
 use project::project_settings::{BinarySettings, ProjectSettings};
 use settings::Settings;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{
-    fs::remove_matching,
-    github::{latest_github_release, GitHubLspBinaryVersion},
-    maybe, ResultExt,
-};
+use util::{fs::remove_matching, maybe, ResultExt};
 
 pub struct CLspAdapter;
 
@@ -38,12 +35,12 @@ impl super::LspAdapter for CLspAdapter {
                 .and_then(|s| s.binary.clone())
         });
 
-        if let Ok(Some(BinarySettings {
-            path: Some(path),
-            arguments,
-        })) = configured_binary
-        {
-            Some(LanguageServerBinary {
+        match configured_binary {
+            Ok(Some(BinarySettings {
+                path: Some(path),
+                arguments,
+                ..
+            })) => Some(LanguageServerBinary {
                 path: path.into(),
                 arguments: arguments
                     .unwrap_or_default()
@@ -51,15 +48,20 @@ impl super::LspAdapter for CLspAdapter {
                     .map(|arg| arg.into())
                     .collect(),
                 env: None,
-            })
-        } else {
-            let env = delegate.shell_env().await;
-            let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-            Some(LanguageServerBinary {
-                path,
-                arguments: vec![],
-                env: Some(env),
-            })
+            }),
+            Ok(Some(BinarySettings {
+                path_lookup: Some(false),
+                ..
+            })) => None,
+            _ => {
+                let env = delegate.shell_env().await;
+                let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+                Some(LanguageServerBinary {
+                    path,
+                    arguments: vec![],
+                    env: Some(env),
+                })
+            }
         }
     }
 
@@ -195,8 +197,16 @@ impl super::LspAdapter for CLspAdapter {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let filter_start = detail.len() + 1;
+                let filter_end =
+                    if let Some(end) = text.rfind('(').filter(|end| *end > filter_start) {
+                        end
+                    } else {
+                        text.len()
+                    };
+
                 return Some(CodeLabel {
-                    filter_range: detail.len() + 1..text.rfind('(').unwrap_or(text.len()),
+                    filter_range: filter_start..filter_end,
                     text,
                     runs,
                 });

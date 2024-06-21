@@ -278,7 +278,7 @@ impl PickerDelegate for NewPathDelegate {
                         .root_entry()
                         .map_or(false, |entry| entry.is_ignored),
                     include_root_name,
-                    directories_only: true,
+                    candidates: project::Candidates::Directories,
                 }
             })
             .collect::<Vec<_>>();
@@ -334,7 +334,7 @@ impl PickerDelegate for NewPathDelegate {
         if exists {
             self.should_dismiss = false;
             let answer = cx.prompt(
-                gpui::PromptLevel::Destructive,
+                gpui::PromptLevel::Critical,
                 &format!("{} already exists. Do you want to replace it?", m.relative_path()),
                 Some(
                     "A file or folder with the same name already eixsts. Replacing it will overwrite its current contents.",

@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.136.0"
+version = "0.142.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -11,7 +11,7 @@ authors = ["Zed Team <hi@zed.dev>"]
 workspace = true
 
 [[bin]]
-name = "Zed"
+name = "zed"
 path = "src/main.rs"
 
 [dependencies]
@@ -19,7 +19,6 @@ activity_indicator.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
-assistant2.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 backtrace = "0.3"
@@ -30,7 +29,6 @@ chrono.workspace = true
 clap.workspace = true
 cli.workspace = true
 client.workspace = true
-clock.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
@@ -51,6 +49,7 @@ git_hosting_providers.workspace = true
 go_to_line.workspace = true
 gpui.workspace = true
 headless.workspace = true
+http.workspace = true
 image_viewer.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
@@ -60,15 +59,18 @@ language.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
 languages.workspace = true
+libc.workspace = true
 log.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 mimalloc = { version = "0.1", optional = true }
-nix = {workspace = true, features = ["pthread"] }
+nix = {workspace = true, features = ["pthread", "signal"] }
 node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true
+outline_panel.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
@@ -77,6 +79,7 @@ quick_action_bar.workspace = true
 recent_projects.workspace = true
 dev_server_projects.workspace = true
 release_channel.workspace = true
+repl.workspace = true
 rope.workspace = true
 search.workspace = true
 serde.workspace = true
@@ -93,6 +96,7 @@ terminal_view.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
 urlencoding = "2.1.2"
+ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 vim.workspace = true
@@ -103,12 +107,16 @@ zed_actions.workspace = true
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd.workspace = true
+
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+tree-sitter-markdown.workspace = true
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 

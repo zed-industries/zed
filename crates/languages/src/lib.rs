@@ -1,14 +1,17 @@
 use anyhow::Context;
-use gpui::{AppContext, BorrowAppContext};
+use gpui::{AppContext, UpdateGlobal};
+use json::json_task_context;
 pub use language::*;
 use node_runtime::NodeRuntime;
+use python::PythonContextProvider;
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
 use std::{str, sync::Arc};
+use typescript::typescript_task_context;
 use util::{asset_str, ResultExt};
 
-use crate::{bash::bash_task_context, python::python_task_context, rust::RustContextProvider};
+use crate::{bash::bash_task_context, go::GoContextProvider, rust::RustContextProvider};
 
 mod bash;
 mod c;
@@ -16,10 +19,10 @@ mod css;
 mod go;
 mod json;
 mod python;
-mod ruby;
 mod rust;
 mod tailwind;
 mod typescript;
+mod vtsls;
 mod yaml;
 
 #[derive(RustEmbed)]
@@ -37,10 +40,6 @@ pub fn init(
         ("c", tree_sitter_c::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
-        (
-            "embedded_template",
-            tree_sitter_embedded_template::language(),
-        ),
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
@@ -50,7 +49,6 @@ pub fn init(
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("regex", tree_sitter_regex::language()),
-        ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
@@ -109,15 +107,21 @@ pub fn init(
         "css",
         vec![Arc::new(css::CssLspAdapter::new(node_runtime.clone())),]
     );
-    language!("go", vec![Arc::new(go::GoLspAdapter)]);
-    language!("gomod");
-    language!("gowork");
+    language!("go", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
+    language!("gomod", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
+    language!(
+        "gowork",
+        vec![Arc::new(go::GoLspAdapter)],
+        GoContextProvider
+    );
+
     language!(
         "json",
         vec![Arc::new(json::JsonLspAdapter::new(
             node_runtime.clone(),
             languages.clone(),
-        ))]
+        ))],
+        json_task_context()
     );
     language!("markdown");
     language!(
@@ -125,7 +129,7 @@ pub fn init(
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
         ))],
-        python_task_context()
+        PythonContextProvider
     );
     language!(
         "rust",
@@ -134,30 +138,35 @@ pub fn init(
     );
     language!(
         "tsx",
-        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
-            node_runtime.clone()
-        ))]
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        ],
+        typescript_task_context()
     );
     language!(
         "typescript",
-        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
-            node_runtime.clone()
-        ))]
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        ],
+        typescript_task_context()
     );
     language!(
         "javascript",
-        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
-            node_runtime.clone()
-        ))]
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        ],
+        typescript_task_context()
     );
     language!(
         "jsdoc",
-        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
-            node_runtime.clone(),
-        ))]
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone(),)),
+            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        ]
     );
-    language!("ruby", vec![Arc::new(ruby::RubyLanguageServer)]);
-    language!("erb", vec![Arc::new(ruby::RubyLanguageServer),]);
     language!("regex");
     language!(
         "yaml",
@@ -231,7 +240,7 @@ pub fn init(
             let language_settings = languages.language_settings();
             if language_settings != prev_language_settings {
                 cx.update(|cx| {
-                    cx.update_global(|settings: &mut SettingsStore, cx| {
+                    SettingsStore::update_global(cx, |settings, cx| {
                         settings
                             .set_extension_settings(language_settings.clone(), cx)
                             .log_err();

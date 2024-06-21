@@ -58,6 +58,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("r", &["r", "R"]),
     ("racket", &["rkt"]),
     ("rescript", &["res", "resi"]),
+    ("ruby", &["rb", "erb"]),
     ("scheme", &["scm"]),
     ("scss", &["scss"]),
     ("sql", &["sql"]),
@@ -68,6 +69,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("toml", &["Cargo.lock", "toml"]),
     ("vue", &["vue"]),
     ("wgsl", &["wgsl"]),
+    ("wit", &["wit"]),
     ("zig", &["zig"]),
 ];
 

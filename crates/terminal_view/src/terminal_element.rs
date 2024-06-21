@@ -553,7 +553,6 @@ impl Element for TerminalElement {
         global_id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.interactivity.occlude_mouse();
         let layout_id = self
             .interactivity
             .request_layout(global_id, cx, |mut style, cx| {
@@ -592,6 +591,8 @@ impl Element for TerminalElement {
                     .clone()
                     .unwrap_or(settings.buffer_font.features.clone());
 
+                let font_weight = terminal_settings.font_weight.unwrap_or_default();
+
                 let line_height = terminal_settings.line_height.value();
                 let font_size = terminal_settings.font_size;
 
@@ -617,6 +618,7 @@ impl Element for TerminalElement {
                 let text_style = TextStyle {
                     font_family,
                     font_features,
+                    font_weight,
                     font_size: font_size.into(),
                     font_style: FontStyle::Normal,
                     line_height: line_height.into(),
@@ -626,7 +628,6 @@ impl Element for TerminalElement {
                     underline: None,
                     strikethrough: None,
                     color: theme.colors().text,
-                    font_weight: FontWeight::NORMAL,
                 };
 
                 let text_system = cx.text_system();
@@ -1040,7 +1041,7 @@ fn to_highlighted_range_lines(
 }
 
 /// Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent.
-fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme: &Theme) -> Hsla {
+pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme: &Theme) -> Hsla {
     let colors = theme.colors();
     match fg {
         // Named and theme defined colors

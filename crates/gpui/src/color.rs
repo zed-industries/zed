@@ -1,6 +1,9 @@
-use anyhow::bail;
+use anyhow::{bail, Context};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
-use std::fmt;
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 /// Convert an RGB hex color code number to a color type
 pub fn rgb(hex: u32) -> Rgba {
@@ -126,6 +129,7 @@ impl TryFrom<&'_ str> for Rgba {
         const RRGGBBAA: usize = "rrggbbaa".len();
 
         const EXPECTED_FORMATS: &str = "Expected #rgb, #rgba, #rrggbb, or #rrggbbaa";
+        const INVALID_UNICODE: &str = "invalid unicode characters in color";
 
         let Some(("", hex)) = value.trim().split_once('#') else {
             bail!("invalid RGBA hex color: '{value}'. {EXPECTED_FORMATS}");
@@ -133,11 +137,31 @@ impl TryFrom<&'_ str> for Rgba {
 
         let (r, g, b, a) = match hex.len() {
             RGB | RGBA => {
-                let r = u8::from_str_radix(&hex[0..1], 16)?;
-                let g = u8::from_str_radix(&hex[1..2], 16)?;
-                let b = u8::from_str_radix(&hex[2..3], 16)?;
+                let r = u8::from_str_radix(
+                    hex.get(0..1).with_context(|| {
+                        format!("{INVALID_UNICODE}: r component of #rgb/#rgba for value: '{value}'")
+                    })?,
+                    16,
+                )?;
+                let g = u8::from_str_radix(
+                    hex.get(1..2).with_context(|| {
+                        format!("{INVALID_UNICODE}: g component of #rgb/#rgba for value: '{value}'")
+                    })?,
+                    16,
+                )?;
+                let b = u8::from_str_radix(
+                    hex.get(2..3).with_context(|| {
+                        format!("{INVALID_UNICODE}: b component of #rgb/#rgba for value: '{value}'")
+                    })?,
+                    16,
+                )?;
                 let a = if hex.len() == RGBA {
-                    u8::from_str_radix(&hex[3..4], 16)?
+                    u8::from_str_radix(
+                        hex.get(3..4).with_context(|| {
+                            format!("{INVALID_UNICODE}: a component of #rgba for value: '{value}'")
+                        })?,
+                        16,
+                    )?
                 } else {
                     0xf
                 };
@@ -151,11 +175,40 @@ impl TryFrom<&'_ str> for Rgba {
                 (duplicate(r), duplicate(g), duplicate(b), duplicate(a))
             }
             RRGGBB | RRGGBBAA => {
-                let r = u8::from_str_radix(&hex[0..2], 16)?;
-                let g = u8::from_str_radix(&hex[2..4], 16)?;
-                let b = u8::from_str_radix(&hex[4..6], 16)?;
+                let r = u8::from_str_radix(
+                    hex.get(0..2).with_context(|| {
+                        format!(
+                            "{}: r component of #rrggbb/#rrggbbaa for value: '{}'",
+                            INVALID_UNICODE, value
+                        )
+                    })?,
+                    16,
+                )?;
+                let g = u8::from_str_radix(
+                    hex.get(2..4).with_context(|| {
+                        format!(
+                            "{INVALID_UNICODE}: g component of #rrggbb/#rrggbbaa for value: '{value}'"
+                        )
+                    })?,
+                    16,
+                )?;
+                let b = u8::from_str_radix(
+                    hex.get(4..6).with_context(|| {
+                        format!(
+                            "{INVALID_UNICODE}: b component of #rrggbb/#rrggbbaa for value: '{value}'"
+                        )
+                    })?,
+                    16,
+                )?;
                 let a = if hex.len() == RRGGBBAA {
-                    u8::from_str_radix(&hex[6..8], 16)?
+                    u8::from_str_radix(
+                        hex.get(6..8).with_context(|| {
+                            format!(
+                                "{INVALID_UNICODE}: a component of #rrggbbaa for value: '{value}'"
+                            )
+                        })?,
+                        16,
+                    )?
                 } else {
                     0xff
                 };
@@ -216,6 +269,15 @@ impl Ord for Hsla {
 }
 
 impl Eq for Hsla {}
+
+impl Hash for Hsla {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u32(u32::from_be_bytes(self.h.to_be_bytes()));
+        state.write_u32(u32::from_be_bytes(self.s.to_be_bytes()));
+        state.write_u32(u32::from_be_bytes(self.l.to_be_bytes()));
+        state.write_u32(u32::from_be_bytes(self.a.to_be_bytes()));
+    }
+}
 
 /// Construct an [`Hsla`] object from plain values
 pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {

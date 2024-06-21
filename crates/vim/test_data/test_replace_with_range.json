@@ -10,3 +10,7 @@
 {"Key":"b"}
 {"Key":"enter"}
 {"Get":{"state":"a\nb\nb\nb\nˇb\na\na\n ","mode":"Normal"}}
+{"Key":"/"}
+{"Key":"a"}
+{"Key":"enter"}
+{"Get":{"state":"a\nb\nb\nb\nb\nˇa\na\n ","mode":"Normal"}}

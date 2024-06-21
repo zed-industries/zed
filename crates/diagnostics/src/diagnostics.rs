@@ -87,7 +87,7 @@ struct DiagnosticGroupState {
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 
 impl Render for ProjectDiagnosticsEditor {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let child = if self.path_states.is_empty() {
             div()
                 .bg(cx.theme().colors().editor_background)
@@ -150,7 +150,7 @@ impl ProjectDiagnosticsEditor {
         let focus_handle = cx.focus_handle();
         cx.on_focus_in(&focus_handle, |this, cx| this.focus_in(cx))
             .detach();
-        cx.on_focus_out(&focus_handle, |this, cx| this.focus_out(cx))
+        cx.on_focus_out(&focus_handle, |this, _event, cx| this.focus_out(cx))
             .detach();
 
         let excerpts = cx.new_model(|cx| {
@@ -161,7 +161,7 @@ impl ProjectDiagnosticsEditor {
         });
         let editor = cx.new_view(|cx| {
             let mut editor =
-                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), cx);
+                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), false, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
@@ -704,7 +704,7 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn clone_on_split(
         &self,
-        _workspace_id: workspace::WorkspaceId,
+        _workspace_id: Option<workspace::WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>>
     where
@@ -792,13 +792,15 @@ impl Item for ProjectDiagnosticsEditor {
     }
 }
 
+const DIAGNOSTIC_HEADER: &'static str = "diagnostic header";
+
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic);
     let message: SharedString = message;
     Box::new(move |cx| {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
         h_flex()
-            .id("diagnostic header")
+            .id(DIAGNOSTIC_HEADER)
             .py_2()
             .pl_10()
             .pr_5()
@@ -865,10 +867,12 @@ fn compare_diagnostics(
     snapshot: &language::BufferSnapshot,
 ) -> Ordering {
     use language::ToOffset;
-    // The old diagnostics may point to a previously open Buffer for this file.
-    if !old.range.start.is_valid(snapshot) {
+
+    // The diagnostics may point to a previously open Buffer for this file.
+    if !old.range.start.is_valid(snapshot) || !new.range.start.is_valid(snapshot) {
         return Ordering::Greater;
     }
+
     old.range
         .start
         .to_offset(snapshot)

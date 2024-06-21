@@ -10,13 +10,14 @@ use gpui::{
     div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     PromptLevel, Render, Task, View, ViewContext,
 };
+use http::HttpClient;
 use isahc::Request;
 use language::Buffer;
 use project::Project;
 use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
-use util::{http::HttpClient, ResultExt};
+use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::{DismissDecision, ModalView, Toast, Workspace};
 
@@ -140,15 +141,15 @@ impl FeedbackModal {
                 return;
             }
 
+            let system_specs = SystemSpecs::new(cx);
             cx.spawn(|workspace, mut cx| async move {
                 let markdown = markdown.await.log_err();
                 let buffer = project.update(&mut cx, |project, cx| {
                     project.create_local_buffer("", markdown, cx)
                 })?;
+                let system_specs = system_specs.await;
 
                 workspace.update(&mut cx, |workspace, cx| {
-                    let system_specs = SystemSpecs::new(cx);
-
                     workspace.toggle_modal(cx, move |cx| {
                         FeedbackModal::new(system_specs, project, buffer, cx)
                     });
@@ -184,6 +185,7 @@ impl FeedbackModal {
                 cx,
             );
             editor.set_show_gutter(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_show_inline_completions(false);
             editor.set_vertical_scroll_margin(5, cx);
             editor.set_use_modal_editing(false);
@@ -191,7 +193,7 @@ impl FeedbackModal {
         });
 
         cx.subscribe(&feedback_editor, |this, editor, event: &EditorEvent, cx| {
-            if *event == EditorEvent::Edited {
+            if matches!(event, EditorEvent::Edited { .. }) {
                 this.character_count = editor
                     .read(cx)
                     .buffer()

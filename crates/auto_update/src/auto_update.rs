@@ -20,19 +20,20 @@ use smol::{fs, io::AsyncReadExt};
 use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs::File, process::Command};
 
+use http::{HttpClient, HttpClientWithUrl};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use std::{
-    env::consts::{ARCH, OS},
+    env::{
+        self,
+        consts::{ARCH, OS},
+    },
     ffi::OsString,
     path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 use update_notification::UpdateNotification;
-use util::{
-    http::{HttpClient, HttpClientWithUrl},
-    ResultExt,
-};
+use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::Workspace;
 
@@ -140,20 +141,29 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     let auto_updater = cx.new_model(|cx| {
         let updater = AutoUpdater::new(version, http_client);
 
-        let mut update_subscription = AutoUpdateSetting::get_global(cx)
-            .0
-            .then(|| updater.start_polling(cx));
+        let poll_for_updates = ReleaseChannel::try_global(cx)
+            .map(|channel| channel.poll_for_updates())
+            .unwrap_or(false);
 
-        cx.observe_global::<SettingsStore>(move |updater, cx| {
-            if AutoUpdateSetting::get_global(cx).0 {
-                if update_subscription.is_none() {
-                    update_subscription = Some(updater.start_polling(cx))
+        if option_env!("ZED_UPDATE_EXPLANATION").is_none()
+            && env::var("ZED_UPDATE_EXPLANATION").is_err()
+            && poll_for_updates
+        {
+            let mut update_subscription = AutoUpdateSetting::get_global(cx)
+                .0
+                .then(|| updater.start_polling(cx));
+
+            cx.observe_global::<SettingsStore>(move |updater, cx| {
+                if AutoUpdateSetting::get_global(cx).0 {
+                    if update_subscription.is_none() {
+                        update_subscription = Some(updater.start_polling(cx))
+                    }
+                } else {
+                    update_subscription.take();
                 }
-            } else {
-                update_subscription.take();
-            }
-        })
-        .detach();
+            })
+            .detach();
+        }
 
         updater
     });
@@ -161,6 +171,33 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
 }
 
 pub fn check(_: &Check, cx: &mut WindowContext) {
+    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION") {
+        drop(cx.prompt(
+            gpui::PromptLevel::Info,
+            "Zed was installed via a package manager.",
+            Some(message),
+            &["Ok"],
+        ));
+        return;
+    }
+
+    if let Some(message) = env::var("ZED_UPDATE_EXPLANATION").ok() {
+        drop(cx.prompt(
+            gpui::PromptLevel::Info,
+            "Zed was installed via a package manager.",
+            Some(&message),
+            &["Ok"],
+        ));
+        return;
+    }
+
+    if !ReleaseChannel::try_global(cx)
+        .map(|channel| channel.poll_for_updates())
+        .unwrap_or(false)
+    {
+        return;
+    }
+
     if let Some(updater) = AutoUpdater::get(cx) {
         updater.update(cx, |updater, cx| updater.poll(cx));
     } else {
@@ -239,8 +276,9 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                             let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
 
                             let tab_description = SharedString::from(body.title.to_string());
-                            let editor = cx
-                                .new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx));
+                            let editor = cx.new_view(|cx| {
+                                Editor::for_multibuffer(buffer, Some(project), true, cx)
+                            });
                             let workspace_handle = workspace.weak_handle();
                             let view: View<MarkdownPreviewView> = MarkdownPreviewView::new(
                                 MarkdownPreviewMode::Default,
@@ -500,7 +538,7 @@ async fn install_release_linux(
     cx: &AsyncAppContext,
 ) -> Result<()> {
     let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name())?;
-    let home_dir = PathBuf::from(std::env::var("HOME").context("no HOME env var set")?);
+    let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
 
     let extracted = temp_dir.path().join("zed");
     fs::create_dir_all(&extracted)

@@ -122,6 +122,15 @@ impl Workspace {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn notification_ids(&self) -> Vec<NotificationId> {
+        self.notifications
+            .iter()
+            .map(|(id, _)| id)
+            .cloned()
+            .collect()
+    }
+
     pub fn show_notification<V: Notification>(
         &mut self,
         id: NotificationId,
@@ -144,7 +153,7 @@ impl Workspace {
 
     pub fn show_error<E>(&mut self, err: &E, cx: &mut ViewContext<Self>)
     where
-        E: std::fmt::Debug,
+        E: std::fmt::Debug + std::fmt::Display,
     {
         struct WorkspaceErrorNotification;
 
@@ -153,7 +162,7 @@ impl Workspace {
             cx,
             |cx| {
                 cx.new_view(|_cx| {
-                    simple_message_notification::MessageNotification::new(format!("Error: {err:?}"))
+                    simple_message_notification::MessageNotification::new(format!("Error: {err:#}"))
                 })
             },
         );
@@ -180,6 +189,11 @@ impl Workspace {
 
     pub fn dismiss_toast(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
         self.dismiss_notification(id, cx);
+    }
+
+    pub fn clear_all_notifications(&mut self, cx: &mut ViewContext<Self>) {
+        self.notifications.clear();
+        cx.notify();
     }
 
     fn dismiss_notification_internal(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
@@ -263,7 +277,7 @@ impl Render for LanguageServerPrompt {
                                             PromptLevel::Warning => {
                                                 Some(DiagnosticSeverity::WARNING)
                                             }
-                                            PromptLevel::Critical | PromptLevel::Destructive => {
+                                            PromptLevel::Critical => {
                                                 Some(DiagnosticSeverity::ERROR)
                                             }
                                         }
@@ -464,7 +478,7 @@ pub trait NotifyResultExt {
 
 impl<T, E> NotifyResultExt for Result<T, E>
 where
-    E: std::fmt::Debug,
+    E: std::fmt::Debug + std::fmt::Display,
 {
     type Ok = T;
 
@@ -483,7 +497,7 @@ where
         match self {
             Ok(value) => Some(value),
             Err(err) => {
-                log::error!("TODO {err:?}");
+                log::error!("{err:?}");
                 cx.update_root(|view, cx| {
                     if let Ok(workspace) = view.downcast::<Workspace>() {
                         workspace.update(cx, |workspace, cx| workspace.show_error(&err, cx))
@@ -502,7 +516,7 @@ pub trait NotifyTaskExt {
 
 impl<R, E> NotifyTaskExt for Task<Result<R, E>>
 where
-    E: std::fmt::Debug + Sized + 'static,
+    E: std::fmt::Debug + std::fmt::Display + Sized + 'static,
     R: 'static,
 {
     fn detach_and_notify_err(self, cx: &mut WindowContext) {
@@ -512,6 +526,13 @@ where
 }
 
 pub trait DetachAndPromptErr {
+    fn prompt_err(
+        self,
+        msg: &str,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+    ) -> Task<()>;
+
     fn detach_and_prompt_err(
         self,
         msg: &str,
@@ -524,25 +545,32 @@ impl<R> DetachAndPromptErr for Task<anyhow::Result<R>>
 where
     R: 'static,
 {
-    fn detach_and_prompt_err(
+    fn prompt_err(
         self,
         msg: &str,
         cx: &mut WindowContext,
         f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
-    ) {
+    ) -> Task<()> {
         let msg = msg.to_owned();
         cx.spawn(|mut cx| async move {
             if let Err(err) = self.await {
                 log::error!("{err:?}");
                 if let Ok(prompt) = cx.update(|cx| {
-                    let detail = f(&err, cx)
-                        .unwrap_or_else(|| format!("{err:?}. Please try again.", err = err));
+                    let detail = f(&err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
                     cx.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"])
                 }) {
                     prompt.await.ok();
                 }
             }
         })
-        .detach();
+    }
+
+    fn detach_and_prompt_err(
+        self,
+        msg: &str,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+    ) {
+        self.prompt_err(msg, cx, f).detach();
     }
 }

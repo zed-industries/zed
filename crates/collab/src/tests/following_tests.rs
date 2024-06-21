@@ -308,8 +308,9 @@ async fn test_basic_following(
         result
     });
     let multibuffer_editor_a = workspace_a.update(cx_a, |workspace, cx| {
-        let editor =
-            cx.new_view(|cx| Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), cx));
+        let editor = cx.new_view(|cx| {
+            Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), true, cx)
+        });
         workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
         editor
     });

@@ -6,18 +6,18 @@ Folder-specific settings are used to override Zed's global settings for files wi
 
 The following global settings can be overridden with a folder-specific configuration:
 
-- `copilot`
+- `inline_completions`
 - `enable_language_server`
 - `ensure_final_newline_on_save`
 - `format_on_save`
 - `formatter`
 - `hard_tabs`
-- `language_overrides`
+- `languages`
 - `preferred_line_length`
 - `remove_trailing_whitespace_on_save`
 - `soft_wrap`
 - `tab_size`
-- `show_copilot_suggestions`
+- `show_inline_completions`
 - `show_whitespaces`
 
 _See the Global settings section for details about these settings_
@@ -110,14 +110,15 @@ The name of any font family installed on the user's system
 
 **Options**
 
-Zed supports a subset of OpenType features that can be enabled or disabled for a given buffer or terminal font. The following [OpenType features](https://en.wikipedia.org/wiki/List_of_typographic_features) can be enabled or disabled too: `calt`, `case`, `cpsp`, `frac`, `liga`, `onum`, `ordn`, `pnum`, `ss01`, `ss02`, `ss03`, `ss04`, `ss05`, `ss06`, `ss07`, `ss08`, `ss09`, `ss10`, `ss11`, `ss12`, `ss13`, `ss14`, `ss15`, `ss16`, `ss17`, `ss18`, `ss19`, `ss20`, `subs`, `sups`, `swsh`, `titl`, `tnum`, `zero`.
+Zed supports all OpenType features that can be enabled, disabled or set a value to a font feature for a given buffer or terminal font.
 
-For example, to disable ligatures for a given font you can add the following to your settings:
+For example, to disable ligatures and set `7` to `cv01` for a given font you can add the following to your settings:
 
 ```json
 {
   "buffer_font_features": {
-    "calt": false
+    "calt": false,
+    "cv01": 7
   }
 }
 ```
@@ -160,14 +161,14 @@ For example, to disable ligatures for a given font you can add the following to 
 The `left_padding` and `right_padding` options define the relative width of the
 left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
 
-## Copilot
+## Inline Completions
 
-- Description: Copilot-specific settings.
-- Setting: `copilot`
+- Description: Settings for inline completions.
+- Setting: `inline_completions`
 - Default:
 
 ```json
-"copilot": {
+"inline_completions": {
   "disabled_globs": [
     ".env"
   ]
@@ -178,13 +179,45 @@ left and right padding of the central pane from the workspace when the centered 
 
 ### Disabled Globs
 
-- Description: The set of glob patterns for which Copilot should be disabled in any matching file.
+- Description: A list of globs representing files that inline completions should be disabled for.
 - Setting: `disabled_globs`
 - Default: [".env"]
 
 **Options**
 
 List of `string` values
+
+## Current Line Highlight
+
+- Description: How to highlight the current line in the editor.
+- Setting: `current_line_highlight`
+- Default: `all`
+
+**Options**
+
+1. Don't highlight the current line:
+
+```json
+"current_line_highlight": "none"
+```
+
+2. Highlight the gutter area.
+
+```json
+"current_line_highlight": "gutter"
+```
+
+3. Highlight the editor area.
+
+```json
+"current_line_highlight": "line"
+```
+
+4. Highlight the full line.
+
+```json
+"current_line_highlight": "all"
+```
 
 ## Cursor Blink
 
@@ -619,18 +652,19 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 ## File Types
 
 - Setting: `file_types`
-- Description: Configure how Zed selects a language for a file based on its filename or extension.
+- Description: Configure how Zed selects a language for a file based on its filename or extension. Supports glob entries.
 - Default: `{}`
 
 **Examples**
 
-To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
+To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files starting with `Dockerfile` as Dockerfile:
 
 ```json
 {
   "file_types": {
     "C++": ["c"],
-    "TOML": ["MyLockFile"]
+    "TOML": ["MyLockFile"],
+    "Dockerfile": ["Dockerfile*"]
   }
 }
 ```
@@ -676,6 +710,75 @@ To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
 {
   "git": {
     "git_gutter": "hide"
+  }
+}
+```
+
+### Indent Guides
+
+- Description: Configuration related to indent guides (requires Zed `0.138.0`). Indent guides can be configured separately for each language.
+- Setting: `indent_guides`
+- Default:
+
+```json
+{
+  "indent_guides": {
+    "enabled": true,
+    "line_width": 1,
+    "active_line_width": 1,
+    "coloring": "fixed",
+    "background_coloring": "disabled"
+  }
+}
+```
+
+**Options**
+
+1. Disable indent guides
+
+```json
+{
+  "indent_guides": {
+    "enabled": false
+  }
+}
+```
+
+2. Enable indent guides for a specific language.
+
+```json
+{
+  "languages": {
+    "Python": {
+      "indent_guides": {
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+3. Enable indent aware coloring ("rainbow indentation").
+   The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+
+```json
+{
+  "indent_guides": {
+    "enabled": true,
+    "coloring": "indent_aware"
+  }
+}
+```
+
+4. Enable indent aware background coloring ("rainbow indentation").
+   The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+
+```json
+{
+  "indent_guides": {
+    "enabled": true,
+    "coloring": "indent_aware",
+    "background_coloring": "indent_aware"
   }
 }
 ```
@@ -825,18 +928,18 @@ Settings-related hint updates are not debounced.
 }
 ```
 
-## Language Overrides
+## Languages
 
-- Description: Configuration overrides for specific languages.
-- Setting: `language_overrides`
+- Description: Configuration for specific languages.
+- Setting: `languages`
 - Default: `null`
 
 **Options**
 
-To override settings for a language, add an entry for that languages name to the `language_overrides` value. Example:
+To override settings for a language, add an entry for that languages name to the `languages` value. Example:
 
 ```json
-"language_overrides": {
+"languages": {
   "C": {
     "format_on_save": "off",
     "preferred_line_length": 64,
@@ -857,7 +960,7 @@ The following settings can be overridden for each specific language:
 - `hard_tabs`
 - `preferred_line_length`
 - `remove_trailing_whitespace_on_save`
-- `show_copilot_suggestions`
+- `show_inline_completions`
 - `show_whitespaces`
 - `soft_wrap`
 - `tab_size`
@@ -980,10 +1083,10 @@ These values take in the same options as the root-level settings with the same n
 
 `integer` values
 
-## Show Copilot Suggestions
+## Show Inline Completions
 
-- Description: Whether or not to show Copilot suggestions as you type or wait for a `copilot::Toggle`.
-- Setting: `show_copilot_suggestions`
+- Description: Whether to show inline completions as you type or manually by triggering `editor::ShowInlineCompletion`.
+- Setting: `show_inline_completions`
 - Default: `true`
 
 **Options**
@@ -1001,6 +1104,7 @@ These values take in the same options as the root-level settings with the same n
 1. `all`
 2. `selection`
 3. `none`
+4. `boundaries`
 
 ## Soft Wrap
 
@@ -1013,6 +1117,16 @@ These values take in the same options as the root-level settings with the same n
 1. `editor_width`
 2. `preferred_line_length`
 3. `none`
+
+## Wrap Guides (Vertical Rulers)
+
+- Description: Where to display vertical rulers as wrap-guides. Disable by setting `show_wrap_guides` to `false`.
+- Setting: `wrap_guides`
+- Default: []
+
+**Options**
+
+List of `integer` column numbers
 
 ## Tab Size
 
@@ -1466,7 +1580,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   // Join calls with the microphone live by default
   "mute_on_join": false,
   // Share your project when you are the first to join a channel
-  "share_on_join": true
+  "share_on_join": false
 },
 ```
 
@@ -1491,7 +1605,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "font_family": "FiraCode Nerd Font Mono",
     "blinking": "off"
   },
-  "language_overrides": {
+  "languages": {
     "C": {
       "format_on_save": "language_server",
       "preferred_line_length": 64,
