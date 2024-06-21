@@ -43,13 +43,9 @@ pub fn create_signature_help_markdown_string(
 
     let function_options_count = signature_information.len();
 
-    let maybe_signature_information = maybe_active_signature
-        .and_then(|active_signature| signature_information.get(active_signature as usize));
-    let signature_information = if let Some(signature_information) = maybe_signature_information {
-        Some(signature_information)
-    } else {
-        signature_information.first()
-    }?;
+    let signature_information = maybe_active_signature
+        .and_then(|active_signature| signature_information.get(active_signature as usize))
+        .or_else(|| signature_information.first())?;
 
     let str_for_join = ", ";
     let parameter_length = signature_information
