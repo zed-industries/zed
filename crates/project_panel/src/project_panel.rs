@@ -2216,52 +2216,52 @@ impl ProjectPanel {
         items_count: usize,
         cx: &mut ViewContext<Self>,
     ) -> Option<Stateful<Div>> {
-        let l = self.scroll_handle.0.borrow();
+        let scroll_handle = self.scroll_handle.0.borrow();
 
-        if let Some(height) = l.last_item_height.filter(|_| self.show_scrollbar) {
-            let total_list_length = height.0 as f64 * items_count as f64;
-            let current_offset = l.base_handle.offset().y.0.abs() as f64;
-            let percentage = current_offset / total_list_length;
-            let end_offset =
-                (current_offset + l.base_handle.bounds().size.height.0 as f64) / total_list_length;
-            if percentage + 0.005 > 1.0 || end_offset > total_list_length {
-                None
-            } else {
-                let end_offset = end_offset.clamp(percentage + 0.005, 1.);
-                Some(
-                    div()
-                        .occlude()
-                        .id("project-panel-scroll")
-                        .on_mouse_move(cx.listener(|_, _, cx| {
-                            cx.notify();
-                            cx.stop_propagation()
-                        }))
-                        .on_hover(|_, cx| {
-                            cx.stop_propagation();
-                        })
-                        .on_any_mouse_down(|_, cx| {
-                            cx.stop_propagation();
-                        })
-                        .on_scroll_wheel(cx.listener(|_, _, cx| {
-                            cx.notify();
-                        }))
-                        .h_full()
-                        .absolute()
-                        .right_0()
-                        .top_0()
-                        .bottom_0()
-                        .w_3()
-                        .cursor_default()
-                        .child(ProjectPanelScrollbar::new(
-                            percentage as f32..end_offset as f32,
-                            self.scroll_handle.clone(),
-                            items_count,
-                        )),
-                )
-            }
-        } else {
-            None
+        let height = scroll_handle
+            .last_item_height
+            .filter(|_| self.show_scrollbar)?;
+
+        let total_list_length = height.0 as f64 * items_count as f64;
+        let current_offset = scroll_handle.base_handle.offset().y.0.abs() as f64;
+        let percentage = current_offset / total_list_length;
+        let end_offset = (current_offset + scroll_handle.base_handle.bounds().size.height.0 as f64)
+            / total_list_length;
+
+        if percentage + 0.005 > 1.0 || end_offset > total_list_length {
+            return None;
         }
+        let end_offset = end_offset.clamp(percentage + 0.005, 1.);
+        Some(
+            div()
+                .occlude()
+                .id("project-panel-scroll")
+                .on_mouse_move(cx.listener(|_, _, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_any_mouse_down(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_scroll_wheel(cx.listener(|_, _, cx| {
+                    cx.notify();
+                }))
+                .h_full()
+                .absolute()
+                .right_0()
+                .top_0()
+                .bottom_0()
+                .w_3()
+                .cursor_default()
+                .child(ProjectPanelScrollbar::new(
+                    percentage as f32..end_offset as f32,
+                    self.scroll_handle.clone(),
+                    items_count,
+                )),
+        )
     }
 
     fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
