@@ -101,8 +101,7 @@ pub fn create_signature_help_markdown_string(
             highlight_start..(highlight_start + suffix.len()),
             SIGNATURE_HELP_OVERLOAD_HIGHLIGHT,
         )));
-        let markdown = format!("{} {}", markdown, suffix);
-        markdown
+        format!("{markdown} {suffix}")
     } else {
         markdown
     };
