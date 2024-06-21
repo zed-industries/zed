@@ -186,7 +186,10 @@ impl LanguageModelRequest {
             LanguageModel::Anthropic(_) => {}
             LanguageModel::Ollama(_) => {}
             LanguageModel::Cloud(model) => match model {
-                CloudModel::Claude3Opus | CloudModel::Claude3Sonnet | CloudModel::Claude3Haiku => {
+                CloudModel::Claude3Opus
+                | CloudModel::Claude3Sonnet
+                | CloudModel::Claude3Haiku
+                | CloudModel::Claude3_5Sonnet => {
                     preprocess_anthropic_request(self);
                 }
                 _ => {}
