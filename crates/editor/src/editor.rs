@@ -12183,9 +12183,7 @@ impl ViewInputHandler for Editor {
                     .collect::<Vec<_>>()
             };
 
-            if text.is_empty() {
-                this.unmark_text(cx);
-            } else {
+            if !text.is_empty() {
                 this.highlight_text::<InputComposition>(
                     marked_ranges.clone(),
                     HighlightStyle {
