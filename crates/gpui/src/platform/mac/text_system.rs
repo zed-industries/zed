@@ -59,7 +59,7 @@ struct FontKey {
 }
 
 struct MacTextSystemState {
-    // pref_langs: CFArray<CFString>,
+    pref_langs: CFArray<CFString>,
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
@@ -75,7 +75,7 @@ unsafe impl Sync for MacTextSystemState {}
 impl MacTextSystem {
     pub(crate) fn new() -> Self {
         Self(RwLock::new(MacTextSystemState {
-            // pref_langs: get_pref_langs(),
+            pref_langs: get_pref_langs(),
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
@@ -652,24 +652,6 @@ impl From<FontStyle> for FontkitStyle {
 }
 
 #[allow(unused)]
-#[cfg(any(test, feature = "test-support"))]
-fn get_pref_langs() -> CFArray<CFString> {
-    use core_foundation::{
-        array::{kCFTypeArrayCallBacks, CFArrayAppendValue, CFArrayCreateMutable},
-        base::kCFAllocatorDefault,
-    };
-
-    unsafe {
-        let array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-        let key = CFString::from_static_string("en-US");
-        CFArrayAppendValue(array, key.as_concrete_TypeRef() as _);
-        CFRelease(key.as_concrete_TypeRef() as _);
-        CFArray::wrap_under_create_rule(array)
-    }
-}
-
-#[allow(unused)]
-#[cfg(not(any(test, feature = "test-support")))]
 fn get_pref_langs() -> CFArray<CFString> {
     use cocoa::base::id;
     use objc::{class, msg_send, sel, sel_impl};
