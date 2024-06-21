@@ -158,6 +158,7 @@ pub fn render_item<T>(
         color: cx.theme().colors().text,
         font_family: settings.buffer_font.family.clone(),
         font_features: settings.buffer_font.features.clone(),
+        font_fallbacks: settings.buffer_font.fallbacks.clone(),
         font_size: settings.buffer_font_size(cx).into(),
         font_weight: FontWeight::NORMAL,
         font_style: FontStyle::Normal,
