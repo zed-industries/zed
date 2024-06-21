@@ -59,7 +59,7 @@ struct FontKey {
 }
 
 struct MacTextSystemState {
-    pref_langs: CFArray<CFString>,
+    // pref_langs: CFArray<CFString>,
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
@@ -75,7 +75,7 @@ unsafe impl Sync for MacTextSystemState {}
 impl MacTextSystem {
     pub(crate) fn new() -> Self {
         Self(RwLock::new(MacTextSystemState {
-            pref_langs: get_pref_langs(),
+            // pref_langs: get_pref_langs(),
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
