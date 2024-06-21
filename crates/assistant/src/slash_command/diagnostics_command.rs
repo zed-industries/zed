@@ -162,7 +162,10 @@ impl SlashCommand for DiagnosticsCommand {
 
         let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
         cx.spawn(move |_| async move {
-            let (text, sections) = task.await?;
+            let Some((text, sections)) = task.await? else {
+                return Ok(SlashCommandOutput::default());
+            };
+
             Ok(SlashCommandOutput {
                 text,
                 sections: sections
@@ -258,7 +261,7 @@ fn collect_diagnostics(
     project: Model<Project>,
     options: Options,
     cx: &mut AppContext,
-) -> Task<Result<(String, Vec<(Range<usize>, PlaceholderType)>)>> {
+) -> Task<Result<Option<(String, Vec<(Range<usize>, PlaceholderType)>)>>> {
     let error_source = if let Some(path_matcher) = &options.path_matcher {
         debug_assert_eq!(path_matcher.sources().len(), 1);
         Some(path_matcher.sources().first().cloned().unwrap_or_default())
@@ -324,12 +327,17 @@ fn collect_diagnostics(
                 PlaceholderType::File(file_path),
             ))
         }
+
+        // No diagnostics found
+        if sections.is_empty() {
+            return Ok(None);
+        }
+
         sections.push((
             0..text.len(),
             PlaceholderType::Root(project_summary, error_source),
         ));
-
-        Ok((text, sections))
+        Ok(Some((text, sections)))
     })
 }
 
