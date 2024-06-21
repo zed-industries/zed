@@ -30,6 +30,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
@@ -65,6 +66,8 @@ pub struct ProjectPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
+    show_scrollbar: bool,
+    hide_scrollbar_task: Option<Task<()>>,
 }
 
 #[derive(Clone, Debug)]
@@ -190,7 +193,10 @@ impl ProjectPanel {
         let project_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
-
+            cx.on_focus_out(&focus_handle, |this, _, cx| {
+                this.hide_scrollbar(cx);
+            })
+            .detach();
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
@@ -275,6 +281,8 @@ impl ProjectPanel {
                 workspace: workspace.weak_handle(),
                 width: None,
                 pending_serialization: Task::ready(None),
+                show_scrollbar: false,
+                hide_scrollbar_task: None,
             };
             this.update_visible_entries(None, cx);
 
@@ -2218,6 +2226,21 @@ impl ProjectPanel {
         dispatch_context
     }
 
+    fn hide_scrollbar(&mut self, cx: &mut ViewContext<Self>) {
+        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+        self.hide_scrollbar_task = Some(cx.spawn(|panel, mut cx| async move {
+            cx.background_executor()
+                .timer(SCROLLBAR_SHOW_INTERVAL)
+                .await;
+            panel
+                .update(&mut cx, |editor, cx| {
+                    editor.show_scrollbar = false;
+                    cx.notify();
+                })
+                .log_err();
+        }))
+    }
+
     fn reveal_entry(
         &mut self,
         project: Model<Project>,
@@ -2262,6 +2285,16 @@ impl Render for ProjectPanel {
                 .group("project-panel")
                 .size_full()
                 .relative()
+                .on_hover(cx.listener(|this, hovered, cx| {
+                    if *hovered {
+                        this.show_scrollbar = true;
+                        this.hide_scrollbar_task.take();
+                    } else if !this.focus_handle.contains_focused(cx) {
+                        this.hide_scrollbar(cx);
+                    }
+
+                    cx.notify();
+                }))
                 .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
@@ -2323,7 +2356,7 @@ impl Render for ProjectPanel {
                 .children({
                     let l = self.scroll_handle.0.borrow();
 
-                    if let Some(height) = l.last_item_height {
+                    if let Some(height) = l.last_item_height.filter(|_| self.show_scrollbar) {
                         let total_list_length = height.0 as f64 * items_count as f64;
                         let current_offset = l.base_handle.offset().y.0.abs() as f64;
                         let percentage = current_offset / total_list_length;

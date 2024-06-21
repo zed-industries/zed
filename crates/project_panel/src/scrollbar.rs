@@ -1,8 +1,8 @@
 use std::ops::Range;
 
 use gpui::{
-    point, Bounds, ContentMask, EntityId, Hitbox, MouseDownEvent, MouseMoveEvent, ScrollWheelEvent,
-    Style, UniformListScrollHandle,
+    point, Bounds, ContentMask, Hitbox, MouseDownEvent, MouseMoveEvent, ScrollWheelEvent, Style,
+    UniformListScrollHandle,
 };
 use ui::{prelude::*, px, relative, IntoElement};
 
@@ -68,9 +68,6 @@ impl gpui::Element for ProjectPanelScrollbar {
         _prepaint: &mut Self::PrepaintState,
         cx: &mut ui::WindowContext,
     ) {
-        if !bounds.contains(&cx.mouse_position()) {
-            return;
-        }
         let hitbox_id = _prepaint.id;
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             cx.paint_quad(gpui::fill(
