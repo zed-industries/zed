@@ -191,13 +191,25 @@ mod linux {
                     .and_then(Path::parent)
                     .ok_or_else(|| anyhow!("no parent path for cli"))?;
 
+                let libexec_fallbacks = ["lib/zed", "lib/zed-editor"];
+
                 match dir.join("libexec").join("zed-editor").canonicalize() {
                     Ok(path) => Ok(path),
-                    // In development cli and zed are in the ./target/ directory together
-                    Err(e) => match cli.parent().unwrap().join("zed").canonicalize() {
-                        Ok(path) if path != cli => Ok(path),
-                        _ => Err(e),
-                    },
+                    Err(e) => {
+                        // Try fallback directories
+                        if let Some(path) = libexec_fallbacks
+                            .into_iter()
+                            .find_map(|d| dir.join(d).join("zed-editor").canonicalize().ok())
+                        {
+                            Ok(path)
+                        } else {
+                            // In development cli and zed are in the ./target/ directory together
+                            match cli.parent().unwrap().join("zed").canonicalize() {
+                                Ok(path) if path != cli => Ok(path),
+                                _ => Err(e),
+                            }
+                        }
+                    }
                 }
             }?;
 
