@@ -1,4 +1,5 @@
 use super::{
+    diagnostics_command::buffer_has_error_diagnostics,
     file_command::{build_entry_output_section, codeblock_fence_for_path},
     SlashCommand, SlashCommandOutput,
 };
@@ -60,12 +61,11 @@ impl SlashCommand for ActiveSlashCommand {
 
             let snapshot = buffer.read(cx).snapshot();
             let path = snapshot.resolve_file_path(cx, true);
-            let text = cx.background_executor().spawn({
+            let task = cx.background_executor().spawn({
                 let path = path.clone();
                 async move {
                     let mut output = String::new();
                     output.push_str(&codeblock_fence_for_path(path.as_deref(), None));
-                    output.push('\n');
                     for chunk in snapshot.as_rope().chunks() {
                         output.push_str(chunk);
                     }
@@ -73,11 +73,20 @@ impl SlashCommand for ActiveSlashCommand {
                         output.push('\n');
                     }
                     output.push_str("```");
-                    output
+                    let mut has_diagnostics = false;
+                    if let Some(path) = path {
+                        if buffer_has_error_diagnostics(&snapshot) {
+                            has_diagnostics = true;
+                            output.push_str("\n/diagnostics ");
+                            output.push_str(&path.to_string_lossy());
+                        }
+                    }
+
+                    (output, has_diagnostics)
                 }
             });
             cx.foreground_executor().spawn(async move {
-                let text = text.await;
+                let (text, has_diagnostics) = task.await;
                 let range = 0..text.len();
                 Ok(SlashCommandOutput {
                     text,
@@ -87,7 +96,7 @@ impl SlashCommand for ActiveSlashCommand {
                         false,
                         None,
                     )],
-                    run_commands_in_text: false,
+                    run_commands_in_text: has_diagnostics,
                 })
             })
         });
