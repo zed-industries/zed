@@ -290,7 +290,10 @@ impl X11WindowState {
                 &win_aux,
             )
             .unwrap()
-            .check()?;
+            .check().with_context(|| {
+                format!("CreateWindow request to X server failed. depth: {}, x_window: {}, visual_set.root: {}, bounds.origin.x.0: {}, bounds.origin.y.0: {}, bounds.size.width.0: {}, bounds.size.height.0: {}",
+                    visual.depth, x_window, visual_set.root, bounds.origin.x.0 + 2, bounds.origin.y.0, bounds.size.width.0, bounds.size.height.0)
+            })?;
 
         let reply = xcb_connection
             .get_geometry(x_window)
