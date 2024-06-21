@@ -17,7 +17,9 @@ use client::telemetry::Telemetry;
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
-    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, ToDisplayPoint},
+    display_map::{
+        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, RenderBlock, ToDisplayPoint,
+    },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorEvent, RowExt, ToOffset as _, ToPoint,
 };
@@ -2200,6 +2202,7 @@ pub struct ContextEditor {
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
+    pending_slash_command_blocks: HashMap<Range<language::Anchor>, BlockId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2273,6 +2276,7 @@ impl ContextEditor {
             fs,
             workspace: workspace.downgrade(),
             pending_slash_command_creases: HashMap::default(),
+            pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -2534,12 +2538,23 @@ impl ContextEditor {
             ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let excerpt_id = *buffer.as_singleton().unwrap().0;
+                    let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
+                    let excerpt_id = *excerpt_id;
 
                     editor.remove_creases(
                         removed
                             .iter()
                             .filter_map(|range| self.pending_slash_command_creases.remove(range)),
+                        cx,
+                    );
+
+                    editor.remove_blocks(
+                        HashSet::from_iter(
+                            removed.iter().filter_map(|range| {
+                                self.pending_slash_command_blocks.remove(range)
+                            }),
+                        ),
+                        None,
                         cx,
                     );
 
@@ -2575,7 +2590,7 @@ impl ContextEditor {
                                 move |row, _, _, _cx: &mut WindowContext| {
                                     render_pending_slash_command_gutter_decoration(
                                         row,
-                                        command.status.clone(),
+                                        &command.status,
                                         confirm_command.clone(),
                                     )
                                 }
@@ -2609,11 +2624,42 @@ impl ContextEditor {
                         cx,
                     );
 
+                    let block_ids = editor.insert_blocks(
+                        updated
+                            .iter()
+                            .filter_map(|command| match &command.status {
+                                PendingSlashCommandStatus::Error(error) => {
+                                    Some((command, error.clone()))
+                                }
+                                _ => None,
+                            })
+                            .map(|(command, error_message)| BlockProperties {
+                                style: BlockStyle::Fixed,
+                                position: Anchor {
+                                    buffer_id: Some(buffer_id),
+                                    excerpt_id,
+                                    text_anchor: command.source_range.start,
+                                },
+                                height: 1,
+                                disposition: BlockDisposition::Below,
+                                render: slash_command_error_block_renderer(error_message),
+                            }),
+                        None,
+                        cx,
+                    );
+
                     self.pending_slash_command_creases.extend(
                         updated
                             .iter()
                             .map(|command| command.source_range.clone())
                             .zip(crease_ids),
+                    );
+
+                    self.pending_slash_command_blocks.extend(
+                        updated
+                            .iter()
+                            .map(|command| command.source_range.clone())
+                            .zip(block_ids),
                     );
                 })
             }
@@ -3204,7 +3250,7 @@ fn render_slash_command_output_toggle(
 
 fn render_pending_slash_command_gutter_decoration(
     row: MultiBufferRow,
-    status: PendingSlashCommandStatus,
+    status: &PendingSlashCommandStatus,
     confirm_command: Arc<dyn Fn(&mut WindowContext)>,
 ) -> AnyElement {
     let mut icon = IconButton::new(
@@ -3222,11 +3268,7 @@ fn render_pending_slash_command_gutter_decoration(
         PendingSlashCommandStatus::Running { .. } => {
             icon = icon.selected(true);
         }
-        PendingSlashCommandStatus::Error(error) => {
-            icon = icon
-                .icon_color(Color::Error)
-                .tooltip(move |cx| Tooltip::text(format!("error: {error}"), cx));
-        }
+        PendingSlashCommandStatus::Error(_) => icon = icon.icon_color(Color::Error),
     }
 
     icon.into_any_element()
@@ -3274,6 +3316,19 @@ fn make_lsp_adapter_delegate(
             .next()
             .ok_or_else(|| anyhow!("no worktrees when constructing ProjectLspAdapterDelegate"))?;
         Ok(ProjectLspAdapterDelegate::new(project, &worktree, cx) as Arc<dyn LspAdapterDelegate>)
+    })
+}
+
+fn slash_command_error_block_renderer(message: String) -> RenderBlock {
+    Box::new(move |_| {
+        div()
+            .pl_6()
+            .child(
+                Label::new(format!("error: {}", message))
+                    .single_line()
+                    .color(Color::Error),
+            )
+            .into_any()
     })
 }
 

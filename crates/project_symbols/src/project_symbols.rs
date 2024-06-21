@@ -1,8 +1,8 @@
 use editor::{scroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, AppContext, DismissEvent, FontWeight, Model, ParentElement, StyledText, Task,
-    View, ViewContext, WeakView, WindowContext,
+    rems, AppContext, DismissEvent, FontWeight, Model, ParentElement, StyledText, Task, View,
+    ViewContext, WeakView, WindowContext,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -15,12 +15,10 @@ use workspace::{
     Workspace,
 };
 
-actions!(project_symbols, [Toggle]);
-
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
-            workspace.register_action(|workspace, _: &Toggle, cx| {
+            workspace.register_action(|workspace, _: &workspace::ToggleProjectSymbols, cx| {
                 let project = workspace.project().clone();
                 let handle = cx.view().downgrade();
                 workspace.toggle_modal(cx, move |cx| {

@@ -62,6 +62,12 @@ impl rwh::HasDisplayHandle for RawWindow {
     }
 }
 
+struct InProgressConfigure {
+    size: Option<Size<Pixels>>,
+    fullscreen: bool,
+    maximized: bool,
+}
+
 pub struct WaylandWindowState {
     xdg_surface: xdg_surface::XdgSurface,
     acknowledged_first_configure: bool,
@@ -85,6 +91,7 @@ pub struct WaylandWindowState {
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
     active: bool,
+    in_progress_configure: Option<InProgressConfigure>,
 }
 
 #[derive(Clone)]
@@ -157,6 +164,7 @@ impl WaylandWindowState {
             fullscreen: false,
             maximized: false,
             windowed_bounds: options.bounds,
+            in_progress_configure: None,
             client,
             appearance,
             handle,
@@ -303,6 +311,31 @@ impl WaylandWindowStatePtr {
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
         match event {
             xdg_surface::Event::Configure { serial } => {
+                {
+                    let mut state = self.state.borrow_mut();
+
+                    if let Some(mut configure) = state.in_progress_configure.take() {
+                        let got_unmaximized = state.maximized && !configure.maximized;
+                        state.fullscreen = configure.fullscreen;
+                        state.maximized = configure.maximized;
+
+                        if got_unmaximized {
+                            configure.size = Some(state.windowed_bounds.size);
+                        } else if !configure.fullscreen && !configure.maximized {
+                            if let Some(size) = configure.size {
+                                state.windowed_bounds = Bounds {
+                                    origin: Point::default(),
+                                    size,
+                                };
+                            }
+                        }
+
+                        drop(state);
+                        if let Some(size) = configure.size {
+                            self.resize(size);
+                        }
+                    }
+                }
                 let mut state = self.state.borrow_mut();
                 state.xdg_surface.ack_configure(serial);
                 let request_frame_callback = !state.acknowledged_first_configure;
@@ -360,25 +393,11 @@ impl WaylandWindowStatePtr {
                 let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
 
                 let mut state = self.state.borrow_mut();
-                let got_unmaximized = state.maximized && !maximized;
-                state.fullscreen = fullscreen;
-                state.maximized = maximized;
-
-                if got_unmaximized {
-                    size = Some(state.windowed_bounds.size);
-                } else if !fullscreen && !maximized {
-                    if let Some(size) = size {
-                        state.windowed_bounds = Bounds {
-                            origin: Point::default(),
-                            size,
-                        };
-                    }
-                }
-
-                drop(state);
-                if let Some(size) = size {
-                    self.resize(size);
-                }
+                state.in_progress_configure = Some(InProgressConfigure {
+                    size,
+                    fullscreen,
+                    maximized,
+                });
 
                 false
             }

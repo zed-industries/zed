@@ -5,8 +5,8 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleZoom, Workspace,
+    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenTerminal, OpenVisible, SplitDirection,
+    ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -366,8 +366,24 @@ impl Pane {
                             .on_click(cx.listener(|pane, _, cx| {
                                 let menu = ContextMenu::build(cx, |menu, _| {
                                     menu.action("New File", NewFile.boxed_clone())
-                                        .action("New Terminal", NewCenterTerminal.boxed_clone())
-                                        .action("New Search", NewSearch.boxed_clone())
+                                        .action(
+                                            "Open File",
+                                            ToggleFileFinder::default().boxed_clone(),
+                                        )
+                                        .separator()
+                                        .action(
+                                            "Search Project",
+                                            DeploySearch {
+                                                replace_enabled: false,
+                                            }
+                                            .boxed_clone(),
+                                        )
+                                        .action(
+                                            "Search Symbols",
+                                            ToggleProjectSymbols.boxed_clone(),
+                                        )
+                                        .separator()
+                                        .action("New Terminal", NewTerminal.boxed_clone())
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
                                     pane.focus(cx);
@@ -1818,7 +1834,11 @@ impl Pane {
             .track_scroll(self.tab_bar_scroll_handle.clone())
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
-                |tab_bar| tab_bar.start_children(vec![navigate_backward, navigate_forward]),
+                |tab_bar| {
+                    tab_bar
+                        .start_child(navigate_backward)
+                        .start_child(navigate_forward)
+                },
             )
             .when(self.has_focus(cx), |tab_bar| {
                 tab_bar.end_child({

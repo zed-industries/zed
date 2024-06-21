@@ -110,7 +110,7 @@ as-raw-xcb-connection = "1"
 ashpd.workspace = true
 calloop = "0.13.0"
 calloop-wayland-source = "0.3.0"
-wayland-backend = { version = "0.3.3", features = ["client_system"] }
+wayland-backend = { version = "0.3.3", features = ["client_system", "dlopen"] }
 wayland-client = { version = "0.31.2" }
 wayland-cursor = "0.31.1"
 wayland-protocols = { version = "0.31.2", features = [

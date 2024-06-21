@@ -23,7 +23,7 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn description(&self) -> String;
     fn menu_text(&self) -> String;
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         query: String,
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
@@ -50,6 +50,7 @@ pub type RenderFoldPlaceholder = Arc<
         + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
 >;
 
+#[derive(Default)]
 pub struct SlashCommandOutput {
     pub text: String,
     pub sections: Vec<SlashCommandOutputSection<usize>>,

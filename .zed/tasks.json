@@ -1,7 +1,7 @@
 [
   {
     "label": "clippy",
-    "command": "cargo",
-    "args": ["xtask", "clippy"]
+    "command": "./script/clippy",
+    "args": []
   }
 ]

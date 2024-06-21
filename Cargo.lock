@@ -406,6 +406,7 @@ dependencies = [
  "strsim 0.11.1",
  "strum",
  "telemetry_events",
+ "terminal_view",
  "theme",
  "tiktoken-rs",
  "toml 0.8.10",
@@ -1584,7 +1585,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/blade?rev=33fd51359d113c03b785e28f4a6cf75bacb0b26d#33fd51359d113c03b785e28f4a6cf75bacb0b26d"
+source = "git+https://github.com/kvark/blade?rev=21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7#21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"
 dependencies = [
  "ash",
  "ash-window",
@@ -1614,7 +1615,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/zed-industries/blade?rev=33fd51359d113c03b785e28f4a6cf75bacb0b26d#33fd51359d113c03b785e28f4a6cf75bacb0b26d"
+source = "git+https://github.com/kvark/blade?rev=21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7#21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1624,7 +1625,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/blade?rev=33fd51359d113c03b785e28f4a6cf75bacb0b26d#33fd51359d113c03b785e28f4a6cf75bacb0b26d"
+source = "git+https://github.com/kvark/blade?rev=21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7#21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2485,11 +2486,13 @@ dependencies = [
  "channel",
  "client",
  "collections",
+ "command_palette",
  "db",
  "dev_server_projects",
  "editor",
  "emojis",
  "extensions_ui",
+ "feedback",
  "futures 0.3.28",
  "fuzzy",
  "gpui",
@@ -12379,6 +12382,7 @@ checksum = "15a0c8eaff5216d07f226cb7a549159267f3467b289d9a2e52fd3ef5aae2b7af"
 dependencies = [
  "dlib",
  "log",
+ "once_cell",
  "pkg-config",
 ]
 
@@ -13325,7 +13329,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.141.0"
+version = "0.142.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13588,6 +13592,14 @@ dependencies = [
 name = "zed_ruby"
 version = "0.0.6"
 dependencies = [
+ "zed_extension_api 0.0.6",
+]
+
+[[package]]
+name = "zed_snippets"
+version = "0.0.4"
+dependencies = [
+ "serde_json",
  "zed_extension_api 0.0.6",
 ]
 

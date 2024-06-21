@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
     px, size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
@@ -8,10 +10,11 @@ use crate::{
 
 use blade_graphics as gpu;
 use raw_window_handle as rwh;
-use util::ResultExt;
+use util::{maybe, ResultExt};
 use x11rb::{
     connection::Connection,
     protocol::{
+        randr::{self, ConnectionExt as _},
         xinput::{self, ConnectionExt as _},
         xproto::{
             self, ClientMessageEvent, ConnectionExt as _, EventMask, TranslateCoordinatesReply,
@@ -29,6 +32,7 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::{self, Arc},
+    time::{Duration, Instant},
 };
 
 use super::{X11Display, XINPUT_MASTER_DEVICE};
@@ -157,6 +161,8 @@ pub struct Callbacks {
 
 pub struct X11WindowState {
     pub destroyed: bool,
+    pub last_render_at: Option<Instant>,
+    pub refresh_rate: Duration,
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
@@ -267,23 +273,47 @@ impl X11WindowState {
                     | xproto::EventMask::KEY_RELEASE,
             );
 
+        let mut bounds = params.bounds.to_device_pixels(scale_factor);
+
         xcb_connection
             .create_window(
                 visual.depth,
                 x_window,
                 visual_set.root,
-                (params.bounds.origin.x.0 * scale_factor) as i16,
-                (params.bounds.origin.y.0 * scale_factor) as i16,
-                (params.bounds.size.width.0 * scale_factor) as u16,
-                (params.bounds.size.height.0 * scale_factor) as u16,
+                (bounds.origin.x.0 + 2) as i16,
+                bounds.origin.y.0 as i16,
+                bounds.size.width.0 as u16,
+                bounds.size.height.0 as u16,
                 0,
                 xproto::WindowClass::INPUT_OUTPUT,
                 visual.id,
                 &win_aux,
             )
             .unwrap()
-            .check()?;
+            .check().with_context(|| {
+                format!("CreateWindow request to X server failed. depth: {}, x_window: {}, visual_set.root: {}, bounds.origin.x.0: {}, bounds.origin.y.0: {}, bounds.size.width.0: {}, bounds.size.height.0: {}",
+                    visual.depth, x_window, visual_set.root, bounds.origin.x.0 + 2, bounds.origin.y.0, bounds.size.width.0, bounds.size.height.0)
+            })?;
 
+        let reply = xcb_connection
+            .get_geometry(x_window)
+            .unwrap()
+            .reply()
+            .unwrap();
+        if reply.x == 0 && reply.y == 0 {
+            bounds.origin.x.0 += 2;
+            // Work around a bug where our rendered content appears
+            // outside the window bounds when opened at the default position
+            // (14px, 49px on X + Gnome + Ubuntu 22).
+            xcb_connection
+                .configure_window(
+                    x_window,
+                    &xproto::ConfigureWindowAux::new()
+                        .x(bounds.origin.x.0)
+                        .y(bounds.origin.y.0),
+                )
+                .unwrap();
+        }
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
                 xcb_connection
@@ -366,6 +396,31 @@ impl X11WindowState {
         };
         xcb_connection.map_window(x_window).unwrap();
 
+        let screen_resources = xcb_connection
+            .randr_get_screen_resources(x_window)
+            .unwrap()
+            .reply()
+            .expect("Could not find available screens");
+
+        let mode = screen_resources
+            .crtcs
+            .iter()
+            .find_map(|crtc| {
+                let crtc_info = xcb_connection
+                    .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
+                    .ok()?
+                    .reply()
+                    .ok()?;
+
+                screen_resources
+                    .modes
+                    .iter()
+                    .find(|m| m.id == crtc_info.mode)
+            })
+            .expect("Unable to find screen refresh rate");
+
+        let refresh_rate = mode_refresh_rate(mode);
+
         Ok(Self {
             client,
             executor,
@@ -374,7 +429,7 @@ impl X11WindowState {
             ),
             _raw: raw,
             x_root_window: visual_set.root,
-            bounds: params.bounds,
+            bounds: bounds.to_pixels(scale_factor),
             scale_factor,
             renderer: BladeRenderer::new(gpu, config),
             atoms: *atoms,
@@ -382,6 +437,8 @@ impl X11WindowState {
             appearance,
             handle,
             destroyed: false,
+            last_render_at: None,
+            refresh_rate,
         })
     }
 
@@ -401,26 +458,32 @@ impl Drop for X11Window {
         let mut state = self.0.state.borrow_mut();
         state.renderer.destroy();
 
-        self.0.xcb_connection.unmap_window(self.0.x_window).unwrap();
-        self.0
-            .xcb_connection
-            .destroy_window(self.0.x_window)
-            .unwrap();
-        self.0.xcb_connection.flush().unwrap();
+        let destroy_x_window = maybe!({
+            self.0.xcb_connection.unmap_window(self.0.x_window)?;
+            self.0.xcb_connection.destroy_window(self.0.x_window)?;
+            self.0.xcb_connection.flush()?;
 
-        // Mark window as destroyed so that we can filter out when X11 events
-        // for it still come in.
-        state.destroyed = true;
+            anyhow::Ok(())
+        })
+        .context("unmapping and destroying X11 window")
+        .log_err();
 
-        let this_ptr = self.0.clone();
-        let client_ptr = state.client.clone();
-        state
-            .executor
-            .spawn(async move {
-                this_ptr.close();
-                client_ptr.drop_window(this_ptr.x_window);
-            })
-            .detach();
+        if destroy_x_window.is_some() {
+            // Mark window as destroyed so that we can filter out when X11 events
+            // for it still come in.
+            state.destroyed = true;
+
+            let this_ptr = self.0.clone();
+            let client_ptr = state.client.clone();
+            state
+                .executor
+                .spawn(async move {
+                    this_ptr.close();
+                    client_ptr.drop_window(this_ptr.x_window);
+                })
+                .detach();
+        }
+
         drop(state);
     }
 }
@@ -545,6 +608,11 @@ impl X11WindowStatePtr {
         let mut cb = self.callbacks.borrow_mut();
         if let Some(ref mut fun) = cb.request_frame {
             fun();
+
+            self.state
+                .borrow_mut()
+                .last_render_at
+                .replace(Instant::now());
         }
     }
 
@@ -642,7 +710,7 @@ impl X11WindowStatePtr {
             }
 
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
-            if state.renderer.viewport_size() != gpu_size {
+            if true {
                 state.renderer.update_drawable_size(size(
                     DevicePixels(gpu_size.width as i32),
                     DevicePixels(gpu_size.height as i32),
@@ -990,4 +1058,13 @@ impl PlatformWindow for X11Window {
     fn should_render_window_controls(&self) -> bool {
         false
     }
+}
+
+// Adatpted from:
+// https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
+pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
+    let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
+    let micros = 1_000_000_000 / millihertz;
+    log::info!("Refreshing at {} micros", micros);
+    Duration::from_micros(micros)
 }

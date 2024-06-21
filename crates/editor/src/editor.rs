@@ -535,11 +535,13 @@ pub struct Editor {
     next_editor_action_id: EditorActionId,
     editor_actions: Rc<RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&mut ViewContext<Self>)>>>>,
     use_autoclose: bool,
+    use_auto_surround: bool,
     auto_replace_emoji_shortcode: bool,
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
+    show_selection_menu: Option<bool>,
     blame: Option<Model<GitBlame>>,
     blame_subscription: Option<Subscription>,
     custom_context_menu: Option<
@@ -554,6 +556,7 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     file_header_size: u8,
+    breadcrumb_header: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1813,6 +1816,7 @@ impl Editor {
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
+            use_auto_surround: true,
             auto_replace_emoji_shortcode: false,
             leader_peer_id: None,
             remote_id: None,
@@ -1837,6 +1841,7 @@ impl Editor {
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
+            show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             blame: None,
@@ -1865,6 +1870,7 @@ impl Editor {
             tasks_update_task: None,
             linked_edit_ranges: Default::default(),
             previous_search_ranges: None,
+            breadcrumb_header: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -2186,6 +2192,10 @@ impl Editor {
 
     pub fn set_use_autoclose(&mut self, autoclose: bool) {
         self.use_autoclose = autoclose;
+    }
+
+    pub fn set_use_auto_surround(&mut self, auto_surround: bool) {
+        self.use_auto_surround = auto_surround;
     }
 
     pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
@@ -2887,7 +2897,7 @@ impl Editor {
                     // `text` can be empty when a user is using IME (e.g. Chinese Wubi Simplified)
                     //  and they are removing the character that triggered IME popup.
                     for (pair, enabled) in scope.brackets() {
-                        if !pair.close {
+                        if !pair.close && !pair.surround {
                             continue;
                         }
 
@@ -2905,9 +2915,10 @@ impl Editor {
                 }
 
                 if let Some(bracket_pair) = bracket_pair {
-                    let autoclose = self.use_autoclose
-                        && snapshot.settings_at(selection.start, cx).use_autoclose;
-
+                    let snapshot_settings = snapshot.settings_at(selection.start, cx);
+                    let autoclose = self.use_autoclose && snapshot_settings.use_autoclose;
+                    let auto_surround =
+                        self.use_auto_surround && snapshot_settings.use_auto_surround;
                     if selection.is_empty() {
                         if is_bracket_pair_start {
                             let prefix_len = bracket_pair.start.len() - text.len();
@@ -2929,6 +2940,7 @@ impl Editor {
                                         &bracket_pair.start[..prefix_len],
                                     ));
                             if autoclose
+                                && bracket_pair.close
                                 && following_text_allows_autoclose
                                 && preceding_text_matches_prefix
                             {
@@ -2980,7 +2992,8 @@ impl Editor {
                     }
                     // If an opening bracket is 1 character long and is typed while
                     // text is selected, then surround that text with the bracket pair.
-                    else if autoclose
+                    else if auto_surround
+                        && bracket_pair.surround
                         && is_bracket_pair_start
                         && bracket_pair.start.chars().count() == 1
                     {
@@ -6722,6 +6735,20 @@ impl Editor {
         })
     }
 
+    pub fn select_page_up(&mut self, _: &SelectPageUp, cx: &mut ViewContext<Self>) {
+        let Some(row_count) = self.visible_row_count() else {
+            return;
+        };
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::up_by_rows(map, head, row_count, goal, false, &text_layout_details)
+            })
+        })
+    }
+
     pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
             return;
@@ -6732,9 +6759,7 @@ impl Editor {
             return;
         }
 
-        let row_count = if let Some(row_count) = self.visible_line_count() {
-            row_count as u32 - 1
-        } else {
+        let Some(row_count) = self.visible_row_count() else {
             return;
         };
 
@@ -6809,6 +6834,20 @@ impl Editor {
         }
     }
 
+    pub fn select_page_down(&mut self, _: &SelectPageDown, cx: &mut ViewContext<Self>) {
+        let Some(row_count) = self.visible_row_count() else {
+            return;
+        };
+
+        let text_layout_details = &self.text_layout_details(cx);
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, goal| {
+                movement::down_by_rows(map, head, row_count, goal, false, &text_layout_details)
+            })
+        })
+    }
+
     pub fn move_page_down(&mut self, action: &MovePageDown, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
             return;
@@ -6829,9 +6868,7 @@ impl Editor {
             return;
         }
 
-        let row_count = if let Some(row_count) = self.visible_line_count() {
-            row_count as u32 - 1
-        } else {
+        let Some(row_count) = self.visible_row_count() else {
             return;
         };
 
@@ -8214,6 +8251,10 @@ impl Editor {
     }
 
     fn refresh_runnables(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+        if !EditorSettings::get_global(cx).gutter.runnables {
+            self.clear_tasks();
+            return Task::ready(());
+        }
         let project = self.project.clone();
         cx.spawn(|this, mut cx| async move {
             let Ok(display_snapshot) = this.update(&mut cx, |this, cx| {
@@ -10195,6 +10236,20 @@ impl Editor {
         self.git_blame_inline_enabled
     }
 
+    pub fn toggle_selection_menu(&mut self, _: &ToggleSelectionMenu, cx: &mut ViewContext<Self>) {
+        self.show_selection_menu = self
+            .show_selection_menu
+            .map(|show_selections_menu| !show_selections_menu)
+            .or_else(|| Some(!EditorSettings::get_global(cx).toolbar.selections_menu));
+
+        cx.notify();
+    }
+
+    pub fn selection_menu_enabled(&self, cx: &AppContext) -> bool {
+        self.show_selection_menu
+            .unwrap_or_else(|| EditorSettings::get_global(cx).toolbar.selections_menu)
+    }
+
     fn start_git_blame(&mut self, user_triggered: bool, cx: &mut ViewContext<Self>) {
         if let Some(project) = self.project.as_ref() {
             let Some(buffer) = self.buffer().read(cx).as_singleton() else {
@@ -10500,6 +10555,10 @@ impl Editor {
             |colors| colors.editor_document_highlight_read_background,
             cx,
         )
+    }
+
+    pub fn set_breadcrumb_header(&mut self, new_header: String) {
+        self.breadcrumb_header = Some(new_header);
     }
 
     pub fn clear_search_within_ranges(&mut self, cx: &mut ViewContext<Self>) {
@@ -10980,6 +11039,7 @@ impl Editor {
     }
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.tasks_update_task = Some(self.refresh_runnables(cx));
         self.refresh_inline_completion(true, cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
@@ -11753,7 +11813,7 @@ impl EditorSnapshot {
             .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
-        left_padding += if show_code_actions {
+        left_padding += if show_code_actions || gutter_settings.runnables {
             em_width * 3.0
         } else if show_git_gutter && show_line_numbers {
             em_width * 2.0
@@ -12160,9 +12220,12 @@ impl ViewInputHandler for Editor {
 
             // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
             let use_autoclose = this.use_autoclose;
+            let use_auto_surround = this.use_auto_surround;
             this.set_use_autoclose(false);
+            this.set_use_auto_surround(false);
             this.handle_input(text, cx);
             this.set_use_autoclose(use_autoclose);
+            this.set_use_auto_surround(use_auto_surround);
 
             if let Some(new_selected_range) = new_selected_range_utf16 {
                 let snapshot = this.buffer.read(cx).read(cx);

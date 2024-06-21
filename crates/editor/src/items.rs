@@ -816,22 +816,24 @@ impl Item for Editor {
         let buffer = multibuffer.buffer(buffer_id)?;
 
         let buffer = buffer.read(cx);
-        let filename = buffer
-            .snapshot()
-            .resolve_file_path(
-                cx,
-                self.project
-                    .as_ref()
-                    .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                    .unwrap_or_default(),
-            )
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_else(|| "untitled".to_string());
+        let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
+            buffer
+                .snapshot()
+                .resolve_file_path(
+                    cx,
+                    self.project
+                        .as_ref()
+                        .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                        .unwrap_or_default(),
+                )
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_else(|| "untitled".to_string())
+        });
 
         let settings = ThemeSettings::get_global(cx);
 
         let mut breadcrumbs = vec![BreadcrumbText {
-            text: filename,
+            text,
             highlights: None,
             font: Some(settings.buffer_font.clone()),
         }];
