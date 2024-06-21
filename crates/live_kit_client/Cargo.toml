@@ -30,7 +30,8 @@ test-support = [
 anyhow.workspace = true
 async-broadcast = "0.7"
 async-trait = { workspace = true, optional = true }
-collections = { workspace = true, optional = true }
+cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
+collections = { workspace = true }
 futures.workspace = true
 gpui.workspace = true
 livekit.workspace = true
@@ -40,6 +41,7 @@ media.workspace = true
 nanoid = { workspace = true, optional = true}
 parking_lot.workspace = true
 postage.workspace = true
+util.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

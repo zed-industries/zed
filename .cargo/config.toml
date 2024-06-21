@@ -1,6 +1,10 @@
 [build]
 # v0 mangling scheme provides more detailed backtraces around closures
-rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
+rustflags = [
+  "-C", "symbol-mangling-version=v0",
+  "-C", "link-args=-ObjC",
+  "--cfg", "tokio_unstable",
+]
 
 [alias]
 xtask = "run --package xtask --"

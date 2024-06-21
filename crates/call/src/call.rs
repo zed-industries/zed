@@ -18,7 +18,7 @@ use room::Event;
 use settings::Settings;
 use std::sync::Arc;
 
-pub use live_kit_client::create_screen_capture_frame_stream_from_video_track;
+pub use live_kit_client::play_remote_video_track;
 pub use participant::ParticipantLocation;
 pub use room::Room;
 

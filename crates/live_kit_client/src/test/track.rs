@@ -106,17 +106,6 @@ impl RemoteAudioTrack {
         }
     }
 
-    pub fn is_playing(&self) -> bool {
-        !self
-            .room
-            .upgrade()
-            .unwrap()
-            .0
-            .lock()
-            .paused_audio_tracks
-            .contains(&self.server_track.sid)
-    }
-
     pub fn rtc_track(&self) -> RtcAudioTrack {
         RtcAudioTrack {
             server_track: self.server_track.clone(),
@@ -138,10 +127,6 @@ impl RemoteVideoTrack {
             server_track: self.server_track.clone(),
         }
     }
-
-    // pub fn frames(&self) -> async_broadcast::Receiver<Frame> {
-    //     self.server_track.frames_rx.clone()
-    // }
 }
 
 impl RtcTrack {

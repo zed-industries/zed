@@ -1,20 +1,26 @@
-use std::sync::Arc;
-
 use anyhow::Result;
+use collections::VecDeque;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
 use futures::{Stream, StreamExt as _};
-use gpui::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream};
+use gpui::{
+    BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
+};
+use parking_lot::Mutex;
+use std::{borrow::Cow, sync::Arc};
 use webrtc::{
+    audio_frame::AudioFrame,
     audio_source::{native::NativeAudioSource, AudioSourceOptions, RtcAudioSource},
+    audio_stream::native::NativeAudioStream,
     video_frame::{native::NativeBuffer, VideoFrame, VideoRotation},
     video_source::{native::NativeVideoSource, RtcVideoSource, VideoResolution},
     video_stream::native::NativeVideoStream,
 };
 
-#[cfg(not(any(test, feature = "test-support")))]
-pub use livekit::*;
-
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+
+#[cfg(not(any(test, feature = "test-support")))]
+pub use livekit::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 
@@ -69,14 +75,136 @@ pub async fn create_video_track_from_screen_capture_source(
     ))
 }
 
-pub async fn create_audio_track_from_microphone() -> Result<track::LocalAudioTrack> {
-    let source = NativeAudioSource::new(AudioSourceOptions::default(), 100, 1);
+pub async fn create_audio_track_from_microphone(
+    cx: &BackgroundExecutor,
+) -> Result<(track::LocalAudioTrack, AudioStream)> {
+    let host = cpal::default_host();
+
+    let device = host
+        .default_input_device()
+        .expect("No input device available");
+    let config = device
+        .default_input_config()
+        .expect("Failed to get default input config");
+    let sample_rate = config.sample_rate();
+    let channels = config.channels() as u32;
+    let source = NativeAudioSource::new(AudioSourceOptions::default(), sample_rate.0, channels);
+
+    let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
+
+    let _task = cx.spawn({
+        let source = source.clone();
+        async move {
+            while let Some(frame) = frame_rx.next().await {
+                source.capture_frame(&frame).await.ok();
+            }
+        }
+    });
+
+    let stream = device
+        .build_input_stream_raw(
+            &config.config(),
+            cpal::SampleFormat::I16,
+            move |data, _: &_| {
+                frame_tx
+                    .unbounded_send(AudioFrame {
+                        data: Cow::Owned(data.as_slice::<i16>().unwrap().to_vec()),
+                        sample_rate: sample_rate.0,
+                        num_channels: channels,
+                        samples_per_channel: data.len() as u32 / channels,
+                    })
+                    .ok();
+            },
+            move |err| eprintln!("Error: {:?}", err),
+            None,
+        )
+        .expect("Failed to build input stream");
+
+    stream.play().expect("Failed to play stream");
+
     let track =
         track::LocalAudioTrack::create_audio_track("microphone", RtcAudioSource::Native(source));
-    Ok(track)
+
+    Ok((
+        track,
+        AudioStream {
+            _stream: stream,
+            _task,
+        },
+    ))
 }
 
-pub fn create_screen_capture_frame_stream_from_video_track(
+pub struct AudioStream {
+    _stream: cpal::Stream,
+    _task: Task<()>,
+}
+
+pub fn play_remote_audio_track(
+    track: &track::RemoteAudioTrack,
+    executor: &BackgroundExecutor,
+) -> AudioStream {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .expect("No output device available");
+    let config = device
+        .default_output_config()
+        .expect("Failed to get default input config");
+
+    let ring_buffer = Arc::new(Mutex::new(VecDeque::new()));
+
+    let _stream = device
+        .build_output_stream::<i16, _, _>(
+            &config.config(),
+            {
+                let ring_buffer = ring_buffer.clone();
+                move |data, _info| {
+                    let mut buffer = ring_buffer.lock();
+                    let (a, b) = buffer.as_slices();
+                    let buffer_len = buffer.len();
+
+                    if a.len() > data.len() {
+                        data.copy_from_slice(&a[..data.len()]);
+                        buffer.drain(..data.len());
+                        return;
+                    }
+
+                    data[..a.len()].copy_from_slice(a);
+
+                    let remainder = (data.len() - a.len()).min(b.len());
+                    data[a.len()..a.len() + remainder].copy_from_slice(&b[..remainder]);
+
+                    if buffer_len < data.len() {
+                        eprintln!(
+                            "not enough data. have {}, need {}",
+                            buffer.len(),
+                            data.len()
+                        );
+                    }
+
+                    buffer.drain(0..data.len().min(buffer_len));
+                }
+            },
+            move |err| eprintln!("Error: {:?}", err),
+            None,
+        )
+        .unwrap();
+
+    let mut stream = NativeAudioStream::new(track.rtc_track());
+
+    let _task = executor.spawn({
+        let ring_buffer = ring_buffer.clone();
+        async move {
+            while let Some(frame) = stream.next().await {
+                ring_buffer.lock().extend(frame.data.iter());
+            }
+        }
+    });
+
+    AudioStream { _stream, _task }
+}
+
+pub fn play_remote_video_track(
     track: &track::RemoteVideoTrack,
 ) -> impl Stream<Item = ScreenCaptureFrame> {
     NativeVideoStream::new(track.rtc_track()).filter_map(|video_frame| async move {

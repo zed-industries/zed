@@ -1320,7 +1320,8 @@ impl Room {
         };
 
         cx.spawn(move |this, mut cx| async move {
-            let track = livekit::create_audio_track_from_microphone().await?;
+            let (track, stream) =
+                livekit::create_audio_track_from_microphone(&cx.background_executor()).await?;
 
             let publication = participant
                 .publish_track(

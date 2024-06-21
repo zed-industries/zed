@@ -36,7 +36,7 @@ impl SharedScreen {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.focus_handle();
-        let frames = call::create_screen_capture_frame_stream_from_video_track(&track);
+        let frames = call::play_remote_video_track(&track);
 
         Self {
             track,
