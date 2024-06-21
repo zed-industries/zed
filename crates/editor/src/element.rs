@@ -2781,12 +2781,12 @@ impl EditorElement {
                 )),
             };
 
-            let requested_line_width = settings.line_width.clamp(1, 10);
             let requested_line_width = if indent_guide.active {
-                settings.active_line_width.clamp(1, 10)
+                settings.active_line_width
             } else {
-                requested_line_width
-            };
+                settings.line_width
+            }
+            .clamp(1, 10);
             let mut line_indicator_width = 0.;
             if let Some(color) = line_color {
                 cx.paint_quad(fill(
