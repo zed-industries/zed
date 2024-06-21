@@ -859,6 +859,175 @@ fn test_fold_action(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_fold_action_whitespace_sensitive_language(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple(
+            &"
+                class Foo:
+                    # Hello!
+
+                    def a():
+                        print(1)
+
+                    def b():
+                        print(2)
+
+                    def c():
+                        print(3)
+            "
+            .unindent(),
+            cx,
+        );
+        build_editor(buffer.clone(), cx)
+    });
+
+    _ = view.update(cx, |view, cx| {
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(10), 0)
+            ]);
+        });
+        view.fold(&Fold, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:
+                    # Hello!
+
+                    def a():
+                        print(1)
+
+                    def b():⋯
+
+                    def c():⋯
+            "
+            .unindent(),
+        );
+
+        view.fold(&Fold, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:⋯
+            "
+            .unindent(),
+        );
+
+        view.unfold_lines(&UnfoldLines, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:
+                    # Hello!
+
+                    def a():
+                        print(1)
+
+                    def b():⋯
+
+                    def c():⋯
+            "
+            .unindent(),
+        );
+
+        view.unfold_lines(&UnfoldLines, cx);
+        assert_eq!(view.display_text(cx), view.buffer.read(cx).read(cx).text());
+    });
+}
+
+#[gpui::test]
+fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple(
+            &"
+                class Foo:
+                    # Hello!
+
+                    def a():
+                        print(1)
+
+                    def b():
+                        print(2)
+
+
+                    def c():
+                        print(3)
+
+
+            "
+            .unindent(),
+            cx,
+        );
+        build_editor(buffer.clone(), cx)
+    });
+
+    _ = view.update(cx, |view, cx| {
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(11), 0)
+            ]);
+        });
+        view.fold(&Fold, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:
+                    # Hello!
+
+                    def a():
+                        print(1)
+
+                    def b():⋯
+
+
+                    def c():⋯
+
+
+            "
+            .unindent(),
+        );
+
+        view.fold(&Fold, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:⋯
+
+
+            "
+            .unindent(),
+        );
+
+        view.unfold_lines(&UnfoldLines, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:
+                    # Hello!
+
+                    def a():
+                        print(1)
+
+                    def b():⋯
+
+
+                    def c():⋯
+
+
+            "
+            .unindent(),
+        );
+
+        view.unfold_lines(&UnfoldLines, cx);
+        assert_eq!(view.display_text(cx), view.buffer.read(cx).read(cx).text());
+    });
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
