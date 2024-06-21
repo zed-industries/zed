@@ -186,7 +186,7 @@ impl settings::Settings for TerminalSettings {
         _: &mut AppContext,
     ) -> anyhow::Result<Self> {
         let merged: TerminalSettingsContent = sources.json_merge()?;
-        let ret = Ok(Self {
+        Ok(Self {
             shell: merged.shell.clone().unwrap(),
             working_directory: merged.working_directory.clone().unwrap(),
             font_size: merged.font_size.map(Into::into),
@@ -220,9 +220,7 @@ impl settings::Settings for TerminalSettings {
                     title: content.title.unwrap(),
                 })
                 .unwrap(),
-        });
-        println!("{:#?}", ret);
-        ret
+        })
     }
 
     fn json_schema(
