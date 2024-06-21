@@ -6,7 +6,6 @@ use crate::{
 use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::{BTreeSet, HashMap};
-use core_foundation::base::TCFTypeRef;
 #[allow(unused_imports)]
 use core_foundation::{
     array::CFArray,
