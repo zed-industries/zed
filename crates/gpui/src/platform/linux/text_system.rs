@@ -63,11 +63,6 @@ impl PlatformTextSystem for CosmicTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    // todo(linux)
-    fn set_fallbacks(&self, _fallbacks: Option<&[String]>, _target_family: &str) -> Result<()> {
-        Ok(())
-    }
-
     fn all_font_names(&self) -> Vec<String> {
         let mut result = self
             .0
