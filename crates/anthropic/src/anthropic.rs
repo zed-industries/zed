@@ -11,27 +11,27 @@ pub const ANTHROPIC_API_URL: &'static str = "https://api.anthropic.com";
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
+    #[default]
+    #[serde(alias = "claude-3-5-sonnet", rename = "claude-3-5-sonnet-20240620")]
+    Claude3_5Sonnet,
     #[serde(alias = "claude-3-opus", rename = "claude-3-opus-20240229")]
     Claude3Opus,
     #[serde(alias = "claude-3-sonnet", rename = "claude-3-sonnet-20240229")]
     Claude3Sonnet,
     #[serde(alias = "claude-3-haiku", rename = "claude-3-haiku-20240307")]
     Claude3Haiku,
-    #[default]
-    #[serde(alias = "claude-3-5-sonnet", rename = "claude-3-5-sonnet-20240620")]
-    Claude3Point5Sonnet,
 }
 
 impl Model {
     pub fn from_id(id: &str) -> Result<Self> {
-        if id.starts_with("claude-3-opus") {
+        if id.starts_with("claude-3-5-sonnet") {
+            Ok(Self::Claude3_5Sonnet)
+        } else if id.starts_with("claude-3-opus") {
             Ok(Self::Claude3Opus)
         } else if id.starts_with("claude-3-sonnet") {
             Ok(Self::Claude3Sonnet)
         } else if id.starts_with("claude-3-haiku") {
             Ok(Self::Claude3Haiku)
-        } else if id.starts_with("claude-3-5-sonnet") {
-            Ok(Self::Claude3Point5Sonnet)
         } else {
             Err(anyhow!("Invalid model id: {}", id))
         }
@@ -39,19 +39,19 @@ impl Model {
 
     pub fn id(&self) -> &'static str {
         match self {
+            Model::Claude3_5Sonnet => "claude-3-5-sonnet-20240620",
             Model::Claude3Opus => "claude-3-opus-20240229",
             Model::Claude3Sonnet => "claude-3-sonnet-20240229",
             Model::Claude3Haiku => "claude-3-opus-20240307",
-            Model::Claude3Point5Sonnet => "claude-3-5-sonnet-20240620",
         }
     }
 
     pub fn display_name(&self) -> &'static str {
         match self {
+            Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
-            Self::Claude3Point5Sonnet => "Claude 3.5 Sonnet",
         }
     }
 

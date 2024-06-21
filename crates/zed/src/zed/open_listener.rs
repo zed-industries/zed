@@ -55,7 +55,7 @@ impl OpenRequest {
     fn parse_file_path(&mut self, file: &str) {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
             if let Some(path_buf) =
-                PathLikeWithPosition::parse_str(&decoded, |s| PathBuf::try_from(s)).log_err()
+                PathLikeWithPosition::parse_str(&decoded, |_, s| PathBuf::try_from(s)).log_err()
             {
                 self.open_paths.push(path_buf)
             }
@@ -295,7 +295,7 @@ pub async fn handle_cli_connection(
                         .map(|path_with_position_string| {
                             PathLikeWithPosition::parse_str(
                                 &path_with_position_string,
-                                |path_str| {
+                                |_, path_str| {
                                     Ok::<_, std::convert::Infallible>(
                                         Path::new(path_str).to_path_buf(),
                                     )

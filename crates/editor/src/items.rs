@@ -1201,20 +1201,22 @@ impl SearchableItem for Editor {
                 for (excerpt_id, search_buffer, search_range) in
                     buffer.excerpts_in_ranges(search_within_ranges)
                 {
-                    ranges.extend(
-                        query
-                            .search(&search_buffer, Some(search_range.clone()))
-                            .await
-                            .into_iter()
-                            .map(|match_range| {
-                                let start = search_buffer
-                                    .anchor_after(search_range.start + match_range.start);
-                                let end = search_buffer
-                                    .anchor_before(search_range.start + match_range.end);
-                                buffer.anchor_in_excerpt(excerpt_id, start).unwrap()
-                                    ..buffer.anchor_in_excerpt(excerpt_id, end).unwrap()
-                            }),
-                    );
+                    if !search_range.is_empty() {
+                        ranges.extend(
+                            query
+                                .search(&search_buffer, Some(search_range.clone()))
+                                .await
+                                .into_iter()
+                                .map(|match_range| {
+                                    let start = search_buffer
+                                        .anchor_after(search_range.start + match_range.start);
+                                    let end = search_buffer
+                                        .anchor_before(search_range.start + match_range.end);
+                                    buffer.anchor_in_excerpt(excerpt_id, start).unwrap()
+                                        ..buffer.anchor_in_excerpt(excerpt_id, end).unwrap()
+                                }),
+                        );
+                    }
                 }
             };
 

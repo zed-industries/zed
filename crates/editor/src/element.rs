@@ -1,3 +1,4 @@
+use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     display_map::{
@@ -858,6 +859,28 @@ impl EditorElement {
             }
 
             selections.extend(remote_selections.into_values());
+        } else if !editor.is_focused(cx) && editor.show_cursor_when_unfocused {
+            let player = if editor.read_only(cx) {
+                cx.theme().players().read_only()
+            } else {
+                self.style.local_player
+            };
+            let layouts = snapshot
+                .buffer_snapshot
+                .selections_in_range(&(start_anchor..end_anchor), true)
+                .map(move |(_, line_mode, cursor_shape, selection)| {
+                    SelectionLayout::new(
+                        selection,
+                        line_mode,
+                        cursor_shape,
+                        &snapshot.display_snapshot,
+                        false,
+                        false,
+                        None,
+                    )
+                })
+                .collect::<Vec<_>>();
+            selections.push((player, layouts));
         }
         (selections, active_rows, newest_selection_head)
     }
@@ -1089,11 +1112,17 @@ impl EditorElement {
             point(bounds.lower_right().x, bounds.lower_left().y),
         );
 
+        let settings = EditorSettings::get_global(cx);
+        let scroll_beyond_last_line: f32 = match settings.scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => rows_per_page,
+            ScrollBeyondLastLine::Off => 1.0,
+            ScrollBeyondLastLine::VerticalScrollMargin => 1.0 + settings.vertical_scroll_margin,
+        };
+        let total_rows = snapshot.max_point().row().as_f32() + scroll_beyond_last_line;
         let height = bounds.size.height;
-        let total_rows = snapshot.max_point().row().as_f32() + rows_per_page;
         let px_per_row = height / total_rows;
         let thumb_height = (rows_per_page * px_per_row).max(ScrollbarLayout::MIN_THUMB_HEIGHT);
-        let row_height = (height - thumb_height) / snapshot.max_point().row().as_f32();
+        let row_height = (height - thumb_height) / (total_rows - rows_per_page).max(0.0);
 
         Some(ScrollbarLayout {
             hitbox: cx.insert_hitbox(track_bounds, false),
@@ -2784,7 +2813,12 @@ impl EditorElement {
                 )),
             };
 
-            let requested_line_width = settings.line_width.clamp(1, 10);
+            let requested_line_width = if indent_guide.active {
+                settings.active_line_width
+            } else {
+                settings.line_width
+            }
+            .clamp(1, 10);
             let mut line_indicator_width = 0.;
             if let Some(color) = line_color {
                 cx.paint_quad(fill(
@@ -3619,12 +3653,12 @@ impl EditorElement {
                         let forbid_vertical_scroll = editor.scroll_manager.forbid_vertical_scroll();
                         if forbid_vertical_scroll {
                             scroll_position.y = current_scroll_position.y;
-                            if scroll_position == current_scroll_position {
-                                return;
-                            }
                         }
-                        editor.scroll(scroll_position, axis, cx);
-                        cx.stop_propagation();
+
+                        if scroll_position != current_scroll_position {
+                            editor.scroll(scroll_position, axis, cx);
+                            cx.stop_propagation();
+                        }
                     });
                 }
             }
@@ -4609,13 +4643,29 @@ impl Element for EditorElement {
                     let content_origin =
                         text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
 
+                    let height_in_lines = bounds.size.height / line_height;
+                    let max_scroll_top = if matches!(snapshot.mode, EditorMode::AutoHeight { .. }) {
+                        (snapshot.max_point().row().as_f32() - height_in_lines + 1.).max(0.)
+                    } else {
+                        let settings = EditorSettings::get_global(cx);
+                        let max_row = snapshot.max_point().row().as_f32();
+                        match settings.scroll_beyond_last_line {
+                            ScrollBeyondLastLine::OnePage => max_row,
+                            ScrollBeyondLastLine::Off => (max_row - height_in_lines + 1.0).max(0.0),
+                            ScrollBeyondLastLine::VerticalScrollMargin => {
+                                (max_row - height_in_lines + 1.0 + settings.vertical_scroll_margin)
+                                    .max(0.0)
+                            }
+                        }
+                    };
+
                     let mut autoscroll_containing_element = false;
                     let mut autoscroll_horizontally = false;
                     self.editor.update(cx, |editor, cx| {
                         autoscroll_containing_element =
                             editor.autoscroll_requested() || editor.has_pending_selection();
                         autoscroll_horizontally =
-                            editor.autoscroll_vertically(bounds, line_height, cx);
+                            editor.autoscroll_vertically(bounds, line_height, max_scroll_top, cx);
                         snapshot = editor.snapshot(cx);
                     });
 
@@ -4623,7 +4673,6 @@ impl Element for EditorElement {
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.
                     let start_row = DisplayRow(scroll_position.y as u32);
-                    let height_in_lines = bounds.size.height / line_height;
                     let max_row = snapshot.max_point().row();
                     let end_row = cmp::min(
                         (scroll_position.y + height_in_lines).ceil() as u32,
@@ -4807,7 +4856,7 @@ impl Element for EditorElement {
 
                     let scroll_max = point(
                         ((scroll_width - text_hitbox.size.width) / em_width).max(0.0),
-                        max_row.as_f32(),
+                        max_scroll_top,
                     );
 
                     self.editor.update(cx, |editor, cx| {
@@ -4931,14 +4980,18 @@ impl Element for EditorElement {
                         }
                     }
 
-                    let test_indicators = self.layout_run_indicators(
-                        line_height,
-                        scroll_pixel_position,
-                        &gutter_dimensions,
-                        &gutter_hitbox,
-                        &snapshot,
-                        cx,
-                    );
+                    let test_indicators = if gutter_settings.runnables {
+                        self.layout_run_indicators(
+                            line_height,
+                            scroll_pixel_position,
+                            &gutter_dimensions,
+                            &gutter_hitbox,
+                            &snapshot,
+                            cx,
+                        )
+                    } else {
+                        vec![]
+                    };
 
                     if !cx.has_active_drag() {
                         self.layout_hover_popovers(

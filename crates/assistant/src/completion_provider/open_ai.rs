@@ -210,10 +210,10 @@ pub fn count_open_ai_tokens(
 
             match request.model {
                 LanguageModel::Anthropic(_)
+                | LanguageModel::Cloud(CloudModel::Claude3_5Sonnet)
                 | LanguageModel::Cloud(CloudModel::Claude3Opus)
                 | LanguageModel::Cloud(CloudModel::Claude3Sonnet)
-                | LanguageModel::Cloud(CloudModel::Claude3Haiku)
-                | LanguageModel::Cloud(CloudModel::Claude3Point5Sonnet) => {
+                | LanguageModel::Cloud(CloudModel::Claude3Haiku) => {
                     // Tiktoken doesn't yet support these models, so we manually use the
                     // same tokenizer as GPT-4.
                     tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)

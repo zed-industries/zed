@@ -88,7 +88,7 @@ A common request is to be able to map from one sequence of keys to another. As o
   {
     "context": "Editor && vim_mode == insert",
     "bindings": {
-      "j k": ["workspace::SendKeystrokes", "escape"],
+      "j k": ["workspace::SendKeystrokes", "escape"]
     }
   }
 ]
@@ -116,6 +116,11 @@ For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ct
   }
 }
 ```
+
+### Task Key bindings
+
+You can also bind keys to launch Zed Tasks defined in your tasks.json.
+See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more.
 
 ### All key bindings
 

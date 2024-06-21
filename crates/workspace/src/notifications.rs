@@ -191,6 +191,11 @@ impl Workspace {
         self.dismiss_notification(id, cx);
     }
 
+    pub fn clear_all_notifications(&mut self, cx: &mut ViewContext<Self>) {
+        self.notifications.clear();
+        cx.notify();
+    }
+
     fn dismiss_notification_internal(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
         self.notifications.retain(|(existing_id, _)| {
             if existing_id == id {

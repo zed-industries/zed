@@ -457,6 +457,9 @@ pub struct Editor {
     pub display_map: Model<DisplayMap>,
     pub selections: SelectionsCollection,
     pub scroll_manager: ScrollManager,
+    /// When inline assist editors are linked, they all render cursors because
+    /// typing enters text into each of them, even the ones that aren't focused.
+    pub(crate) show_cursor_when_unfocused: bool,
     columnar_selection_tail: Option<Anchor>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
@@ -1635,7 +1638,7 @@ impl Editor {
         clone
     }
 
-    fn new(
+    pub fn new(
         mode: EditorMode,
         buffer: Model<MultiBuffer>,
         project: Option<Model<Project>>,
@@ -1752,6 +1755,7 @@ impl Editor {
 
         let mut this = Self {
             focus_handle,
+            show_cursor_when_unfocused: false,
             last_focused_descendant: None,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
@@ -2220,7 +2224,7 @@ impl Editor {
         // Copy selections to primary selection buffer
         #[cfg(target_os = "linux")]
         if local {
-            let selections = &self.selections.disjoint;
+            let selections = self.selections.all::<usize>(cx);
             let buffer_handle = self.buffer.read(cx).read(cx);
 
             let mut text = String::new();
@@ -8247,6 +8251,10 @@ impl Editor {
     }
 
     fn refresh_runnables(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+        if !EditorSettings::get_global(cx).gutter.runnables {
+            self.clear_tasks();
+            return Task::ready(());
+        }
         let project = self.project.clone();
         cx.spawn(|this, mut cx| async move {
             let Ok(display_snapshot) = this.update(&mut cx, |this, cx| {
@@ -9960,6 +9968,15 @@ impl Editor {
         }
     }
 
+    pub fn row_for_block(
+        &self,
+        block_id: BlockId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<DisplayRow> {
+        self.display_map
+            .update(cx, |map, cx| map.row_for_block(block_id, cx))
+    }
+
     pub fn insert_creases(
         &mut self,
         creases: impl IntoIterator<Item = Crease>,
@@ -10898,6 +10915,11 @@ impl Editor {
             && self.focus_handle.is_focused(cx)
     }
 
+    pub fn set_show_cursor_when_unfocused(&mut self, is_enabled: bool, cx: &mut ViewContext<Self>) {
+        self.show_cursor_when_unfocused = is_enabled;
+        cx.notify();
+    }
+
     fn on_buffer_changed(&mut self, _: Model<MultiBuffer>, cx: &mut ViewContext<Self>) {
         cx.notify();
     }
@@ -11017,6 +11039,7 @@ impl Editor {
     }
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.tasks_update_task = Some(self.refresh_runnables(cx));
         self.refresh_inline_completion(true, cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
@@ -11717,7 +11740,7 @@ impl EditorSnapshot {
             .map(|(_, collaborator)| (collaborator.replica_id, collaborator))
             .collect::<HashMap<_, _>>();
         self.buffer_snapshot
-            .remote_selections_in_range(range)
+            .selections_in_range(range, false)
             .filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
                 let collaborator = collaborators_by_replica_id.get(&replica_id)?;
                 let participant_index = participant_indices.get(&collaborator.user_id).copied();
@@ -11790,7 +11813,7 @@ impl EditorSnapshot {
             .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
-        left_padding += if show_code_actions {
+        left_padding += if show_code_actions || gutter_settings.runnables {
             em_width * 3.0
         } else if show_git_gutter && show_line_numbers {
             em_width * 2.0

@@ -450,6 +450,11 @@ pub struct IndentGuideSettings {
     /// Default: 1
     #[serde(default = "line_width")]
     pub line_width: u32,
+    /// The width of the active indent guide in pixels, between 1 and 10.
+    ///
+    /// Default: 1
+    #[serde(default = "active_line_width")]
+    pub active_line_width: u32,
     /// Determines how indent guides are colored.
     ///
     /// Default: Fixed
@@ -464,6 +469,10 @@ pub struct IndentGuideSettings {
 
 fn line_width() -> u32 {
     1
+}
+
+fn active_line_width() -> u32 {
+    line_width()
 }
 
 /// Determines how indent guides are colored.

@@ -34,6 +34,7 @@ ignore.workspace = true
 language.workspace = true
 log.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 postage.workspace = true
 rpc.workspace = true
 schemars.workspace = true

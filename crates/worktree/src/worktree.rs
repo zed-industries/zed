@@ -31,6 +31,7 @@ use gpui::{
 };
 use ignore::IgnoreStack;
 use parking_lot::Mutex;
+use paths::local_settings_folder_relative_path;
 use postage::{
     barrier,
     prelude::{Sink as _, Stream as _},
@@ -2589,6 +2590,7 @@ impl BackgroundScannerState {
     fn should_scan_directory(&self, entry: &Entry) -> bool {
         (!entry.is_external && !entry.is_ignored)
             || entry.path.file_name() == Some(*DOT_GIT)
+            || entry.path.file_name() == Some(local_settings_folder_relative_path().as_os_str())
             || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
             || self
                 .paths_to_scan

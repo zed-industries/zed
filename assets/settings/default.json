@@ -231,6 +231,8 @@
     "line_numbers": true,
     // Whether to show code action buttons in the gutter.
     "code_actions": true,
+    // Whether to show runnables buttons in the gutter.
+    "runnables": true,
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
@@ -239,6 +241,8 @@
     "enabled": true,
     /// The width of the indent guides in pixels, between 1 and 10.
     "line_width": 1,
+    /// The width of the active indent guide in pixels, between 1 and 10.
+    "active_line_width": 1,
     /// Determines how indent guides are colored.
     /// This setting can take the following three values:
     ///
@@ -253,6 +257,8 @@
     /// 2. "indent_aware"
     "background_coloring": "disabled"
   },
+  // Whether the editor will scroll beyond the last line.
+  "scroll_beyond_last_line": "one_page",
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
   // Scroll sensitivity multiplier. This multiplier is applied

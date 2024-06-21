@@ -281,9 +281,9 @@ async-tar = "0.4.2"
 async-trait = "0.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "33fd51359d113c03b785e28f4a6cf75bacb0b26d" }
-blade-macros = { git = "https://github.com/zed-industries/blade", rev =  "33fd51359d113c03b785e28f4a6cf75bacb0b26d" }
-blade-util = { git = "https://github.com/zed-industries/blade", rev = "33fd51359d113c03b785e28f4a6cf75bacb0b26d"  }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
+blade-macros = { git = "https://github.com/kvark/blade", rev =  "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"  }
 cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
