@@ -612,17 +612,10 @@ impl settings::Settings for ThemeSettings {
             .cloned()
             .map(Value::String)
             .collect::<Vec<_>>();
-        let fonts_schema = {
-            let mut fonts_schema = SchemaObject::default();
-            fonts_schema.instance_type = Some(InstanceType::Array.into());
-            let array_schema: Schema = {
-                let mut array_schema = SchemaObject::default();
-                array_schema.instance_type = Some(InstanceType::String.into());
-                array_schema.enum_values = Some(available_fonts);
-                array_schema.into()
-            };
-            fonts_schema.array().items = Some(array_schema.into());
-            fonts_schema
+        let fonts_schema = SchemaObject {
+            instance_type: Some(InstanceType::Array.into()),
+            enum_values: Some(available_fonts),
+            ..Default::default()
         };
         root_schema.definitions.extend([
             ("ThemeName".into(), theme_name_schema.into()),
