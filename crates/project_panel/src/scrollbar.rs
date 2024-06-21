@@ -70,10 +70,10 @@ impl gpui::Element for ProjectPanelScrollbar {
     ) {
         let hitbox_id = _prepaint.id;
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            cx.paint_quad(gpui::fill(
-                bounds,
-                cx.theme().colors().scrollbar_track_border,
-            ));
+            let colors = cx.theme().colors();
+            let scrollbar_background = colors.scrollbar_track_background;
+            let thumb_background = colors.scrollbar_thumb_background;
+            cx.paint_quad(gpui::fill(bounds, scrollbar_background));
 
             let thumb_offset = self.thumb.start * bounds.size.height;
             let thumb_end = self.thumb.end * bounds.size.height;
@@ -84,7 +84,7 @@ impl gpui::Element for ProjectPanelScrollbar {
             );
             cx.paint_quad(gpui::fill(
                 Bounds::from_corners(thumb_upper_left, thumb_lower_right),
-                cx.theme().colors().scrollbar_thumb_background,
+                thumb_background,
             ));
             let scroll = self.scroll.clone();
             let item_count = self.item_count;
