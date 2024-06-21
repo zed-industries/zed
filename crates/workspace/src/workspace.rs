@@ -115,6 +115,7 @@ actions!(
         ActivateNextPane,
         ActivatePreviousPane,
         AddFolderToProject,
+        ClearAllNotifications,
         CloseAllDocks,
         CloseWindow,
         Feedback,
@@ -3894,6 +3895,11 @@ impl Workspace {
             .on_action(
                 cx.listener(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
                     workspace.close_all_docks(cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|workspace: &mut Workspace, _: &ClearAllNotifications, cx| {
+                    workspace.clear_all_notifications(cx);
                 }),
             )
             .on_action(cx.listener(Workspace::open))
