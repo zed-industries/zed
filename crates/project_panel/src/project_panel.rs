@@ -2231,13 +2231,18 @@ impl ProjectPanel {
             .filter(|_| self.show_scrollbar)?;
 
         let total_list_length = height.0 as f64 * items_count as f64;
-        let current_offset = scroll_handle.base_handle.offset().y.0.abs() as f64;
-        let percentage = current_offset / total_list_length;
-        let end_offset = (current_offset + scroll_handle.base_handle.bounds().size.height.0 as f64)
+        let current_offset = scroll_handle.base_handle.offset().y.0.min(0.).abs() as f64;
+        let mut percentage = current_offset / total_list_length;
+        let mut end_offset = (current_offset
+            + scroll_handle.base_handle.bounds().size.height.0 as f64)
             / total_list_length;
 
         if percentage + 0.005 > 1.0 || end_offset > total_list_length {
             return None;
+        }
+        if total_list_length < scroll_handle.base_handle.bounds().size.height.0 as f64 {
+            percentage = 0.;
+            end_offset = 1.;
         }
         let end_offset = end_offset.clamp(percentage + 0.005, 1.);
         Some(
