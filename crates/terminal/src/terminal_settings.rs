@@ -1,5 +1,7 @@
 use collections::HashMap;
-use gpui::{px, AbsoluteLength, AppContext, FontFeatures, FontWeight, Pixels};
+use gpui::{
+    px, AbsoluteLength, AppContext, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString,
+};
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, RootSchema, Schema, SchemaObject},
@@ -8,7 +10,7 @@ use schemars::{
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{SettingsJsonSchemaParams, SettingsSources};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 use task::Shell;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -24,15 +26,16 @@ pub struct Toolbar {
     pub title: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug)]
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
     pub font_size: Option<Pixels>,
-    pub font_family: Option<String>,
-    pub line_height: TerminalLineHeight,
+    pub font_family: Option<SharedString>,
     pub font_features: Option<FontFeatures>,
+    pub font_fallbacks: Option<FontFallbacks>,
     pub font_weight: Option<FontWeight>,
+    pub line_height: TerminalLineHeight,
     pub env: HashMap<String, String>,
     pub blinking: TerminalBlink,
     pub alternate_scroll: AlternateScroll,
@@ -110,7 +113,7 @@ pub struct TerminalSettingsContent {
     ///
     /// If this option is not included,
     /// the terminal will default to matching the buffer's font family.
-    pub font_family: Option<String>,
+    pub font_family: Option<Vec<String>>,
     /// Sets the terminal's line height.
     ///
     /// Default: comfortable
@@ -183,7 +186,44 @@ impl settings::Settings for TerminalSettings {
         sources: SettingsSources<Self::FileContent>,
         _: &mut AppContext,
     ) -> anyhow::Result<Self> {
-        sources.json_merge()
+        let merged: TerminalSettingsContent = sources.json_merge()?;
+        let ret = Ok(Self {
+            shell: merged.shell.clone().unwrap(),
+            working_directory: merged.working_directory.clone().unwrap(),
+            font_size: merged.font_size.map(Into::into),
+            font_family: merged
+                .font_family
+                .as_ref()
+                .map(|family| family[0].clone().into()),
+            font_features: merged.font_features.clone(),
+            font_fallbacks: merged
+                .font_family
+                .as_ref()
+                .map(|family| get_fallbacks(family))
+                .flatten(),
+            font_weight: merged.font_weight.map(|weight| FontWeight(weight)),
+            line_height: merged.line_height.clone().unwrap(),
+            env: merged.env.clone().unwrap(),
+            blinking: merged.blinking.clone().unwrap(),
+            alternate_scroll: merged.alternate_scroll.clone().unwrap(),
+            option_as_meta: merged.option_as_meta.unwrap_or_default(),
+            copy_on_select: merged.copy_on_select.unwrap_or_default(),
+            button: merged.button.unwrap_or_default(),
+            dock: merged.dock.clone().unwrap(),
+            default_width: merged.default_width.map(Into::into).unwrap(),
+            default_height: merged.default_height.map(Into::into).unwrap(),
+            detect_venv: merged.detect_venv.clone().unwrap(),
+            max_scroll_history_lines: merged.max_scroll_history_lines,
+            toolbar: merged
+                .toolbar
+                .as_ref()
+                .map(|content| Toolbar {
+                    title: content.title.unwrap(),
+                })
+                .unwrap(),
+        });
+        println!("{:#?}", ret);
+        ret
     }
 
     fn json_schema(
@@ -287,4 +327,12 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub title: Option<bool>,
+}
+
+fn get_fallbacks(families: &[String]) -> Option<FontFallbacks> {
+    if families.len() > 1 {
+        Some(FontFallbacks(Arc::new(families[1..].to_vec())))
+    } else {
+        None
+    }
 }
