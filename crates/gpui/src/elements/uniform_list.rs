@@ -221,9 +221,10 @@ impl Element for UniformList {
                     bounds.lower_right() - point(border.right + padding.right, border.bottom),
                 );
 
-                self.scroll_handle.as_mut().map(|handle| {
+                if let Some(handle) = self.scroll_handle.as_mut() {
                     handle.0.borrow_mut().base_handle.set_bounds(bounds);
-                });
+                }
+
                 if self.item_count > 0 {
                     let content_height =
                         item_height * self.item_count + padding.top + padding.bottom;
