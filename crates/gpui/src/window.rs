@@ -1006,6 +1006,13 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.start_window_resize(edge);
     }
 
+    /// When implementing client side decorations, use this to set the
+    /// area of the window which aren't decorations (e.g. drop shadows)
+    /// Wayland only
+    pub fn set_content_area(&mut self, area: Bounds<Pixels>) {
+        self.window.platform_window.set_content_area(area);
+    }
+
     /// Return the `WindowBounds` to indicate that how a window should be opened
     /// after it has been closed
     pub fn window_bounds(&self) -> WindowBounds {

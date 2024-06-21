@@ -26,8 +26,8 @@ use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, AnyWindowHandle, Bounds, Globals, Modifiers, Output, Pixels, PlatformDisplay,
-    PlatformInput, Point, PromptLevel, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowParams,
+    PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling, WaylandClientStatePtr,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowParams,
 };
 
 #[derive(Default)]
@@ -351,7 +351,7 @@ impl WaylandWindowStatePtr {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
                     self.state.borrow_mut().decoration_state = WindowDecorations::Server;
                     if let Some(mut appearance_changed) =
-                        self.callbacks.borrow_mut().appearance_changed
+                        self.callbacks.borrow_mut().appearance_changed.as_mut()
                     {
                         appearance_changed();
                     }
@@ -359,7 +359,7 @@ impl WaylandWindowStatePtr {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
                     self.state.borrow_mut().decoration_state = WindowDecorations::Client;
                     if let Some(mut appearance_changed) =
-                        self.callbacks.borrow_mut().appearance_changed
+                        self.callbacks.borrow_mut().appearance_changed.as_mut()
                     {
                         appearance_changed();
                     }
@@ -852,8 +852,28 @@ impl PlatformWindow for WaylandWindow {
         state.toplevel._move(&state.globals.seat, serial);
     }
 
+    fn start_window_resize(&self, edge: crate::ResizeEdge) {
+        let state = self.borrow();
+        state.toplevel.resize(
+            &state.globals.seat,
+            state.client.get_serial(SerialKind::MousePress),
+            edge.to_xdg(),
+        )
+    }
+
     fn window_decorations(&self) -> WindowDecorations {
         self.borrow().decoration_state
+    }
+
+    fn set_content_area(&mut self, area: Bounds<Pixels>) {
+        let state = self.borrow();
+
+        state.xdg_surface.set_window_geometry(
+            area.origin.x.0 as i32,
+            area.origin.y.0 as i32,
+            area.size.width.0 as i32,
+            area.size.height.0 as i32,
+        )
     }
 
     fn tiling(&self) -> Tiling {
@@ -873,6 +893,21 @@ impl WindowDecorations {
         match self {
             WindowDecorations::Client => zxdg_toplevel_decoration_v1::Mode::ClientSide,
             WindowDecorations::Server => zxdg_toplevel_decoration_v1::Mode::ServerSide,
+        }
+    }
+}
+
+impl ResizeEdge {
+    fn to_xdg(&self) -> xdg_toplevel::ResizeEdge {
+        match self {
+            ResizeEdge::Top => xdg_toplevel::ResizeEdge::Top,
+            ResizeEdge::TopRight => xdg_toplevel::ResizeEdge::TopRight,
+            ResizeEdge::Right => xdg_toplevel::ResizeEdge::Right,
+            ResizeEdge::BottomRight => xdg_toplevel::ResizeEdge::BottomRight,
+            ResizeEdge::Bottom => xdg_toplevel::ResizeEdge::Bottom,
+            ResizeEdge::BottomLeft => xdg_toplevel::ResizeEdge::BottomLeft,
+            ResizeEdge::Left => xdg_toplevel::ResizeEdge::Left,
+            ResizeEdge::TopLeft => xdg_toplevel::ResizeEdge::TopLeft,
         }
     }
 }
