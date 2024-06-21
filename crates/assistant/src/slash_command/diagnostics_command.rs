@@ -10,6 +10,7 @@ use language::{
 use project::{DiagnosticSummary, PathMatchCandidateSet, Project};
 use rope::Point;
 use std::fmt::Write;
+use std::path::PathBuf;
 use std::{
     ops::Range,
     sync::{atomic::AtomicBool, Arc},
@@ -57,7 +58,7 @@ impl DiagnosticsCommand {
                         include_ignored: worktree
                             .root_entry()
                             .map_or(false, |entry| entry.is_ignored),
-                        include_root_name: false,
+                        include_root_name: true,
                         candidates: project::Candidates::Entries,
                     }
                 })
@@ -161,7 +162,10 @@ impl SlashCommand for DiagnosticsCommand {
 
         let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
         cx.spawn(move |_| async move {
-            let (text, sections) = task.await?;
+            let Some((text, sections)) = task.await? else {
+                return Ok(SlashCommandOutput::default());
+            };
+
             Ok(SlashCommandOutput {
                 text,
                 sections: sections
@@ -257,7 +261,7 @@ fn collect_diagnostics(
     project: Model<Project>,
     options: Options,
     cx: &mut AppContext,
-) -> Task<Result<(String, Vec<(Range<usize>, PlaceholderType)>)>> {
+) -> Task<Result<Option<(String, Vec<(Range<usize>, PlaceholderType)>)>>> {
     let error_source = if let Some(path_matcher) = &options.path_matcher {
         debug_assert_eq!(path_matcher.sources().len(), 1);
         Some(path_matcher.sources().first().cloned().unwrap_or_default())
@@ -266,7 +270,16 @@ fn collect_diagnostics(
     };
 
     let project_handle = project.downgrade();
-    let diagnostic_summaries: Vec<_> = project.read(cx).diagnostic_summaries(false, cx).collect();
+    let diagnostic_summaries: Vec<_> = project
+        .read(cx)
+        .diagnostic_summaries(false, cx)
+        .flat_map(|(path, _, summary)| {
+            let worktree = project.read(cx).worktree_for_id(path.worktree_id, cx)?;
+            let mut path_buf = PathBuf::from(worktree.read(cx).root_name());
+            path_buf.push(&path.path);
+            Some((path, path_buf, summary))
+        })
+        .collect();
 
     cx.spawn(|mut cx| async move {
         let mut text = String::new();
@@ -278,9 +291,9 @@ fn collect_diagnostics(
         let mut sections: Vec<(Range<usize>, PlaceholderType)> = Vec::new();
 
         let mut project_summary = DiagnosticSummary::default();
-        for (project_path, _, summary) in diagnostic_summaries {
+        for (project_path, path, summary) in diagnostic_summaries {
             if let Some(path_matcher) = &options.path_matcher {
-                if !path_matcher.is_match(&project_path.path) {
+                if !path_matcher.is_match(&path) {
                     continue;
                 }
             }
@@ -293,7 +306,7 @@ fn collect_diagnostics(
             }
 
             let last_end = text.len();
-            let file_path = project_path.path.to_string_lossy().to_string();
+            let file_path = path.to_string_lossy().to_string();
             writeln!(&mut text, "{file_path}").unwrap();
 
             if let Some(buffer) = project_handle
@@ -314,12 +327,17 @@ fn collect_diagnostics(
                 PlaceholderType::File(file_path),
             ))
         }
+
+        // No diagnostics found
+        if sections.is_empty() {
+            return Ok(None);
+        }
+
         sections.push((
             0..text.len(),
             PlaceholderType::Root(project_summary, error_source),
         ));
-
-        Ok((text, sections))
+        Ok(Some((text, sections)))
     })
 }
 
