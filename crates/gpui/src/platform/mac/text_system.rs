@@ -44,7 +44,7 @@ use pathfinder_geometry::{
 use smallvec::SmallVec;
 use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
 
-use super::open_type::apply_features_and_fallbacks;
+// use super::open_type::apply_features_and_fallbacks;
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -219,8 +219,8 @@ impl MacTextSystemState {
     fn load_family(
         &mut self,
         name: &str,
-        features: &FontFeatures,
-        fallbacks: &FontFallbacks,
+        _features: &FontFeatures,
+        _fallbacks: &FontFallbacks,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let name = if name == ".SystemUIFont" {
             ".AppleSystemUIFont"
