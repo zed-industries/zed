@@ -197,7 +197,7 @@ impl InlineAssistant {
             .assists_by_editor
             .entry(editor.downgrade())
             .or_insert_with(|| EditorInlineAssists::new(&editor, cx));
-        let mut assist_group = InlineAssistGroup::default();
+        let mut assist_group = InlineAssistGroup::new();
         for ((assist_id, prompt_editor), block_ids) in
             assists.into_iter().zip(assist_block_ids.chunks_exact(2))
         {
@@ -231,7 +231,19 @@ impl InlineAssistant {
         let Some(decorations) = assist.decorations.as_ref() else {
             return;
         };
+        let assist_group = self.assist_groups.get_mut(&assist.group_id).unwrap();
         let editor_assists = self.assists_by_editor.get_mut(&assist.editor).unwrap();
+
+        assist_group.active_assist_id = Some(assist_id);
+        if assist_group.linked {
+            for assist_id in &assist_group.assist_ids {
+                if let Some(decorations) = self.assists[assist_id].decorations.as_ref() {
+                    decorations.prompt_editor.update(cx, |prompt_editor, cx| {
+                        prompt_editor.set_show_cursor_when_unfocused(true, cx)
+                    });
+                }
+            }
+        }
 
         assist
             .editor
@@ -253,6 +265,27 @@ impl InlineAssistant {
                 }
             })
             .ok();
+    }
+
+    fn handle_prompt_editor_focus_out(
+        &mut self,
+        assist_id: InlineAssistId,
+        cx: &mut WindowContext,
+    ) {
+        let assist = &self.assists[&assist_id];
+        let assist_group = self.assist_groups.get_mut(&assist.group_id).unwrap();
+        if assist_group.active_assist_id == Some(assist_id) {
+            assist_group.active_assist_id = None;
+            if assist_group.linked {
+                for assist_id in &assist_group.assist_ids {
+                    if let Some(decorations) = self.assists[assist_id].decorations.as_ref() {
+                        decorations.prompt_editor.update(cx, |prompt_editor, cx| {
+                            prompt_editor.set_show_cursor_when_unfocused(false, cx)
+                        });
+                    }
+                }
+            }
+        }
     }
 
     fn handle_prompt_editor_event(
@@ -440,8 +473,8 @@ impl InlineAssistant {
 
     fn finish_assist(&mut self, assist_id: InlineAssistId, undo: bool, cx: &mut WindowContext) {
         if let Some(assist) = self.assists.get(&assist_id) {
-            if assist.linked_to_group {
-                let assist_group_id = assist.group_id;
+            let assist_group_id = assist.group_id;
+            if self.assist_groups[&assist_group_id].linked {
                 for assist_id in self.unlink_assist_group(assist_group_id, cx) {
                     self.finish_assist(assist_id, undo, cx);
                 }
@@ -643,17 +676,17 @@ impl InlineAssistant {
         assist_group_id: InlineAssistGroupId,
         cx: &mut WindowContext,
     ) -> Vec<InlineAssistId> {
-        let assist_ids = self.assist_groups[&assist_group_id].assist_ids.clone();
-        for assist_id in &assist_ids {
+        let assist_group = self.assist_groups.get_mut(&assist_group_id).unwrap();
+        assist_group.linked = false;
+        for assist_id in &assist_group.assist_ids {
             let assist = self.assists.get_mut(assist_id).unwrap();
-            assist.linked_to_group = false;
             if let Some(editor_decorations) = assist.decorations.as_ref() {
                 editor_decorations
                     .prompt_editor
                     .update(cx, |prompt_editor, cx| prompt_editor.unlink(cx));
             }
         }
-        assist_ids
+        assist_group.assist_ids.clone()
     }
 
     fn start_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
@@ -663,8 +696,8 @@ impl InlineAssistant {
             return;
         };
 
-        if assist.linked_to_group {
-            let assist_group_id = assist.group_id;
+        let assist_group_id = assist.group_id;
+        if self.assist_groups[&assist_group_id].linked {
             for assist_id in self.unlink_assist_group(assist_group_id, cx) {
                 self.start_assist(assist_id, cx);
             }
@@ -1049,9 +1082,20 @@ impl EditorInlineAssists {
     }
 }
 
-#[derive(Default)]
 struct InlineAssistGroup {
     assist_ids: Vec<InlineAssistId>,
+    linked: bool,
+    active_assist_id: Option<InlineAssistId>,
+}
+
+impl InlineAssistGroup {
+    fn new() -> Self {
+        Self {
+            assist_ids: Vec::new(),
+            linked: true,
+            active_assist_id: None,
+        }
+    }
 }
 
 fn build_assist_editor_renderer(editor: &View<PromptEditor>) -> RenderBlock {
@@ -1313,7 +1357,7 @@ impl PromptEditor {
             // Since the prompt editors for all inline assistants are linked,
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
-            editor.set_show_cursor_when_unfocused(true);
+            editor.set_show_cursor_when_unfocused(true, cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor
         });
@@ -1342,6 +1386,16 @@ impl PromptEditor {
             .push(cx.observe(&self.editor, Self::handle_prompt_editor_changed));
         self.editor_subscriptions
             .push(cx.subscribe(&self.editor, Self::handle_prompt_editor_events));
+    }
+
+    fn set_show_cursor_when_unfocused(
+        &mut self,
+        show_cursor_when_unfocused: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.set_show_cursor_when_unfocused(show_cursor_when_unfocused, cx)
+        });
     }
 
     fn unlink(&mut self, cx: &mut ViewContext<Self>) {
@@ -1528,7 +1582,6 @@ impl PromptEditor {
 
 struct InlineAssist {
     group_id: InlineAssistGroupId,
-    linked_to_group: bool,
     editor: WeakView<Editor>,
     decorations: Option<InlineAssistDecorations>,
     codegen: Model<Codegen>,
@@ -1553,7 +1606,6 @@ impl InlineAssist {
         let prompt_editor_focus_handle = prompt_editor.focus_handle(cx);
         InlineAssist {
             group_id,
-            linked_to_group: true,
             include_context,
             editor: editor.downgrade(),
             decorations: Some(InlineAssistDecorations {
@@ -1568,6 +1620,11 @@ impl InlineAssist {
                 cx.on_focus_in(&prompt_editor_focus_handle, move |cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
                         this.handle_prompt_editor_focus_in(assist_id, cx)
+                    })
+                }),
+                cx.on_focus_out(&prompt_editor_focus_handle, move |_, cx| {
+                    InlineAssistant::update_global(cx, |this, cx| {
+                        this.handle_prompt_editor_focus_out(assist_id, cx)
                     })
                 }),
                 cx.subscribe(prompt_editor, |prompt_editor, event, cx| {

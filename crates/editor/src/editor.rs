@@ -10856,8 +10856,9 @@ impl Editor {
             && self.focus_handle.is_focused(cx)
     }
 
-    pub fn set_show_cursor_when_unfocused(&mut self, is_enabled: bool) {
+    pub fn set_show_cursor_when_unfocused(&mut self, is_enabled: bool, cx: &mut ViewContext<Self>) {
         self.show_cursor_when_unfocused = is_enabled;
+        cx.notify();
     }
 
     fn on_buffer_changed(&mut self, _: Model<MultiBuffer>, cx: &mut ViewContext<Self>) {
