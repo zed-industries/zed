@@ -92,14 +92,19 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                     if let Some(range) = range {
                         let start = range.start.to_offset(&display_map, Bias::Right);
                         let end = range.end.to_offset(&display_map, Bias::Left);
-                        let start_cursor_str =
-                            format!("{}{}", pair.start, if surround { " " } else { "" });
-                        let close_cursor_str =
-                            format!("{}{}", if surround { " " } else { "" }, pair.end);
+                        let (start_cursor_str, end_cursor_str) = if mode == Mode::VisualLine {
+                            (format!("{}\n", pair.start), format!("{}\n", pair.end))
+                        } else {
+                            let maybe_space = if surround { " " } else { "" };
+                            (
+                                format!("{}{}", pair.start, maybe_space),
+                                format!("{}{}", maybe_space, pair.end),
+                            )
+                        };
                         let start_anchor = display_map.buffer_snapshot.anchor_before(start);
 
                         edits.push((start..start, start_cursor_str));
-                        edits.push((end..end, close_cursor_str));
+                        edits.push((end..end, end_cursor_str));
                         anchors.push(start_anchor..start_anchor);
                     } else {
                         let start_anchor = display_map
@@ -770,6 +775,25 @@ mod test {
             The ˇ'quick' brown
             fox 'jumps' over
             the 'lazy 'dog."},
+            Mode::Normal,
+        );
+
+        // test add surrounds with visual line
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("j shift-v shift-s '");
+        cx.assert_state(
+            indoc! {"
+            The quick brown
+            ˇ'
+            fox jumps over
+            '
+            the lazy dog."},
             Mode::Normal,
         );
     }
