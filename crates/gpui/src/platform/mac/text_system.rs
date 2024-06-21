@@ -651,34 +651,36 @@ impl From<FontStyle> for FontkitStyle {
     }
 }
 
-// #[cfg(any(test, feature = "test-support"))]
-// fn get_pref_langs() -> CFArray<CFString> {
-//     use core_foundation::{
-//         array::{kCFTypeArrayCallBacks, CFArrayAppendValue, CFArrayCreateMutable},
-//         base::kCFAllocatorDefault,
-//     };
+#[cfg(allow(unused))]
+#[cfg(any(test, feature = "test-support"))]
+fn get_pref_langs() -> CFArray<CFString> {
+    use core_foundation::{
+        array::{kCFTypeArrayCallBacks, CFArrayAppendValue, CFArrayCreateMutable},
+        base::kCFAllocatorDefault,
+    };
 
-//     unsafe {
-//         let array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-//         let key = CFString::from_static_string("en-US");
-//         CFArrayAppendValue(array, key.as_concrete_TypeRef() as _);
-//         CFRelease(key.as_concrete_TypeRef() as _);
-//         CFArray::wrap_under_create_rule(array)
-//     }
-// }
+    unsafe {
+        let array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+        let key = CFString::from_static_string("en-US");
+        CFArrayAppendValue(array, key.as_concrete_TypeRef() as _);
+        CFRelease(key.as_concrete_TypeRef() as _);
+        CFArray::wrap_under_create_rule(array)
+    }
+}
 
-// #[cfg(not(any(test, feature = "test-support")))]
-// fn get_pref_langs() -> CFArray<CFString> {
-//     use cocoa::base::id;
-//     use objc::{class, msg_send, sel, sel_impl};
+#[cfg(allow(unused))]
+#[cfg(not(any(test, feature = "test-support")))]
+fn get_pref_langs() -> CFArray<CFString> {
+    use cocoa::base::id;
+    use objc::{class, msg_send, sel, sel_impl};
 
-//     unsafe {
-//         let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
-//         let key = CFString::from_static_string("AppleLanguages");
-//         let ret: CFArray<CFString> = msg_send![user_defaults, stringArrayForKey: key];
-//         ret
-//     }
-// }
+    unsafe {
+        let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
+        let key = CFString::from_static_string("AppleLanguages");
+        let ret: CFArray<CFString> = msg_send![user_defaults, stringArrayForKey: key];
+        ret
+    }
+}
 
 // Some fonts may have no attributest despite `core_text` requiring them (and panicking).
 // This is the same version as `core_text` has without `expect` calls.
