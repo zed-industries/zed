@@ -312,7 +312,14 @@
     "auto_reveal_entries": true,
     /// Whether to fold directories automatically
     /// when a directory has only one directory inside.
-    "auto_fold_dirs": false
+    "auto_fold_dirs": false,
+    /// Scrollbar-related settings
+    "scrollbar": {
+      /// When to show the scrollbar in the project panel.
+      ///
+      /// Default: always
+      "show": "always"
+    }
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar

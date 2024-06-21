@@ -5,7 +5,11 @@ use scrollbar::ProjectPanelScrollbar;
 use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
-use editor::{items::entry_git_aware_label_color, scroll::Autoscroll, Editor};
+use editor::{
+    items::entry_git_aware_label_color,
+    scroll::{Autoscroll, ScrollbarAutoHide},
+    Editor,
+};
 use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
@@ -21,7 +25,7 @@ use gpui::{
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
-use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
+use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowScrollbar};
 use serde::{Deserialize, Serialize};
 use std::{
     cell::OnceCell,
@@ -281,7 +285,7 @@ impl ProjectPanel {
                 workspace: workspace.weak_handle(),
                 width: None,
                 pending_serialization: Task::ready(None),
-                show_scrollbar: false,
+                show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
             };
             this.update_visible_entries(None, cx);
@@ -2216,6 +2220,10 @@ impl ProjectPanel {
         items_count: usize,
         cx: &mut ViewContext<Self>,
     ) -> Option<Stateful<Div>> {
+        let settings = ProjectPanelSettings::get_global(cx);
+        if settings.scrollbar.show == ShowScrollbar::Never {
+            return None;
+        }
         let scroll_handle = self.scroll_handle.0.borrow();
 
         let height = scroll_handle
@@ -2279,8 +2287,16 @@ impl ProjectPanel {
         dispatch_context
     }
 
+    fn should_autohide_scrollbar(cx: &AppContext) -> bool {
+        cx.try_global::<ScrollbarAutoHide>()
+            .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0)
+    }
+
     fn hide_scrollbar(&mut self, cx: &mut ViewContext<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+        if !Self::should_autohide_scrollbar(cx) {
+            return;
+        }
         self.hide_scrollbar_task = Some(cx.spawn(|panel, mut cx| async move {
             cx.background_executor()
                 .timer(SCROLLBAR_SHOW_INTERVAL)
