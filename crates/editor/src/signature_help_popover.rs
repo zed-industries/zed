@@ -106,11 +106,10 @@ pub fn create_signature_help_markdown_string(
         markdown
     };
 
-    let highlights = highlights.into_iter().flatten().collect::<Vec<_>>();
-
     if markdown.is_empty() {
         None
     } else {
+        let highlights = highlights.into_iter().flatten().collect::<Vec<_>>();
         let markdown = format!("```{}```", markdown);
         Some((markdown, highlights))
     }
