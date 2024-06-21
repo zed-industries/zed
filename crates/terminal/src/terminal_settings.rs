@@ -199,17 +199,16 @@ impl settings::Settings for TerminalSettings {
             font_fallbacks: merged
                 .font_family
                 .as_ref()
-                .map(|family| get_fallbacks(family))
-                .flatten(),
+                .and_then(|family| get_fallbacks(family)),
             font_weight: merged.font_weight.map(|weight| FontWeight(weight)),
             line_height: merged.line_height.clone().unwrap(),
             env: merged.env.clone().unwrap(),
-            blinking: merged.blinking.clone().unwrap(),
-            alternate_scroll: merged.alternate_scroll.clone().unwrap(),
+            blinking: merged.blinking.unwrap(),
+            alternate_scroll: merged.alternate_scroll.unwrap(),
             option_as_meta: merged.option_as_meta.unwrap_or_default(),
             copy_on_select: merged.copy_on_select.unwrap_or_default(),
             button: merged.button.unwrap_or_default(),
-            dock: merged.dock.clone().unwrap(),
+            dock: merged.dock.unwrap(),
             default_width: merged.default_width.map(Into::into).unwrap(),
             default_height: merged.default_height.map(Into::into).unwrap(),
             detect_venv: merged.detect_venv.clone().unwrap(),
