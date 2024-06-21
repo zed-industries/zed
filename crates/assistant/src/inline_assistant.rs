@@ -1026,6 +1026,7 @@ struct InlineAssistScrollLock {
 }
 
 impl EditorInlineAssists {
+    #[allow(clippy::too_many_arguments)]
     fn new(editor: &View<Editor>, cx: &mut WindowContext) -> Self {
         let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
         Self {
@@ -2248,7 +2249,7 @@ where
     }
 }
 
-fn prefixes<'a>(text: &'a str) -> impl Iterator<Item = &'a str> {
+fn prefixes(text: &str) -> impl Iterator<Item = &str> {
     (0..text.len() - 1).map(|ix| &text[..ix + 1])
 }
 
