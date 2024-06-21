@@ -240,6 +240,19 @@ pub enum WindowDecorations {
     Server,
 }
 
+/// What window controls this platform supports
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub struct WindowControls {
+    /// Whether this platform supports fullscreen
+    pub fullscreen: bool,
+    /// Whether this platform supports maximize
+    pub maximize: bool,
+    /// Whether this platform supports minimize
+    pub minimize: bool,
+    /// Whether this platform supports a window menu
+    pub window_menu: bool,
+}
+
 /// A type to describe which sides of the window are currently tiled in some way
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct Tiling {
@@ -324,6 +337,14 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         }
     }
     fn set_content_area(&mut self, _area: Bounds<Pixels>) {}
+    fn supported_window_controls(&self) -> WindowControls {
+        WindowControls {
+            fullscreen: true,
+            maximize: true,
+            minimize: true,
+            window_menu: false,
+        }
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
