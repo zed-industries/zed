@@ -258,13 +258,15 @@ fn collect_files(
                     }
                     text.push('\n');
                 } else if entry.is_file() {
-                    if let Some(buffer) = project_handle
+                    let Some(open_buffer_task) = project_handle
                         .update(&mut cx, |project, cx| {
                             project.open_buffer((worktree_id, &entry.path), cx)
-                        })?
-                        .await
-                        .log_err()
-                    {
+                        })
+                        .ok()
+                    else {
+                        continue;
+                    };
+                    if let Some(buffer) = open_buffer_task.await.log_err() {
                         let snapshot = cx.read_model(&buffer, |buffer, _| buffer.snapshot())?;
                         let prev_len = text.len();
                         collect_file_content(&mut text, &snapshot, filename.clone());
