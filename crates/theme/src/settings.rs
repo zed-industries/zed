@@ -7,6 +7,7 @@ use gpui::{
     Subscription, ViewContext, WindowContext,
 };
 use refineable::Refineable;
+use schemars::schema::ArrayValidation;
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
@@ -613,8 +614,22 @@ impl settings::Settings for ThemeSettings {
             .map(Value::String)
             .collect::<Vec<_>>();
         let fonts_schema = SchemaObject {
-            instance_type: Some(InstanceType::Array.into()),
+            instance_type: Some(InstanceType::String.into()),
             enum_values: Some(available_fonts),
+            ..Default::default()
+        };
+        let fonts_schema = SchemaObject {
+            instance_type: Some(InstanceType::Array.into()),
+            array: Some(
+                ArrayValidation {
+                    items: Some(schemars::schema::SingleOrVec::Single(Box::new(
+                        fonts_schema.into(),
+                    ))),
+                    unique_items: Some(true),
+                    ..Default::default()
+                }
+                .into(),
+            ),
             ..Default::default()
         };
         root_schema.definitions.extend([
