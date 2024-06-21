@@ -33,14 +33,13 @@ pub struct SignatureHelpPopover {
 
 /// create_signature_help_markdown_string generates the markdown text that is displayed in the `SignatureHelp` window.
 pub fn create_signature_help_markdown_string(
-    signature_help: SignatureHelp,
+    SignatureHelp {
+        signatures: signature_information,
+        active_signature: maybe_active_signature,
+        active_parameter: maybe_active_parameter,
+        ..
+    }: SignatureHelp,
 ) -> Option<(String, Vec<(Range<usize>, MarkdownHighlight)>)> {
-    let (signature_information, maybe_active_signature, maybe_active_parameter) = (
-        signature_help.signatures,
-        signature_help.active_signature,
-        signature_help.active_parameter,
-    );
-
     let function_options_count = signature_information.len();
 
     let signature_information = maybe_active_signature
