@@ -84,6 +84,19 @@ struct TypeScriptVersions {
     server_version: String,
 }
 
+pub trait Stripper {
+    fn strip_before(&self, c: char) -> Option<&str>;
+    fn strip_until(&self, c: char) -> Option<&str>;
+}
+impl Stripper for str {
+    fn strip_before(&self, c: char) -> Option<&str> {
+        self.split_once(c).map(|pair| pair.0)
+    }
+    fn strip_until(&self, c: char) -> Option<&str> {
+        self.split_once(c).map(|pair| pair.1)
+    }
+}
+
 #[async_trait(?Send)]
 impl LspAdapter for TypeScriptLspAdapter {
     fn name(&self) -> LanguageServerName {
@@ -204,34 +217,6 @@ impl LspAdapter for TypeScriptLspAdapter {
         completion: &lsp::CompletionItem,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let kind = completion.kind?;
-        let mut scan = completion.detail.as_ref()?.as_str();
-        let import_text = "Auto import from '";
-        let import = if scan.starts_with(import_text) {
-            let slice = &scan[import_text.len()..];
-            let import_end = slice.find('\'');
-            let import = match import_end {
-                Some(end) => Some(slice[..end].to_string()),
-                None => return None,
-            };
-            if let Some(offset) = scan.find('\n') {
-                scan = &scan[(offset + 1)..];
-            } else {
-                return None;
-            }
-            import
-        } else {
-            None
-        };
-
-        if scan.starts_with("namespace") {
-            if let Some(offset) = scan.find('\n') {
-                scan = &scan[offset..];
-            } else {
-                return None;
-            }
-        }
-
         fn trim(str: &str) -> Cow<str> {
             lazy_static! {
                 static ref REGEX: Regex = Regex::new(r"(\s*\n)+\s*").unwrap();
@@ -239,182 +224,180 @@ impl LspAdapter for TypeScriptLspAdapter {
             REGEX.replace_all(str, " ")
         }
 
-        let interface = "interface ";
-        let constant = "const ";
-        let type_keyword = "type ";
-        let func = "function ";
-        let new = "new ";
+        const INTERFACE: &str = "interface ";
+        const CONSTANT: &str = "const ";
+        const TYPE: &str = "type ";
+        const FUNCTION: &str = "function ";
+        const NEW: &str = "new ";
+        const CLASS: &str = "class ";
+        const CONSTRUCTOR: &str = "constructor ";
+        const VAR: &str = "var ";
+        const LET: &str = "let ";
+        const ALIAS: &str = "(alias) ";
+        const METHOD: &str = "(method) ";
+        const PROPERTY: &str = "(property) ";
+        const ENUM: &str = "enum ";
+
+        let kind = completion.kind?;
+        let scan = completion.detail.as_ref()?.as_str();
+        let import_text = "Auto import from '";
+        let (scan, import) = if let Some(stripped) = scan.strip_prefix(import_text) {
+            (
+                stripped.strip_until('\n')?,
+                Some(stripped.strip_before('\'')?),
+            )
+        } else {
+            (scan, None)
+        };
+
+        let scan = if let Some(stripped) = scan.strip_prefix("namespace") {
+            stripped.strip_until('\n')?
+        } else {
+            scan
+        };
+
         let (label, range, runs) = match kind {
             lsp::CompletionItemKind::CLASS => {
-                let class = "class ";
-                let ctor = "constructor ";
-                if scan.starts_with(ctor) {
-                    scan = &scan[ctor.len()..];
-                    let name_end = scan.find(|c| (c == '(') || (c == '<'))? + 4;
-                    let source = Rope::from(format!("function {scan}"));
+                if let Some(stripped) = scan.strip_prefix(CONSTRUCTOR) {
+                    let name_end = stripped.find(|c| (c == '(') || (c == '<'))? + NEW.len();
                     let highlight_keyword = language.grammar()?.highlight_id_for_name("keyword")?;
+                    let source = Rope::from(format!("function {stripped}"));
                     let mut runs = vec![(0..3, highlight_keyword)];
                     runs.append(&mut adjust_runs(
-                        new.len(),
-                        language.highlight_text(&source, func.len()..func.len() + scan.len()),
+                        language
+                            .highlight_text(&source, FUNCTION.len()..FUNCTION.len() + scan.len()),
+                        NEW.len(),
                     ));
-                    let str = format!("new {}", &scan);
-                    let label = trim(&str);
-                    let owned_label = Cow::from(label.into_owned());
-                    Some((owned_label, 4..name_end, Some(runs)))
-                } else if scan.starts_with(type_keyword) {
-                    let name_end = scan[type_keyword.len()..].find(|c| (c == ' ') || (c == '<'))?
-                        + type_keyword.len();
-                    Some((trim(scan), type_keyword.len()..name_end, None))
-                } else if scan.starts_with(class) {
-                    let name_end = scan[class.len()..]
+
+                    let str = format!("new {}", &stripped);
+                    let owned_label = Cow::from(trim(&str).into_owned());
+                    Some((owned_label, NEW.len()..name_end, Some(runs)))
+                } else if let Some(stripped) = scan.strip_prefix(TYPE) {
+                    let name_end = stripped.find(|c| (c == ' ') || (c == '<'))? + TYPE.len();
+                    Some((trim(scan), TYPE.len()..name_end, None))
+                } else if let Some(stripped) = scan.strip_prefix(CLASS) {
+                    let name_end = stripped
                         .find(|c| (c == '<') || (c == ' ') || (c == '\n'))
-                        .map(|i| i + class.len())
+                        .map(|i| i + CLASS.len())
                         .unwrap_or(scan.len());
                     let label = scan[name_end..]
                         .find('\n')
                         .map(|i| i + name_end)
                         .map(|label_end| &scan[..label_end])
                         .unwrap_or(scan);
-                    Some((Cow::from(label), class.len()..name_end, None))
+                    Some((Cow::from(label), CLASS.len()..name_end, None))
                 } else {
                     None
                 }
             }
             lsp::CompletionItemKind::FUNCTION => {
-                if scan.starts_with(interface) {
+                if scan.starts_with(INTERFACE) {
                     None
-                } else if scan.starts_with(func) {
-                    let label = &scan[func.len()..];
+                } else if let Some(label) = scan.strip_prefix(FUNCTION) {
                     let name_end = label.find(|c| (c == '(') || (c == '<'))?;
                     let source = Rope::from(scan);
-                    let runs = language.highlight_text(&source, func.len()..scan.len());
+                    let runs = language.highlight_text(&source, FUNCTION.len()..scan.len());
                     Some((trim(label), 0..name_end, Some(runs)))
                 } else {
                     None
                 }
             }
             lsp::CompletionItemKind::VARIABLE => {
-                let var = "var ";
-                let let_keyword = "let ";
-                let alias = "(alias) ";
+                let scan = scan.strip_prefix(ALIAS).unwrap_or(scan);
 
-                if scan.starts_with(alias) {
-                    scan = &scan[alias.len()..];
-                }
-
-                if scan.starts_with(interface) {
-                    let name_end = scan[interface.len()..].find(|c| (c == ' ') || (c == '<'))?
-                        + interface.len();
+                if let Some(stripped) = scan.strip_prefix(INTERFACE) {
+                    let name_end = stripped.find(|c| c == ' ' || c == '<')? + INTERFACE.len();
                     let label = scan[name_end..]
                         .rfind('}')
-                        .map(|i| i + name_end)
-                        .map(|label_end| &scan[..label_end])
+                        .map(|i| &scan[..i + name_end])
                         .unwrap_or(scan);
                     Some((trim(label), 0..name_end, None))
-                } else if scan.starts_with(type_keyword) {
-                    let name_end = scan[type_keyword.len()..].find(|c| (c == ' ') || (c == '<'))?
-                        + type_keyword.len();
+                } else if let Some(stripped) = scan.strip_prefix(TYPE) {
+                    let name_end = stripped.find(|c| c == ' ' || c == '<')? + TYPE.len();
                     let label = scan[name_end..]
                         .rfind('}')
-                        .map(|i| i + name_end + 1)
-                        .map(|label_end| &scan[..label_end])
+                        .map(|i| &scan[..i + name_end + 1])
                         .unwrap_or(scan);
-                    Some((trim(label), type_keyword.len()..name_end, None))
-                } else if scan.starts_with(new) {
-                    let name_end =
-                        scan[new.len()..].find(|c| (c == '(') || (c == '<'))? + new.len();
-                    // includes "new "
+                    Some((trim(label), TYPE.len()..name_end, None))
+                } else if let Some(stripped) = scan.strip_prefix(NEW) {
+                    let name_end = stripped.find(|c| (c == '(') || (c == '<'))? + NEW.len();
+                    // includes `new `
                     let full_label = trim(
                         scan[name_end..]
                             .find('\n')
-                            .map(|i| i + name_end)
-                            .map(|label_end| &scan[..label_end])
+                            .map(|i| &scan[..i + name_end])
                             .unwrap_or(scan),
                     );
-                    // doesn't include "new "
-                    let label = &full_label[new.len()..];
-                    let source = Rope::from(format!("function {}", label));
+                    // to get proper syntax highlighting we have to remove the `new` and add `function`
+                    let source = Rope::from(format!("function {}", &full_label[NEW.len()..]));
                     let highlight_keyword = language.grammar()?.highlight_id_for_name("keyword")?;
                     let mut runs = vec![(0..3, highlight_keyword)];
                     runs.append(&mut adjust_runs(
-                        new.len(),
-                        language.highlight_text(&source, func.len()..func.len() + label.len()),
+                        language.highlight_text(
+                            &source,
+                            FUNCTION.len()..FUNCTION.len() + full_label.len() - NEW.len(),
+                        ),
+                        NEW.len(),
                     ));
-                    Some((full_label, new.len()..name_end, Some(runs)))
-                } else if scan.starts_with(constant) {
-                    let label = &scan[constant.len()..];
+                    Some((full_label, NEW.len()..name_end, Some(runs)))
+                } else if let Some(stripped) = scan.strip_prefix(CONSTANT) {
+                    let name_end = stripped.find(':')?;
+                    let source = Rope::from(scan);
+                    let runs = language.highlight_text(&source, CONSTANT.len()..scan.len());
+                    Some((trim(stripped), 0..name_end, Some(runs)))
+                } else if scan.starts_with(VAR) || scan.starts_with(LET) {
+                    let label = &scan[VAR.len()..];
                     let name_end = label.find(':')?;
                     let source = Rope::from(scan);
-                    let runs = language.highlight_text(&source, constant.len()..scan.len());
-                    Some((trim(label), 0..name_end, Some(runs)))
-                } else if scan.starts_with(var) || scan.starts_with(let_keyword) {
-                    let label = &scan[var.len()..];
-                    let name_end = label.find(':')?;
-                    let source = Rope::from(scan);
-                    let runs = language.highlight_text(&source, var.len()..scan.len());
+                    let runs = language.highlight_text(&source, VAR.len()..scan.len());
                     Some((trim(label), 0..name_end, Some(runs)))
                 } else {
                     None
                 }
             }
             lsp::CompletionItemKind::CONSTANT => {
-                let label = &scan[constant.len()..];
+                let label = scan.strip_prefix(CONSTANT)?;
                 let name_end = label.find(':')?;
                 let source = Rope::from(scan);
-                let runs = language.highlight_text(&source, constant.len()..scan.len());
+                let runs = language.highlight_text(&source, CONSTANT.len()..scan.len());
                 Some((trim(label), 0..name_end, Some(runs)))
             }
             lsp::CompletionItemKind::METHOD => {
-                let method = "(method) ";
-                if !scan.starts_with(method) {
-                    return None;
-                }
-                scan = &scan[method.len()..];
-                scan = &scan[scan.find('.')? + 1..];
+                let scan = scan.strip_prefix(METHOD)?.strip_until('.')?;
                 let trimmed = trim(scan);
+                let name_end = trimmed.find(|c| c == '(' || c == '<')?;
                 let source = Rope::from(format!("function {}", trimmed.as_ref()));
-                let name_end = trimmed.find(|c| (c == '(') || (c == '<'))?;
-                let runs = language.highlight_text(&source, func.len()..trimmed.len() + func.len());
+                let runs = language
+                    .highlight_text(&source, FUNCTION.len()..trimmed.len() + FUNCTION.len());
                 Some((trimmed, 0..name_end, Some(runs)))
             }
             lsp::CompletionItemKind::PROPERTY | lsp::CompletionItemKind::FIELD => {
-                let property = "(property) ";
-                if !scan.starts_with(property) {
-                    return None;
-                }
-                scan = &scan[property.len()..];
-                scan = &scan[scan.find('.')? + 1..];
+                let scan = scan.strip_prefix(PROPERTY)?.strip_until('.')?;
                 let trimmed = trim(scan);
+                let name_end = trimmed.find(':')?;
                 let source = Rope::from(format!("let {}", trimmed.as_ref()));
                 let runs = language.highlight_text(&source, 4..4 + trimmed.len());
-                let name_end = trimmed.find(':')?;
                 Some((trimmed, 0..name_end, Some(runs)))
             }
             lsp::CompletionItemKind::CONSTRUCTOR => None,
             lsp::CompletionItemKind::INTERFACE => {
-                if !scan.starts_with(interface) {
-                    return None;
-                }
-                let name_end =
-                    scan[interface.len()..].find(|c| (c == ' ') || (c == '<'))? + interface.len();
+                let name_end = scan
+                    .strip_prefix(INTERFACE)?
+                    .find(|c| c == ' ' || c == '<')?
+                    + INTERFACE.len();
                 let label = scan[name_end..]
                     .rfind('}')
-                    .map(|i| i + name_end + 1)
-                    .map(|label_end| &scan[..label_end])
+                    .map(|i| &scan[..i + name_end + 1])
                     .unwrap_or(scan);
-                Some((trim(label), interface.len()..name_end, None))
+                Some((trim(label), INTERFACE.len()..name_end, None))
             }
             lsp::CompletionItemKind::ENUM => {
-                let enum_text = "enum ";
-                if !scan.starts_with(enum_text) {
-                    return None;
-                }
-                let name_end = scan[enum_text.len()..]
-                    .find(|c| (c == ' ') || (c == '\n'))
-                    .map(|i| i + enum_text.len())
+                let name_end = scan
+                    .strip_prefix(ENUM)?
+                    .find(|c| c == ' ' || c == '\n')
+                    .map(|i| i + ENUM.len())
                     .unwrap_or(scan.len());
-                Some((Cow::from(scan), enum_text.len()..name_end, None))
+                Some((Cow::from(scan), ENUM.len()..name_end, None))
             }
             _ => None,
         }?;
@@ -685,8 +668,8 @@ impl LspAdapter for EsLintLspAdapter {
 }
 
 fn adjust_runs(
-    delta: usize,
     mut runs: Vec<(Range<usize>, HighlightId)>,
+    delta: usize,
 ) -> Vec<(Range<usize>, HighlightId)> {
     for (range, _) in &mut runs {
         range.start += delta;

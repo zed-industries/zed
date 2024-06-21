@@ -6155,8 +6155,7 @@ impl Project {
         let text_edit = lsp_completion
             .text_edit
             .as_ref()
-            .map(|edit| parse_completion_text_edit(edit, snapshot))
-            .flatten()
+            .and_then(|edit| parse_completion_text_edit(edit, snapshot))
             .map(|(old_range, mut new_text)| {
                 LineEnding::normalize(&mut new_text);
                 (old_range, new_text)

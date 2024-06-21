@@ -980,7 +980,7 @@ impl CompletionsMenu {
             matches_write
                 .iter()
                 .enumerate()
-                .map(|(i, m)| (m.candidate_id.clone(), i)),
+                .map(|(i, m)| (m.candidate_id, i)),
         );
 
         for new_mat in new_matches {
@@ -988,7 +988,7 @@ impl CompletionsMenu {
             let completion = &completions[new_mat.candidate_id];
             let old_mat = matches_write.get_mut(old_mat_index).unwrap();
 
-            old_mat.string = completion.label.text.clone();
+            old_mat.string.clone_from(&completion.label.text);
             old_mat.positions = new_mat.positions;
             for position in &mut old_mat.positions {
                 *position += completion.label.filter_range.start;
@@ -4163,8 +4163,7 @@ impl Editor {
             .matches
             .read()
             .get(action.item_ix.unwrap_or(completions_menu.selected_item))?
-            .candidate_id
-            .clone();
+            .candidate_id;
 
         let buffer_handle = completions_menu.buffer;
         let completions = completions_menu.completions.read();

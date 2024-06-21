@@ -58,6 +58,6 @@ util.workspace = true
 
 [dev-dependencies]
 text.workspace = true
-theme.workspace = true
+theme = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
