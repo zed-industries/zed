@@ -27,9 +27,11 @@ use rope::Rope;
 use settings::Settings;
 use similar::TextDiff;
 use std::{
-    cmp, future, mem,
+    cmp, mem,
     ops::{Range, RangeInclusive},
+    pin::Pin,
     sync::Arc,
+    task::{self, Poll},
     time::Instant,
 };
 use theme::ThemeSettings;
@@ -1831,7 +1833,7 @@ impl Codegen {
                             let mut response_latency = None;
                             let request_start = Instant::now();
                             let diff = async {
-                                let chunks = strip_invalid_spans_from_codeblock(response.await?);
+                                let chunks = StripInvalidSpans::new(response.await?);
                                 futures::pin_mut!(chunks);
                                 let mut diff = StreamingDiff::new(selected_text.to_string());
 
@@ -2118,90 +2120,136 @@ impl Codegen {
     }
 }
 
-fn strip_invalid_spans_from_codeblock(
-    stream: impl Stream<Item = Result<String>>,
-) -> impl Stream<Item = Result<String>> {
-    let mut first_line = true;
-    let mut buffer = String::new();
-    let mut starts_with_markdown_codeblock = false;
-    let mut includes_start_or_end_span = false;
-    stream.filter_map(move |chunk| {
-        let chunk = match chunk {
-            Ok(chunk) => chunk,
-            Err(err) => return future::ready(Some(Err(err))),
-        };
-        buffer.push_str(&chunk);
+struct StripInvalidSpans<T> {
+    stream: T,
+    stream_done: bool,
+    buffer: String,
+    first_line: bool,
+    line_end: bool,
+    starts_with_code_block: bool,
+}
 
-        if buffer.len() > "<|S|".len() && buffer.starts_with("<|S|") {
-            includes_start_or_end_span = true;
-
-            buffer = buffer
-                .strip_prefix("<|S|>")
-                .or_else(|| buffer.strip_prefix("<|S|"))
-                .unwrap_or(&buffer)
-                .to_string();
-        } else if buffer.ends_with("|E|>") {
-            includes_start_or_end_span = true;
-        } else if buffer.starts_with("<|")
-            || buffer.starts_with("<|S")
-            || buffer.starts_with("<|S|")
-            || buffer.ends_with('|')
-            || buffer.ends_with("|E")
-            || buffer.ends_with("|E|")
-        {
-            return future::ready(None);
+impl<T> StripInvalidSpans<T>
+where
+    T: Stream<Item = Result<String>>,
+{
+    fn new(stream: T) -> Self {
+        Self {
+            stream,
+            stream_done: false,
+            buffer: String::new(),
+            first_line: true,
+            line_end: false,
+            starts_with_code_block: false,
         }
+    }
+}
 
-        if first_line {
-            if buffer.is_empty() || buffer == "`" || buffer == "``" {
-                return future::ready(None);
-            } else if buffer.starts_with("```") {
-                starts_with_markdown_codeblock = true;
-                if let Some(newline_ix) = buffer.find('\n') {
-                    buffer.replace_range(..newline_ix + 1, "");
-                    first_line = false;
-                } else {
-                    return future::ready(None);
+impl<T> Stream for StripInvalidSpans<T>
+where
+    T: Stream<Item = Result<String>>,
+{
+    type Item = Result<String>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Option<Self::Item>> {
+        const CODE_BLOCK_DELIMITER: &str = "```";
+        const CURSOR_SPAN: &str = "<|CURSOR|>";
+
+        let this = unsafe { self.get_unchecked_mut() };
+        loop {
+            if !this.stream_done {
+                let mut stream = unsafe { Pin::new_unchecked(&mut this.stream) };
+                match stream.as_mut().poll_next(cx) {
+                    Poll::Ready(Some(Ok(chunk))) => {
+                        this.buffer.push_str(&chunk);
+                    }
+                    Poll::Ready(Some(Err(error))) => return Poll::Ready(Some(Err(error))),
+                    Poll::Ready(None) => {
+                        this.stream_done = true;
+                    }
+                    Poll::Pending => return Poll::Pending,
                 }
             }
+
+            let mut chunk = String::new();
+            let mut consumed = 0;
+            if !this.buffer.is_empty() {
+                let mut lines = this.buffer.split('\n').enumerate().peekable();
+                while let Some((line_ix, line)) = lines.next() {
+                    if line_ix > 0 {
+                        this.first_line = false;
+                    }
+
+                    if this.first_line {
+                        let trimmed_line = line.trim();
+                        if lines.peek().is_some() {
+                            if trimmed_line.starts_with(CODE_BLOCK_DELIMITER) {
+                                consumed += line.len() + 1;
+                                this.starts_with_code_block = true;
+                                continue;
+                            }
+                        } else if trimmed_line.is_empty()
+                            || prefixes(CODE_BLOCK_DELIMITER)
+                                .any(|prefix| trimmed_line.starts_with(prefix))
+                        {
+                            break;
+                        }
+                    }
+
+                    let line_without_cursor = line.replace(CURSOR_SPAN, "");
+                    if lines.peek().is_some() {
+                        if this.line_end {
+                            chunk.push('\n');
+                        }
+
+                        chunk.push_str(&line_without_cursor);
+                        this.line_end = true;
+                        consumed += line.len() + 1;
+                    } else if this.stream_done {
+                        if !this.starts_with_code_block
+                            || !line_without_cursor.trim().ends_with(CODE_BLOCK_DELIMITER)
+                        {
+                            if this.line_end {
+                                chunk.push('\n');
+                            }
+
+                            chunk.push_str(&line);
+                        }
+
+                        consumed += line.len();
+                    } else {
+                        let trimmed_line = line.trim();
+                        if trimmed_line.is_empty()
+                            || prefixes(CURSOR_SPAN).any(|prefix| trimmed_line.ends_with(prefix))
+                            || prefixes(CODE_BLOCK_DELIMITER)
+                                .any(|prefix| trimmed_line.ends_with(prefix))
+                        {
+                            break;
+                        } else {
+                            if this.line_end {
+                                chunk.push('\n');
+                                this.line_end = false;
+                            }
+
+                            chunk.push_str(&line_without_cursor);
+                            consumed += line.len();
+                        }
+                    }
+                }
+            }
+
+            this.buffer = this.buffer.split_off(consumed);
+            if !chunk.is_empty() {
+                return Poll::Ready(Some(Ok(chunk)));
+            } else if this.stream_done {
+                return Poll::Ready(None);
+            }
         }
+    }
+}
 
-        let mut text = buffer.to_string();
-        if starts_with_markdown_codeblock {
-            text = text
-                .strip_suffix("\n```\n")
-                .or_else(|| text.strip_suffix("\n```"))
-                .or_else(|| text.strip_suffix("\n``"))
-                .or_else(|| text.strip_suffix("\n`"))
-                .or_else(|| text.strip_suffix('\n'))
-                .unwrap_or(&text)
-                .to_string();
-        }
-
-        if includes_start_or_end_span {
-            text = text
-                .strip_suffix("|E|>")
-                .or_else(|| text.strip_suffix("E|>"))
-                .or_else(|| text.strip_prefix("|>"))
-                .or_else(|| text.strip_prefix('>'))
-                .unwrap_or(&text)
-                .to_string();
-        };
-
-        if text.contains('\n') {
-            first_line = false;
-        }
-
-        let remainder = buffer.split_off(text.len());
-        let result = if buffer.is_empty() {
-            None
-        } else {
-            Some(Ok(buffer.clone()))
-        };
-
-        buffer = remainder;
-        future::ready(result)
-    })
+fn prefixes<'a>(text: &'a str) -> impl Iterator<Item = &'a str> {
+    (0..text.len() - 1).map(|ix| &text[..ix + 1])
 }
 
 fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
@@ -2422,81 +2470,33 @@ mod tests {
 
     #[gpui::test]
     async fn test_strip_invalid_spans_from_codeblock() {
-        assert_eq!(
-            strip_invalid_spans_from_codeblock(chunks("Lorem ipsum dolor", 2))
-                .map(|chunk| chunk.unwrap())
-                .collect::<String>()
-                .await,
-            "Lorem ipsum dolor"
-        );
-        assert_eq!(
-            strip_invalid_spans_from_codeblock(chunks("```\nLorem ipsum dolor", 2))
-                .map(|chunk| chunk.unwrap())
-                .collect::<String>()
-                .await,
-            "Lorem ipsum dolor"
-        );
-        assert_eq!(
-            strip_invalid_spans_from_codeblock(chunks("```\nLorem ipsum dolor\n```", 2))
-                .map(|chunk| chunk.unwrap())
-                .collect::<String>()
-                .await,
-            "Lorem ipsum dolor"
-        );
-        assert_eq!(
-            strip_invalid_spans_from_codeblock(chunks("```\nLorem ipsum dolor\n```\n", 2))
-                .map(|chunk| chunk.unwrap())
-                .collect::<String>()
-                .await,
-            "Lorem ipsum dolor"
-        );
-        assert_eq!(
-            strip_invalid_spans_from_codeblock(chunks(
-                "```html\n```js\nLorem ipsum dolor\n```\n```",
-                2
-            ))
-            .map(|chunk| chunk.unwrap())
-            .collect::<String>()
-            .await,
-            "```js\nLorem ipsum dolor\n```"
-        );
-        assert_eq!(
-            strip_invalid_spans_from_codeblock(chunks("``\nLorem ipsum dolor\n```", 2))
-                .map(|chunk| chunk.unwrap())
-                .collect::<String>()
-                .await,
-            "``\nLorem ipsum dolor\n```"
-        );
-        assert_eq!(
-            strip_invalid_spans_from_codeblock(chunks("<|S|Lorem ipsum|E|>", 2))
-                .map(|chunk| chunk.unwrap())
-                .collect::<String>()
-                .await,
-            "Lorem ipsum"
-        );
+        assert_chunks("Lorem ipsum dolor", "Lorem ipsum dolor").await;
+        assert_chunks("```\nLorem ipsum dolor", "Lorem ipsum dolor").await;
+        assert_chunks("```\nLorem ipsum dolor\n```", "Lorem ipsum dolor").await;
+        assert_chunks(
+            "```html\n```js\nLorem ipsum dolor\n```\n```",
+            "```js\nLorem ipsum dolor\n```",
+        )
+        .await;
+        assert_chunks("``\nLorem ipsum dolor\n```", "``\nLorem ipsum dolor\n```").await;
+        assert_chunks("Lorem<|CURSOR|> ipsum", "Lorem ipsum").await;
+        assert_chunks("Lorem ipsum", "Lorem ipsum").await;
+        assert_chunks("```\n<|CURSOR|>Lorem ipsum\n```", "Lorem ipsum").await;
 
-        assert_eq!(
-            strip_invalid_spans_from_codeblock(chunks("<|S|>Lorem ipsum", 2))
-                .map(|chunk| chunk.unwrap())
-                .collect::<String>()
-                .await,
-            "Lorem ipsum"
-        );
+        async fn assert_chunks(text: &str, expected_text: &str) {
+            for chunk_size in 1..=text.len() {
+                let actual_text = StripInvalidSpans::new(chunks(text, chunk_size))
+                    .map(|chunk| chunk.unwrap())
+                    .collect::<String>()
+                    .await;
+                assert_eq!(
+                    actual_text, expected_text,
+                    "failed to strip invalid spans, chunk size: {}",
+                    chunk_size
+                );
+            }
+        }
 
-        assert_eq!(
-            strip_invalid_spans_from_codeblock(chunks("```\n<|S|>Lorem ipsum\n```", 2))
-                .map(|chunk| chunk.unwrap())
-                .collect::<String>()
-                .await,
-            "Lorem ipsum"
-        );
-        assert_eq!(
-            strip_invalid_spans_from_codeblock(chunks("```\n<|S|Lorem ipsum|E|>\n```", 2))
-                .map(|chunk| chunk.unwrap())
-                .collect::<String>()
-                .await,
-            "Lorem ipsum"
-        );
         fn chunks(text: &str, size: usize) -> impl Stream<Item = Result<String>> {
             stream::iter(
                 text.chars()

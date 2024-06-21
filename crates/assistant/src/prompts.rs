@@ -46,7 +46,7 @@ pub fn generate_content_prompt(
         for chunk in buffer.as_rope().chunks_in_range(0..range.start) {
             prompt.push_str(chunk);
         }
-        prompt.push_str("<|START|>");
+        prompt.push_str("<|CURSOR|>");
         for chunk in buffer.as_rope().chunks_in_range(range.start..buffer.len()) {
             prompt.push_str(chunk);
         }
@@ -58,7 +58,7 @@ pub fn generate_content_prompt(
 
         writeln!(
             prompt,
-            "Assume the cursor is located where the `<|START|>` span is."
+            "Assume the cursor is located where the `<|CURSOR|>` span is."
         )
         .unwrap();
         writeln!(
