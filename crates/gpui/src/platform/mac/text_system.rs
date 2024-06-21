@@ -662,7 +662,6 @@ fn get_pref_langs() -> CFArray<CFString> {
         let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
         let key = CFString::from_static_string("AppleLanguages");
         let ret: CFArray<CFString> = msg_send![user_defaults, stringArrayForKey: key];
-        CFRelease(key.as_concrete_TypeRef() as _);
         CFRelease(user_defaults.as_void_ptr());
         ret
     }
