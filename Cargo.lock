@@ -13587,7 +13587,7 @@ dependencies = [
 
 [[package]]
 name = "zed_snippets"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde_json",
  "zed_extension_api 0.0.6",
