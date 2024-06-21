@@ -529,13 +529,13 @@ impl MacTextSystemState {
     }
 }
 
-// impl Drop for MacTextSystemState {
-//     fn drop(&mut self) {
-//         unsafe {
-//             CFRelease(self.pref_langs.as_concrete_TypeRef() as _);
-//         }
-//     }
-// }
+impl Drop for MacTextSystemState {
+    fn drop(&mut self) {
+        unsafe {
+            CFRelease(self._pref_langs.as_concrete_TypeRef() as _);
+        }
+    }
+}
 
 #[derive(Clone)]
 struct StringIndexConverter<'a> {
