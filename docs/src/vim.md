@@ -293,6 +293,22 @@ Subword motion is not enabled by default. To enable it, add these bindings to yo
   },
 ```
 
+Surrounding the selection in visual mode is also not enabled by default (`shift-s` normally behaves like `c`). To enable it, add the following to your keymap.
+
+```json
+  {
+    "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
+    "bindings": {
+      "shift-s": [
+        "vim::PushOperator",
+        {
+          "AddSurrounds": {}
+        }
+      ]
+    }
+  }
+```
+
 ## Supported plugins
 
 Zed has nascent support for some Vim plugins:
