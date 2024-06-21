@@ -13,6 +13,7 @@ use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
+use wayland_protocols::wp::fullscreen_shell::zv1::client::zwp_fullscreen_shell_v1::Capability;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
@@ -27,7 +28,8 @@ use crate::scene::Scene;
 use crate::{
     px, size, AnyWindowHandle, Bounds, Globals, Modifiers, Output, Pixels, PlatformDisplay,
     PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling, WaylandClientStatePtr,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowParams,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowParams,
 };
 
 #[derive(Default)]
@@ -94,6 +96,8 @@ pub struct WaylandWindowState {
     handle: AnyWindowHandle,
     active: bool,
     in_progress_configure: Option<InProgressConfigure>,
+    in_progress_window_controls: Option<WindowControls>,
+    window_controls: WindowControls,
 }
 
 #[derive(Clone)]
@@ -310,6 +314,18 @@ impl WaylandWindowStatePtr {
             xdg_surface::Event::Configure { serial } => {
                 {
                     let mut state = self.state.borrow_mut();
+                    if let Some(window_controls) = state.in_progress_window_controls.take() {
+                        state.window_controls = window_controls;
+
+                        drop(state);
+                        let mut callbacks = self.callbacks.borrow_mut();
+                        if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
+                            appearance_changed();
+                        }
+                    }
+                }
+                {
+                    let mut state = self.state.borrow_mut();
 
                     if let Some(mut configure) = state.in_progress_configure.take() {
                         let got_unmaximized = state.maximized && !configure.maximized;
@@ -430,6 +446,17 @@ impl WaylandWindowStatePtr {
                 } else {
                     true
                 }
+            }
+            xdg_toplevel::Event::WmCapabilities { capabilities } => {
+                let window_controls = WindowControls {
+                    maximize: capabilities.contains(xdg_toplevel::WmCapabilities::Maximize),
+                    minimize: capabilities.contains(xdg_toplevel::WmCapabilities::Minimize),
+                    fullscreen: capabilities.contains(xdg_toplevel::WmCapabilities::Fullscreen),
+                    window_menu: capabilities.contains(xdg_toplevel::WmCapabilities::Fullscreen),
+                };
+
+                let mut state = self.state.borrow_mut();
+                state.window_controls = Some(window_controls);
             }
             _ => false,
         }
@@ -885,6 +912,10 @@ impl PlatformWindow for WaylandWindow {
         if let Some(decoration) = state.decoration.as_ref() {
             decoration.set_mode(decorations.to_xdg())
         }
+    }
+
+    fn supported_window_controls(&self) -> WindowControls {
+        self.borrow().window_controls
     }
 }
 

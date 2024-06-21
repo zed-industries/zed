@@ -12,8 +12,8 @@ use crate::{
     RenderSvgParams, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
     TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View, VisualContext,
-    WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
+    WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -1253,6 +1253,11 @@ impl<'a> WindowContext<'a> {
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
     pub fn window_decorations(&self) -> WindowDecorations {
         self.window.platform_window.window_decorations()
+    }
+
+    /// Returns what window controls this platform supports (Wayland)
+    pub fn supported_window_controls(&self) -> WindowControls {
+        self.window.platform_window.supported_window_controls()
     }
 
     /// Updates the window's title at the platform level.

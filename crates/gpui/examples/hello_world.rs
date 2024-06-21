@@ -21,9 +21,20 @@ impl Render for HelloWorld {
             .id("window-backdrop")
             .when(decorations == WindowDecorations::Client, |div| {
                 div.bg(gpui::transparent_black())
-                    .shadow_lg()
+                    .shadow(smallvec::smallvec![gpui::BoxShadow {
+                        color: Hsla {
+                            h: 0.,
+                            s: 0.,
+                            l: 0.,
+                            a: 1.0,
+                        },
+                        blur_radius: px(20.0),
+                        spread_radius: px(0.0),
+                        offset: point(px(0.0), px(0.0)),
+                    }])
                     .rounded_t(px(10.0))
-                    .p(px(16.0))
+                    .p(px(20.0))
+                    .m(px(20.0))
                     .on_mouse_move(|e, cx| {
                         if e.dragging() {
                             cx.start_window_resize(ResizeEdge::Left)
@@ -59,7 +70,7 @@ impl Render for HelloWorld {
                             div()
                                 .id("hello")
                                 .flex()
-                                .bg(rgb(0x2e7d32))
+                                .bg(white())
                                 .size(Length::Definite(Pixels(300.0).into()))
                                 .justify_center()
                                 .items_center()
@@ -68,7 +79,19 @@ impl Render for HelloWorld {
                                 .border_color(rgb(0x0000ff))
                                 .text_xl()
                                 .text_color(rgb(0xffffff))
-                                .child(format!("Hello, {}!", &self.text))
+                                .child(div().w(px(100.0)).h(px(50.0)).bg(green()).shadow(
+                                    smallvec::smallvec![gpui::BoxShadow {
+                                        color: Hsla {
+                                            h: 0.,
+                                            s: 0.,
+                                            l: 0.,
+                                            a: 1.0,
+                                        },
+                                        blur_radius: px(20.0),
+                                        spread_radius: px(0.0),
+                                        offset: point(px(0.0), px(0.0)),
+                                    }],
+                                ))
                                 .on_mouse_move(|e, cx| {
                                     if e.dragging() {
                                         cx.start_window_move();

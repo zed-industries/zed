@@ -19,6 +19,7 @@ impl LinuxWindowControls {
 
 impl RenderOnce for LinuxWindowControls {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let controls = cx.supported_window_controls();
         let close_button_hover_color = Rgba {
             r: 232.0 / 255.0,
             g: 17.0 / 255.0,
@@ -49,22 +50,26 @@ impl RenderOnce for LinuxWindowControls {
             .content_stretch()
             .max_h(self.button_height)
             .min_h(self.button_height)
-            .child(TitlebarButton::new(
-                "minimize",
-                TitlebarButtonType::Minimize,
-                button_hover_color,
-                self.close_window_action.boxed_clone(),
-            ))
-            .child(TitlebarButton::new(
-                "maximize-or-restore",
-                if cx.is_maximized() {
-                    TitlebarButtonType::Restore
-                } else {
-                    TitlebarButtonType::Maximize
-                },
-                button_hover_color,
-                self.close_window_action.boxed_clone(),
-            ))
+            .children(controls.minimize.then(|| {
+                TitlebarButton::new(
+                    "minimize",
+                    TitlebarButtonType::Minimize,
+                    button_hover_color,
+                    self.close_window_action.boxed_clone(),
+                )
+            }))
+            .children(controls.maximize.then(|| {
+                TitlebarButton::new(
+                    "maximize-or-restore",
+                    if cx.is_maximized() {
+                        TitlebarButtonType::Restore
+                    } else {
+                        TitlebarButtonType::Maximize
+                    },
+                    button_hover_color,
+                    self.close_window_action.boxed_clone(),
+                )
+            }))
             .child(TitlebarButton::new(
                 "close",
                 TitlebarButtonType::Close,
