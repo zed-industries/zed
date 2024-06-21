@@ -323,6 +323,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
             bottom: false,
         }
     }
+    fn set_content_area(&mut self, _area: Bounds<Pixels>) {}
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
