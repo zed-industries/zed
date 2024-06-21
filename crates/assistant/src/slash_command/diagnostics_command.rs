@@ -10,7 +10,7 @@ use language::{
 use project::{DiagnosticSummary, PathMatchCandidateSet, Project};
 use rope::Point;
 use std::fmt::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{
     ops::Range,
     sync::{atomic::AtomicBool, Arc},
@@ -269,6 +269,26 @@ fn collect_diagnostics(
         None
     };
 
+    let glob_is_exact_file_match = if let Some(path) = options
+        .path_matcher
+        .as_ref()
+        .and_then(|pm| pm.sources().first())
+    {
+        PathBuf::try_from(path)
+            .ok()
+            .and_then(|path| {
+                project.read(cx).worktrees().find_map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    let worktree_root_path = Path::new(worktree.root_name());
+                    let relative_path = path.strip_prefix(worktree_root_path).ok()?;
+                    worktree.absolutize(&relative_path).ok()
+                })
+            })
+            .is_some()
+    } else {
+        false
+    };
+
     let project_handle = project.downgrade();
     let diagnostic_summaries: Vec<_> = project
         .read(cx)
@@ -307,7 +327,9 @@ fn collect_diagnostics(
 
             let last_end = text.len();
             let file_path = path.to_string_lossy().to_string();
-            writeln!(&mut text, "{file_path}").unwrap();
+            if !glob_is_exact_file_match {
+                writeln!(&mut text, "{file_path}").unwrap();
+            }
 
             if let Some(buffer) = project_handle
                 .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))?
@@ -322,10 +344,12 @@ fn collect_diagnostics(
                 );
             }
 
-            sections.push((
-                last_end..text.len().saturating_sub(1),
-                PlaceholderType::File(file_path),
-            ))
+            if !glob_is_exact_file_match {
+                sections.push((
+                    last_end..text.len().saturating_sub(1),
+                    PlaceholderType::File(file_path),
+                ))
+            }
         }
 
         // No diagnostics found
@@ -339,6 +363,31 @@ fn collect_diagnostics(
         ));
         Ok(Some((text, sections)))
     })
+}
+
+pub fn buffer_has_error_diagnostics(snapshot: &BufferSnapshot) -> bool {
+    for (_, group) in snapshot.diagnostic_groups(None) {
+        let entry = &group.entries[group.primary_ix];
+        if entry.diagnostic.severity == DiagnosticSeverity::ERROR {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn write_single_file_diagnostics(
+    output: &mut String,
+    path: Option<&Path>,
+    snapshot: &BufferSnapshot,
+) -> bool {
+    if let Some(path) = path {
+        if buffer_has_error_diagnostics(&snapshot) {
+            output.push_str("/diagnostics ");
+            output.push_str(&path.to_string_lossy());
+            return true;
+        }
+    }
+    false
 }
 
 fn collect_buffer_diagnostics(
