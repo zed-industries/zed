@@ -90,6 +90,7 @@ pub fn generate_content_prompt(
         if let Some(language_name) = language_name {
             write!(prompt, "{language_name}")?;
         }
+        prompt.push('\n');
         for chunk in buffer.text_for_range(range.clone()) {
             prompt.push_str(chunk);
         }
