@@ -3963,15 +3963,9 @@ impl Editor {
                 } else {
                     None
                 };
-            if let Some(signature_help_popover) = maybe_signature_help_popover {
-                let _ = this.update(&mut cx, |editor, _| {
-                    editor.signature_help_state = Some(signature_help_popover);
-                });
-            } else {
-                let _ = this.update(&mut cx, |editor, _| {
-                    editor.signature_help_state = None;
-                });
-            }
+            this.update(&mut cx, |editor, _| {
+                editor.signature_help_state = maybe_signature_help_popover;
+            }).ok();
         });
         self.signature_help_task = Some(task);
     }
