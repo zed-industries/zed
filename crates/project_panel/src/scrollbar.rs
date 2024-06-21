@@ -82,6 +82,7 @@ impl gpui::Element for ProjectPanelScrollbar {
                 bounds.origin.x + bounds.size.width,
                 bounds.origin.y + thumb_end,
             );
+            let thumb_percentage_size = (self.thumb.end - self.thumb.start);
             cx.paint_quad(gpui::fill(
                 Bounds::from_corners(thumb_upper_left, thumb_lower_right),
                 thumb_background,
@@ -92,24 +93,16 @@ impl gpui::Element for ProjectPanelScrollbar {
                 let scroll = self.scroll.clone();
                 move |event: &MouseDownEvent, phase, _cx| {
                     if phase.bubble() && bounds.contains(&event.position) {
-                        if thumb_offset > px(0.) {
-                            let percentage_offset =
-                                (event.position.y - bounds.origin.y) / thumb_offset;
-                            let scroll = scroll.0.borrow();
-                            let current_offset = scroll.base_handle.offset();
+                        let scroll = scroll.0.borrow();
+                        if let Some(last_height) = scroll.last_item_height {
+                            let max_offset = item_count as f32 * last_height;
+                            let percentage =
+                                (event.position.y - bounds.origin.y) / bounds.size.height;
+
+                            let percentage = percentage.min(1. - thumb_percentage_size);
                             scroll
                                 .base_handle
-                                .set_offset(current_offset * percentage_offset);
-                        } else {
-                            let scroll = scroll.0.borrow();
-                            if let Some(last_height) = scroll.last_item_height {
-                                let max_offset = item_count as f32 * last_height;
-                                let percentage =
-                                    (event.position.y - bounds.origin.y) / bounds.size.height;
-                                scroll
-                                    .base_handle
-                                    .set_offset(point(px(0.), -max_offset * percentage));
-                            }
+                                .set_offset(point(px(0.), -max_offset * percentage));
                         }
                     }
                 }
@@ -135,6 +128,8 @@ impl gpui::Element for ProjectPanelScrollbar {
                             let max_offset = item_count as f32 * last_height;
                             let percentage =
                                 (event.position.y - bounds.origin.y) / bounds.size.height;
+
+                            let percentage = percentage.min(1. - thumb_percentage_size);
                             scroll
                                 .base_handle
                                 .set_offset(point(px(0.), -max_offset * percentage));
