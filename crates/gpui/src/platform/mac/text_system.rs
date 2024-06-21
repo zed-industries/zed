@@ -6,6 +6,7 @@ use crate::{
 use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::{BTreeSet, HashMap};
+#[allow(unused_imports)]
 use core_foundation::{
     array::CFArray,
     attributed_string::CFMutableAttributedString,
@@ -59,7 +60,7 @@ struct FontKey {
 }
 
 struct MacTextSystemState {
-    pref_langs: CFArray<CFString>,
+    _pref_langs: CFArray<CFString>,
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
@@ -75,7 +76,7 @@ unsafe impl Sync for MacTextSystemState {}
 impl MacTextSystem {
     pub(crate) fn new() -> Self {
         Self(RwLock::new(MacTextSystemState {
-            pref_langs: get_pref_langs(),
+            _pref_langs: get_pref_langs(),
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
