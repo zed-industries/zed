@@ -54,6 +54,8 @@ wit-component.workspace = true
 workspace.workspace = true
 task.workspace = true
 serde_json_lenient.workspace = true
+async_zip.workspace = true
+smol.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
