@@ -16,6 +16,8 @@ fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui::App::new().run(|cx| {
+        live_kit_client::init(cx.background_executor().dispatcher.clone());
+
         #[cfg(any(test, feature = "test-support"))]
         println!("USING TEST LIVEKIT");
 

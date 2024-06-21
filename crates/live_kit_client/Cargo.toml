@@ -32,7 +32,7 @@ async-broadcast = "0.7"
 async-trait = { workspace = true, optional = true }
 collections = { workspace = true, optional = true }
 futures.workspace = true
-gpui = { workspace = true, optional = true }
+gpui.workspace = true
 livekit.workspace = true
 live_kit_server = { workspace = true, optional = true }
 log.workspace = true

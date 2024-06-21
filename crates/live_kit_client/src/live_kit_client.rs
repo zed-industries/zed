@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use futures::{Stream, StreamExt as _};
 use gpui::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream};
@@ -15,6 +17,26 @@ pub use livekit::*;
 pub mod test;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
+
+pub fn init(dispatcher: Arc<dyn gpui::PlatformDispatcher>) {
+    struct Dispatcher(Arc<dyn gpui::PlatformDispatcher>);
+
+    impl livekit::dispatcher::Dispatcher for Dispatcher {
+        fn dispatch(&self, runnable: livekit::dispatcher::Runnable) {
+            self.0.dispatch(runnable, None);
+        }
+
+        fn dispatch_after(
+            &self,
+            duration: std::time::Duration,
+            runnable: livekit::dispatcher::Runnable,
+        ) {
+            self.0.dispatch_after(duration, runnable);
+        }
+    }
+
+    livekit::dispatcher::set_dispatcher(Dispatcher(dispatcher));
+}
 
 pub async fn create_video_track_from_screen_capture_source(
     capture_source: &dyn ScreenCaptureSource,
