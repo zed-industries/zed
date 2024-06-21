@@ -2289,11 +2289,10 @@ impl Render for ProjectPanel {
                     if *hovered {
                         this.show_scrollbar = true;
                         this.hide_scrollbar_task.take();
+                        cx.notify();
                     } else if !this.focus_handle.contains_focused(cx) {
                         this.hide_scrollbar(cx);
                     }
-
-                    cx.notify();
                 }))
                 .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
