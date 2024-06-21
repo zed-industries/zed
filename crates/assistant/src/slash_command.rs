@@ -269,8 +269,8 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         _: Vec<usize>,
         _: Arc<RwLock<Box<[project::Completion]>>>,
         _: &mut ViewContext<Editor>,
-    ) -> Task<Result<bool>> {
-        Task::ready(Ok(true))
+    ) -> Task<Result<Vec<usize>>> {
+        Task::ready(Ok(Vec::new()))
     }
 
     fn apply_additional_edits_for_completion(
