@@ -15,6 +15,7 @@ use core_foundation::{
     number::CFNumber,
     string::CFString,
 };
+use core_foundation_sys::locale::CFLocaleCopyPreferredLanguages;
 use core_graphics::{
     base::{kCGImageAlphaPremultipliedLast, CGGlyph},
     color_space::CGColorSpace,
@@ -659,10 +660,12 @@ fn get_pref_langs() -> CFArray<CFString> {
     use objc::{class, msg_send, sel, sel_impl};
 
     unsafe {
-        let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
-        let key = CFString::from_static_string("AppleLanguages");
-        let ret: CFArray<CFString> = msg_send![user_defaults, stringArrayForKey: key];
-        CFRelease(user_defaults.as_void_ptr());
+        // let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
+        // let key = CFString::from_static_string("AppleLanguages");
+        // let ret: CFArray<CFString> = msg_send![user_defaults, stringArrayForKey: key];
+        // CFRelease(user_defaults.as_void_ptr());
+        let array = CFLocaleCopyPreferredLanguages();
+        let ret: CFArray<CFString> = CFArray::wrap_under_create_rule(array);
         ret
     }
 }
