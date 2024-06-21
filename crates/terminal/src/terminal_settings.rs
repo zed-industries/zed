@@ -4,7 +4,7 @@ use gpui::{
 };
 use schemars::{
     gen::SchemaGenerator,
-    schema::{InstanceType, RootSchema, Schema, SchemaObject},
+    schema::{ArrayValidation, InstanceType, RootSchema, Schema, SchemaObject},
     JsonSchema,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -235,9 +235,20 @@ impl settings::Settings for TerminalSettings {
             .cloned()
             .map(Value::String)
             .collect();
-        let fonts_schema = SchemaObject {
+        let font_family_schema = SchemaObject {
             instance_type: Some(InstanceType::String.into()),
             enum_values: Some(available_fonts),
+            ..Default::default()
+        };
+        let fonts_schema = SchemaObject {
+            instance_type: Some(InstanceType::Array.into()),
+            array: Some(Box::new(ArrayValidation {
+                items: Some(schemars::schema::SingleOrVec::Single(Box::new(
+                    font_family_schema.into(),
+                ))),
+                unique_items: Some(true),
+                ..Default::default()
+            })),
             ..Default::default()
         };
         root_schema

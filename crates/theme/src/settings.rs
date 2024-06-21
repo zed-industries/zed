@@ -613,23 +613,20 @@ impl settings::Settings for ThemeSettings {
             .cloned()
             .map(Value::String)
             .collect::<Vec<_>>();
-        let fonts_schema = SchemaObject {
+        let font_family_schema = SchemaObject {
             instance_type: Some(InstanceType::String.into()),
             enum_values: Some(available_fonts),
             ..Default::default()
         };
         let fonts_schema = SchemaObject {
             instance_type: Some(InstanceType::Array.into()),
-            array: Some(
-                ArrayValidation {
-                    items: Some(schemars::schema::SingleOrVec::Single(Box::new(
-                        fonts_schema.into(),
-                    ))),
-                    unique_items: Some(true),
-                    ..Default::default()
-                }
-                .into(),
-            ),
+            array: Some(Box::new(ArrayValidation {
+                items: Some(schemars::schema::SingleOrVec::Single(Box::new(
+                    font_family_schema.into(),
+                ))),
+                unique_items: Some(true),
+                ..Default::default()
+            })),
             ..Default::default()
         };
         root_schema.definitions.extend([
