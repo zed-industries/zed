@@ -616,8 +616,7 @@ impl Element for TerminalElement {
                 let terminal_settings = TerminalSettings::get_global(cx);
                 let font_family = terminal_settings
                     .font_family
-                    .as_ref()
-                    .map(|string| string[0].clone().into())
+                    .clone()
                     .unwrap_or(settings.buffer_font.family);
 
                 let font_features = terminal_settings
