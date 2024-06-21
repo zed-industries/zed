@@ -45,7 +45,7 @@ use pathfinder_geometry::{
 use smallvec::SmallVec;
 use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
 
-// use super::open_type::apply_features_and_fallbacks;
+use super::open_type::apply_features_and_fallbacks;
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -60,7 +60,7 @@ struct FontKey {
 }
 
 struct MacTextSystemState {
-    _pref_langs: CFArray<CFString>,
+    pref_langs: CFArray<CFString>,
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
@@ -76,7 +76,7 @@ unsafe impl Sync for MacTextSystemState {}
 impl MacTextSystem {
     pub(crate) fn new() -> Self {
         Self(RwLock::new(MacTextSystemState {
-            _pref_langs: get_pref_langs(),
+            pref_langs: get_pref_langs(),
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
@@ -220,8 +220,8 @@ impl MacTextSystemState {
     fn load_family(
         &mut self,
         name: &str,
-        _features: &FontFeatures,
-        _fallbacks: &FontFallbacks,
+        features: &FontFeatures,
+        fallbacks: &FontFallbacks,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let name = if name == ".SystemUIFont" {
             ".AppleSystemUIFont"
@@ -237,7 +237,7 @@ impl MacTextSystemState {
         for font in family.fonts() {
             let mut font = font.load()?;
 
-            // apply_features_and_fallbacks(&mut font, features, fallbacks, &self.pref_langs)?;
+            apply_features_and_fallbacks(&mut font, features, fallbacks, &self.pref_langs)?;
             // This block contains a precautionary fix to guard against loading fonts
             // that might cause panics due to `.unwrap()`s up the chain.
             {
