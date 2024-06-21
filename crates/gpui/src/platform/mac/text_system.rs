@@ -6,11 +6,10 @@ use crate::{
 use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::{BTreeSet, HashMap};
-#[allow(unused_imports)]
 use core_foundation::{
     array::CFArray,
     attributed_string::CFMutableAttributedString,
-    base::{CFRange, CFRelease, TCFType},
+    base::{CFRange, TCFType},
     number::CFNumber,
     string::CFString,
 };
@@ -529,14 +528,6 @@ impl MacTextSystemState {
     }
 }
 
-impl Drop for MacTextSystemState {
-    fn drop(&mut self) {
-        unsafe {
-            CFRelease(self._pref_langs.as_concrete_TypeRef() as _);
-        }
-    }
-}
-
 #[derive(Clone)]
 struct StringIndexConverter<'a> {
     text: &'a str,
@@ -653,18 +644,10 @@ impl From<FontStyle> for FontkitStyle {
     }
 }
 
-#[allow(unused)]
 fn get_pref_langs() -> CFArray<CFString> {
-    use cocoa::base::id;
-    use objc::{class, msg_send, sel, sel_impl};
-
     unsafe {
-        // let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
-        // let key = CFString::from_static_string("AppleLanguages");
-        // let ret: CFArray<CFString> = msg_send![user_defaults, stringArrayForKey: key];
-        // CFRelease(user_defaults.as_void_ptr());
         let array = CFLocaleCopyPreferredLanguages();
-        let ret: CFArray<CFString> = CFArray::wrap_under_create_rule(array);
+        let ret: CFArray<CFString> = CFArray::wrap_under_get_rule(array);
         ret
     }
 }
