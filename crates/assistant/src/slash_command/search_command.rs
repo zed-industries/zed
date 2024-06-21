@@ -1,11 +1,12 @@
 use super::{
+    create_label_for_command,
     file_command::{build_entry_output_section, codeblock_fence_for_path},
     SlashCommand, SlashCommandOutput,
 };
 use anyhow::Result;
 use assistant_slash_command::SlashCommandOutputSection;
 use gpui::{AppContext, Task, WeakView};
-use language::{CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
+use language::{CodeLabel, LineEnding, LspAdapterDelegate};
 use semantic_index::SemanticIndex;
 use std::{
     fmt::Write,
@@ -24,14 +25,7 @@ impl SlashCommand for SearchSlashCommand {
     }
 
     fn label(&self, cx: &AppContext) -> CodeLabel {
-        let mut label = CodeLabel::default();
-        label.push_str("search ", None);
-        label.push_str(
-            "--n",
-            cx.theme().syntax().highlight_id("comment").map(HighlightId),
-        );
-        label.filter_range = 0.."search".len();
-        label
+        create_label_for_command("search", &["--n"], cx)
     }
 
     fn description(&self) -> String {

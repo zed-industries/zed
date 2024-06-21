@@ -8247,6 +8247,10 @@ impl Editor {
     }
 
     fn refresh_runnables(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+        if !EditorSettings::get_global(cx).gutter.runnables {
+            self.clear_tasks();
+            return Task::ready(());
+        }
         let project = self.project.clone();
         cx.spawn(|this, mut cx| async move {
             let Ok(display_snapshot) = this.update(&mut cx, |this, cx| {
@@ -11017,6 +11021,7 @@ impl Editor {
     }
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.tasks_update_task = Some(self.refresh_runnables(cx));
         self.refresh_inline_completion(true, cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
@@ -11790,7 +11795,7 @@ impl EditorSnapshot {
             .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
-        left_padding += if show_code_actions {
+        left_padding += if show_code_actions || gutter_settings.runnables {
             em_width * 3.0
         } else if show_git_gutter && show_line_numbers {
             em_width * 2.0

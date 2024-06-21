@@ -793,17 +793,18 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let query = PathLikeWithPosition::parse_str(raw_query, |path_like_str| {
-                Ok::<_, std::convert::Infallible>(FileSearchQuery {
-                    raw_query: raw_query.to_owned(),
-                    file_query_end: if path_like_str == raw_query {
-                        None
-                    } else {
-                        Some(path_like_str.len())
-                    },
+            let query =
+                PathLikeWithPosition::parse_str(&raw_query, |normalized_query, path_like_str| {
+                    Ok::<_, std::convert::Infallible>(FileSearchQuery {
+                        raw_query: normalized_query.to_owned(),
+                        file_query_end: if path_like_str == raw_query {
+                            None
+                        } else {
+                            Some(path_like_str.len())
+                        },
+                    })
                 })
-            })
-            .expect("infallible");
+                .expect("infallible");
 
             if Path::new(query.path_like.path_query()).is_absolute() {
                 self.lookup_absolute_path(query, cx)

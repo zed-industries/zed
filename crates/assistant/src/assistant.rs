@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
     active_command, default_command, diagnostics_command, fetch_command, file_command, now_command,
-    project_command, prompt_command, rustdoc_command, search_command, tabs_command,
+    project_command, prompt_command, rustdoc_command, search_command, tabs_command, term_command,
 };
 use std::{
     fmt::{self, Display},
@@ -314,6 +314,7 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(search_command::SearchSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
+    slash_command_registry.register_command(term_command::TermSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, true);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsCommand, true);
     slash_command_registry.register_command(rustdoc_command::RustdocSlashCommand, false);

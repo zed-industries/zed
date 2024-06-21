@@ -983,8 +983,23 @@ impl DisplaySnapshot {
                     break;
                 }
             }
-            let end = end.unwrap_or(max_point);
-            Some((start..end, self.fold_placeholder.clone()))
+
+            let mut row_before_line_breaks = end.unwrap_or(max_point);
+            while row_before_line_breaks.row > start.row
+                && self
+                    .buffer_snapshot
+                    .is_line_blank(MultiBufferRow(row_before_line_breaks.row))
+            {
+                row_before_line_breaks.row -= 1;
+            }
+
+            row_before_line_breaks = Point::new(
+                row_before_line_breaks.row,
+                self.buffer_snapshot
+                    .line_len(MultiBufferRow(row_before_line_breaks.row)),
+            );
+
+            Some((start..row_before_line_breaks, self.fold_placeholder.clone()))
         } else {
             None
         }

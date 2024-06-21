@@ -1855,9 +1855,9 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
 }
 
 fn test_path_like(test_str: &str) -> PathLikeWithPosition<FileSearchQuery> {
-    PathLikeWithPosition::parse_str(test_str, |path_like_str| {
+    PathLikeWithPosition::parse_str(test_str, |normalized_query, path_like_str| {
         Ok::<_, std::convert::Infallible>(FileSearchQuery {
-            raw_query: test_str.to_owned(),
+            raw_query: normalized_query.to_owned(),
             file_query_end: if path_like_str == test_str {
                 None
             } else {
