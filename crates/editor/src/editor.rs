@@ -3933,7 +3933,7 @@ impl Editor {
             return;
         };
 
-        let task = cx.spawn(move |this, mut cx| async move {
+        self.signature_help_task = Some(cx.spawn(move |this, mut cx| async move {
             let markdown_task_result = this.update(&mut cx, |editor, cx| {
                 let project = editor.project.clone()?;
                 let (maybe_markdown, language_registry) = project.update(cx, |project, mut cx| {
@@ -3965,9 +3965,9 @@ impl Editor {
                 };
             this.update(&mut cx, |editor, _| {
                 editor.signature_help_state = maybe_signature_help_popover;
-            }).ok();
-        });
-        self.signature_help_task = Some(task);
+            })
+            .ok();
+        }));
     }
 
     pub fn show_completions(&mut self, options: &ShowCompletions, cx: &mut ViewContext<Self>) {
