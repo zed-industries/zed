@@ -292,7 +292,7 @@ impl DirectWriteState {
         &self,
         fallbacks: &FontFallbacks,
     ) -> Result<Option<IDWriteFontFallback>> {
-        if fallbacks.fallback_list().len() == 0 {
+        if fallbacks.fallback_list().is_empty() {
             return Ok(None);
         }
         unsafe {
