@@ -1,5 +1,5 @@
 use super::{
-    diagnostics_command::buffer_has_error_diagnostics,
+    diagnostics_command::write_single_file_diagnostics,
     file_command::{build_entry_output_section, codeblock_fence_for_path},
     SlashCommand, SlashCommandOutput,
 };
@@ -72,16 +72,12 @@ impl SlashCommand for ActiveSlashCommand {
                     if !output.ends_with('\n') {
                         output.push('\n');
                     }
-                    output.push_str("```");
-                    let mut has_diagnostics = false;
-                    if let Some(path) = path {
-                        if buffer_has_error_diagnostics(&snapshot) {
-                            has_diagnostics = true;
-                            output.push_str("\n/diagnostics ");
-                            output.push_str(&path.to_string_lossy());
-                        }
+                    output.push_str("```\n");
+                    let has_diagnostics =
+                        write_single_file_diagnostics(&mut output, path.as_deref(), &snapshot);
+                    if output.ends_with('\n') {
+                        output.pop();
                     }
-
                     (output, has_diagnostics)
                 }
             });

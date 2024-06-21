@@ -375,6 +375,21 @@ pub fn buffer_has_error_diagnostics(snapshot: &BufferSnapshot) -> bool {
     false
 }
 
+pub fn write_single_file_diagnostics(
+    output: &mut String,
+    path: Option<&Path>,
+    snapshot: &BufferSnapshot,
+) -> bool {
+    if let Some(path) = path {
+        if buffer_has_error_diagnostics(&snapshot) {
+            output.push_str("/diagnostics ");
+            output.push_str(&path.to_string_lossy());
+            return true;
+        }
+    }
+    false
+}
+
 fn collect_buffer_diagnostics(
     text: &mut String,
     sections: &mut Vec<(Range<usize>, PlaceholderType)>,
