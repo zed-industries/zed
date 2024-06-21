@@ -169,7 +169,7 @@ impl DisplayMap {
         let (wrap_snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(tab_snapshot.clone(), edits, cx));
-        let block_snapshot = self.block_map.read(wrap_snapshot.clone(), edits);
+        let block_snapshot = self.block_map.read(wrap_snapshot.clone(), edits).snapshot;
 
         DisplaySnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(cx),
@@ -346,6 +346,25 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
         block_map.remove(ids);
+    }
+
+    pub fn row_for_block(
+        &mut self,
+        block_id: BlockId,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<DisplayRow> {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let block_map = self.block_map.read(snapshot, edits);
+        let block_row = block_map.row_for_block(block_id)?;
+        Some(DisplayRow(block_row.0))
     }
 
     pub fn highlight_text(

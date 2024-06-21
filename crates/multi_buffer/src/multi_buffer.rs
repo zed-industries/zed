@@ -3834,8 +3834,7 @@ impl MultiBufferSnapshot {
                 return None;
             }
 
-            if range.as_ref().unwrap().is_empty() || *cursor.start() >= range.as_ref().unwrap().end
-            {
+            if *cursor.start() >= range.as_ref().unwrap().end {
                 range = next_range(&mut cursor);
                 if range.is_none() {
                     return None;
@@ -3867,9 +3866,10 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn remote_selections_in_range<'a>(
+    pub fn selections_in_range<'a>(
         &'a self,
         range: &'a Range<Anchor>,
+        include_local: bool,
     ) -> impl 'a + Iterator<Item = (ReplicaId, bool, CursorShape, Selection<Anchor>)> {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
         let start_locator = self.excerpt_locator_for_id(range.start.excerpt_id);
@@ -3888,7 +3888,7 @@ impl MultiBufferSnapshot {
 
                 excerpt
                     .buffer
-                    .remote_selections_in_range(query_range)
+                    .selections_in_range(query_range, include_local)
                     .flat_map(move |(replica_id, line_mode, cursor_shape, selections)| {
                         selections.map(move |selection| {
                             let mut start = Anchor {
