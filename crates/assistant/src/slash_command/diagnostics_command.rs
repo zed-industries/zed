@@ -272,7 +272,7 @@ fn collect_diagnostics(
     let glob_is_exact_file_match = if let Some(path) = options
         .path_matcher
         .as_ref()
-        .and_then(|pm| pm.sources().first().clone())
+        .and_then(|pm| pm.sources().first())
     {
         PathBuf::try_from(path)
             .ok()
