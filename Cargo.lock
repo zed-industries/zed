@@ -13082,6 +13082,7 @@ dependencies = [
  "language",
  "log",
  "parking_lot",
+ "paths",
  "postage",
  "pretty_assertions",
  "rand 0.8.5",
