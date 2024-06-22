@@ -85,7 +85,6 @@ impl WindowsWindowState {
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
-        println!("Click state: {:#?}", click_state);
         let system_settings = WindowsSystemSettings::new();
         let nc_button_pressed = None;
         let fullscreen = None;
