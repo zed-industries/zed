@@ -3817,52 +3817,35 @@ impl MultiBufferSnapshot {
         ranges: impl IntoIterator<Item = Range<Anchor>>,
     ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, Range<usize>)> {
         let mut ranges = ranges.into_iter().map(|range| range.to_offset(self));
-
         let mut cursor = self.excerpts.cursor::<usize>();
-        let mut next_range = move |cursor: &mut Cursor<Excerpt, usize>| {
-            let range = ranges.next();
-            if let Some(range) = range.as_ref() {
-                cursor.seek_forward(&range.start, Bias::Right, &());
-            }
-
-            range
-        };
-        let mut range = next_range(&mut cursor);
-
+        cursor.next(&());
+        let mut current_range = ranges.next();
         iter::from_fn(move || {
-            if range.is_none() {
-                return None;
-            }
-
-            if *cursor.start() >= range.as_ref().unwrap().end {
-                range = next_range(&mut cursor);
-                if range.is_none() {
-                    return None;
+            let range = current_range.clone()?;
+            if range.start >= cursor.end(&()) {
+                cursor.seek_forward(&range.start, Bias::Right, &());
+                if range.start == self.len() {
+                    cursor.prev(&());
                 }
             }
 
-            cursor.item().map(|excerpt| {
-                let multibuffer_excerpt = MultiBufferExcerpt::new(&excerpt, *cursor.start());
+            let excerpt = cursor.item()?;
+            let range_start_in_excerpt = cmp::max(range.start, *cursor.start());
+            let range_end_in_excerpt = if excerpt.has_trailing_newline {
+                cmp::min(range.end, cursor.end(&()) - 1)
+            } else {
+                cmp::min(range.end, cursor.end(&()))
+            };
+            let buffer_range = MultiBufferExcerpt::new(excerpt, *cursor.start())
+                .map_range_to_buffer(range_start_in_excerpt..range_end_in_excerpt);
 
-                let multibuffer_excerpt_range = multibuffer_excerpt
-                    .map_range_from_buffer(excerpt.range.context.to_offset(&excerpt.buffer));
+            if range.end > cursor.end(&()) {
+                cursor.next(&());
+            } else {
+                current_range = ranges.next();
+            }
 
-                let overlap_range = cmp::max(
-                    range.as_ref().unwrap().start,
-                    multibuffer_excerpt_range.start,
-                )
-                    ..cmp::min(range.as_ref().unwrap().end, multibuffer_excerpt_range.end);
-
-                let overlap_range = multibuffer_excerpt.map_range_to_buffer(overlap_range);
-
-                if multibuffer_excerpt_range.end <= range.as_ref().unwrap().end {
-                    cursor.next(&());
-                } else {
-                    range = next_range(&mut cursor);
-                }
-
-                (excerpt.id, &excerpt.buffer, overlap_range)
-            })
+            Some((excerpt.id, &excerpt.buffer, buffer_range))
         })
     }
 
