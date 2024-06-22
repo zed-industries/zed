@@ -5,7 +5,7 @@ use gpui::{
     WindowHandle, WindowOptions,
 };
 use live_kit_client::{
-    create_audio_track_from_microphone,
+    capture_local_audio_track,
     options::TrackPublishOptions,
     play_remote_audio_track,
     publication::LocalTrackPublication,
@@ -254,7 +254,7 @@ impl LivekitWindow {
         } else {
             let participant = self.room.local_participant();
             cx.spawn(|this, mut cx| async move {
-                let track = create_audio_track_from_microphone(cx.background_executor());
+                let track = capture_local_audio_track(cx.background_executor());
                 let (track, stream) = track.await?;
                 let publication = participant
                     .publish_track(LocalTrack::Audio(track), TrackPublishOptions::default())

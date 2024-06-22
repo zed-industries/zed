@@ -44,7 +44,7 @@ pub fn init(dispatcher: Arc<dyn gpui::PlatformDispatcher>) {
     livekit::dispatcher::set_dispatcher(Dispatcher(dispatcher));
 }
 
-pub async fn create_video_track_from_screen_capture_source(
+pub async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
     let track_source = NativeVideoSource::new(VideoResolution {
@@ -75,7 +75,7 @@ pub async fn create_video_track_from_screen_capture_source(
     ))
 }
 
-pub async fn create_audio_track_from_microphone(
+pub async fn capture_local_audio_track(
     cx: &BackgroundExecutor,
 ) -> Result<(track::LocalAudioTrack, AudioStream)> {
     let host = cpal::default_host();

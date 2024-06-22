@@ -1321,7 +1321,7 @@ impl Room {
 
         cx.spawn(move |this, mut cx| async move {
             let (track, stream) =
-                livekit::create_audio_track_from_microphone(&cx.background_executor()).await?;
+                livekit::capture_local_audio_track(&cx.background_executor()).await?;
 
             let publication = participant
                 .publish_track(
@@ -1402,8 +1402,7 @@ impl Room {
             let sources = sources.await??;
             let source = sources.first().ok_or_else(|| anyhow!("no display found"))?;
 
-            let (track, _stream) =
-                livekit::create_video_track_from_screen_capture_source(&**source).await?;
+            let (track, _stream) = livekit::capture_local_video_track(&**source).await?;
 
             let publication = participant
                 .publish_track(
