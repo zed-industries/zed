@@ -137,6 +137,7 @@ actions!(
         ToggleBottomDock,
         ToggleCenteredLayout,
         CloseAllDocks,
+        ToggleBreakpoint,
     ]
 );
 

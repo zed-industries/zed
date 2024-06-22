@@ -1,6 +1,6 @@
 use crate::{
     requests::{
-        Continue, ContinueArguments, Initialize, InitializeArguments, Launch,
+        ConfigurationDone, Continue, ContinueArguments, Initialize, InitializeArguments, Launch,
         LaunchRequestArguments, Next, NextArguments, SetBreakpoints, SetBreakpointsArguments,
         StepIn, StepInArguments, StepOut, StepOutArguments,
     },
@@ -21,6 +21,7 @@ use smol::{
 };
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
+    path::{Path, PathBuf},
     process::Stdio,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -31,16 +32,19 @@ pub enum TransportType {
     TCP,
     STDIO,
 }
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct DebugAdapterClientId(pub usize);
 
 #[derive(Debug)]
-pub struct Client {
+pub struct DebugAdapterClient {
     _process: Option<Child>,
     server_tx: UnboundedSender<Payload>,
     request_count: AtomicU64,
     thread_id: Option<ThreadId>,
 }
 
-impl Client {
+impl DebugAdapterClient {
     pub async fn new(
         transport_type: TransportType,
         command: &str,
@@ -254,10 +258,10 @@ impl Client {
         }
     }
 
-    pub async fn set_breakpoints(&self, line: usize) -> Result<Value> {
+    pub async fn set_breakpoints(&self, path: PathBuf, line: usize) -> Result<Value> {
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
-                path: Some("/Users/remcosmits/Documents/code/symfony_demo/src/Kernel.php".into()),
+                path: Some(path),
                 ..Default::default()
             },
             breakpoints: Some(vec![SourceBreakpoint {
@@ -270,5 +274,9 @@ impl Client {
             source_modified: None,
         })
         .await
+    }
+
+    pub async fn configuration_done(&self) -> Result<Value> {
+        self.request::<ConfigurationDone>(()).await
     }
 }

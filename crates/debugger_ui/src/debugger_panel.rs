@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use dap::{
-    client::{Client, TransportType},
+    client::{DebugAdapterClient, TransportType},
     transport::Payload,
 };
 use futures::channel::mpsc::UnboundedReceiver;
@@ -29,14 +29,14 @@ pub struct DebugPanel {
     pub active: bool,
     pub focus_handle: FocusHandle,
     pub size: Pixels,
-    pub debug_client: Arc<Client>,
+    pub debug_client: Arc<DebugAdapterClient>,
     pub events: UnboundedReceiver<Payload>,
 }
 
 impl DebugPanel {
     pub fn new(
         position: DockPosition,
-        debug_client: Arc<Client>,
+        debug_client: Arc<DebugAdapterClient>,
         events: UnboundedReceiver<Payload>,
         cx: &mut WindowContext,
     ) -> Self {
@@ -56,7 +56,7 @@ impl DebugPanel {
         cx: AsyncWindowContext,
     ) -> Result<View<Self>> {
         let mut cx = cx.clone();
-        let c = Client::new(
+        let c = DebugAdapterClient::new(
             TransportType::TCP,
             "python3",
             vec![
@@ -80,13 +80,19 @@ impl DebugPanel {
         // initialize request
         debug_client.initialize().await;
 
+        // set break point
+        debug_client
+            .set_breakpoints(
+                "/Users/remcosmits/Documents/code/symfony_demo/src/Kernel.php".into(),
+                14,
+            )
+            .await;
+
         // launch/attach request
         debug_client.launch().await;
 
-        // TODO: we should send configure request here
-
-        // set break point
-        debug_client.set_breakpoints(14).await;
+        // configuration done
+        debug_client.configuration_done().await;
 
         workspace.update(&mut cx, |_, cx| {
             cx.new_view(|cx| {
@@ -183,10 +189,22 @@ impl Render for DebugPanel {
                     )
                     .child(
                         IconButton::new("debug-go-in", IconName::Play)
+                            .on_click(cx.listener(|view, _, cx| {
+                                let client = view.debug_client.clone();
+                                cx.background_executor()
+                                    .spawn(async move { client.step_in().await })
+                                    .detach();
+                            }))
                             .tooltip(move |cx| Tooltip::text("Go in", cx)),
                     )
                     .child(
                         IconButton::new("debug-go-out", IconName::Play)
+                            .on_click(cx.listener(|view, _, cx| {
+                                let client = view.debug_client.clone();
+                                cx.background_executor()
+                                    .spawn(async move { client.step_out().await })
+                                    .detach();
+                            }))
                             .tooltip(move |cx| Tooltip::text("Go out", cx)),
                     )
                     .child(

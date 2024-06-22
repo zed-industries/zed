@@ -20,6 +20,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
+use dap::client::{DebugAdapterClient, DebugAdapterClientId};
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::{
@@ -46,8 +47,8 @@ use language::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
         serialize_version, split_operations,
     },
-    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
-    ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
+    range_from_lsp, Bias, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability,
+    CodeLabel, ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
     Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
     LspAdapterDelegate, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
     ToOffset, ToPointUtf16, Transaction, Unclipped,
@@ -80,7 +81,7 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
 use std::{
-    borrow::Cow,
+    borrow::{BorrowMut, Cow},
     cmp::{self, Ordering},
     convert::TryInto,
     env,
@@ -170,6 +171,8 @@ pub struct Project {
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
+    debug_adapters: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
+    breakpoints: HashMap<BufferId, Vec<Breakpoint>>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
@@ -306,6 +309,10 @@ impl PartialEq for LanguageServerPromptRequest {
     }
 }
 
+struct Breakpoint {
+    row: BufferRow,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId),
@@ -371,6 +378,11 @@ pub struct LanguageServerProgress {
     pub percentage: Option<usize>,
     #[serde(skip_serializing)]
     pub last_update_at: Instant,
+}
+
+pub enum DebugAdapterClientState {
+    Starting(Task<Option<Arc<DebugAdapterClient>>>),
+    Running(Arc<DebugAdapterClient>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -750,6 +762,8 @@ impl Project {
                 next_diagnostic_group_id: Default::default(),
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
+                debug_adapters: Default::default(),
+                breakpoints: Default::default(),
                 language_server_ids: HashMap::default(),
                 language_server_statuses: Default::default(),
                 last_formatting_failure: None,
@@ -904,6 +918,8 @@ impl Project {
                         )
                     })
                     .collect(),
+                debug_adapters: Default::default(),
+                breakpoints: Default::default(),
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
@@ -1005,6 +1021,56 @@ impl Project {
                 self.disconnected_from_host_internal(cx);
             }
         }
+    }
+
+    pub fn update_breakpoint(
+        &mut self,
+        buffer: Model<Buffer>,
+        row: BufferRow,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let buffer = buffer.read(cx);
+        let Some(abs_path) = maybe!({
+            let project_path = buffer.project_path(cx)?;
+            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+            worktree.read(cx).absolutize(&project_path.path).ok()
+        }) else {
+            return;
+        };
+
+        let breakpoints_for_buffer = self
+            .breakpoints
+            .entry(buffer.remote_id())
+            .or_insert(Vec::new());
+
+        if let Some(ix) = breakpoints_for_buffer
+            .iter()
+            .position(|breakpoint| breakpoint.row == row)
+        {
+            breakpoints_for_buffer.remove(ix);
+        } else {
+            breakpoints_for_buffer.push(Breakpoint { row });
+        }
+
+        let clients = self
+            .debug_adapters
+            .iter()
+            .filter_map(|(_, state)| match state {
+                DebugAdapterClientState::Starting(_) => None,
+                DebugAdapterClientState::Running(client) => Some(client.clone()),
+            })
+            .collect::<Vec<_>>();
+
+        cx.background_executor()
+            .spawn(async move {
+                for client in clients {
+                    client
+                        .set_breakpoints(abs_path.clone(), row as usize)
+                        .await?;
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx)
     }
 
     fn shutdown_language_servers(

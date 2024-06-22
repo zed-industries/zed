@@ -7798,6 +7798,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "dap",
  "dev_server_projects",
  "env_logger",
  "fs",

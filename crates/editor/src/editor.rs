@@ -145,7 +145,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{OpenInTerminal, OpenTerminal, Toast};
+use workspace::{OpenInTerminal, OpenTerminal, Toast, ToggleBreakpoint};
 
 use crate::hover_links::find_url;
 
@@ -420,6 +420,12 @@ struct ResolvedTasks {
     templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
     position: Anchor,
 }
+
+#[derive(Clone, Debug)]
+struct Breakpoint {
+    line: BufferRow,
+}
+
 #[derive(Copy, Clone, Debug)]
 struct MultiBufferOffset(usize);
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
@@ -524,6 +530,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    breakpoints: BTreeMap<(BufferId, BufferRow), Breakpoint>,
 }
 
 #[derive(Clone)]
@@ -1784,6 +1791,7 @@ impl Editor {
             blame: None,
             blame_subscription: None,
             tasks: Default::default(),
+            breakpoints: Default::default(),
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -5521,6 +5529,29 @@ impl Editor {
         }) {
             cx.dispatch_action(OpenTerminal { working_directory }.boxed_clone());
         }
+    }
+
+    pub fn toggle_breakpoint(&mut self, _: &ToggleBreakpoint, cx: &mut ViewContext<Self>) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let cursor_position: Point = self.selections.newest(cx).head();
+        let target_row = cursor_position.row;
+        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+            return;
+        };
+
+        let buffer_id = buffer.read(cx).remote_id();
+        let key = (buffer_id, target_row);
+
+        if self.breakpoints.remove(&key).is_none() {
+            self.breakpoints
+                .insert(key, Breakpoint { line: target_row });
+        }
+
+        project.update(cx, |project, cx| {
+            project.update_breakpoint(buffer, target_row, cx);
+        });
     }
 
     fn gather_revert_changes(
