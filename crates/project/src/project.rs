@@ -1037,45 +1037,52 @@ impl Project {
         id: DebugAdapterClientId,
         cx: &mut ModelContext<Self>,
     ) {
-        let task = cx.spawn(|this, mut cx| async move {
-            let (mut client, _) = DebugAdapterClient::new(
-                TransportType::TCP,
-                "bun",
-                vec![
-                    "/Users/remcosmits/Documents/code/vscode-php-debug/out/phpDebug.js",
-                    "--server=8123",
-                ],
-                Some(8123),
-                &mut cx,
-            )
-            .await
-            .log_err()?;
-
-            client.initialize().await.log_err()?;
-
-            // configuration done
-            client.configuration_done().await.log_err()?;
-
-            // launch/attach request
-            client.launch().await.log_err()?;
-
-            let client = Arc::new(client);
-
-            this.update(&mut cx, |this, _| {
-                let handle = this
-                    .debug_adapters
-                    .get_mut(&id)
-                    .with_context(|| "Failed to find debug adapter with given id")?;
-                *handle = DebugAdapterClientState::Running(client.clone());
-                anyhow::Ok(())
-            })
-            .log_err();
-
-            Some(client)
-        });
-
         self.debug_adapters
-            .insert(id, DebugAdapterClientState::Starting(task));
+            .insert(id, DebugAdapterClientState::Starting(Task::Ready(None)));
+
+        let task = cx
+            .spawn(|this, mut cx| async move {
+                let mut client = DebugAdapterClient::new(
+                    TransportType::TCP,
+                    "bun",
+                    vec![
+                        "/Users/remcosmits/Documents/code/vscode-php-debug/out/phpDebug.js",
+                        "--server=8125",
+                    ],
+                    8125,
+                    &mut cx,
+                )
+                .await?;
+
+                // initialize
+                client.initialize().await?;
+
+                // set break point
+                client
+                    .set_breakpoints(
+                        "/Users/remcosmits/Documents/code/symfony_demo/src/Kernel.php".into(),
+                        14,
+                    )
+                    .await;
+
+                // launch/attach request
+                client.launch().await?;
+
+                // configuration done
+                client.configuration_done().await?;
+
+                let client = Arc::new(client);
+
+                this.update(&mut cx, |this, _| {
+                    let handle = this
+                        .debug_adapters
+                        .get_mut(&id)
+                        .with_context(|| "Failed to find debug adapter with given id")?;
+                    *handle = DebugAdapterClientState::Running(client.clone());
+                    anyhow::Ok(())
+                })
+            })
+            .detach_and_log_err(cx);
     }
 
     pub fn update_breakpoint(
@@ -1090,7 +1097,6 @@ impl Project {
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
             worktree.read(cx).absolutize(&project_path.path).ok()
         }) else {
-            dbg!("Failed to get abs_path");
             return;
         };
 

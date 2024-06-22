@@ -42,6 +42,7 @@ pub struct DebugAdapterClient {
     server_tx: UnboundedSender<Payload>,
     request_count: AtomicU64,
     thread_id: Option<ThreadId>,
+    client_rx: UnboundedReceiver<Payload>,
 }
 
 impl DebugAdapterClient {
@@ -49,9 +50,9 @@ impl DebugAdapterClient {
         transport_type: TransportType,
         command: &str,
         args: Vec<&str>,
-        port: Option<u16>,
+        port: u16,
         cx: &mut AsyncAppContext,
-    ) -> Result<(Self, UnboundedReceiver<Payload>)> {
+    ) -> Result<Self> {
         match transport_type {
             TransportType::TCP => Self::create_tcp_client(command, args, port, cx).await,
             TransportType::STDIO => Self::create_stdio_client(command, args, port, cx).await,
@@ -61,9 +62,9 @@ impl DebugAdapterClient {
     async fn create_tcp_client(
         command: &str,
         args: Vec<&str>,
-        port: Option<u16>,
+        port: u16,
         cx: &mut AsyncAppContext,
-    ) -> Result<(Self, UnboundedReceiver<Payload>)> {
+    ) -> Result<Self> {
         let mut command = process::Command::new(command);
         command
             .args(args)
@@ -81,7 +82,7 @@ impl DebugAdapterClient {
             .timer(Duration::from_millis(500))
             .await;
 
-        let address = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port.unwrap_or(0));
+        let address = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port);
 
         let (rx, tx) = TcpStream::connect(address).await?.split();
 
@@ -97,9 +98,9 @@ impl DebugAdapterClient {
     async fn create_stdio_client(
         command: &str,
         args: Vec<&str>,
-        port: Option<u16>,
+        port: u16,
         cx: &mut AsyncAppContext,
-    ) -> Result<(Self, UnboundedReceiver<Payload>)> {
+    ) -> Result<Self> {
         todo!("not implemented")
     }
 
@@ -109,7 +110,7 @@ impl DebugAdapterClient {
         err: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
         process: Option<Child>,
         cx: &mut AsyncAppContext,
-    ) -> Result<(Self, UnboundedReceiver<Payload>)> {
+    ) -> Result<Self> {
         let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
         let (client_tx, client_rx) = unbounded::<Payload>();
 
@@ -118,12 +119,13 @@ impl DebugAdapterClient {
             _process: process,
             request_count: AtomicU64::new(0),
             thread_id: Some(ThreadId(1)),
+            client_rx, // TODO: remove this here
         };
 
         cx.spawn(move |_| Self::recv(server_rx, server_tx, client_tx))
             .detach();
 
-        Ok((client, client_rx))
+        Ok(client)
     }
 
     async fn recv(
