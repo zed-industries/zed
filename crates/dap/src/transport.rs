@@ -12,7 +12,7 @@ use smol::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 use std::{collections::HashMap, sync::Arc};
 use util::ResultExt;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Request {
     #[serde(skip)]
     pub back_ch: Option<Sender<Result<Response>>>,
@@ -30,7 +30,7 @@ pub struct Response {
     pub body: Option<Value>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Payload {
     Event(Box<Event>),
@@ -59,7 +59,7 @@ impl Transport {
 
         let transport = Arc::new(transport);
 
-        cx.update(|cx| {
+        let _ = cx.update(|cx| {
             cx.spawn(|_| Self::recv(transport.clone(), server_stdout, client_tx))
                 .detach_and_log_err(cx);
             cx.spawn(|_| Self::send(transport, server_stdin, client_rx))
@@ -100,12 +100,11 @@ impl Transport {
 
         let content_length = content_length.context("missing content length")?;
 
-        //TODO: reuse vector
         let mut content = vec![0; content_length];
         reader.read_exact(&mut content).await?;
         let msg = std::str::from_utf8(&content).context("invalid utf8 from server")?;
 
-        dbg!("<- DAP {}", msg);
+        dbg!(msg);
 
         Ok(serde_json::from_str::<Payload>(msg)?)
     }
