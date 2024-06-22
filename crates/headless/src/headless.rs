@@ -119,7 +119,6 @@ impl DevServer {
     async fn handle_dev_server_instructions(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::DevServerInstructions>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let (added_projects, removed_projects_ids) = this.read_with(&mut cx, |this, _| {
@@ -162,7 +161,6 @@ impl DevServer {
     async fn handle_validate_dev_server_project_request(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ValidateDevServerProjectRequest>,
-        _: Arc<Client>,
         cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
@@ -180,7 +178,6 @@ impl DevServer {
     async fn handle_shutdown(
         this: Model<Self>,
         _envelope: TypedEnvelope<proto::ShutdownDevServer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
