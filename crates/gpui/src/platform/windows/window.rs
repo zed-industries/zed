@@ -56,7 +56,8 @@ pub(crate) struct WindowsWindowStatePtr {
     hwnd: HWND,
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
-    pub(crate) hide_title_bar: bool,
+    pub(crate) title_bar: bool,
+    pub(crate) transparent_title_bar: bool,
     pub(crate) executor: ForegroundExecutor,
 }
 
@@ -211,7 +212,8 @@ impl WindowsWindowStatePtr {
             state,
             hwnd,
             handle: context.handle,
-            hide_title_bar: context.hide_title_bar,
+            title_bar: context.title_bar,
+            transparent_title_bar: context.transparent_title_bar,
             executor: context.executor.clone(),
         })
     }
@@ -232,7 +234,8 @@ pub(crate) struct Callbacks {
 struct WindowCreateContext {
     inner: Option<Rc<WindowsWindowStatePtr>>,
     handle: AnyWindowHandle,
-    hide_title_bar: bool,
+    title_bar: bool,
+    transparent_title_bar: bool,
     display: WindowsDisplay,
     transparent: bool,
     executor: ForegroundExecutor,
@@ -248,7 +251,7 @@ impl WindowsWindow {
         current_cursor: HCURSOR,
     ) -> Self {
         let classname = register_wnd_class(icon);
-        let hide_title_bar = params
+        let transparent_title_bar = params
             .titlebar
             .as_ref()
             .map(|titlebar| titlebar.appears_transparent)
@@ -272,7 +275,8 @@ impl WindowsWindow {
         let mut context = WindowCreateContext {
             inner: None,
             handle,
-            hide_title_bar,
+            title_bar: params.titlebar.is_some(),
+            transparent_title_bar,
             display,
             transparent: params.window_background != WindowBackgroundAppearance::Opaque,
             executor,
