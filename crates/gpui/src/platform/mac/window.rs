@@ -1913,7 +1913,6 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
     unsafe {
         let window_state = get_window_state(window);
         let mut lock = window_state.lock();
-        lock.ime_composing = true;
 
         if let Some(mut input_handler) = lock.input_handler.take() {
             match ime {
@@ -1927,6 +1926,7 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
                     input_handler.replace_text_in_range(range, &text)
                 }
                 ImeInput::SetMarkedText(text, range, marked_range) => {
+                    lock.ime_composing = true;
                     drop(lock);
                     input_handler.replace_and_mark_text_in_range(range, &text, marked_range)
                 }
