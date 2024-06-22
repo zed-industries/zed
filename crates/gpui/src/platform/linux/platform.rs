@@ -597,6 +597,9 @@ impl Keystroke {
             Keysym::Prior => "pageup".to_owned(),
             Keysym::Next => "pagedown".to_owned(),
 
+            Keysym::KP_Prior => "numpad_pageup".to_owned(),
+            Keysym::KP_Next => "numpad_pagedown".to_owned(),
+
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),
             Keysym::less => "<".to_owned(),
@@ -640,7 +643,12 @@ impl Keystroke {
 
             _ => {
                 handle_consumed_modifiers = false;
-                xkb::keysym_get_name(key_sym).to_lowercase()
+                let name = xkb::keysym_get_name(key_sym).to_lowercase();
+                if key_sym.is_keypad_key() {
+                    name.replace("kp", "numpad")
+                } else {
+                    name
+                }
             }
         };
 
