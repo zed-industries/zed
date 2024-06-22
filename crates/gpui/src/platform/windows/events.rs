@@ -267,14 +267,8 @@ fn handle_syskeydown_msg(
 ) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
-        return None;
-    };
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return None;
-    };
-    drop(lock);
+    let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
     let event = KeyDownEvent {
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
@@ -292,14 +286,8 @@ fn handle_syskeydown_msg(
 fn handle_syskeyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
-        return None;
-    };
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return None;
-    };
-    drop(lock);
+    let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
     let event = KeyUpEvent { keystroke };
     let result = if func(PlatformInput::KeyUp(event)).default_prevented {
         Some(0)
@@ -663,11 +651,7 @@ fn handle_calc_client_size(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar || state_ptr.state.borrow().is_fullscreen() {
-        return None;
-    }
-
-    if wparam.0 == 0 {
+    if !state_ptr.hide_title_bar || state_ptr.state.borrow().is_fullscreen() || wparam.0 == 0 {
         return None;
     }
 
@@ -1097,13 +1081,14 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_NEXT => "pagedown",
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
+        VK_DELETE => "delete",
         _ => return basic_vkcode_to_string(vk_code, modifiers),
     }
     .to_owned();
 
     Some(Keystroke {
         modifiers,
-        key: key,
+        key,
         ime_key: None,
     })
 }
@@ -1160,7 +1145,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
 
     Some(KeystrokeOrModifier::Keystroke(Keystroke {
         modifiers,
-        key: key,
+        key,
         ime_key: None,
     }))
 }
