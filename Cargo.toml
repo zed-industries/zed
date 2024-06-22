@@ -308,7 +308,7 @@ heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 ignore = "0.4.22"
-image = "0.23"
+image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "1"
 # We explicitly disable http2 support in isahc.

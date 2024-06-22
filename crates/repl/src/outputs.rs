@@ -60,7 +60,12 @@ impl ImageView {
         let bytes = base64::decode(base64_encoded_data)?;
 
         let format = image::guess_format(&bytes)?;
-        let data = image::load_from_memory_with_format(&bytes, format)?.into_bgra8();
+        let mut data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
+
+        // Convert from RGBA to BGRA.
+        for pixel in data.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
 
         let height = data.height();
         let width = data.width();
