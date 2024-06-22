@@ -5,6 +5,8 @@
       "cmd-shift-]": "pane::ActivateNextItem",
       "ctrl-pagedown": "pane::ActivatePrevItem",
       "ctrl-pageup": "pane::ActivateNextItem",
+      "ctrl-numpad_pagedown": "pane::ActivatePrevItem",
+      "ctrl-numpad_pageup": "pane::ActivateNextItem",
       "ctrl-shift-tab": "pane::ActivateNextItem",
       "ctrl-tab": "pane::ActivatePrevItem",
       "cmd-+": "zed::IncreaseBufferFontSize"
@@ -15,6 +17,8 @@
     "bindings": {
       "ctrl-shift-up": "editor::AddSelectionAbove",
       "ctrl-shift-down": "editor::AddSelectionBelow",
+      "ctrl-shift-numpad_up": "editor::AddSelectionAbove",
+      "ctrl-shift-numpad_down": "editor::AddSelectionBelow",
       "cmd-shift-space": "editor::SelectAll",
       "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
       "cmd-shift-l": "editor::SplitSelectionIntoLines",
@@ -23,10 +27,14 @@
       "alt-cmd-down": "editor::GoToDefinition",
       "ctrl-alt-cmd-down": "editor::GoToDefinitionSplit",
       "alt-shift-cmd-down": "editor::FindAllReferences",
+      "alt-cmd-numpad_down": "editor::GoToDefinition",
+      "ctrl-alt-cmd-numpad_down": "editor::GoToDefinitionSplit",
+      "alt-shift-cmd-numpad_down": "editor::FindAllReferences",
       "ctrl-.": "editor::GoToHunk",
       "ctrl-,": "editor::GoToPrevHunk",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd"
+      "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "ctrl-numpad_delete": "editor::DeleteToNextWordEnd"
     }
   },
   {
