@@ -602,35 +602,25 @@ fn handle_ime_composition(
 ) -> Option<isize> {
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
-        let Some((string, string_len)) = parse_ime_compostion_string(handle) else {
-            return None;
-        };
-        let mut lock = state_ptr.state.borrow_mut();
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return None;
-        };
-        drop(lock);
-        input_handler.replace_and_mark_text_in_range(None, string.as_str(), Some(0..string_len));
+        let (comp_string, string_len) = parse_ime_compostion_string(handle)?;
+        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
+        input_handler.replace_and_mark_text_in_range(
+            None,
+            &comp_string,
+            Some(string_len..string_len),
+        );
         state_ptr.state.borrow_mut().input_handler = Some(input_handler);
-        ime_input = Some(string);
+        ime_input = Some(comp_string);
     }
     if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
-        let Some(ref comp_string) = ime_input else {
-            return None;
-        };
+        let comp_string = &ime_input?;
         let caret_pos = retrieve_composition_cursor_position(handle);
-        let mut lock = state_ptr.state.borrow_mut();
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return None;
-        };
-        drop(lock);
-        input_handler.replace_and_mark_text_in_range(None, comp_string, Some(0..caret_pos));
+        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
+        input_handler.replace_and_mark_text_in_range(None, comp_string, Some(caret_pos..caret_pos));
         state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     }
     if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
-        let Some(comp_result) = parse_ime_compostion_result(handle) else {
-            return None;
-        };
+        let comp_result = parse_ime_compostion_result(handle)?;
         let mut lock = state_ptr.state.borrow_mut();
         let Some(mut input_handler) = lock.input_handler.take() else {
             return Some(1);
