@@ -51,11 +51,16 @@ impl DebugAdapterClient {
         command: &str,
         args: Vec<&str>,
         port: u16,
+        project_path: PathBuf,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
         match transport_type {
-            TransportType::TCP => Self::create_tcp_client(command, args, port, cx).await,
-            TransportType::STDIO => Self::create_stdio_client(command, args, port, cx).await,
+            TransportType::TCP => {
+                Self::create_tcp_client(command, args, port, project_path, cx).await
+            }
+            TransportType::STDIO => {
+                Self::create_stdio_client(command, args, port, project_path, cx).await
+            }
         }
     }
 
@@ -63,10 +68,12 @@ impl DebugAdapterClient {
         command: &str,
         args: Vec<&str>,
         port: u16,
+        project_path: PathBuf,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
         let mut command = process::Command::new(command);
         command
+            .current_dir(project_path)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -99,6 +106,7 @@ impl DebugAdapterClient {
         command: &str,
         args: Vec<&str>,
         port: u16,
+        project_path: PathBuf,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
         todo!("not implemented")
@@ -177,7 +185,7 @@ impl DebugAdapterClient {
     pub async fn initialize(&self) -> Result<Value> {
         let args = InitializeArguments {
             client_id: Some("zed".to_owned()),
-            client_name: Some("zed".to_owned()),
+            client_name: Some("Zed".to_owned()),
             adapter_id: "xdebug".into(),
             locale: Some("en-us".to_owned()),
             lines_start_at_one: Some(true),

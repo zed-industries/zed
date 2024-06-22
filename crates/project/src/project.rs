@@ -1037,52 +1037,55 @@ impl Project {
         id: DebugAdapterClientId,
         cx: &mut ModelContext<Self>,
     ) {
-        self.debug_adapters
-            .insert(id, DebugAdapterClientState::Starting(Task::Ready(None)));
+        let task = cx.spawn(|this, mut cx| async move {
+            let mut client = DebugAdapterClient::new(
+                TransportType::TCP,
+                "bun",
+                vec![
+                    "/Users/remcosmits/Documents/code/vscode-php-debug/out/phpDebug.js",
+                    "--server=8127",
+                ],
+                8127,
+                "/Users/remcosmits/Documents/code/symfony_demo".into(),
+                &mut cx,
+            )
+            .await
+            .log_err()?;
 
-        let task = cx
-            .spawn(|this, mut cx| async move {
-                let mut client = DebugAdapterClient::new(
-                    TransportType::TCP,
-                    "bun",
-                    vec![
-                        "/Users/remcosmits/Documents/code/vscode-php-debug/out/phpDebug.js",
-                        "--server=8125",
-                    ],
-                    8125,
-                    &mut cx,
+            // initialize
+            client.initialize().await.log_err()?;
+
+            // set break point
+            client
+                .set_breakpoints(
+                    "/Users/remcosmits/Documents/code/symfony_demo/src/Kernel.php".into(),
+                    14,
                 )
-                .await?;
+                .await;
 
-                // initialize
-                client.initialize().await?;
+            // configuration done
+            client.configuration_done().await.log_err()?;
 
-                // set break point
-                client
-                    .set_breakpoints(
-                        "/Users/remcosmits/Documents/code/symfony_demo/src/Kernel.php".into(),
-                        14,
-                    )
-                    .await;
+            // launch/attach request
+            client.launch().await.log_err()?;
 
-                // launch/attach request
-                client.launch().await?;
+            let client = Arc::new(client);
 
-                // configuration done
-                client.configuration_done().await?;
-
-                let client = Arc::new(client);
-
-                this.update(&mut cx, |this, _| {
-                    let handle = this
-                        .debug_adapters
-                        .get_mut(&id)
-                        .with_context(|| "Failed to find debug adapter with given id")?;
-                    *handle = DebugAdapterClientState::Running(client.clone());
-                    anyhow::Ok(())
-                })
+            this.update(&mut cx, |this, _| {
+                let handle = this
+                    .debug_adapters
+                    .get_mut(&id)
+                    .with_context(|| "Failed to find debug adapter with given id")?;
+                *handle = DebugAdapterClientState::Running(client.clone());
+                anyhow::Ok(())
             })
-            .detach_and_log_err(cx);
+            .log_err();
+
+            Some(client)
+        });
+
+        self.debug_adapters
+            .insert(id, DebugAdapterClientState::Starting(task));
     }
 
     pub fn update_breakpoint(
