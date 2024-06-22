@@ -25,6 +25,8 @@
       ],
       "ctrl-shift-down": "editor::AddSelectionBelow",
       "ctrl-shift-up": "editor::AddSelectionAbove",
+      "ctrl-shift-numpad_down": "editor::AddSelectionBelow",
+      "ctrl-shift-numpad_up": "editor::AddSelectionAbove",
       "cmd-shift-backspace": "editor::DeleteToBeginningOfLine",
       "ctrl-shift-m": "markdown::OpenPreviewToTheSide"
     }
