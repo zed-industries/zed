@@ -15,9 +15,13 @@
       "cmd-backspace": "editor::DeleteLine",
       "cmd-pagedown": "editor::MovePageDown",
       "cmd-pageup": "editor::MovePageUp",
+      "cmd-numpad_pagedown": "editor::MovePageDown",
+      "cmd-numpad_pageup": "editor::MovePageUp",
       "ctrl-alt-shift-b": "editor::SelectToPreviousWordStart",
       "cmd-alt-enter": "editor::NewlineAbove",
       "shift-enter": "editor::NewlineBelow",
+      "cmd-alt-numpad_enter": "editor::NewlineAbove",
+      "shift-numpad_enter": "editor::NewlineBelow",
       "cmd--": "editor::Fold",
       "cmd-+": "editor::UnfoldLines",
       "alt-shift-g": "editor::SplitSelectionIntoLines",
@@ -41,8 +45,12 @@
       ],
       "alt-up": "editor::SelectLargerSyntaxNode",
       "alt-down": "editor::SelectSmallerSyntaxNode",
+      "alt-numpad_up": "editor::SelectLargerSyntaxNode",
+      "alt-numpad_down": "editor::SelectSmallerSyntaxNode",
       "shift-alt-up": "editor::MoveLineUp",
       "shift-alt-down": "editor::MoveLineDown",
+      "shift-alt-numpad_up": "editor::MoveLineUp",
+      "shift-alt-numpad_down": "editor::MoveLineDown",
       "cmd-alt-l": "editor::Format",
       "shift-f6": "editor::Rename",
       "cmd-[": "pane::GoBack",
@@ -57,10 +65,16 @@
       "cmd-f2": "editor::GoToPrevDiagnostic",
       "ctrl-alt-shift-down": "editor::GoToHunk",
       "ctrl-alt-shift-up": "editor::GoToPrevHunk",
+      "ctrl-alt-shift-numpad_down": "editor::GoToHunk",
+      "ctrl-alt-shift-numpad_up": "editor::GoToPrevHunk",
       "cmd-home": "editor::MoveToBeginning",
       "cmd-end": "editor::MoveToEnd",
+      "cmd-numpad_home": "editor::MoveToBeginning",
+      "cmd-numpad_end": "editor::MoveToEnd",
       "cmd-shift-home": "editor::SelectToBeginning",
-      "cmd-shift-end": "editor::SelectToEnd"
+      "cmd-shift-end": "editor::SelectToEnd",
+      "cmd-shift-numpad_home": "editor::SelectToBeginning",
+      "cmd-shift-numpad_end": "editor::SelectToEnd"
     }
   },
   {
@@ -70,7 +84,8 @@
       "cmd-7": "outline::Toggle",
       "cmd-shift-o": "file_finder::Toggle",
       "cmd-l": "go_to_line::Toggle",
-      "alt-enter": "editor::ToggleCodeActions"
+      "alt-enter": "editor::ToggleCodeActions",
+      "alt-numpad_enter": "editor::ToggleCodeActions"
     }
   },
   {
@@ -87,13 +102,16 @@
     "context": "Pane",
     "bindings": {
       "cmd-alt-left": "pane::GoBack",
-      "cmd-alt-right": "pane::GoForward"
+      "cmd-alt-right": "pane::GoForward",
+      "cmd-alt-numpad_left": "pane::GoBack",
+      "cmd-alt-numpad_right": "pane::GoForward"
     }
   },
   {
     "context": "ProjectPanel",
     "bindings": {
       "enter": "project_panel::Open",
+      "numpad_enter": "project_panel::Open",
       "shift-f6": "project_panel::Rename"
     }
   }
