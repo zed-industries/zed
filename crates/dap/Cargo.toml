@@ -10,7 +10,6 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
-dap = { git = "https://github.com/sztomi/dap-rs", branch = "main" }
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true
@@ -21,3 +20,4 @@ serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
 util.workspace = true
+async-std = "1.12.0"

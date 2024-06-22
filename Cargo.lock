@@ -3132,7 +3132,7 @@ name = "dap"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dap 0.4.1-alpha1",
+ "async-std",
  "futures 0.3.28",
  "gpui",
  "log",
@@ -3143,16 +3143,6 @@ dependencies = [
  "serde_json",
  "smol",
  "util",
-]
-
-[[package]]
-name = "dap"
-version = "0.4.1-alpha1"
-source = "git+https://github.com/sztomi/dap-rs?branch=main#913a2a520416a2a81a1f09a7946f595d5ae3ee4a"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror",
 ]
 
 [[package]]
@@ -3208,7 +3198,7 @@ name = "debugger_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dap 0.1.0",
+ "dap",
  "db",
  "editor",
  "futures 0.3.28",
