@@ -4350,7 +4350,6 @@ impl WorkspaceStore {
     pub async fn handle_follow(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::Follow>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::FollowResponse> {
         this.update(&mut cx, |this, cx| {
@@ -4396,7 +4395,6 @@ impl WorkspaceStore {
     async fn handle_update_followers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateFollowers>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let leader_id = envelope.original_sender_id()?;
