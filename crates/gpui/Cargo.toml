@@ -6,6 +6,9 @@ authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
 publish = false
 license = "Apache-2.0"
+[profile.release]
+lto = true
+strip = "symbols"
 
 [lints]
 workspace = true
@@ -81,6 +84,9 @@ collections = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 http = { workspace = true, features = ["test-support"] }
 
+[build-dependencies]
+embed-resource = "2.4"
+
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.65.1"
 cbindgen = "0.26.0"
@@ -103,14 +109,15 @@ blade-graphics.workspace = true
 blade-macros.workspace = true
 blade-util.workspace = true
 bytemuck = "1"
-cosmic-text = { git = "https://github.com/pop-os/cosmic-text", rev = "542b20c" }
+cosmic-text = "0.11.2"
+copypasta = "0.10.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 as-raw-xcb-connection = "1"
 ashpd.workspace = true
-calloop = "0.13.0"
-calloop-wayland-source = "0.3.0"
-wayland-backend = { version = "0.3.3", features = ["client_system", "dlopen"] }
+calloop = "0.12.4"
+calloop-wayland-source = "0.2.0"
+wayland-backend = { version = "0.3.3", features = ["client_system"] }
 wayland-client = { version = "0.31.2" }
 wayland-cursor = "0.31.1"
 wayland-protocols = { version = "0.31.2", features = [
@@ -141,10 +148,6 @@ x11-clipboard = "0.9.2"
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 windows-core = "0.57"
-clipboard-win = "3.1.1"
-
-[target.'cfg(windows)'.build-dependencies]
-embed-resource = "2.4"
 
 [[example]]
 name = "hello_world"
