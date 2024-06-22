@@ -842,9 +842,9 @@ impl ClickState {
     }
 
     pub fn system_update(&mut self) {
-        let double_click_spatial_tolerance_width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
-        let double_click_spatial_tolerance_height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
-        let double_click_interval = Duration::from_millis(unsafe { GetDoubleClickTime() } as u64);
+        self.double_click_spatial_tolerance_width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
+        self.double_click_spatial_tolerance_height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
+        self.double_click_interval = Duration::from_millis(unsafe { GetDoubleClickTime() } as u64);
     }
 
     #[inline]
