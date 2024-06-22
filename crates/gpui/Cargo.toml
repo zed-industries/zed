@@ -148,6 +148,7 @@ x11-clipboard = "0.9.2"
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 windows-core = "0.57"
+clipboard-win = "3.1.1"
 
 [[example]]
 name = "hello_world"
