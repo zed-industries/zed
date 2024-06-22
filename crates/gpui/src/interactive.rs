@@ -486,6 +486,7 @@ mod test {
                     focus_handle: cx.focus_handle(),
                 })
             })
+            .unwrap()
         });
 
         cx.update(|cx| {

@@ -9,7 +9,7 @@ use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
-use ui::{h_flex, popover_menu, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
+use ui::{h_flex, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
 use workspace::{
     item::{Item, ItemHandle, TabContentParams},
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -110,7 +110,7 @@ impl SyntaxTreeView {
 
         let subscription = cx.subscribe(&editor, |this, _, event, cx| {
             let did_reparse = match event {
-                editor::EditorEvent::Reparsed => true,
+                editor::EditorEvent::Reparsed(_) => true,
                 editor::EditorEvent::SelectionsChanged { .. } => false,
                 _ => return,
             };
@@ -431,7 +431,7 @@ impl SyntaxTreeToolbarItemView {
 
         let view = cx.view().clone();
         Some(
-            popover_menu("Syntax Tree")
+            PopoverMenu::new("Syntax Tree")
                 .trigger(Self::render_header(&active_layer))
                 .menu(move |cx| {
                     ContextMenu::build(cx, |mut menu, cx| {
@@ -492,7 +492,7 @@ fn format_node_range(node: Node) -> String {
 impl Render for SyntaxTreeToolbarItemView {
     fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
         self.render_menu(cx)
-            .unwrap_or_else(|| popover_menu("Empty Syntax Tree"))
+            .unwrap_or_else(|| PopoverMenu::new("Empty Syntax Tree"))
     }
 }
 

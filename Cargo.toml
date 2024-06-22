@@ -61,22 +61,28 @@ members = [
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",
+    "crates/ollama",
     "crates/open_ai",
     "crates/outline",
+    "crates/outline_panel",
+    "crates/paths",
     "crates/picker",
     "crates/prettier",
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
+    "crates/proto",
     "crates/quick_action_bar",
     "crates/recent_projects",
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
     "crates/dev_server_projects",
+    "crates/repl",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
+    "crates/rustdoc",
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
@@ -130,6 +136,7 @@ members = [
     "extensions/prisma",
     "extensions/purescript",
     "extensions/ruby",
+    "extensions/snippets",
     "extensions/svelte",
     "extensions/terraform",
     "extensions/toml",
@@ -163,7 +170,6 @@ clock = { path = "crates/clock" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
-color = { path = "crates/color" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
@@ -207,13 +213,17 @@ menu = { path = "crates/menu" }
 multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
+ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
+outline_panel = { path = "crates/outline_panel" }
+paths = { path = "crates/paths" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
+proto = { path = "crates/proto" }
 worktree = { path = "crates/worktree" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
@@ -221,9 +231,11 @@ quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
 dev_server_projects = { path = "crates/dev_server_projects" }
+repl = { path = "crates/repl" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
+rustdoc = { path = "crates/rustdoc" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
@@ -257,29 +269,32 @@ workspace = { path = "crates/workspace" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
+alacritty_terminal = "0.23"
 anyhow = "1.0.57"
 any_vec = "0.13"
 ashpd = "0.8.0"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-dispatcher = { version = "0.1"}
 async-fs = "1.6"
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "bdaf8c534fbbc9fbca71d1cf272f45640b3a068d" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "bdaf8c534fbbc9fbca71d1cf272f45640b3a068d" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "bdaf8c534fbbc9fbca71d1cf272f45640b3a068d" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
+blade-macros = { git = "https://github.com/kvark/blade", rev =  "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"  }
 cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
+cocoa = "0.25"
 ctor = "0.2.6"
-signal-hook = "0.3.17"
 core-foundation = { version = "0.9.3" }
 core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
+dirs = "4.0"
 emojis = "0.6.1"
 env_logger = "0.9"
 exec = "0.3.1"
@@ -287,18 +302,17 @@ fork = "0.1.23"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-git2 = { version = "0.18", default-features = false }
+git2 = { version = "0.19", default-features = false }
 globset = "0.4"
 heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 ignore = "0.4.22"
+image = "0.23"
+indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "1"
 # We explicitly disable http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = [
-    "static-curl",
-    "text-decoding",
-] }
+isahc = { version = "1.7.2", default-features = false, features = [ "text-decoding" ] }
 itertools = "0.11.0"
 lazy_static = "1.4.0"
 libc = "0.2"
@@ -307,6 +321,7 @@ log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
 nix = "0.28"
+num-format = "0.4.4"
 once_cell = "1.19.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
@@ -323,6 +338,7 @@ rand = "0.8.5"
 refineable = { path = "./crates/refineable" }
 regex = "1.5"
 repair_json = "0.1.0"
+runtimelib = { version="0.12", default-features = false, features = ["async-dispatcher-runtime"] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
 schemars = "0.8"
@@ -338,6 +354,8 @@ serde_repr = "0.1"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
+signal-hook = "0.3.17"
+similar = "1.3"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
@@ -399,12 +417,13 @@ wit-component = "0.201"
 sys-locale = "0.3.1"
 
 [workspace.dependencies.windows]
-version = "0.56.0"
+version = "0.57"
 features = [
     "implement",
     "Foundation_Numerics",
     "System",
     "System_Threading",
+    "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
     "Win32_Graphics_Direct2D",

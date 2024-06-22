@@ -601,6 +601,7 @@ impl LanguageServer {
                                 ],
                             }),
                             insert_replace_support: Some(true),
+                            label_details_support: Some(true),
                             ..Default::default()
                         }),
                         completion_list: Some(CompletionListCapability {
@@ -611,6 +612,7 @@ impl LanguageServer {
                                 "data".to_owned(),
                             ]),
                         }),
+                        context_support: Some(true),
                         ..Default::default()
                     }),
                     rename: Some(RenameClientCapabilities {
@@ -641,10 +643,6 @@ impl LanguageServer {
                         dynamic_registration: None,
                     }),
                     on_type_formatting: Some(DynamicRegistrationClientCapabilities {
-                        dynamic_registration: None,
-                    }),
-                    diagnostic: Some(DiagnosticClientCapabilities {
-                        related_document_support: Some(true),
                         dynamic_registration: None,
                     }),
                     ..Default::default()
@@ -1001,7 +999,7 @@ impl LanguageServer {
             select! {
                 response = rx.fuse() => {
                     let elapsed = started.elapsed();
-                    log::trace!("Took {elapsed:?} to receive response to {method:?} id {id}");
+                    log::info!("Took {elapsed:?} to receive response to {method:?} id {id}");
                     cancel_on_drop.abort();
                     response?
                 }
@@ -1293,6 +1291,14 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has started work and notifies about its progress with the specified token.
     pub async fn start_progress(&self, token: impl Into<String>) {
+        self.start_progress_with(token, Default::default()).await
+    }
+
+    pub async fn start_progress_with(
+        &self,
+        token: impl Into<String>,
+        progress: WorkDoneProgressBegin,
+    ) {
         let token = token.into();
         self.request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
             token: NumberOrString::String(token.clone()),
@@ -1301,7 +1307,7 @@ impl FakeLanguageServer {
         .unwrap();
         self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token),
-            value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(Default::default())),
+            value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
         });
     }
 
@@ -1317,7 +1323,7 @@ impl FakeLanguageServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{SemanticVersion, TestAppContext};
     use std::str::FromStr;
 
     #[ctor::ctor]
@@ -1330,7 +1336,7 @@ mod tests {
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
         });
         let (server, mut fake) = FakeLanguageServer::new(
             LanguageServerId(0),

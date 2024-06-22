@@ -1,12 +1,15 @@
-use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
+use super::{
+    diagnostics_command::write_single_file_diagnostics,
+    file_command::{build_entry_output_section, codeblock_fence_for_path},
+    SlashCommand, SlashCommandOutput,
+};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandOutputSection;
 use collections::HashMap;
 use editor::Editor;
 use gpui::{AppContext, Entity, Task, WeakView};
 use language::LspAdapterDelegate;
-use std::{fmt::Write, path::Path, sync::Arc};
-use ui::{IntoElement, WindowContext};
+use std::{fmt::Write, sync::Arc};
+use ui::WindowContext;
 use workspace::Workspace;
 
 pub(crate) struct TabsSlashCommand;
@@ -29,7 +32,7 @@ impl SlashCommand for TabsSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         _query: String,
         _cancel: Arc<std::sync::atomic::AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
@@ -75,44 +78,37 @@ impl SlashCommand for TabsSlashCommand {
 
                 let mut sections = Vec::new();
                 let mut text = String::new();
+                let mut has_diagnostics = false;
                 for (full_path, buffer, _) in open_buffers {
                     let section_start_ix = text.len();
-                    writeln!(
-                        text,
-                        "```{}\n",
-                        full_path
-                            .as_deref()
-                            .unwrap_or(Path::new("untitled"))
-                            .display()
-                    )
-                    .unwrap();
+                    text.push_str(&codeblock_fence_for_path(full_path.as_deref(), None));
                     for chunk in buffer.as_rope().chunks() {
                         text.push_str(chunk);
                     }
                     if !text.ends_with('\n') {
                         text.push('\n');
                     }
-                    writeln!(text, "```\n").unwrap();
-                    let section_end_ix = text.len() - 1;
+                    writeln!(text, "```").unwrap();
+                    if write_single_file_diagnostics(&mut text, full_path.as_deref(), &buffer) {
+                        has_diagnostics = true;
+                    }
+                    if !text.ends_with('\n') {
+                        text.push('\n');
+                    }
 
-                    sections.push(SlashCommandOutputSection {
-                        range: section_start_ix..section_end_ix,
-                        render_placeholder: Arc::new(move |id, unfold, _| {
-                            FilePlaceholder {
-                                id,
-                                path: full_path.clone(),
-                                line_range: None,
-                                unfold,
-                            }
-                            .into_any_element()
-                        }),
-                    });
+                    let section_end_ix = text.len() - 1;
+                    sections.push(build_entry_output_section(
+                        section_start_ix..section_end_ix,
+                        full_path.as_deref(),
+                        false,
+                        None,
+                    ));
                 }
 
                 Ok(SlashCommandOutput {
                     text,
                     sections,
-                    run_commands_in_text: false,
+                    run_commands_in_text: has_diagnostics,
                 })
             }),
             Err(error) => Task::ready(Err(error)),

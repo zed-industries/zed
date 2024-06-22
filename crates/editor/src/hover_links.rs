@@ -322,7 +322,6 @@ pub fn update_inlay_link_and_hover_points(
                                     hover_popover::hover_at_inlay(
                                         editor,
                                         InlayHover {
-                                            excerpt: excerpt_id,
                                             tooltip: match tooltip {
                                                 InlayHintTooltip::String(text) => HoverBlock {
                                                     text,
@@ -370,7 +369,6 @@ pub fn update_inlay_link_and_hover_points(
                                         hover_popover::hover_at_inlay(
                                             editor,
                                             InlayHover {
-                                                excerpt: excerpt_id,
                                                 tooltip: match tooltip {
                                                     InlayHintLabelPartTooltip::String(text) => {
                                                         HoverBlock {
@@ -752,9 +750,13 @@ mod tests {
                 ])))
             });
 
-        cx.cx
-            .cx
-            .simulate_mouse_move(screen_coord.unwrap(), None, Modifiers::command_shift());
+        let modifiers = if cfg!(target_os = "macos") {
+            Modifiers::command_shift()
+        } else {
+            Modifiers::control_shift()
+        };
+
+        cx.simulate_mouse_move(screen_coord.unwrap(), None, modifiers);
 
         requests.next().await;
         cx.run_until_parked();
@@ -771,9 +773,7 @@ mod tests {
             let variable = A;
         "});
 
-        cx.cx
-            .cx
-            .simulate_click(screen_coord.unwrap(), Modifiers::command_shift());
+        cx.simulate_click(screen_coord.unwrap(), modifiers);
 
         cx.assert_editor_state(indoc! {"
             struct «Aˇ»;

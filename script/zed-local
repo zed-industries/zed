@@ -17,7 +17,7 @@ OPTIONS
   --stable         Use stable Zed release installed on local machine for all instances (except for the first one).
 `.trim();
 
-const { spawn, execFileSync } = require("child_process");
+const { spawn, execSync, execFileSync } = require("child_process");
 const assert = require("assert");
 
 let users;
@@ -68,24 +68,43 @@ while (args.length > 0) {
 
   args.shift();
 }
+const os = require("os");
+const platform = os.platform();
 
-// Parse the resolution of the main screen
-const displayInfo = JSON.parse(
-  execFileSync("system_profiler", ["SPDisplaysDataType", "-json"], {
-    encoding: "utf8",
-  }),
-);
-const mainDisplayResolution = displayInfo?.SPDisplaysDataType?.flatMap(
-  (display) => display?.spdisplays_ndrvs,
-)
-  ?.find((entry) => entry?.spdisplays_main === "spdisplays_yes")
-  ?._spdisplays_resolution?.match(RESOLUTION_REGEX);
-if (!mainDisplayResolution) {
-  throw new Error("Could not parse screen resolution");
-}
+let screenWidth, screenHeight;
 const titleBarHeight = 24;
-const screenWidth = parseInt(mainDisplayResolution[1]);
-let screenHeight = parseInt(mainDisplayResolution[2]) - titleBarHeight;
+
+if (platform === "darwin") {
+  // macOS
+  const displayInfo = JSON.parse(
+    execFileSync("system_profiler", ["SPDisplaysDataType", "-json"], {
+      encoding: "utf8",
+    }),
+  );
+  const mainDisplayResolution = displayInfo?.SPDisplaysDataType?.flatMap(
+    (display) => display?.spdisplays_ndrvs,
+  )
+    ?.find((entry) => entry?.spdisplays_main === "spdisplays_yes")
+    ?._spdisplays_resolution?.match(RESOLUTION_REGEX);
+  if (!mainDisplayResolution) {
+    throw new Error("Could not parse screen resolution");
+  }
+  screenWidth = parseInt(mainDisplayResolution[1]);
+  screenHeight = parseInt(mainDisplayResolution[2]) - titleBarHeight;
+} else if (platform === "linux") {
+  // Linux
+  try {
+    const xrandrOutput = execSync('xrandr | grep "\\*" | cut -d" " -f4', {
+      encoding: "utf8",
+    }).trim();
+    [screenWidth, screenHeight] = xrandrOutput.split("x").map(Number);
+  } catch (err) {
+    console.log(err);
+    throw new Error("Could not get screen resolution");
+  }
+}
+
+screenHeight -= titleBarHeight;
 
 if (isTop) {
   screenHeight = Math.floor(screenHeight / 2);
@@ -128,7 +147,9 @@ if (isReleaseMode) {
 }
 
 try {
-  execFileSync("cargo", buildArgs, { stdio: "inherit" });
+  execFileSync("cargo", buildArgs, {
+    stdio: "inherit",
+  });
 } catch (e) {
   process.exit(0);
 }
@@ -151,7 +172,7 @@ setTimeout(() => {
       env: Object.assign({}, process.env, {
         ZED_IMPERSONATE: users[i],
         ZED_WINDOW_POSITION: position,
-        ZED_STATELESS: isStateful && i == 0 ? "1" : "",
+        ZED_STATELESS: isStateful && i == 0 ? "" : "1",
         ZED_ALWAYS_ACTIVE: "1",
         ZED_SERVER_URL: "http://localhost:3000",
         ZED_RPC_URL: "http://localhost:8080/rpc",

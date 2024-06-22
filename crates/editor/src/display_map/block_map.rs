@@ -37,6 +37,11 @@ pub struct BlockMap {
     excerpt_footer_height: u8,
 }
 
+pub struct BlockMapReader<'a> {
+    blocks: &'a Vec<Arc<Block>>,
+    pub snapshot: BlockSnapshot,
+}
+
 pub struct BlockMapWriter<'a>(&'a mut BlockMap);
 
 #[derive(Clone)]
@@ -246,12 +251,15 @@ impl BlockMap {
         map
     }
 
-    pub fn read(&self, wrap_snapshot: WrapSnapshot, edits: Patch<u32>) -> BlockSnapshot {
+    pub fn read(&self, wrap_snapshot: WrapSnapshot, edits: Patch<u32>) -> BlockMapReader {
         self.sync(&wrap_snapshot, edits);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot.clone();
-        BlockSnapshot {
-            wrap_snapshot,
-            transforms: self.transforms.borrow().clone(),
+        BlockMapReader {
+            blocks: &self.blocks,
+            snapshot: BlockSnapshot {
+                wrap_snapshot,
+                transforms: self.transforms.borrow().clone(),
+            },
         }
     }
 
@@ -603,6 +611,62 @@ impl Deref for BlockPoint {
 impl std::ops::DerefMut for BlockPoint {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl<'a> Deref for BlockMapReader<'a> {
+    type Target = BlockSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+
+impl<'a> DerefMut for BlockMapReader<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.snapshot
+    }
+}
+
+impl<'a> BlockMapReader<'a> {
+    pub fn row_for_block(&self, block_id: BlockId) -> Option<BlockRow> {
+        let block = self.blocks.iter().find(|block| block.id == block_id)?;
+        let buffer_row = block
+            .position
+            .to_point(self.wrap_snapshot.buffer_snapshot())
+            .row;
+        let wrap_row = self
+            .wrap_snapshot
+            .make_wrap_point(Point::new(buffer_row, 0), Bias::Left)
+            .row();
+        let start_wrap_row = WrapRow(
+            self.wrap_snapshot
+                .prev_row_boundary(WrapPoint::new(wrap_row, 0)),
+        );
+        let end_wrap_row = WrapRow(
+            self.wrap_snapshot
+                .next_row_boundary(WrapPoint::new(wrap_row, 0))
+                .unwrap_or(self.wrap_snapshot.max_point().row() + 1),
+        );
+
+        let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>();
+        cursor.seek(&start_wrap_row, Bias::Left, &());
+        while let Some(transform) = cursor.item() {
+            if cursor.start().0 > end_wrap_row {
+                break;
+            }
+
+            if let Some(BlockType::Custom(id)) =
+                transform.block.as_ref().map(|block| block.block_type())
+            {
+                if id == block_id {
+                    return Some(cursor.start().1);
+                }
+            }
+            cursor.next(&());
+        }
+
+        None
     }
 }
 
@@ -1157,7 +1221,7 @@ mod tests {
     use super::*;
     use crate::display_map::inlay_map::InlayMap;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
-    use gpui::{div, font, px, Element};
+    use gpui::{div, font, px, AssetSource, Element};
     use multi_buffer::MultiBuffer;
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1452,6 +1516,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[gpui::test]
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx));
@@ -1783,6 +1848,15 @@ mod tests {
                 expected_block_positions
             );
 
+            for (block_row, block) in expected_block_positions {
+                if let BlockType::Custom(block_id) = block.block_type() {
+                    assert_eq!(
+                        blocks_snapshot.row_for_block(block_id),
+                        Some(BlockRow(block_row))
+                    );
+                }
+            }
+
             let mut expected_longest_rows = Vec::new();
             let mut longest_line_len = -1_isize;
             for (row, line) in expected_lines.iter().enumerate() {
@@ -1940,6 +2014,12 @@ mod tests {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         theme::init(theme::LoadThemes::JustBase, cx);
+        cx.text_system()
+            .add_fonts(vec![assets::Assets
+                .load("fonts/zed-mono/zed-mono-extended.ttf")
+                .unwrap()
+                .unwrap()])
+            .unwrap();
     }
 
     impl TransformBlock {

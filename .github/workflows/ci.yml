@@ -38,9 +38,6 @@ jobs:
       - name: Remove untracked files
         run: git clean -df
 
-      - name: Set up default .cargo/config.toml
-        run: cp ./.cargo/ci-config.toml ~/.cargo/config.toml
-
       - name: Check spelling
         run: |
           if ! which typos > /dev/null; then
@@ -53,6 +50,9 @@ jobs:
 
       - name: Check unused dependencies
         uses: bnjbvr/cargo-machete@main
+
+      - name: Check licenses are present
+        run: script/check-licenses
 
       - name: Check license generation
         run: script/generate-licenses /tmp/zed_licenses_output
@@ -74,8 +74,8 @@ jobs:
           version: v1.29.0
       - uses: bufbuild/buf-breaking-action@v1
         with:
-          input: "crates/rpc/proto/"
-          against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/rpc/proto/"
+          input: "crates/proto/proto/"
+          against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
 
   macos_tests:
     timeout-minutes: 60
@@ -90,7 +90,7 @@ jobs:
           clean: false
 
       - name: cargo clippy
-        run: cargo xtask clippy
+        run: ./script/clippy
 
       - name: Run tests
         uses: ./.github/actions/run_tests
@@ -101,7 +101,6 @@ jobs:
       - name: Build other binaries and features
         run: cargo build --workspace --bins --all-features; cargo check -p gpui --features "macos-blade"
 
-  # todo(linux): Actually run the tests
   linux_tests:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
@@ -118,7 +117,10 @@ jobs:
           clean: false
 
       - name: cargo clippy
-        run: cargo xtask clippy
+        run: ./script/clippy
+
+      - name: Run tests
+        uses: ./.github/actions/run_tests
 
       - name: Build Zed
         run: cargo build -p zed
@@ -140,7 +142,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo clippy
-        run: cargo xtask clippy
+        run: ./script/clippy
 
       - name: Build Zed
         run: cargo build -p zed
@@ -305,10 +307,7 @@ jobs:
             exit 1
           fi
 
-      - name: Generate license file
-        run: script/generate-licenses
-
-      - name: Create and upload Linux .tar.gz bundle
+      - name: Create Linux .tar.gz bundle
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
@@ -316,7 +315,7 @@ jobs:
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
-          path: zed-*.tar.gz
+          path: target/release/zed-*.tar.gz
 
       - name: Upload app bundle to release
         uses: softprops/action-gh-release@v1
@@ -325,6 +324,89 @@ jobs:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
           files: target/release/zed-linux-x86_64.tar.gz
+          body: ""
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  bundle-linux-aarch64:
+    timeout-minutes: 60
+    name: Create arm64 Linux bundle
+    runs-on:
+      - hosted-linux-arm-1
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    needs: [linux_tests]
+    env:
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: "Setup jq"
+        uses: dcarbone/install-jq-action@v2
+
+      - name: Set up Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-10 clang-10 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
+          echo "/usr/lib/llvm-10/bin" >> $GITHUB_PATH
+
+      - uses: rui314/setup-mold@v1
+        with:
+          mold-version: 2.32.0
+
+      - name: rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 100
+
+      - name: Determine version and release channel
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          set -eu
+
+          version=$(script/get-crate-version zed)
+          channel=$(cat crates/zed/RELEASE_CHANNEL)
+          echo "Publishing version: ${version} on release channel ${channel}"
+          echo "RELEASE_CHANNEL=${channel}" >> $GITHUB_ENV
+
+          expected_tag_name=""
+          case ${channel} in
+            stable)
+              expected_tag_name="v${version}";;
+            preview)
+              expected_tag_name="v${version}-pre";;
+            nightly)
+              expected_tag_name="v${version}-nightly";;
+            *)
+              echo "can't publish a release on channel ${channel}"
+              exit 1;;
+          esac
+          if [[ $GITHUB_REF_NAME != $expected_tag_name ]]; then
+            echo "invalid release tag ${GITHUB_REF_NAME}. expected ${expected_tag_name}"
+            exit 1
+          fi
+
+      - name: Create and upload Linux .tar.gz bundle
+        run: script/bundle-linux
+
+      - name: Upload Linux bundle to workflow run if main branch or specific label
+        uses: actions/upload-artifact@v4
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        with:
+          name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
+          path: target/release/zed-*.tar.gz
+
+      - name: Upload app bundle to release
+        uses: softprops/action-gh-release@v1
+        if: ${{ env.RELEASE_CHANNEL == 'preview' }}
+        with:
+          draft: true
+          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+          files: target/release/zed-linux-aarch64.tar.gz
           body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

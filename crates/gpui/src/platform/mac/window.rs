@@ -1,11 +1,10 @@
 use super::{ns_string, renderer, MacDisplay, NSRange, NSStringExt};
 use crate::{
-    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DevicePixels,
-    DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind,
-    WindowParams,
+    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DisplayLink,
+    ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -311,7 +310,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
 }
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum ImeInput {
     InsertText(String, Option<Range<usize>>),
     SetMarkedText(String, Option<Range<usize>>, Option<Range<usize>>),
@@ -336,7 +335,6 @@ struct MacWindowState {
     input_handler: Option<PlatformInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
-    last_fresh_keydown: Option<Keystroke>,
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     // State tracking what the IME did after the last request
@@ -345,7 +343,7 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
-    fullscreen_restore_bounds: Bounds<DevicePixels>,
+    fullscreen_restore_bounds: Bounds<Pixels>,
 }
 
 impl MacWindowState {
@@ -439,7 +437,7 @@ impl MacWindowState {
         }
     }
 
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
         let screen_frame = unsafe {
             let screen = NSWindow::screen(self.native_window);
@@ -452,12 +450,12 @@ impl MacWindowState {
 
         let bounds = Bounds::new(
             point(
-                ((window_frame.origin.x - screen_frame.origin.x) as i32).into(),
-                ((window_frame.origin.y - screen_frame.origin.y) as i32).into(),
+                px((window_frame.origin.x - screen_frame.origin.x) as f32),
+                px((window_frame.origin.y - screen_frame.origin.y) as f32),
             ),
             size(
-                (window_frame.size.width as i32).into(),
-                (window_frame.size.height as i32).into(),
+                px(window_frame.size.width as f32),
+                px(window_frame.size.height as f32),
             ),
         );
         bounds
@@ -471,13 +469,6 @@ impl MacWindowState {
 
     fn scale_factor(&self) -> f32 {
         get_scale_factor(self.native_window)
-    }
-
-    fn update_drawable_size(&mut self, drawable_size: NSSize) {
-        self.renderer.update_drawable_size(Size {
-            width: drawable_size.width,
-            height: drawable_size.height,
-        })
     }
 
     fn titlebar_height(&self) -> Pixels {
@@ -599,14 +590,6 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
-            let window_size = {
-                let scale = get_scale_factor(native_window);
-                size(
-                    bounds.size.width.0 as f32 * scale,
-                    bounds.size.height.0 as f32 * scale,
-                )
-            };
-
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
@@ -617,7 +600,7 @@ impl MacWindow {
                     renderer_context,
                     native_window as *mut _,
                     native_view as *mut _,
-                    window_size,
+                    bounds.size.map(|pixels| pixels.0),
                     window_background != WindowBackgroundAppearance::Opaque,
                 ),
                 request_frame_callback: None,
@@ -631,7 +614,6 @@ impl MacWindow {
                 input_handler: None,
                 last_key_equivalent: None,
                 synthetic_drag_counter: 0,
-                last_fresh_keydown: None,
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
@@ -772,7 +754,7 @@ impl Drop for MacWindow {
 }
 
 impl PlatformWindow for MacWindow {
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.0.as_ref().lock().bounds()
     }
 
@@ -1235,15 +1217,6 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
         let keydown = event.keystroke.clone();
         let fn_modifier = keydown.modifiers.function;
-        // Ignore events from held-down keys after some of the initially-pressed keys
-        // were released.
-        if event.is_held {
-            if lock.last_fresh_keydown.as_ref() != Some(&keydown) {
-                return YES;
-            }
-        } else {
-            lock.last_fresh_keydown = Some(keydown.clone());
-        }
         lock.last_ime_inputs = Some(Default::default());
         drop(lock);
 
@@ -1455,7 +1428,6 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
         is_held: false,
     });
 
-    lock.last_fresh_keydown = Some(keystroke);
     if let Some(mut callback) = lock.event_callback.take() {
         drop(lock);
         callback(event);
@@ -1580,20 +1552,17 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
 
-    let scale_factor = lock.scale_factor() as f64;
+    let scale_factor = lock.scale_factor();
     let size = lock.content_size();
-    let drawable_size: NSSize = NSSize {
-        width: f64::from(size.width) * scale_factor,
-        height: f64::from(size.height) * scale_factor,
-    };
+    let drawable_size = size.to_device_pixels(scale_factor);
     unsafe {
         let _: () = msg_send![
             lock.renderer.layer(),
-            setContentsScale: scale_factor
+            setContentsScale: scale_factor as f64
         ];
     }
 
-    lock.update_drawable_size(drawable_size);
+    lock.renderer.update_drawable_size(drawable_size);
 
     if let Some(mut callback) = lock.resize_callback.take() {
         let content_size = lock.content_size();
@@ -1608,7 +1577,8 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
 
-    if lock.content_size() == size.into() {
+    let new_size = Size::<Pixels>::from(size);
+    if lock.content_size() == new_size {
         return;
     }
 
@@ -1616,16 +1586,10 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
         let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
     }
 
-    let scale_factor = lock.scale_factor() as f64;
-    let drawable_size: NSSize = NSSize {
-        width: size.width * scale_factor,
-        height: size.height * scale_factor,
-    };
+    let scale_factor = lock.scale_factor();
+    let drawable_size = new_size.to_device_pixels(scale_factor);
+    lock.renderer.update_drawable_size(drawable_size);
 
-    lock.update_drawable_size(drawable_size);
-
-    drop(lock);
-    let mut lock = window_state.lock();
     if let Some(mut callback) = lock.resize_callback.take() {
         let content_size = lock.content_size();
         let scale_factor = lock.scale_factor();
@@ -1947,7 +1911,7 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
         let mut lock = window_state.lock();
 
         if let Some(mut input_handler) = lock.input_handler.take() {
-            match ime.clone() {
+            match ime {
                 ImeInput::InsertText(text, range) => {
                     if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
                         ime_input.push((text, range));
@@ -1967,6 +1931,15 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
                 }
             }
             window_state.lock().input_handler = Some(input_handler);
+        } else {
+            match ime {
+                ImeInput::InsertText(text, range) => {
+                    if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
+                        ime_input.push((text, range));
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }

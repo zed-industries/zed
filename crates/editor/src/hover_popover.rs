@@ -3,7 +3,7 @@ use crate::{
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
-    EditorStyle, ExcerptId, Hover, RangeToAnchorExt,
+    EditorStyle, Hover, RangeToAnchorExt,
 };
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, CursorStyle, Hsla, InteractiveElement, IntoElement,
@@ -47,7 +47,6 @@ pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, cx: &mut ViewContex
 }
 
 pub struct InlayHover {
-    pub excerpt: ExcerptId,
     pub range: InlayHighlight,
     pub tooltip: HoverBlock,
 }

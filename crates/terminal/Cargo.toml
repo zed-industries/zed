@@ -17,7 +17,7 @@ doctest = false
 alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "cacdb5bb3b72bad2c729227537979d95af75978f" }
 anyhow.workspace = true
 collections.workspace = true
-dirs = "4.0.0"
+dirs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 libc.workspace = true

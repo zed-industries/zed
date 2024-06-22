@@ -228,11 +228,11 @@ impl ChannelView {
             &self.editor,
             move |this, _, e: &EditorEvent, cx| {
                 match e {
-                    EditorEvent::Reparsed => {
+                    EditorEvent::Reparsed(_) => {
                         this.focus_position_from_link(position.clone(), false, cx);
                         this._reparse_subscription.take();
                     }
-                    EditorEvent::Edited | EditorEvent::SelectionsChanged { local: true } => {
+                    EditorEvent::Edited { .. } | EditorEvent::SelectionsChanged { local: true } => {
                         this._reparse_subscription.take();
                     }
                     _ => {}

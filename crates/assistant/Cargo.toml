@@ -16,6 +16,7 @@ doctest = false
 anyhow.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
 assistant_slash_command.workspace = true
+async-watch.workspace = true
 cargo_toml.workspace = true
 chrono.workspace = true
 client.workspace = true
@@ -35,22 +36,27 @@ language.workspace = true
 log.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
+ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 ordered-float.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 project.workspace = true
 regex.workspace = true
 rope.workspace = true
+rustdoc.workspace = true
 schemars.workspace = true
 search.workspace = true
 semantic_index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+similar.workspace = true
 smol.workspace = true
 strsim = "0.11"
 strum.workspace = true
 telemetry_events.workspace = true
+terminal_view.workspace = true
 theme.workspace = true
 tiktoken-rs.workspace = true
 toml.workspace = true

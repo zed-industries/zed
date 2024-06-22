@@ -78,12 +78,12 @@ impl super::LspAdapter for GoLspAdapter {
                 .and_then(|s| s.binary.clone())
         });
 
-        if let Ok(Some(BinarySettings {
-            path: Some(path),
-            arguments,
-        })) = configured_binary
-        {
-            Some(LanguageServerBinary {
+        match configured_binary {
+            Ok(Some(BinarySettings {
+                path: Some(path),
+                arguments,
+                ..
+            })) => Some(LanguageServerBinary {
                 path: path.into(),
                 arguments: arguments
                     .unwrap_or_default()
@@ -91,15 +91,20 @@ impl super::LspAdapter for GoLspAdapter {
                     .map(|arg| arg.into())
                     .collect(),
                 env: None,
-            })
-        } else {
-            let env = delegate.shell_env().await;
-            let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-            Some(LanguageServerBinary {
-                path,
-                arguments: server_binary_arguments(),
-                env: Some(env),
-            })
+            }),
+            Ok(Some(BinarySettings {
+                path_lookup: Some(false),
+                ..
+            })) => None,
+            _ => {
+                let env = delegate.shell_env().await;
+                let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+                Some(LanguageServerBinary {
+                    path,
+                    arguments: server_binary_arguments(),
+                    env: Some(env),
+                })
+            }
         }
     }
 

@@ -2,6 +2,7 @@ use std::fmt;
 
 pub use anthropic::Model as AnthropicModel;
 use gpui::Pixels;
+pub use ollama::Model as OllamaModel;
 pub use open_ai::Model as OpenAiModel;
 use schemars::{
     schema::{InstanceType, Metadata, Schema, SchemaObject},
@@ -23,6 +24,7 @@ pub enum CloudModel {
     Gpt4Turbo,
     #[default]
     Gpt4Omni,
+    Claude3_5Sonnet,
     Claude3Opus,
     Claude3Sonnet,
     Claude3Haiku,
@@ -104,6 +106,7 @@ impl CloudModel {
             Self::Gpt4 => "gpt-4",
             Self::Gpt4Turbo => "gpt-4-turbo-preview",
             Self::Gpt4Omni => "gpt-4o",
+            Self::Claude3_5Sonnet => "claude-3-5-sonnet",
             Self::Claude3Opus => "claude-3-opus",
             Self::Claude3Sonnet => "claude-3-sonnet",
             Self::Claude3Haiku => "claude-3-haiku",
@@ -117,6 +120,7 @@ impl CloudModel {
             Self::Gpt4 => "GPT 4",
             Self::Gpt4Turbo => "GPT 4 Turbo",
             Self::Gpt4Omni => "GPT 4 Omni",
+            Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
@@ -129,7 +133,10 @@ impl CloudModel {
             Self::Gpt3Point5Turbo => 2048,
             Self::Gpt4 => 4096,
             Self::Gpt4Turbo | Self::Gpt4Omni => 128000,
-            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 200000,
+            Self::Claude3_5Sonnet
+            | Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3Haiku => 200000,
             Self::Custom(_) => 4096, // TODO: Make this configurable
         }
     }
@@ -168,6 +175,11 @@ pub enum AssistantProvider {
         api_url: String,
         low_speed_timeout_in_seconds: Option<u64>,
     },
+    Ollama {
+        model: OllamaModel,
+        api_url: String,
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
 }
 
 impl Default for AssistantProvider {
@@ -194,6 +206,12 @@ pub enum AssistantProviderContent {
     #[serde(rename = "anthropic")]
     Anthropic {
         default_model: Option<AnthropicModel>,
+        api_url: Option<String>,
+        low_speed_timeout_in_seconds: Option<u64>,
+    },
+    #[serde(rename = "ollama")]
+    Ollama {
+        default_model: Option<OllamaModel>,
         api_url: Option<String>,
         low_speed_timeout_in_seconds: Option<u64>,
     },
@@ -323,6 +341,13 @@ impl AssistantSettingsContent {
                         }
                         LanguageModel::Anthropic(model) => {
                             *provider = Some(AssistantProviderContent::Anthropic {
+                                default_model: Some(model),
+                                api_url: None,
+                                low_speed_timeout_in_seconds: None,
+                            })
+                        }
+                        LanguageModel::Ollama(model) => {
+                            *provider = Some(AssistantProviderContent::Ollama {
                                 default_model: Some(model),
                                 api_url: None,
                                 low_speed_timeout_in_seconds: None,
@@ -473,6 +498,27 @@ impl Settings for AssistantSettings {
                         }
                     }
                     (
+                        AssistantProvider::Ollama {
+                            model,
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                        },
+                        AssistantProviderContent::Ollama {
+                            default_model: model_override,
+                            api_url: api_url_override,
+                            low_speed_timeout_in_seconds: low_speed_timeout_in_seconds_override,
+                        },
+                    ) => {
+                        merge(model, model_override);
+                        merge(api_url, api_url_override);
+                        if let Some(low_speed_timeout_in_seconds_override) =
+                            low_speed_timeout_in_seconds_override
+                        {
+                            *low_speed_timeout_in_seconds =
+                                Some(low_speed_timeout_in_seconds_override);
+                        }
+                    }
+                    (
                         AssistantProvider::Anthropic {
                             model,
                             api_url,
@@ -517,6 +563,15 @@ impl Settings for AssistantSettings {
                                 model: model.unwrap_or_default(),
                                 api_url: api_url
                                     .unwrap_or_else(|| anthropic::ANTHROPIC_API_URL.into()),
+                                low_speed_timeout_in_seconds,
+                            },
+                            AssistantProviderContent::Ollama {
+                                default_model: model,
+                                api_url,
+                                low_speed_timeout_in_seconds,
+                            } => AssistantProvider::Ollama {
+                                model: model.unwrap_or_default(),
+                                api_url: api_url.unwrap_or_else(|| ollama::OLLAMA_API_URL.into()),
                                 low_speed_timeout_in_seconds,
                             },
                         };

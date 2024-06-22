@@ -30,6 +30,7 @@ test-support = [
 [dependencies]
 aho-corasick = "1.1"
 anyhow.workspace = true
+assets.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true

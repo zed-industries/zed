@@ -54,7 +54,7 @@ struct Args {
 fn parse_path_with_position(
     argument_str: &str,
 ) -> Result<PathLikeWithPosition<PathBuf>, std::convert::Infallible> {
-    PathLikeWithPosition::parse_str(argument_str, |path_str| {
+    PathLikeWithPosition::parse_str(argument_str, |_, path_str| {
         Ok(Path::new(path_str).to_path_buf())
     })
 }
@@ -161,10 +161,7 @@ mod linux {
         env,
         ffi::OsString,
         io,
-        os::{
-            linux::net::SocketAddrExt,
-            unix::net::{SocketAddr, UnixDatagram},
-        },
+        os::unix::net::{SocketAddr, UnixDatagram},
         path::{Path, PathBuf},
         process::{self, ExitStatus},
         thread,
@@ -223,12 +220,9 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let uid: u32 = unsafe { libc::getuid() };
-            let sock_addr =
-                SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL, uid))?;
-
+            let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL));
             let sock = UnixDatagram::unbound()?;
-            if sock.connect_addr(&sock_addr).is_err() {
+            if sock.connect(&sock_path).is_err() {
                 self.boot_background(ipc_url)?;
             } else {
                 sock.send(ipc_url.as_bytes())?;

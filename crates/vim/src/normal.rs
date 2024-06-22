@@ -9,8 +9,9 @@ pub(crate) mod repeat;
 mod scroll;
 pub(crate) mod search;
 pub mod substitute;
-mod yank;
+pub(crate) mod yank;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{
@@ -20,9 +21,13 @@ use crate::{
     surrounds::{check_and_move_to_valid_bracket_pair, SurroundsType},
     Vim,
 };
+use case::{change_case_motion, change_case_object, CaseTarget};
 use collections::BTreeSet;
+use editor::display_map::ToDisplayPoint;
 use editor::scroll::Autoscroll;
+use editor::Anchor;
 use editor::Bias;
+use editor::Editor;
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, SelectionGoal};
 use log::error;
@@ -46,6 +51,7 @@ actions!(
         InsertEndOfLine,
         InsertLineAbove,
         InsertLineBelow,
+        InsertAtPrevious,
         DeleteLeft,
         DeleteRight,
         ChangeToEndOfLine,
@@ -68,6 +74,7 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(insert_end_of_line);
     workspace.register_action(insert_line_above);
     workspace.register_action(insert_line_below);
+    workspace.register_action(insert_at_previous);
     workspace.register_action(change_case);
     workspace.register_action(convert_to_upper_case);
     workspace.register_action(convert_to_lower_case);
@@ -143,7 +150,11 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             vim.update_active_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| editor.indent(&Default::default(), cx))
+                editor.transact(cx, |editor, cx| {
+                    let mut original_positions = save_selection_starts(editor, cx);
+                    editor.indent(&Default::default(), cx);
+                    restore_selection_cursors(editor, cx, &mut original_positions);
+                });
             });
             if vim.state().mode.is_visual() {
                 vim.switch_mode(Mode::Normal, false, cx)
@@ -155,7 +166,11 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             vim.update_active_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| editor.outdent(&Default::default(), cx))
+                editor.transact(cx, |editor, cx| {
+                    let mut original_positions = save_selection_starts(editor, cx);
+                    editor.outdent(&Default::default(), cx);
+                    restore_selection_cursors(editor, cx, &mut original_positions);
+                });
             });
             if vim.state().mode.is_visual() {
                 vim.switch_mode(Mode::Normal, false, cx)
@@ -186,6 +201,15 @@ pub fn normal_motion(
             Some(Operator::AddSurrounds { target: None }) => {}
             Some(Operator::Indent) => indent_motion(vim, motion, times, IndentDirection::In, cx),
             Some(Operator::Outdent) => indent_motion(vim, motion, times, IndentDirection::Out, cx),
+            Some(Operator::Lowercase) => {
+                change_case_motion(vim, motion, times, CaseTarget::Lowercase, cx)
+            }
+            Some(Operator::Uppercase) => {
+                change_case_motion(vim, motion, times, CaseTarget::Uppercase, cx)
+            }
+            Some(Operator::OppositeCase) => {
+                change_case_motion(vim, motion, times, CaseTarget::OppositeCase, cx)
+            }
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -207,6 +231,15 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                 }
                 Some(Operator::Outdent) => {
                     indent_object(vim, object, around, IndentDirection::Out, cx)
+                }
+                Some(Operator::Lowercase) => {
+                    change_case_object(vim, object, around, CaseTarget::Lowercase, cx)
+                }
+                Some(Operator::Uppercase) => {
+                    change_case_object(vim, object, around, CaseTarget::Uppercase, cx)
+                }
+                Some(Operator::OppositeCase) => {
+                    change_case_object(vim, object, around, CaseTarget::OppositeCase, cx)
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {
@@ -310,6 +343,20 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
     });
 }
 
+fn insert_at_previous(_: &mut Workspace, _: &InsertAtPrevious, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.start_recording(cx);
+        vim.switch_mode(Mode::Insert, false, cx);
+        vim.update_active_editor(cx, |vim, editor, cx| {
+            if let Some(marks) = vim.state().marks.get("^") {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
+                });
+            }
+        });
+    });
+}
+
 fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.start_recording(cx);
@@ -388,6 +435,33 @@ fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
         let count = vim.take_count(cx);
         yank_motion(vim, motion::Motion::CurrentLine, count, cx)
     })
+}
+
+fn save_selection_starts(editor: &Editor, cx: &mut ViewContext<Editor>) -> HashMap<usize, Anchor> {
+    let (map, selections) = editor.selections.all_display(cx);
+    selections
+        .iter()
+        .map(|selection| {
+            (
+                selection.id,
+                map.display_point_to_anchor(selection.start, Bias::Right),
+            )
+        })
+        .collect::<HashMap<_, _>>()
+}
+
+fn restore_selection_cursors(
+    editor: &mut Editor,
+    cx: &mut ViewContext<Editor>,
+    positions: &mut HashMap<usize, Anchor>,
+) {
+    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+        s.move_with(|map, selection| {
+            if let Some(anchor) = positions.remove(&selection.id) {
+                selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
+            }
+        });
+    });
 }
 
 pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
