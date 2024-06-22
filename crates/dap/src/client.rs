@@ -12,7 +12,7 @@ use futures::{
     channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
     AsyncBufRead, AsyncReadExt, AsyncWrite, SinkExt as _, StreamExt,
 };
-use gpui::AsyncWindowContext;
+use gpui::AsyncAppContext;
 use serde_json::Value;
 use smol::{
     io::BufReader,
@@ -21,7 +21,7 @@ use smol::{
 };
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Stdio,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -49,28 +49,24 @@ impl DebugAdapterClient {
         transport_type: TransportType,
         command: &str,
         args: Vec<&str>,
-        port_arg: Option<&str>,
-        cx: &mut AsyncWindowContext,
+        port: Option<u16>,
+        cx: &mut AsyncAppContext,
     ) -> Result<(Self, UnboundedReceiver<Payload>)> {
         match transport_type {
-            TransportType::TCP => Self::create_tcp_client(command, args, port_arg, cx).await,
-            TransportType::STDIO => Self::create_stdio_client(command, args, port_arg, cx).await,
+            TransportType::TCP => Self::create_tcp_client(command, args, port, cx).await,
+            TransportType::STDIO => Self::create_stdio_client(command, args, port, cx).await,
         }
     }
 
     async fn create_tcp_client(
         command: &str,
         args: Vec<&str>,
-        port_arg: Option<&str>,
-        cx: &mut AsyncWindowContext,
+        port: Option<u16>,
+        cx: &mut AsyncAppContext,
     ) -> Result<(Self, UnboundedReceiver<Payload>)> {
-        let mut command = process::Command::new("bun");
+        let mut command = process::Command::new(command);
         command
-            .current_dir("/Users/remcosmits/Documents/code/symfony_demo")
-            .args([
-                "/Users/remcosmits/Documents/code/vscode-php-debug/out/phpDebug.js",
-                "--server=8123",
-            ])
+            .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -85,7 +81,7 @@ impl DebugAdapterClient {
             .timer(Duration::from_millis(500))
             .await;
 
-        let address = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 8123);
+        let address = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port.unwrap_or(0));
 
         let (rx, tx) = TcpStream::connect(address).await?.split();
 
@@ -101,8 +97,8 @@ impl DebugAdapterClient {
     async fn create_stdio_client(
         command: &str,
         args: Vec<&str>,
-        port_arg: Option<&str>,
-        cx: &mut AsyncWindowContext,
+        port: Option<u16>,
+        cx: &mut AsyncAppContext,
     ) -> Result<(Self, UnboundedReceiver<Payload>)> {
         todo!("not implemented")
     }
@@ -112,7 +108,7 @@ impl DebugAdapterClient {
         tx: Box<dyn AsyncWrite + Unpin + Send>,
         err: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
         process: Option<Child>,
-        cx: &mut AsyncWindowContext,
+        cx: &mut AsyncAppContext,
     ) -> Result<(Self, UnboundedReceiver<Payload>)> {
         let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
         let (client_tx, client_rx) = unbounded::<Payload>();

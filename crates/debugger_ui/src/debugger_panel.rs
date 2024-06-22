@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use dap::{
-    client::{DebugAdapterClient, TransportType},
+    client::{DebugAdapterClient, DebugAdapterClientId, TransportType},
     transport::Payload,
 };
 use futures::channel::mpsc::UnboundedReceiver;
@@ -29,15 +29,13 @@ pub struct DebugPanel {
     pub active: bool,
     pub focus_handle: FocusHandle,
     pub size: Pixels,
-    pub debug_client: Arc<DebugAdapterClient>,
-    pub events: UnboundedReceiver<Payload>,
+    pub workspace: WeakView<Workspace>,
 }
 
 impl DebugPanel {
     pub fn new(
         position: DockPosition,
-        debug_client: Arc<DebugAdapterClient>,
-        events: UnboundedReceiver<Payload>,
+        workspace: WeakView<Workspace>,
         cx: &mut WindowContext,
     ) -> Self {
         Self {
@@ -46,59 +44,32 @@ impl DebugPanel {
             active: false,
             focus_handle: cx.focus_handle(),
             size: px(300.),
-            debug_client,
-            events,
+            workspace,
         }
     }
 
     pub async fn load(
         workspace: WeakView<Workspace>,
-        cx: AsyncWindowContext,
+        mut cx: AsyncWindowContext,
     ) -> Result<View<Self>> {
-        let mut cx = cx.clone();
-        let c = DebugAdapterClient::new(
-            TransportType::TCP,
-            "python3",
-            vec![
-                "-m",
-                "debugpy",
-                "--listen",
-                "localhost:5668",
-                "--wait-for-client",
-                "test.py",
-            ],
-            None,
-            &mut cx,
-        )
-        .await;
+        workspace.update(&mut cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.start_debug_adapter_client(DebugAdapterClientId(1), cx);
+            });
+        })?;
+        cx.new_view(|cx| DebugPanel::new(DockPosition::Bottom, workspace, cx))
+    }
 
-        let Ok((mut debug_client, events)) = c else {
-            dbg!(&c);
-            return Err(anyhow!("Failed to create debug client"));
-        };
-
-        // initialize request
-        debug_client.initialize().await;
-
-        // set break point
-        debug_client
-            .set_breakpoints(
-                "/Users/remcosmits/Documents/code/symfony_demo/src/Kernel.php".into(),
-                14,
-            )
-            .await;
-
-        // launch/attach request
-        debug_client.launch().await;
-
-        // configuration done
-        debug_client.configuration_done().await;
-
-        workspace.update(&mut cx, |_, cx| {
-            cx.new_view(|cx| {
-                DebugPanel::new(DockPosition::Bottom, Arc::new(debug_client), events, cx)
+    fn debug_adapter(&self, cx: &mut ViewContext<Self>) -> Arc<DebugAdapterClient> {
+        self.workspace
+            .update(cx, |this, cx| {
+                this.project()
+                    .read(cx)
+                    .running_debug_adapters()
+                    .next()
+                    .unwrap()
             })
-        })
+            .unwrap()
     }
 }
 
@@ -176,7 +147,7 @@ impl Render for DebugPanel {
                     .child(
                         IconButton::new("debug-play", IconName::Play)
                             .on_click(cx.listener(|view, _, cx| {
-                                let client = view.debug_client.clone();
+                                let client = view.debug_adapter(cx);
                                 cx.background_executor()
                                     .spawn(async move { client.continue_thread().await })
                                     .detach();
@@ -190,7 +161,7 @@ impl Render for DebugPanel {
                     .child(
                         IconButton::new("debug-go-in", IconName::Play)
                             .on_click(cx.listener(|view, _, cx| {
-                                let client = view.debug_client.clone();
+                                let client = view.debug_adapter(cx);
                                 cx.background_executor()
                                     .spawn(async move { client.step_in().await })
                                     .detach();
@@ -200,7 +171,7 @@ impl Render for DebugPanel {
                     .child(
                         IconButton::new("debug-go-out", IconName::Play)
                             .on_click(cx.listener(|view, _, cx| {
-                                let client = view.debug_client.clone();
+                                let client = view.debug_adapter(cx);
                                 cx.background_executor()
                                     .spawn(async move { client.step_out().await })
                                     .detach();

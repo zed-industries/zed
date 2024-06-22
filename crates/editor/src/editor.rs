@@ -423,6 +423,7 @@ struct ResolvedTasks {
 
 #[derive(Clone, Debug)]
 struct Breakpoint {
+    row: MultiBufferRow,
     line: BufferRow,
 }
 
@@ -4762,6 +4763,17 @@ impl Editor {
         }
     }
 
+    fn render_breakpoint(&self, row: DisplayRow, cx: &mut ViewContext<Self>) -> IconButton {
+        IconButton::new(("breakpoint_indicator", row.0 as usize), ui::IconName::Play)
+            .icon_size(IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .icon_color(Color::Error)
+            .on_click(cx.listener(move |editor, _e, cx| {
+                editor.focus(cx);
+                editor.toggle_breakpoint_at_row(row.0, cx) //TODO handle folded
+            }))
+    }
+
     fn render_run_indicator(
         &self,
         _style: &EditorStyle,
@@ -5532,26 +5544,35 @@ impl Editor {
     }
 
     pub fn toggle_breakpoint(&mut self, _: &ToggleBreakpoint, cx: &mut ViewContext<Self>) {
+        let cursor_position: Point = self.selections.newest(cx).head();
+        self.toggle_breakpoint_at_row(cursor_position.row, cx);
+    }
+
+    pub fn toggle_breakpoint_at_row(&mut self, row: u32, cx: &mut ViewContext<Self>) {
         let Some(project) = &self.project else {
             return;
         };
-        let cursor_position: Point = self.selections.newest(cx).head();
-        let target_row = cursor_position.row;
         let Some(buffer) = self.buffer.read(cx).as_singleton() else {
             return;
         };
 
         let buffer_id = buffer.read(cx).remote_id();
-        let key = (buffer_id, target_row);
+        let key = (buffer_id, row);
 
         if self.breakpoints.remove(&key).is_none() {
-            self.breakpoints
-                .insert(key, Breakpoint { line: target_row });
+            self.breakpoints.insert(
+                key,
+                Breakpoint {
+                    row: MultiBufferRow(row),
+                    line: row,
+                },
+            );
         }
 
         project.update(cx, |project, cx| {
-            project.update_breakpoint(buffer, target_row, cx);
+            project.update_breakpoint(buffer, row, cx);
         });
+        cx.notify();
     }
 
     fn gather_revert_changes(

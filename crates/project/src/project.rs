@@ -20,7 +20,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
-use dap::client::{DebugAdapterClient, DebugAdapterClientId};
+use dap::client::{DebugAdapterClient, DebugAdapterClientId, TransportType};
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::{
@@ -1023,6 +1023,61 @@ impl Project {
         }
     }
 
+    pub fn running_debug_adapters(&self) -> impl Iterator<Item = Arc<DebugAdapterClient>> + '_ {
+        self.debug_adapters
+            .values()
+            .filter_map(|state| match state {
+                DebugAdapterClientState::Starting(_) => None,
+                DebugAdapterClientState::Running(client) => Some(client.clone()),
+            })
+    }
+
+    pub fn start_debug_adapter_client(
+        &mut self,
+        id: DebugAdapterClientId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let task = cx.spawn(|this, mut cx| async move {
+            let (mut client, _) = DebugAdapterClient::new(
+                TransportType::TCP,
+                "bun",
+                vec![
+                    "/Users/remcosmits/Documents/code/vscode-php-debug/out/phpDebug.js",
+                    "--server=8123",
+                ],
+                Some(8123),
+                &mut cx,
+            )
+            .await
+            .log_err()?;
+
+            client.initialize().await.log_err()?;
+
+            // configuration done
+            client.configuration_done().await.log_err()?;
+
+            // launch/attach request
+            client.launch().await.log_err()?;
+
+            let client = Arc::new(client);
+
+            this.update(&mut cx, |this, _| {
+                let handle = this
+                    .debug_adapters
+                    .get_mut(&id)
+                    .with_context(|| "Failed to find debug adapter with given id")?;
+                *handle = DebugAdapterClientState::Running(client.clone());
+                anyhow::Ok(())
+            })
+            .log_err();
+
+            Some(client)
+        });
+
+        self.debug_adapters
+            .insert(id, DebugAdapterClientState::Starting(task));
+    }
+
     pub fn update_breakpoint(
         &mut self,
         buffer: Model<Buffer>,
@@ -1035,6 +1090,7 @@ impl Project {
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
             worktree.read(cx).absolutize(&project_path.path).ok()
         }) else {
+            dbg!("Failed to get abs_path");
             return;
         };
 

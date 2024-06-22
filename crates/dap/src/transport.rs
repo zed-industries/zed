@@ -4,7 +4,7 @@ use futures::{
     channel::mpsc::{unbounded, Sender, UnboundedReceiver, UnboundedSender},
     AsyncBufRead, AsyncWrite, SinkExt as _, StreamExt,
 };
-use gpui::AsyncWindowContext;
+use gpui::AsyncAppContext;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -48,7 +48,7 @@ impl Transport {
         server_stdout: Box<dyn AsyncBufRead + Unpin + Send>,
         server_stdin: Box<dyn AsyncWrite + Unpin + Send>,
         server_stderr: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
-        cx: &mut AsyncWindowContext,
+        cx: &mut AsyncAppContext,
     ) -> (UnboundedReceiver<Payload>, UnboundedSender<Payload>) {
         let (client_tx, server_rx) = unbounded::<Payload>();
         let (server_tx, client_rx) = unbounded::<Payload>();
