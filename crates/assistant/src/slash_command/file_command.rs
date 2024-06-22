@@ -1,11 +1,10 @@
-use super::{SlashCommand, SlashCommandOutput};
+use super::{diagnostics_command::write_single_file_diagnostics, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandOutputSection;
-use fs::Fs;
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
-use language::{LineEnding, LspAdapterDelegate};
-use project::{PathMatchCandidateSet, Worktree};
+use language::{BufferSnapshot, LineEnding, LspAdapterDelegate};
+use project::{PathMatchCandidateSet, Project};
 use std::{
     fmt::Write,
     ops::Range,
@@ -142,13 +141,7 @@ impl SlashCommand for FileSlashCommand {
             return Task::ready(Err(anyhow!("missing path")));
         };
 
-        let fs = workspace.read(cx).app_state().fs.clone();
-        let task = collect_files(
-            workspace.read(cx).visible_worktrees(cx).collect(),
-            argument,
-            fs,
-            cx,
-        );
+        let task = collect_files(workspace.read(cx).project().clone(), argument, cx);
 
         cx.foreground_executor().spawn(async move {
             let (text, ranges) = task.await?;
@@ -165,7 +158,7 @@ impl SlashCommand for FileSlashCommand {
                         )
                     })
                     .collect(),
-                run_commands_in_text: false,
+                run_commands_in_text: true,
             })
         })
     }
@@ -178,62 +171,33 @@ enum EntryType {
 }
 
 fn collect_files(
-    worktrees: Vec<Model<Worktree>>,
+    project: Model<Project>,
     glob_input: &str,
-    fs: Arc<dyn Fs>,
     cx: &mut AppContext,
 ) -> Task<Result<(String, Vec<(Range<usize>, PathBuf, EntryType)>)>> {
     let Ok(matcher) = PathMatcher::new(&[glob_input.to_owned()]) else {
         return Task::ready(Err(anyhow!("invalid path")));
     };
 
-    let path = PathBuf::try_from(glob_input).ok();
-    let file_path = if let Some(path) = &path {
-        worktrees.iter().find_map(|worktree| {
-            let worktree = worktree.read(cx);
-            let worktree_root_path = Path::new(worktree.root_name());
-            let relative_path = path.strip_prefix(worktree_root_path).ok()?;
-            worktree.absolutize(&relative_path).ok()
-        })
-    } else {
-        None
-    };
-
-    if let Some(abs_path) = file_path {
-        if abs_path.is_file() {
-            let filename = path
-                .as_ref()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
-            return cx.background_executor().spawn(async move {
-                let mut text = String::new();
-                collect_file_content(&mut text, fs, filename.clone(), abs_path.clone().into())
-                    .await?;
-                let text_range = 0..text.len();
-                Ok((
-                    text,
-                    vec![(text_range, path.unwrap_or_default(), EntryType::File)],
-                ))
-            });
-        }
-    }
-
-    let snapshots = worktrees
-        .iter()
+    let project_handle = project.downgrade();
+    let snapshots = project
+        .read(cx)
+        .worktrees()
         .map(|worktree| worktree.read(cx).snapshot())
         .collect::<Vec<_>>();
-    cx.background_executor().spawn(async move {
+    cx.spawn(|mut cx| async move {
         let mut text = String::new();
         let mut ranges = Vec::new();
         for snapshot in snapshots {
+            let worktree_id = snapshot.id();
             let mut directory_stack: Vec<(Arc<Path>, String, usize)> = Vec::new();
             let mut folded_directory_names_stack = Vec::new();
             let mut is_top_level_directory = true;
             for entry in snapshot.entries(false, 0) {
-                let mut path_buf = PathBuf::new();
-                path_buf.push(snapshot.root_name());
-                path_buf.push(&entry.path);
-                if !matcher.is_match(&path_buf) {
+                let mut path_including_worktree_name = PathBuf::new();
+                path_including_worktree_name.push(snapshot.root_name());
+                path_including_worktree_name.push(&entry.path);
+                if !matcher.is_match(&path_including_worktree_name) {
                     continue;
                 }
 
@@ -264,8 +228,9 @@ fn collect_files(
                         if child_entries.next().is_none() && child.kind.is_dir() {
                             if is_top_level_directory {
                                 is_top_level_directory = false;
-                                folded_directory_names_stack
-                                    .push(path_buf.to_string_lossy().to_string());
+                                folded_directory_names_stack.push(
+                                    path_including_worktree_name.to_string_lossy().to_string(),
+                                );
                             } else {
                                 folded_directory_names_stack.push(filename.to_string());
                             }
@@ -280,7 +245,7 @@ fn collect_files(
                     let entry_start = text.len();
                     if prefix_paths.is_empty() {
                         if is_top_level_directory {
-                            text.push_str(&path_buf.to_string_lossy());
+                            text.push_str(&path_including_worktree_name.to_string_lossy());
                             is_top_level_directory = false;
                         } else {
                             text.push_str(&filename);
@@ -293,15 +258,26 @@ fn collect_files(
                     }
                     text.push('\n');
                 } else if entry.is_file() {
-                    if let Some(abs_path) = snapshot.absolutize(&entry.path).log_err() {
+                    let Some(open_buffer_task) = project_handle
+                        .update(&mut cx, |project, cx| {
+                            project.open_buffer((worktree_id, &entry.path), cx)
+                        })
+                        .ok()
+                    else {
+                        continue;
+                    };
+                    if let Some(buffer) = open_buffer_task.await.log_err() {
+                        let snapshot = cx.read_model(&buffer, |buffer, _| buffer.snapshot())?;
                         let prev_len = text.len();
-                        collect_file_content(
+                        collect_file_content(&mut text, &snapshot, filename.clone());
+                        text.push('\n');
+                        if !write_single_file_diagnostics(
                             &mut text,
-                            fs.clone(),
-                            filename.clone(),
-                            abs_path.into(),
-                        )
-                        .await?;
+                            Some(&path_including_worktree_name),
+                            &snapshot,
+                        ) {
+                            text.pop();
+                        }
                         ranges.push((
                             prev_len..text.len(),
                             PathBuf::from(filename),
@@ -323,13 +299,8 @@ fn collect_files(
     })
 }
 
-async fn collect_file_content(
-    buffer: &mut String,
-    fs: Arc<dyn Fs>,
-    filename: String,
-    abs_path: Arc<Path>,
-) -> Result<()> {
-    let mut content = fs.load(&abs_path).await?;
+fn collect_file_content(buffer: &mut String, snapshot: &BufferSnapshot, filename: String) {
+    let mut content = snapshot.text();
     LineEnding::normalize(&mut content);
     buffer.reserve(filename.len() + content.len() + 9);
     buffer.push_str(&codeblock_fence_for_path(
@@ -341,7 +312,6 @@ async fn collect_file_content(
         buffer.push('\n');
     }
     buffer.push_str("```");
-    anyhow::Ok(())
 }
 
 pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32>>) -> String {

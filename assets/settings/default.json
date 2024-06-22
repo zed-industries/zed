@@ -241,6 +241,8 @@
     "enabled": true,
     /// The width of the indent guides in pixels, between 1 and 10.
     "line_width": 1,
+    /// The width of the active indent guide in pixels, between 1 and 10.
+    "active_line_width": 1,
     /// Determines how indent guides are colored.
     /// This setting can take the following three values:
     ///

@@ -307,7 +307,7 @@ jobs:
             exit 1
           fi
 
-      - name: Create and upload Linux .tar.gz bundle
+      - name: Create Linux .tar.gz bundle
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
@@ -315,7 +315,7 @@ jobs:
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
-          path: zed-*.tar.gz
+          path: target/release/zed-*.tar.gz
 
       - name: Upload app bundle to release
         uses: softprops/action-gh-release@v1
@@ -348,12 +348,12 @@ jobs:
       - name: Set up Clang
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm-10 clang-10 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1 libgit2-dev
+          sudo apt-get install -y llvm-10 clang-10 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
           echo "/usr/lib/llvm-10/bin" >> $GITHUB_PATH
 
       - uses: rui314/setup-mold@v1
         with:
-          mold_version: 2.32.0
+          mold-version: 2.32.0
 
       - name: rustup
         run: |
