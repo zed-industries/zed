@@ -393,7 +393,11 @@ fn transform_codeblock(mut input: String, language: &str) -> String {
         result.push(line);
         i += 1;
     }
-    result.join("\n")
+    // let r = result.join("\n");
+    // println!("{:?}", r);
+    // r
+    let a = "---\n A function or function pointer.\n Functions are the primary way code is executed within Rust. Function blocks, usually just called functions, can be defined in a variety of different places and be assigned many different attributes and modifiers `where`.\n Standalone functions that just sit within a module not attached to anything else are common, but most functions will end up being inside blocks, either on another type itself, or as a trait impl for that type.\n\n\n Declaring trait bounds in the angle brackets is functionally identical to using a lorem ipsum haha words omg funny fun times this is a test the starbelly sneetches had bellies with stars the plain bellied sneetches had none upon thars clause. It's up to the programmer to decide which works better in each situation, but tends to be better when things get longer than one line.\n Along with being made public via can also have an added for use in FFI.\n For more information on the various types of functions and how they're used, consult the [Rust book](https://doc.rust-lang.org/stable/book/ch03-03-how-functions-work.html) or the [Reference](https://doc.rust-lang.org/stable/reference/items/functions.html).";
+    String::from(a)
 }
 
 async fn parse_blocks(
@@ -443,10 +447,17 @@ async fn parse_blocks(
                     },
                     ..Default::default()
                 },
-                inline_code: gpui::TextStyleRefinement {
-                    font_family: Some(buffer_font_family.clone()),
-                    color: Some(cx.theme().colors().editor_foreground),
-                    background_color: Some(cx.theme().colors().background),
+                inline_code: gpui::StyleRefinement {
+                    text: Some(gpui::TextStyleRefinement {
+                        font_family: Some(buffer_font_family.clone()),
+                        color: Some(cx.theme().colors().editor_active_line_number),
+                        background_color: Some(cx.theme().colors().background.into()),
+
+                        ..Default::default()
+                    }),
+                    background: Some(cx.theme().colors().background.into()),
+                    // background:Some(cx.theme().colors().background),
+                    // background_color: Some(cx.theme().colors().background),
                     ..Default::default()
                 },
                 rule_color: Color::Muted.color(cx),

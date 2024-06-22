@@ -21,7 +21,7 @@ use util::{ResultExt, TryFutureExt};
 pub struct MarkdownStyle {
     pub base_text_style: TextStyle,
     pub code_block: StyleRefinement,
-    pub inline_code: TextStyleRefinement,
+    pub inline_code: StyleRefinement,
     pub block_quote: TextStyleRefinement,
     pub link: TextStyleRefinement,
     pub rule_color: Hsla,
@@ -646,8 +646,14 @@ impl Element for MarkdownElement {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                 }
                 MarkdownEvent::Code => {
-                    builder.push_text_style(self.style.inline_code.clone());
+                    builder.push_text_style(self.style.inline_code.text.clone().unwrap());
+
+                    // let mut div = div();
+                    // div.style().refine(&self.style.inline_code);
+                    // builder.push_div(div, range, markdown_end);
+
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    // builder.pop_div();
                     builder.pop_text_style();
                 }
                 MarkdownEvent::Html => {
