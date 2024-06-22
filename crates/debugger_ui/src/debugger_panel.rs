@@ -1,7 +1,8 @@
-use anyhow::Result;
+use std::sync::Arc;
+
+use anyhow::{anyhow, Result};
 use dap::{
     client::{Client, TransportType},
-    requests::{Initialize, Launch, LaunchRequestArguments},
     transport::Payload,
 };
 use futures::channel::mpsc::UnboundedReceiver;
@@ -12,8 +13,8 @@ use gpui::{
 use ui::{
     div, h_flex,
     prelude::{IntoElement, Pixels, WindowContext},
-    px, ButtonCommon, Element, IconButton, IconName, ParentElement, Render, Styled, Tooltip,
-    VisualContext,
+    px, ButtonCommon, Clickable, Element, IconButton, IconName, ParentElement, Render, Styled,
+    Tooltip, VisualContext,
 };
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -28,13 +29,15 @@ pub struct DebugPanel {
     pub active: bool,
     pub focus_handle: FocusHandle,
     pub size: Pixels,
-    debug_client: (Client, UnboundedReceiver<Payload>),
+    pub debug_client: Arc<Client>,
+    pub events: UnboundedReceiver<Payload>,
 }
 
 impl DebugPanel {
     pub fn new(
         position: DockPosition,
-        debug_client: (Client, UnboundedReceiver<Payload>),
+        debug_client: Arc<Client>,
+        events: UnboundedReceiver<Payload>,
         cx: &mut WindowContext,
     ) -> Self {
         Self {
@@ -44,6 +47,7 @@ impl DebugPanel {
             focus_handle: cx.focus_handle(),
             size: px(300.),
             debug_client,
+            events,
         }
     }
 
@@ -52,7 +56,7 @@ impl DebugPanel {
         cx: AsyncWindowContext,
     ) -> Result<View<Self>> {
         let mut cx = cx.clone();
-        let (mut debug_client, events) = Client::new(
+        let c = Client::new(
             TransportType::TCP,
             "python3",
             vec![
@@ -66,44 +70,28 @@ impl DebugPanel {
             None,
             &mut cx,
         )
-        .await?;
+        .await;
 
-        let mut cx = cx.clone();
-
-        let args = dap::requests::InitializeArguments {
-            client_id: Some("zed".to_owned()),
-            client_name: Some("zed".to_owned()),
-            adapter_id: "debugpy".into(),
-            locale: Some("en-us".to_owned()),
-            lines_start_at_one: Some(true),
-            columns_start_at_one: Some(true),
-            path_format: Some("path".to_owned()),
-            supports_variable_type: Some(true),
-            supports_variable_paging: Some(false),
-            supports_run_in_terminal_request: Some(false),
-            supports_memory_references: Some(false),
-            supports_progress_reporting: Some(false),
-            supports_invalidated_event: Some(false),
+        let Ok((mut debug_client, events)) = c else {
+            dbg!(&c);
+            return Err(anyhow!("Failed to create debug client"));
         };
 
-        let capabilities = debug_client.request::<Initialize>(args).await;
+        // initialize request
+        debug_client.initialize().await;
 
-        dbg!(capabilities);
+        // launch/attach request
+        debug_client.launch().await;
 
-        // launch/attach
-        let launch = debug_client
-            .request::<Launch>(LaunchRequestArguments {
-                no_debug: Some(true),
-                __restart: None,
-            })
-            .await;
+        // TODO: we should send configure request here
 
-        dbg!(launch);
-
-        // configure request
+        // set break point
+        debug_client.set_breakpoints(14).await;
 
         workspace.update(&mut cx, |_, cx| {
-            cx.new_view(|cx| DebugPanel::new(DockPosition::Bottom, (debug_client, events), cx))
+            cx.new_view(|cx| {
+                DebugPanel::new(DockPosition::Bottom, Arc::new(debug_client), events, cx)
+            })
         })
     }
 }
@@ -173,7 +161,7 @@ impl Panel for DebugPanel {
 }
 
 impl Render for DebugPanel {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .child(
                 h_flex()
@@ -181,9 +169,12 @@ impl Render for DebugPanel {
                     .gap_2()
                     .child(
                         IconButton::new("debug-play", IconName::Play)
-                            // .on_click(|_, cx| {
-                            //     self.debug_client.0.request("continue", None);
-                            // })
+                            .on_click(cx.listener(|view, _, cx| {
+                                let client = view.debug_client.clone();
+                                cx.background_executor()
+                                    .spawn(async move { client.continue_thread().await })
+                                    .detach();
+                            }))
                             .tooltip(move |cx| Tooltip::text("Start debug", cx)),
                     )
                     .child(
