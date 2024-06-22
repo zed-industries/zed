@@ -5,7 +5,7 @@ use std::{collections::HashMap, fmt, path::PathBuf};
 #[derive(
     Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize,
 )]
-pub struct ThreadId(isize);
+pub struct ThreadId(pub isize);
 
 impl fmt::Display for ThreadId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
