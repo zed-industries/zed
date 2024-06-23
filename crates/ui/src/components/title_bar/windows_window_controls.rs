@@ -5,11 +5,34 @@ use crate::prelude::*;
 #[derive(IntoElement)]
 pub struct WindowsWindowControls {
     button_height: Pixels,
+    font: SharedString,
 }
 
 impl WindowsWindowControls {
     pub fn new(button_height: Pixels) -> Self {
-        Self { button_height }
+        Self {
+            button_height,
+            font: SharedString::from(Self::get_font()),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn get_font() -> &'static str {
+        "Segoe Fluent Icons"
+    }
+
+    #[cfg(target_os = "windows")]
+    fn get_font() -> &'static str {
+        use windows::Wdk::System::SystemServices::RtlGetVersion;
+
+        let mut version = unsafe { std::mem::zeroed() };
+        let status = unsafe { RtlGetVersion(&mut version) };
+
+        if status.is_ok() && version.dwBuildNumber >= 22000 {
+            "Segoe Fluent Icons"
+        } else {
+            "Segoe MDL2 Assets"
+        }
     }
 }
 
@@ -49,6 +72,7 @@ impl RenderOnce for WindowsWindowControls {
                 "minimize",
                 WindowsCaptionButtonIcon::Minimize,
                 button_hover_color,
+                self.font.clone(),
             ))
             .child(WindowsCaptionButton::new(
                 "maximize-or-restore",
@@ -58,11 +82,13 @@ impl RenderOnce for WindowsWindowControls {
                     WindowsCaptionButtonIcon::Maximize
                 },
                 button_hover_color,
+                self.font.clone(),
             ))
             .child(WindowsCaptionButton::new(
                 "close",
                 WindowsCaptionButtonIcon::Close,
                 close_button_hover_color,
+                self.font.clone(),
             ))
     }
 }
@@ -80,6 +106,7 @@ struct WindowsCaptionButton {
     id: ElementId,
     icon: WindowsCaptionButtonIcon,
     hover_background_color: Rgba,
+    font: SharedString,
 }
 
 impl WindowsCaptionButton {
@@ -87,30 +114,13 @@ impl WindowsCaptionButton {
         id: impl Into<ElementId>,
         icon: WindowsCaptionButtonIcon,
         hover_background_color: Rgba,
+        font: SharedString,
     ) -> Self {
         Self {
             id: id.into(),
             icon,
             hover_background_color,
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn get_font() -> &'static str {
-        "Segoe Fluent Icons"
-    }
-
-    #[cfg(target_os = "windows")]
-    fn get_font() -> &'static str {
-        use windows::Wdk::System::SystemServices::RtlGetVersion;
-
-        let mut version = unsafe { std::mem::zeroed() };
-        let status = unsafe { RtlGetVersion(&mut version) };
-
-        if status.is_ok() && version.dwBuildNumber >= 22000 {
-            "Segoe Fluent Icons"
-        } else {
-            "Segoe MDL2 Assets"
+            font,
         }
     }
 }
@@ -129,7 +139,7 @@ impl RenderOnce for WindowsCaptionButton {
             .content_center()
             .w(width)
             .h_full()
-            .font_family(Self::get_font())
+            .font_family(self.font)
             .text_size(px(10.0))
             .hover(|style| style.bg(self.hover_background_color))
             .active(|style| {
