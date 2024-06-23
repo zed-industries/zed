@@ -45,7 +45,7 @@ impl SnippetExtension {
             },
             os = match platform {
                 zed::Os::Mac => "apple-darwin",
-                zed::Os::Linux => "unknown-linux-musl",
+                zed::Os::Linux => "unknown-linux-gnu",
                 zed::Os::Windows => "pc-windows-msvc",
             },
         );
