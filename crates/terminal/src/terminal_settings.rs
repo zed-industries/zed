@@ -9,6 +9,7 @@ use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{SettingsJsonSchemaParams, SettingsSources};
 use std::path::PathBuf;
+use util::ResultExt;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -266,6 +267,15 @@ pub enum Shell {
         program: String,
         args: Vec<String>,
     },
+}
+
+impl Shell {
+    pub fn retrieve_system_shell() -> Option<String> {
+        #[cfg(not(target_os = "windows"))]
+        return std::env::var("SHELL").log_err();
+        #[cfg(target_os = "windows")]
+        return std::env::var("COMSPEC").log_err();
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
