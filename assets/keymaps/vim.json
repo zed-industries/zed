@@ -612,13 +612,13 @@
   {
     "context": "Editor && vim_mode == normal && !VimWaiting",
     "bindings": {
-      "g c c": "editor::ToggleComments"
+      "g c c": "vim::ToggleComments"
     }
   },
   {
     "context": "Editor && vim_mode == visual",
     "bindings": {
-      "g c": "editor::ToggleComments"
+      "g c": "vim::ToggleComments"
     }
   },
   {
