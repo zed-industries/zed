@@ -86,7 +86,7 @@ impl DebugAdapterClient {
 
         // give the adapter some time to spin up the tcp server
         cx.background_executor()
-            .timer(Duration::from_millis(500))
+            .timer(Duration::from_millis(1000))
             .await;
 
         let address = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port);

@@ -1043,9 +1043,9 @@ impl Project {
                 "bun",
                 vec![
                     "/Users/remcosmits/Documents/code/vscode-php-debug/out/phpDebug.js",
-                    "--server=8127",
+                    "--server=8130",
                 ],
-                8127,
+                8130,
                 "/Users/remcosmits/Documents/code/symfony_demo".into(),
                 &mut cx,
             )
