@@ -130,6 +130,7 @@ actions!(
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
+        StartDebugger,
         ToggleBreakpoint,
         ToggleBottomDock,
         ToggleCenteredLayout,
@@ -3912,6 +3913,13 @@ impl Workspace {
                 }),
             )
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(
+                cx.listener(|workspace: &mut Workspace, _: &StartDebugger, cx| {
+                    workspace.project.update(cx, |project, cx| {
+                        project.start_debug_adapter_client(cx);
+                    })
+                }),
+            )
     }
 
     #[cfg(any(test, feature = "test-support"))]

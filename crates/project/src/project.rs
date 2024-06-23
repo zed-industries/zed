@@ -1057,11 +1057,9 @@ impl Project {
         })
     }
 
-    pub fn start_debug_adapter_client(
-        &mut self,
-        id: DebugAdapterClientId,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn start_debug_adapter_client(&mut self, cx: &mut ModelContext<Self>) {
+        let id = DebugAdapterClientId(1);
+
         let task = cx.spawn(|this, mut cx| async move {
             let this2 = this.clone();
             let mut client = DebugAdapterClient::new(
