@@ -54,7 +54,7 @@ actions!(
         CollapseAllEntries,
         CopyPath,
         CopyRelativePath,
-        RevealInFinder,
+        RevealInFiles,
         Open,
         ToggleFocus,
         UnfoldDirectory,
@@ -832,7 +832,7 @@ impl OutlinePanel {
 
         let context_menu = ContextMenu::build(cx, |menu, _| {
             menu.context(self.focus_handle.clone())
-                .action("Reveal in Files", Box::new(RevealInFinder))
+                .action("Reveal in Files", Box::new(RevealInFiles))
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .when(is_unfoldable, |menu| {
                     menu.action("Unfold Directory", Box::new(UnfoldDirectory))
@@ -1113,7 +1113,7 @@ impl OutlinePanel {
         }
     }
 
-    fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
+    fn reveal_in_finder(&mut self, _: &RevealInFiles, cx: &mut ViewContext<Self>) {
         if let Some(abs_path) = self
             .selected_entry
             .as_ref()

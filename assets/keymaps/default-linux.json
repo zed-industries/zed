@@ -354,7 +354,7 @@
       "ctrl-shift-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
-      "alt-ctrl-r": "editor::RevealInFinder",
+      "alt-ctrl-r": "editor::RevealInFiles",
       "ctrl-alt-shift-c": "editor::DisplayCursorNames"
     }
   },
@@ -564,7 +564,7 @@
       "right": "outline_panel::ExpandSelectedEntry",
       "ctrl-alt-c": "outline_panel::CopyPath",
       "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
-      "alt-ctrl-r": "outline_panel::RevealInFinder",
+      "alt-ctrl-r": "outline_panel::RevealInFiles",
       "space": "outline_panel::Open",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev"
@@ -590,7 +590,7 @@
       "delete": "project_panel::Trash",
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
-      "alt-ctrl-r": "project_panel::RevealInFinder",
+      "alt-ctrl-r": "project_panel::RevealInFiles",
       "alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
