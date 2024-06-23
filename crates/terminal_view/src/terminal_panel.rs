@@ -358,9 +358,13 @@ impl TerminalPanel {
         };
 
         #[cfg(not(target_os = "windows"))]
-        spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+        {
+            spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+        }
         #[cfg(target_os = "windows")]
-        spawn_task.command_label = format!("{shell} /C `{}`", spawn_task.command_label);
+        {
+            spawn_task.command_label = format!("{shell} /C `{}`", spawn_task.command_label);
+        }
         let task_command = std::mem::replace(&mut spawn_task.command, shell);
         let task_args = std::mem::take(&mut spawn_task.args);
         let combined_command = task_args
