@@ -365,6 +365,8 @@ impl TerminalPanel {
         {
             spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label);
         }
+        #[cfg(target_os = "windows")]
+        let windows_shell = shell.clone();
         let task_command = std::mem::replace(&mut spawn_task.command, shell);
         let task_args = std::mem::take(&mut spawn_task.args);
         let combined_command = task_args
@@ -374,7 +376,7 @@ impl TerminalPanel {
                 #[cfg(not(target_os = "windows"))]
                 command.push_str(&arg);
                 #[cfg(target_os = "windows")]
-                command.push_str(&task::to_powershell_variable(arg));
+                command.push_str(&task::to_windows_variable(&windows_shell, arg));
                 command
             });
         #[cfg(not(target_os = "windows"))]

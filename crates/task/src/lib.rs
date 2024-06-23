@@ -272,10 +272,53 @@ pub struct TaskContext {
 #[derive(Clone, Debug)]
 pub struct RunnableTag(pub SharedString);
 
+/// Convert unix-shell variable sytax to windows-shell sytax.
+/// `powershell` and `cmd` are considered valide here.
+#[inline]
+#[cfg(target_os = "windows")]
+pub fn to_windows_variable(shell: &str, input: String) -> String {
+    match shell {
+        "powershell" => to_powershell_variable(input),
+        "cmd" => to_cmd_variable(input),
+        some_shell => {
+            if some_shell.ends_with("powershell.exe") {
+                to_powershell_variable(input)
+            } else if some_shell.ends_with("cmd.exe") {
+                to_cmd_variable(input)
+            } else {
+                // someother shell detected
+                input
+            }
+        }
+    }
+}
+
+/// Convert `${SOME_VAR}`, `$SOME_VAR` to `%SOME_VAR%`.
+#[inline]
+#[cfg(target_os = "windows")]
+fn to_cmd_variable(input: String) -> String {
+    if let Some(var_str) = input.strip_prefix("${") {
+        if var_str.find(':').is_none() {
+            // If the input starts with "${", remove the trailing "}"
+            format!("%{}%", &var_str[..var_str.len() - 1])
+        } else {
+            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
+            // which will result in the task failing to run in such cases.
+            input
+        }
+    } else if let Some(var_str) = input.strip_prefix('$') {
+        // If the input starts with "$", directly append to "$env:"
+        format!("%{}%", var_str)
+    } else {
+        // If no prefix is found, return the input as is
+        input
+    }
+}
+
 /// Convert `${SOME_VAR}`, `$SOME_VAR` to `$env:SOME_VAR`.
 #[inline]
 #[cfg(target_os = "windows")]
-pub fn to_powershell_variable(input: String) -> String {
+fn to_powershell_variable(input: String) -> String {
     if let Some(var_str) = input.strip_prefix("${") {
         if var_str.find(':').is_none() {
             // If the input starts with "${", remove the trailing "}"
