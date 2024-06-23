@@ -1701,6 +1701,8 @@ impl Buffer {
             },
             cx,
         );
+        self.selections_update_count += 1;
+        cx.notify();
     }
 
     /// Clears the selections, so that other replicas of the buffer do not see any selections for
@@ -3355,9 +3357,10 @@ impl BufferSnapshot {
 
     /// Returns selections for remote peers intersecting the given range.
     #[allow(clippy::type_complexity)]
-    pub fn remote_selections_in_range(
+    pub fn selections_in_range(
         &self,
         range: Range<Anchor>,
+        include_local: bool,
     ) -> impl Iterator<
         Item = (
             ReplicaId,
@@ -3368,8 +3371,9 @@ impl BufferSnapshot {
     > + '_ {
         self.remote_selections
             .iter()
-            .filter(|(replica_id, set)| {
-                **replica_id != self.text.replica_id() && !set.selections.is_empty()
+            .filter(move |(replica_id, set)| {
+                (include_local || **replica_id != self.text.replica_id())
+                    && !set.selections.is_empty()
             })
             .map(move |(replica_id, set)| {
                 let start_ix = match set.selections.binary_search_by(|probe| {

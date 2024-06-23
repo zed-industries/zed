@@ -1,7 +1,7 @@
 use serde_json::json;
 use std::fs;
 use zed::LanguageServerId;
-use zed_extension_api::{self as zed, Result};
+use zed_extension_api::{self as zed, settings::LspSettings, Result};
 
 struct SnippetExtension {
     cached_binary_path: Option<String>,
@@ -106,32 +106,24 @@ impl zed::Extension for SnippetExtension {
         })
     }
 
-    fn language_server_initialization_options(
-        &mut self,
-        _language_server_id: &LanguageServerId,
-        _worktree: &zed_extension_api::Worktree,
-    ) -> Result<Option<zed_extension_api::serde_json::Value>> {
-        Ok(Some(json!({
-            "max_completion_items": 20,
-            "snippets_first": true,
-            "feature_words": false,
-            "feature_snippets": true,
-            "feature_paths": true
-        })))
-    }
-
     fn language_server_workspace_configuration(
         &mut self,
-        _language_server_id: &LanguageServerId,
-        _worktree: &zed_extension_api::Worktree,
+        server_id: &LanguageServerId,
+        worktree: &zed_extension_api::Worktree,
     ) -> Result<Option<zed_extension_api::serde_json::Value>> {
-        Ok(Some(json!({
-            "max_completion_items": 20,
-            "snippets_first": true,
-            "feature_words": false,
-            "feature_snippets": true,
-            "feature_paths": true
-        })))
+        let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .unwrap_or_else(|| {
+                json!({
+                    "max_completion_items": 20,
+                    "snippets_first": true,
+                    "feature_words": false,
+                    "feature_snippets": true,
+                    "feature_paths": true
+                })
+            });
+        Ok(Some(settings))
     }
 }
 
