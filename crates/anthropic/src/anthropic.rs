@@ -11,9 +11,9 @@ pub const ANTHROPIC_API_URL: &'static str = "https://api.anthropic.com";
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
+    #[default]
     #[serde(alias = "claude-3-5-sonnet", rename = "claude-3-5-sonnet-20240620")]
     Claude3_5Sonnet,
-    #[default]
     #[serde(alias = "claude-3-opus", rename = "claude-3-opus-20240229")]
     Claude3Opus,
     #[serde(alias = "claude-3-sonnet", rename = "claude-3-sonnet-20240229")]

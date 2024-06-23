@@ -242,7 +242,6 @@ impl UserStore {
     async fn handle_update_invite_info(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateInviteInfo>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -258,7 +257,6 @@ impl UserStore {
     async fn handle_show_contacts(
         this: Model<Self>,
         _: TypedEnvelope<proto::ShowContacts>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts))?;
@@ -272,7 +270,6 @@ impl UserStore {
     async fn handle_update_contacts(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateContacts>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {

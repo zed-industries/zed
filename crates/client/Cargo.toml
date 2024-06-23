@@ -19,7 +19,6 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 anyhow.workspace = true
 async-recursion = "0.3"
 async-tungstenite = { version = "0.16", features = ["async-std", "async-native-tls"] }
-async-native-tls = { version = "0.5.0", features = ["vendored"] }
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
@@ -68,10 +67,5 @@ windows.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa.workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
-async-native-tls = {"version" = "0.5.0", features = ["vendored"]}
-# This is an indirect dependency of async-tungstenite that is included
-# here so we can vendor libssl with the feature flag.
-[package.metadata.cargo-machete]
-ignored = ["async-native-tls"]
+isahc = { workspace = true, features = ["static-curl"] }
+async-native-tls = { version = "0.5.0", features = ["vendored"] }

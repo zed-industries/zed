@@ -697,7 +697,6 @@ impl Room {
     async fn handle_room_updated(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::RoomUpdated>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let room = envelope
