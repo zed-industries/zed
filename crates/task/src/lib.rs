@@ -156,11 +156,7 @@ pub enum VariableName {
 impl VariableName {
     /// Generates a `$VARIABLE`-like string value to be used in templates.
     pub fn template_value(&self) -> String {
-        #[cfg(not(target_os = "windows"))]
-        return format!("${self}");
-        // TODO: This is for powershell, for cmd, this should be "%{self}%"
-        #[cfg(target_os = "windows")]
-        return format!("$env:{self}");
+        format!("${self}")
     }
 }
 
@@ -275,3 +271,12 @@ pub struct TaskContext {
 /// This is a new type representing a 'tag' on a 'runnable symbol', typically a test of main() function, found via treesitter.
 #[derive(Clone, Debug)]
 pub struct RunnableTag(pub SharedString);
+
+/// TODO:
+#[inline]
+pub fn to_powershell_variable(input: String) -> String {
+    input
+        .strip_prefix('$')
+        .map(|var_str| format!("$env:{var_str}"))
+        .unwrap_or(input)
+}
