@@ -189,7 +189,7 @@ impl TaskTemplate {
                     },
                 ),
                 command,
-                args: args_with_substitutions,
+                args: self.args.clone(),
                 env,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
