@@ -575,12 +575,11 @@ fn retrieve_package_id_and_bin_name_from_metadata(
     metadata: CargoMetadata,
     abs_path: &Path,
 ) -> Option<(String, String)> {
-    let abs_path = abs_path.to_str()?;
-
     for package in metadata.packages {
         for target in package.targets {
             let is_bin = target.kind.iter().any(|kind| kind == "bin");
-            if target.src_path == abs_path && is_bin {
+            let target_path = PathBuf::from(target.src_path);
+            if target_path == abs_path && is_bin {
                 return Some((package.id, target.name));
             }
         }
