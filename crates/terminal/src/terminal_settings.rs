@@ -9,7 +9,6 @@ use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{SettingsJsonSchemaParams, SettingsSources};
 use std::path::PathBuf;
-use util::ResultExt;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -272,8 +271,15 @@ pub enum Shell {
 impl Shell {
     pub fn retrieve_system_shell() -> Option<String> {
         #[cfg(not(target_os = "windows"))]
-        return std::env::var("SHELL").log_err();
-        // Alacritty uses this as default. See:
+        {
+            use anyhow::Context;
+            use util::ResultExt;
+
+            return std::env::var("SHELL")
+                .context("Error finding SHELL in env.")
+                .log_err();
+        }
+        // `alacritty_terminal` uses this as default. See:
         // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
         #[cfg(target_os = "windows")]
         return Some("powershell".to_owned());
