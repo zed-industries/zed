@@ -1,10 +1,10 @@
-use crate::assistant_panel::ConversationEditor;
+use crate::assistant_panel::ContextEditor;
 use anyhow::Result;
 pub use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandRegistry};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{Model, Task, ViewContext, WeakView, WindowContext};
-use language::{Anchor, Buffer, CodeLabel, Documentation, LanguageServerId, ToPoint};
+use gpui::{AppContext, Model, Task, ViewContext, WeakView, WindowContext};
+use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
 use parking_lot::{Mutex, RwLock};
 use rope::Point;
 use std::{
@@ -14,21 +14,27 @@ use std::{
         Arc,
     },
 };
+use ui::ActiveTheme;
 use workspace::Workspace;
 
 pub mod active_command;
+pub mod default_command;
+pub mod diagnostics_command;
+pub mod fetch_command;
 pub mod file_command;
+pub mod now_command;
 pub mod project_command;
 pub mod prompt_command;
 pub mod rustdoc_command;
 pub mod search_command;
 pub mod tabs_command;
+pub mod term_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
-    editor: WeakView<ConversationEditor>,
     commands: Arc<SlashCommandRegistry>,
     cancel_flag: Mutex<Arc<AtomicBool>>,
-    workspace: WeakView<Workspace>,
+    editor: Option<WeakView<ContextEditor>>,
+    workspace: Option<WeakView<Workspace>>,
 }
 
 pub(crate) struct SlashCommandLine {
@@ -40,9 +46,9 @@ pub(crate) struct SlashCommandLine {
 
 impl SlashCommandCompletionProvider {
     pub fn new(
-        editor: WeakView<ConversationEditor>,
         commands: Arc<SlashCommandRegistry>,
-        workspace: WeakView<Workspace>,
+        editor: Option<WeakView<ContextEditor>>,
+        workspace: Option<WeakView<Workspace>>,
     ) -> Self {
         Self {
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
@@ -96,6 +102,30 @@ impl SlashCommandCompletionProvider {
                             new_text.push(' ');
                         }
 
+                        let confirm = editor.clone().zip(workspace.clone()).and_then(
+                            |(editor, workspace)| {
+                                (!requires_argument).then(|| {
+                                    let command_name = mat.string.clone();
+                                    let command_range = command_range.clone();
+                                    let editor = editor.clone();
+                                    let workspace = workspace.clone();
+                                    Arc::new(move |cx: &mut WindowContext| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                editor.run_command(
+                                                    command_range.clone(),
+                                                    &command_name,
+                                                    None,
+                                                    true,
+                                                    workspace.clone(),
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    }) as Arc<_>
+                                })
+                            },
+                        );
                         Some(project::Completion {
                             old_range: name_range.clone(),
                             documentation: Some(Documentation::SingleLine(command.description())),
@@ -104,25 +134,7 @@ impl SlashCommandCompletionProvider {
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
                             show_new_completions_on_confirm: requires_argument,
-                            confirm: (!requires_argument).then(|| {
-                                let command_name = mat.string.clone();
-                                let command_range = command_range.clone();
-                                let editor = editor.clone();
-                                let workspace = workspace.clone();
-                                Arc::new(move |cx: &mut WindowContext| {
-                                    editor
-                                        .update(cx, |editor, cx| {
-                                            editor.run_command(
-                                                command_range.clone(),
-                                                &command_name,
-                                                None,
-                                                workspace.clone(),
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                }) as Arc<_>
-                            }),
+                            confirm,
                         })
                     })
                     .collect()
@@ -157,33 +169,42 @@ impl SlashCommandCompletionProvider {
                 Ok(completions
                     .await?
                     .into_iter()
-                    .map(|arg| project::Completion {
-                        old_range: argument_range.clone(),
-                        label: CodeLabel::plain(arg.clone(), None),
-                        new_text: arg.clone(),
-                        documentation: None,
-                        server_id: LanguageServerId(0),
-                        lsp_completion: Default::default(),
-                        show_new_completions_on_confirm: false,
-                        confirm: Some(Arc::new({
-                            let command_name = command_name.clone();
-                            let command_range = command_range.clone();
-                            let editor = editor.clone();
-                            let workspace = workspace.clone();
-                            move |cx| {
-                                editor
-                                    .update(cx, |editor, cx| {
-                                        editor.run_command(
-                                            command_range.clone(),
-                                            &command_name,
-                                            Some(&arg),
-                                            workspace.clone(),
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            }
-                        })),
+                    .map(|command_argument| {
+                        let confirm =
+                            editor
+                                .clone()
+                                .zip(workspace.clone())
+                                .map(|(editor, workspace)| {
+                                    Arc::new({
+                                        let command_range = command_range.clone();
+                                        let command_name = command_name.clone();
+                                        let command_argument = command_argument.clone();
+                                        move |cx: &mut WindowContext| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.run_command(
+                                                        command_range.clone(),
+                                                        &command_name,
+                                                        Some(&command_argument),
+                                                        true,
+                                                        workspace.clone(),
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    }) as Arc<_>
+                                });
+                        project::Completion {
+                            old_range: argument_range.clone(),
+                            label: CodeLabel::plain(command_argument.clone(), None),
+                            new_text: command_argument.clone(),
+                            documentation: None,
+                            server_id: LanguageServerId(0),
+                            lsp_completion: Default::default(),
+                            show_new_completions_on_confirm: false,
+                            confirm,
+                        }
                     })
                     .collect())
             })
@@ -199,6 +220,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         &self,
         buffer: &Model<Buffer>,
         buffer_position: Anchor,
+        _: editor::CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<project::Completion>>> {
         let Some((name, argument, command_range, argument_range)) =
@@ -326,4 +348,20 @@ impl SlashCommandLine {
         }
         call
     }
+}
+
+pub fn create_label_for_command(
+    command_name: &str,
+    arguments: &[&str],
+    cx: &AppContext,
+) -> CodeLabel {
+    let mut label = CodeLabel::default();
+    label.push_str(command_name, None);
+    label.push_str(" ", None);
+    label.push_str(
+        &arguments.join(" "),
+        cx.theme().syntax().highlight_id("comment").map(HighlightId),
+    );
+    label.filter_range = 0..command_name.len();
+    label
 }

@@ -7,10 +7,10 @@ use anyhow::Context;
 use gpui::AppContext;
 pub use indoc::indoc;
 pub use lazy_static;
+pub use paths::database_dir;
 pub use smol;
 pub use sqlez;
 pub use sqlez_macros;
-pub use util::paths::DB_DIR;
 
 use release_channel::ReleaseChannel;
 pub use release_channel::RELEASE_CHANNEL;
@@ -145,7 +145,7 @@ macro_rules! define_connection {
 
         #[cfg(not(any(test, feature = "test-support")))]
         $crate::lazy_static::lazy_static! {
-            pub static ref $id: $t = $t($crate::smol::block_on($crate::open_db(&$crate::DB_DIR, &$crate::RELEASE_CHANNEL)));
+            pub static ref $id: $t = $t($crate::smol::block_on($crate::open_db($crate::database_dir(), &$crate::RELEASE_CHANNEL)));
         }
     };
     (pub static ref $id:ident: $t:ident<$($d:ty),+> = $migrations:expr;) => {
@@ -176,7 +176,7 @@ macro_rules! define_connection {
 
         #[cfg(not(any(test, feature = "test-support")))]
         $crate::lazy_static::lazy_static! {
-            pub static ref $id: $t = $t($crate::smol::block_on($crate::open_db(&$crate::DB_DIR, &$crate::RELEASE_CHANNEL)));
+            pub static ref $id: $t = $t($crate::smol::block_on($crate::open_db($crate::database_dir(), &$crate::RELEASE_CHANNEL)));
         }
     };
 }

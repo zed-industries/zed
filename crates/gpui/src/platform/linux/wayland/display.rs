@@ -6,13 +6,14 @@ use std::{
 use uuid::Uuid;
 use wayland_backend::client::ObjectId;
 
-use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay};
+use crate::{Bounds, DisplayId, Pixels, PlatformDisplay};
 
 #[derive(Debug, Clone)]
 pub(crate) struct WaylandDisplay {
     /// The ID of the wl_output object
     pub id: ObjectId,
-    pub bounds: Bounds<DevicePixels>,
+    pub name: Option<String>,
+    pub bounds: Bounds<Pixels>,
 }
 
 impl Hash for WaylandDisplay {
@@ -27,10 +28,14 @@ impl PlatformDisplay for WaylandDisplay {
     }
 
     fn uuid(&self) -> anyhow::Result<Uuid> {
-        Err(anyhow::anyhow!("Display UUID is not supported on Wayland"))
+        if let Some(name) = &self.name {
+            Ok(Uuid::new_v5(&Uuid::NAMESPACE_DNS, name.as_bytes()))
+        } else {
+            Err(anyhow::anyhow!("Wayland display does not have a name"))
+        }
     }
 
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
     }
 }

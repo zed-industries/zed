@@ -54,6 +54,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
         ("backspace", AlacModifiers::None) => Some("\x7f".to_string()),
         //Interesting escape codes
         ("tab", AlacModifiers::Shift) => Some("\x1b[Z".to_string()),
+        ("backspace", AlacModifiers::Ctrl) => Some("\x08".to_string()),
         ("backspace", AlacModifiers::Alt) => Some("\x1b\x7f".to_string()),
         ("backspace", AlacModifiers::Shift) => Some("\x7f".to_string()),
         ("space", AlacModifiers::Ctrl) => Some("\x00".to_string()),

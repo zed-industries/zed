@@ -17,7 +17,7 @@ anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
 env_logger.workspace = true
 fs.workspace = true
-extension.workspace = true
+extension = { workspace = true, features = ["no-webrtc"] }
 language.workspace = true
 log.workspace = true
 rpc.workspace = true

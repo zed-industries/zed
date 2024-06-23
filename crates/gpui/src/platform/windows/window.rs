@@ -32,9 +32,9 @@ use crate::*;
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
 
 pub struct WindowsWindowState {
-    pub origin: Point<DevicePixels>,
-    pub physical_size: Size<DevicePixels>,
-    pub fullscreen_restore_bounds: Bounds<DevicePixels>,
+    pub origin: Point<Pixels>,
+    pub logical_size: Size<Pixels>,
+    pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub scale_factor: f32,
 
     pub callbacks: Callbacks,
@@ -45,6 +45,7 @@ pub struct WindowsWindowState {
     pub click_state: ClickState,
     pub system_settings: WindowsSystemSettings,
     pub current_cursor: HCURSOR,
+    pub nc_button_pressed: Option<u32>,
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
@@ -67,26 +68,30 @@ impl WindowsWindowState {
         current_cursor: HCURSOR,
         display: WindowsDisplay,
     ) -> Self {
-        let origin = point(cs.x.into(), cs.y.into());
-        let physical_size = size(cs.cx.into(), cs.cy.into());
-        let fullscreen_restore_bounds = Bounds {
-            origin,
-            size: physical_size,
-        };
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
+        };
+        let origin = logical_point(cs.x as f32, cs.y as f32, scale_factor);
+        let logical_size = {
+            let physical_size = size(DevicePixels(cs.cx), DevicePixels(cs.cy));
+            physical_size.to_pixels(scale_factor)
+        };
+        let fullscreen_restore_bounds = Bounds {
+            origin,
+            size: logical_size,
         };
         let renderer = windows_renderer::windows_renderer(hwnd, transparent);
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
         let system_settings = WindowsSystemSettings::new();
+        let nc_button_pressed = None;
         let fullscreen = None;
 
         Self {
             origin,
-            physical_size,
+            logical_size,
             fullscreen_restore_bounds,
             scale_factor,
             callbacks,
@@ -95,6 +100,7 @@ impl WindowsWindowState {
             click_state,
             system_settings,
             current_cursor,
+            nc_button_pressed,
             display,
             fullscreen,
             hwnd,
@@ -110,10 +116,10 @@ impl WindowsWindowState {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         Bounds {
             origin: self.origin,
-            size: self.physical_size,
+            size: self.logical_size,
         }
     }
 
@@ -126,15 +132,17 @@ impl WindowsWindowState {
             GetWindowPlacement(self.hwnd, &mut placement).log_err();
             placement
         };
+        let physical_size = size(
+            DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
+            DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
+        );
         let bounds = Bounds {
-            origin: point(
-                DevicePixels(placement.rcNormalPosition.left),
-                DevicePixels(placement.rcNormalPosition.top),
+            origin: logical_point(
+                placement.rcNormalPosition.left as f32,
+                placement.rcNormalPosition.top as f32,
+                self.scale_factor,
             ),
-            size: size(
-                DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
-                DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
-            ),
+            size: physical_size.to_pixels(self.scale_factor),
         };
 
         if self.is_fullscreen() {
@@ -151,7 +159,7 @@ impl WindowsWindowState {
     /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
-        logical_size(self.physical_size, self.scale_factor)
+        self.logical_size
     }
 
     fn title_bar_padding(&self) -> Pixels {
@@ -303,6 +311,7 @@ impl WindowsWindow {
             } else {
                 display.default_bounds()
             };
+            let bounds = bounds.to_device_pixels(wnd.0.state.borrow().scale_factor);
             placement.rcNormalPosition.left = bounds.left().0;
             placement.rcNormalPosition.right = bounds.right().0;
             placement.rcNormalPosition.top = bounds.top().0;
@@ -350,7 +359,7 @@ impl Drop for WindowsWindow {
 }
 
 impl PlatformWindow for WindowsWindow {
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.0.state.borrow().bounds()
     }
 
@@ -534,7 +543,7 @@ impl PlatformWindow for WindowsWindow {
                 let mut lock = state_ptr.state.borrow_mut();
                 lock.fullscreen_restore_bounds = Bounds {
                     origin: lock.origin,
-                    size: lock.physical_size,
+                    size: lock.logical_size,
                 };
                 let StyleAndBounds {
                     style,
@@ -562,13 +571,13 @@ impl PlatformWindow for WindowsWindow {
                             | WS_MAXIMIZEBOX
                             | WS_MINIMIZEBOX
                             | WS_CAPTION);
-                    let bounds = lock.display.bounds();
+                    let physical_bounds = lock.display.physical_bounds();
                     StyleAndBounds {
                         style,
-                        x: bounds.left().0,
-                        y: bounds.top().0,
-                        cx: bounds.size.width.0,
-                        cy: bounds.size.height.0,
+                        x: physical_bounds.left().0,
+                        y: physical_bounds.top().0,
+                        cx: physical_bounds.size.width.0,
+                        cy: physical_bounds.size.height.0,
                     }
                 };
                 drop(lock);

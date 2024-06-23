@@ -128,9 +128,15 @@ impl Connection {
                             &mut remaining_sql_ptr,
                         );
 
+                        #[cfg(not(target_os = "linux"))]
+                        let offset = sqlite3_error_offset(temp_connection.sqlite3);
+
+                        #[cfg(target_os = "linux")]
+                        let offset = 0;
+
                         (
                             sqlite3_errcode(temp_connection.sqlite3),
-                            sqlite3_error_offset(temp_connection.sqlite3),
+                            offset,
                             sqlite3_errmsg(temp_connection.sqlite3),
                             Some(temp_connection),
                         )
@@ -142,9 +148,16 @@ impl Connection {
                             &mut raw_statement,
                             &mut remaining_sql_ptr,
                         );
+
+                        #[cfg(not(target_os = "linux"))]
+                        let offset = sqlite3_error_offset(self.sqlite3);
+
+                        #[cfg(target_os = "linux")]
+                        let offset = 0;
+
                         (
                             sqlite3_errcode(self.sqlite3),
-                            sqlite3_error_offset(self.sqlite3),
+                            offset,
                             sqlite3_errmsg(self.sqlite3),
                             None,
                         )
@@ -395,6 +408,7 @@ mod test {
         );
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn test_sql_has_syntax_errors() {
         let connection = Connection::open_memory(Some("test_sql_has_syntax_errors"));

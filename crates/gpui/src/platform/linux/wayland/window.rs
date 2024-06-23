@@ -1,6 +1,5 @@
 use std::cell::{Ref, RefCell, RefMut};
 use std::ffi::c_void;
-use std::num::NonZeroU32;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -26,9 +25,9 @@ use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, AnyWindowHandle, Bounds, DevicePixels, Globals, Modifiers, Output, Pixels,
-    PlatformDisplay, PlatformInput, Point, PromptLevel, Size, WaylandClientStatePtr,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowParams,
+    px, size, AnyWindowHandle, Bounds, Globals, Modifiers, Output, Pixels, PlatformDisplay,
+    PlatformInput, Point, PromptLevel, Size, WaylandClientStatePtr, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowParams,
 };
 
 #[derive(Default)]
@@ -63,6 +62,12 @@ impl rwh::HasDisplayHandle for RawWindow {
     }
 }
 
+struct InProgressConfigure {
+    size: Option<Size<Pixels>>,
+    fullscreen: bool,
+    maximized: bool,
+}
+
 pub struct WaylandWindowState {
     xdg_surface: xdg_surface::XdgSurface,
     acknowledged_first_configure: bool,
@@ -76,16 +81,17 @@ pub struct WaylandWindowState {
     display: Option<(ObjectId, Output)>,
     globals: Globals,
     renderer: BladeRenderer,
-    bounds: Bounds<u32>,
+    bounds: Bounds<Pixels>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
     decoration_state: WaylandDecorationState,
     fullscreen: bool,
-    restore_bounds: Bounds<DevicePixels>,
     maximized: bool,
+    windowed_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
     active: bool,
+    in_progress_configure: Option<InProgressConfigure>,
 }
 
 #[derive(Clone)]
@@ -107,9 +113,7 @@ impl WaylandWindowState {
         client: WaylandClientStatePtr,
         globals: Globals,
         options: WindowParams,
-    ) -> Self {
-        let bounds = options.bounds.map(|p| p.0 as u32);
-
+    ) -> anyhow::Result<Self> {
         let raw = RawWindow {
             window: surface.id().as_ptr().cast::<c_void>(),
             display: surface
@@ -130,18 +134,18 @@ impl WaylandWindowState {
                     },
                 )
             }
-            .unwrap(),
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
         );
         let config = BladeSurfaceConfig {
             size: gpu::Extent {
-                width: bounds.size.width,
-                height: bounds.size.height,
+                width: options.bounds.size.width.0 as u32,
+                height: options.bounds.size.height.0 as u32,
                 depth: 1,
             },
             transparent: options.window_background != WindowBackgroundAppearance::Opaque,
         };
 
-        Self {
+        Ok(Self {
             xdg_surface,
             acknowledged_first_configure: false,
             surface,
@@ -153,18 +157,19 @@ impl WaylandWindowState {
             outputs: HashMap::default(),
             display: None,
             renderer: BladeRenderer::new(gpu, config),
-            bounds,
+            bounds: options.bounds,
             scale: 1.0,
             input_handler: None,
             decoration_state: WaylandDecorationState::Client,
             fullscreen: false,
-            restore_bounds: Bounds::default(),
             maximized: false,
+            windowed_bounds: options.bounds,
+            in_progress_configure: None,
             client,
             appearance,
             handle,
             active: false,
-        }
+        })
     }
 }
 
@@ -224,12 +229,13 @@ impl WaylandWindow {
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
-    ) -> (Self, ObjectId) {
+    ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let xdg_surface = globals
             .wm_base
             .get_xdg_surface(&surface, &globals.qh, surface.id());
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
+        toplevel.set_min_size(200, 200);
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -266,14 +272,14 @@ impl WaylandWindow {
                 client,
                 globals,
                 params,
-            ))),
+            )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
         });
 
         // Kick things off
         surface.commit();
 
-        (this, surface.id())
+        Ok((this, surface.id()))
     }
 }
 
@@ -305,6 +311,31 @@ impl WaylandWindowStatePtr {
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
         match event {
             xdg_surface::Event::Configure { serial } => {
+                {
+                    let mut state = self.state.borrow_mut();
+
+                    if let Some(mut configure) = state.in_progress_configure.take() {
+                        let got_unmaximized = state.maximized && !configure.maximized;
+                        state.fullscreen = configure.fullscreen;
+                        state.maximized = configure.maximized;
+
+                        if got_unmaximized {
+                            configure.size = Some(state.windowed_bounds.size);
+                        } else if !configure.fullscreen && !configure.maximized {
+                            if let Some(size) = configure.size {
+                                state.windowed_bounds = Bounds {
+                                    origin: Point::default(),
+                                    size,
+                                };
+                            }
+                        }
+
+                        drop(state);
+                        if let Some(size) = configure.size {
+                            self.resize(size);
+                        }
+                    }
+                }
                 let mut state = self.state.borrow_mut();
                 state.xdg_surface.ack_configure(serial);
                 let request_frame_callback = !state.acknowledged_first_configure;
@@ -352,19 +383,21 @@ impl WaylandWindowStatePtr {
                 height,
                 states,
             } => {
-                let width = NonZeroU32::new(width as u32);
-                let height = NonZeroU32::new(height as u32);
+                let mut size = if width == 0 || height == 0 {
+                    None
+                } else {
+                    Some(size(px(width as f32), px(height as f32)))
+                };
+
                 let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
                 let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
+
                 let mut state = self.state.borrow_mut();
-                state.maximized = maximized;
-                state.fullscreen = fullscreen;
-                if fullscreen || maximized {
-                    state.restore_bounds = state.bounds.map(|p| DevicePixels(p as i32));
-                }
-                drop(state);
-                self.resize(width, height);
-                self.set_fullscreen(fullscreen);
+                state.in_progress_configure = Some(InProgressConfigure {
+                    size,
+                    fullscreen,
+                    maximized,
+                });
 
                 false
             }
@@ -393,49 +426,44 @@ impl WaylandWindowStatePtr {
     ) {
         let mut state = self.state.borrow_mut();
 
-        // We use `WpFractionalScale` instead to set the scale if it's available
-        if state.globals.fractional_scale_manager.is_some() {
-            return;
-        }
-
         match event {
             wl_surface::Event::Enter { output } => {
-                // We use `PreferredBufferScale` instead to set the scale if it's available
-                if state.surface.version() >= wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
-                    return;
-                }
                 let id = output.id();
 
                 let Some(output) = outputs.get(&id) else {
                     return;
                 };
 
-                state.outputs.insert(id, *output);
+                state.outputs.insert(id, output.clone());
 
                 let scale = primary_output_scale(&mut state);
 
-                state.surface.set_buffer_scale(scale);
-                drop(state);
-                self.rescale(scale as f32);
+                // We use `PreferredBufferScale` instead to set the scale if it's available
+                if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
+                    state.surface.set_buffer_scale(scale);
+                    drop(state);
+                    self.rescale(scale as f32);
+                }
             }
             wl_surface::Event::Leave { output } => {
-                // We use `PreferredBufferScale` instead to set the scale if it's available
-                if state.surface.version() >= wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
-                    return;
-                }
-
                 state.outputs.remove(&output.id());
 
                 let scale = primary_output_scale(&mut state);
 
-                state.surface.set_buffer_scale(scale);
-                drop(state);
-                self.rescale(scale as f32);
+                // We use `PreferredBufferScale` instead to set the scale if it's available
+                if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
+                    state.surface.set_buffer_scale(scale);
+                    drop(state);
+                    self.rescale(scale as f32);
+                }
             }
             wl_surface::Event::PreferredBufferScale { factor } => {
-                state.surface.set_buffer_scale(factor);
-                drop(state);
-                self.rescale(factor as f32);
+                // We use `WpFractionalScale` instead to set the scale if it's available
+                if state.globals.fractional_scale_manager.is_none() {
+                    state.surface.set_buffer_scale(factor);
+                    drop(state);
+                    self.rescale(factor as f32);
+                }
             }
             _ => {}
         }
@@ -478,68 +506,43 @@ impl WaylandWindowStatePtr {
         bounds
     }
 
-    pub fn set_size_and_scale(
-        &self,
-        width: Option<NonZeroU32>,
-        height: Option<NonZeroU32>,
-        scale: Option<f32>,
-    ) {
-        let (width, height, scale) = {
+    pub fn set_size_and_scale(&self, size: Option<Size<Pixels>>, scale: Option<f32>) {
+        let (size, scale) = {
             let mut state = self.state.borrow_mut();
-            if width.map_or(true, |width| width.get() == state.bounds.size.width)
-                && height.map_or(true, |height| height.get() == state.bounds.size.height)
+            if size.map_or(true, |size| size == state.bounds.size)
                 && scale.map_or(true, |scale| scale == state.scale)
             {
                 return;
             }
-            if let Some(width) = width {
-                state.bounds.size.width = width.get();
-            }
-            if let Some(height) = height {
-                state.bounds.size.height = height.get();
+            if let Some(size) = size {
+                state.bounds.size = size;
             }
             if let Some(scale) = scale {
                 state.scale = scale;
             }
-            let width = state.bounds.size.width;
-            let height = state.bounds.size.height;
-            let scale = state.scale;
-            state.renderer.update_drawable_size(size(
-                width as f64 * scale as f64,
-                height as f64 * scale as f64,
-            ));
-            (width, height, scale)
+            let device_bounds = state.bounds.to_device_pixels(state.scale);
+            state.renderer.update_drawable_size(device_bounds.size);
+            (state.bounds.size, state.scale)
         };
 
         if let Some(ref mut fun) = self.callbacks.borrow_mut().resize {
-            fun(
-                Size {
-                    width: px(width as f32),
-                    height: px(height as f32),
-                },
-                scale,
-            );
+            fun(size, scale);
         }
 
         {
             let state = self.state.borrow();
             if let Some(viewport) = &state.viewport {
-                viewport.set_destination(width as i32, height as i32);
+                viewport.set_destination(size.width.0 as i32, size.height.0 as i32);
             }
         }
     }
 
-    pub fn resize(&self, width: Option<NonZeroU32>, height: Option<NonZeroU32>) {
-        self.set_size_and_scale(width, height, None);
+    pub fn resize(&self, size: Size<Pixels>) {
+        self.set_size_and_scale(Some(size), None);
     }
 
     pub fn rescale(&self, scale: f32) {
-        self.set_size_and_scale(None, None, Some(scale));
-    }
-
-    pub fn set_fullscreen(&self, fullscreen: bool) {
-        let mut state = self.state.borrow_mut();
-        state.fullscreen = fullscreen;
+        self.set_size_and_scale(None, Some(scale));
     }
 
     /// Notifies the window of the state of the decorations.
@@ -602,10 +605,10 @@ fn primary_output_scale(state: &mut RefMut<WaylandWindowState>) -> i32 {
     for (id, output) in state.outputs.iter() {
         if let Some((_, output_data)) = &current_output {
             if output.scale > output_data.scale {
-                current_output = Some((id.clone(), *output));
+                current_output = Some((id.clone(), output.clone()));
             }
         } else {
-            current_output = Some((id.clone(), *output));
+            current_output = Some((id.clone(), output.clone()));
         }
         scale = scale.max(output.scale);
     }
@@ -625,8 +628,8 @@ impl rwh::HasDisplayHandle for WaylandWindow {
 }
 
 impl PlatformWindow for WaylandWindow {
-    fn bounds(&self) -> Bounds<DevicePixels> {
-        self.borrow().bounds.map(|p| DevicePixels(p as i32))
+    fn bounds(&self) -> Bounds<Pixels> {
+        self.borrow().bounds
     }
 
     fn is_maximized(&self) -> bool {
@@ -636,20 +639,17 @@ impl PlatformWindow for WaylandWindow {
     fn window_bounds(&self) -> WindowBounds {
         let state = self.borrow();
         if state.fullscreen {
-            WindowBounds::Fullscreen(state.restore_bounds)
+            WindowBounds::Fullscreen(state.windowed_bounds)
         } else if state.maximized {
-            WindowBounds::Maximized(state.restore_bounds)
+            WindowBounds::Maximized(state.windowed_bounds)
         } else {
-            WindowBounds::Windowed(state.bounds.map(|p| DevicePixels(p as i32)))
+            drop(state);
+            WindowBounds::Windowed(self.bounds())
         }
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        let state = self.borrow();
-        Size {
-            width: Pixels(state.bounds.size.width as f32),
-            height: Pixels(state.bounds.size.height as f32),
-        }
+        self.borrow().bounds.size
     }
 
     fn scale_factor(&self) -> f32 {
@@ -661,10 +661,12 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        self.borrow().display.as_ref().map(|(id, display)| {
+        let state = self.borrow();
+        state.display.as_ref().map(|(id, display)| {
             Rc::new(WaylandDisplay {
                 id: id.clone(),
-                bounds: display.bounds,
+                name: display.name.clone(),
+                bounds: display.bounds.to_pixels(state.scale),
             }) as Rc<dyn PlatformDisplay>
         })
     }
@@ -779,7 +781,6 @@ impl PlatformWindow for WaylandWindow {
 
     fn toggle_fullscreen(&self) {
         let mut state = self.borrow_mut();
-        state.restore_bounds = state.bounds.map(|p| DevicePixels(p as i32));
         if !state.fullscreen {
             state.toplevel.set_fullscreen(None);
         } else {

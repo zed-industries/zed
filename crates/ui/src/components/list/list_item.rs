@@ -35,6 +35,7 @@ pub struct ListItem {
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
+    selectable: bool,
 }
 
 impl ListItem {
@@ -56,11 +57,17 @@ impl ListItem {
             on_toggle: None,
             tooltip: None,
             children: SmallVec::new(),
+            selectable: true,
         }
     }
 
     pub fn spacing(mut self, spacing: ListItemSpacing) -> Self {
         self.spacing = spacing;
+        self
+    }
+
+    pub fn selectable(mut self, has_hover: bool) -> Self {
+        self.selectable = has_hover;
         self
     }
 
@@ -164,10 +171,12 @@ impl RenderOnce for ListItem {
                     //     this.border_1()
                     //         .border_color(cx.theme().colors().border_focused)
                     // })
-                    .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                    .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                    .when(self.selected, |this| {
-                        this.bg(cx.theme().colors().ghost_element_selected)
+                    .when(self.selectable, |this| {
+                        this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                            .when(self.selected, |this| {
+                                this.bg(cx.theme().colors().ghost_element_selected)
+                            })
                     })
             })
             .child(
@@ -189,10 +198,14 @@ impl RenderOnce for ListItem {
                             //     this.border_1()
                             //         .border_color(cx.theme().colors().border_focused)
                             // })
-                            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                            .when(self.selected, |this| {
-                                this.bg(cx.theme().colors().ghost_element_selected)
+                            .when(self.selectable, |this| {
+                                this.hover(|style| {
+                                    style.bg(cx.theme().colors().ghost_element_hover)
+                                })
+                                .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                                .when(self.selected, |this| {
+                                    this.bg(cx.theme().colors().ghost_element_selected)
+                                })
                             })
                     })
                     .when_some(self.on_click, |this, on_click| {

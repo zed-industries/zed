@@ -109,6 +109,17 @@ impl Keystroke {
         })
     }
 
+    /// Returns true if this keystroke left
+    /// the ime system in an incomplete state.
+    pub fn is_ime_in_progress(&self) -> bool {
+        self.ime_key.is_none()
+            && (is_printable_key(&self.key) || self.key.is_empty())
+            && !(self.modifiers.platform
+                || self.modifiers.control
+                || self.modifiers.function
+                || self.modifiers.alt)
+    }
+
     /// Returns a new keystroke with the ime_key filled.
     /// This is used for dispatch_keystroke where we want users to
     /// be able to simulate typing "space", etc.
@@ -123,9 +134,7 @@ impl Keystroke {
                 "space" => Some(" ".into()),
                 "tab" => Some("\t".into()),
                 "enter" => Some("\n".into()),
-                "up" | "down" | "left" | "right" | "pageup" | "pagedown" | "home" | "end"
-                | "delete" | "escape" | "backspace" | "f1" | "f2" | "f3" | "f4" | "f5" | "f6"
-                | "f7" | "f8" | "f9" | "f10" | "f11" | "f12" => None,
+                key if !is_printable_key(key) => None,
                 key => {
                     if self.modifiers.shift {
                         Some(key.to_uppercase())
@@ -136,6 +145,15 @@ impl Keystroke {
             }
         }
         self
+    }
+}
+
+fn is_printable_key(key: &str) -> bool {
+    match key {
+        "up" | "down" | "left" | "right" | "pageup" | "pagedown" | "home" | "end" | "delete"
+        | "escape" | "backspace" | "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9"
+        | "f10" | "f11" | "f12" => false,
+        _ => true,
     }
 }
 
@@ -292,6 +310,15 @@ impl Modifiers {
         Modifiers {
             shift: true,
             platform: true,
+            ..Default::default()
+        }
+    }
+
+    /// helper method for Modifiers with command + shift
+    pub fn control_shift() -> Modifiers {
+        Modifiers {
+            shift: true,
+            control: true,
             ..Default::default()
         }
     }

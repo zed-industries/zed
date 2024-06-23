@@ -1,5 +1,4 @@
 [
-  // todo(linux): Review the editor bindings
   // Standard Linux bindings
   {
     "bindings": {
@@ -43,40 +42,30 @@
       "shift-tab": "editor::TabPrev",
       "ctrl-k": "editor::CutToEndOfLine",
       "ctrl-t": "editor::Transpose",
-      // "ctrl-backspace": "editor::DeleteToBeginningOfLine",
-      // "ctrl-delete": "editor::DeleteToEndOfLine",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      // "ctrl-w": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
-      // "alt-h": "editor::DeleteToPreviousWordStart",
-      // "alt-d": "editor::DeleteToNextWordEnd",
       "ctrl-x": "editor::Cut",
-      "ctrl-c": "editor::Copy",
       "ctrl-insert": "editor::Copy",
-      "ctrl-v": "editor::Paste",
+      "ctrl-c": "editor::Copy",
       "shift-insert": "editor::Paste",
+      "ctrl-v": "editor::Paste",
+      "ctrl-y": "editor::Redo",
       "ctrl-z": "editor::Undo",
       "ctrl-shift-z": "editor::Redo",
       "up": "editor::MoveUp",
-      // "ctrl-up": "editor::MoveToStartOfParagraph", todo(linux) Should be "scroll down by 1 line"
+      "ctrl-up": "editor::LineUp",
+      "ctrl-down": "editor::LineDown",
       "pageup": "editor::PageUp",
-      // "shift-pageup": "editor::MovePageUp", todo(linux) should be 'select page up'
+      "shift-pageup": "editor::SelectPageUp",
       "home": "editor::MoveToBeginningOfLine",
       "down": "editor::MoveDown",
-      // "ctrl-down": "editor::MoveToEndOfParagraph", todo(linux) should be "scroll up by 1 line"
       "pagedown": "editor::PageDown",
-      // "shift-pagedown": "editor::MovePageDown", todo(linux) should be 'select page down'
+      "shift-pagedown": "editor::SelectPageDown",
       "end": "editor::MoveToEndOfLine",
       "left": "editor::MoveLeft",
       "right": "editor::MoveRight",
       "ctrl-left": "editor::MoveToPreviousWordStart",
-      // "alt-b": "editor::MoveToPreviousWordStart",
       "ctrl-right": "editor::MoveToNextWordEnd",
-      // "alt-f": "editor::MoveToNextWordEnd",
-      // "cmd-left": "editor::MoveToBeginningOfLine",
-      // "ctrl-a": "editor::MoveToBeginningOfLine",
-      // "cmd-right": "editor::MoveToEndOfLine",
-      // "ctrl-e": "editor::MoveToEndOfLine",
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-end": "editor::MoveToEnd",
       "shift-up": "editor::SelectUp",
@@ -87,8 +76,6 @@
       "ctrl-shift-right": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::AddSelectionAbove",
       "ctrl-shift-down": "editor::AddSelectionBelow",
-      // "ctrl-shift-up": "editor::SelectToStartOfParagraph",
-      // "ctrl-shift-down": "editor::SelectToEndOfParagraph",
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
@@ -205,15 +192,10 @@
     }
   },
   {
-    "context": "ConversationEditor > Editor",
+    "context": "PromptLibrary",
     "bindings": {
-      "ctrl-enter": "assistant::Assist",
-      "ctrl-s": "workspace::Save",
-      "ctrl->": "assistant::QuoteSelection",
-      "shift-enter": "assistant::Split",
-      "ctrl-r": "assistant::CycleMessageRole",
-      "enter": "assistant::ConfirmCommand",
-      "alt-enter": "editor::Newline"
+      "ctrl-n": "prompt_library::NewPrompt",
+      "ctrl-shift-s": "prompt_library::ToggleDefaultPrompt"
     }
   },
   {
@@ -225,7 +207,8 @@
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
       "ctrl-f": "search::FocusSearch",
-      "ctrl-h": "search::ToggleReplace"
+      "ctrl-h": "search::ToggleReplace",
+      "ctrl-l": "search::ToggleSelection"
     }
   },
   {
@@ -289,6 +272,7 @@
       "ctrl-alt-g": "search::SelectNextMatch",
       "ctrl-alt-shift-g": "search::SelectPrevMatch",
       "ctrl-alt-shift-h": "search::ToggleReplace",
+      "ctrl-alt-shift-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
@@ -296,6 +280,13 @@
       "alt-ctrl-f": "project_search::ToggleFilters",
       "ctrl-alt-shift-r": "search::ToggleRegex",
       "ctrl-alt-shift-x": "search::ToggleRegex"
+    }
+  },
+  {
+    "context": "Terminal",
+    "bindings": {
+      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"]
     }
   },
   // Bindings from VS Code
@@ -422,7 +413,7 @@
       "alt-8": ["workspace::ActivatePane", 7],
       "alt-9": ["workspace::ActivatePane", 8],
       "ctrl-alt-b": "workspace::ToggleLeftDock",
-      "ctrl-b": "workspace::ToggleRightDock",
+      "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "ctrl-shift-f": "pane::DeploySearch",
@@ -442,6 +433,7 @@
       "ctrl-shift-p": "command_palette::Toggle",
       "ctrl-shift-m": "diagnostics::Deploy",
       "ctrl-shift-e": "project_panel::ToggleFocus",
+      "ctrl-shift-b": "outline_panel::ToggleFocus",
       "ctrl-?": "assistant::ToggleFocus",
       "ctrl-alt-s": "workspace::SaveAll",
       "ctrl-k m": "language_selector::Toggle",
@@ -548,9 +540,34 @@
     }
   },
   {
+    "context": "ContextEditor > Editor",
+    "bindings": {
+      "ctrl-enter": "assistant::Assist",
+      "ctrl-s": "workspace::Save",
+      "ctrl->": "assistant::QuoteSelection",
+      "shift-enter": "assistant::Split",
+      "ctrl-r": "assistant::CycleMessageRole",
+      "enter": "assistant::ConfirmCommand",
+      "alt-enter": "editor::Newline"
+    }
+  },
+  {
     "context": "ProjectSearchBar && !in_replace",
     "bindings": {
       "ctrl-enter": "project_search::SearchInNew"
+    }
+  },
+  {
+    "context": "OutlinePanel",
+    "bindings": {
+      "left": "outline_panel::CollapseSelectedEntry",
+      "right": "outline_panel::ExpandSelectedEntry",
+      "ctrl-alt-c": "outline_panel::CopyPath",
+      "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
+      "alt-ctrl-r": "outline_panel::RevealInFinder",
+      "space": "outline_panel::Open",
+      "shift-down": "menu::SelectNext",
+      "shift-up": "menu::SelectPrev"
     }
   },
   {
@@ -574,7 +591,10 @@
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFinder",
-      "alt-shift-f": "project_panel::NewSearchInDirectory"
+      "alt-shift-f": "project_panel::NewSearchInDirectory",
+      "shift-down": "menu::SelectNext",
+      "shift-up": "menu::SelectPrev",
+      "escape": "menu::Cancel"
     }
   },
   {
@@ -635,12 +655,7 @@
       "pagedown": ["terminal::SendKeystroke", "pagedown"],
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
-      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
-
-      // Some nice conveniences
-      "ctrl-backspace": ["terminal::SendText", "\u0015"],
-      "ctrl-right": ["terminal::SendText", "\u0005"],
-      "ctrl-left": ["terminal::SendText", "\u0001"]
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"]
     }
   }
 ]

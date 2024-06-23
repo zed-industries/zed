@@ -62,14 +62,16 @@ pub(crate) fn handle_msg(
         WM_NCMBUTTONUP => {
             handle_nc_mouse_up_msg(handle, MouseButton::Middle, wparam, lparam, state_ptr)
         }
-        WM_LBUTTONDOWN => handle_mouse_down_msg(MouseButton::Left, lparam, state_ptr),
-        WM_RBUTTONDOWN => handle_mouse_down_msg(MouseButton::Right, lparam, state_ptr),
-        WM_MBUTTONDOWN => handle_mouse_down_msg(MouseButton::Middle, lparam, state_ptr),
-        WM_XBUTTONDOWN => handle_xbutton_msg(wparam, lparam, handle_mouse_down_msg, state_ptr),
-        WM_LBUTTONUP => handle_mouse_up_msg(MouseButton::Left, lparam, state_ptr),
-        WM_RBUTTONUP => handle_mouse_up_msg(MouseButton::Right, lparam, state_ptr),
-        WM_MBUTTONUP => handle_mouse_up_msg(MouseButton::Middle, lparam, state_ptr),
-        WM_XBUTTONUP => handle_xbutton_msg(wparam, lparam, handle_mouse_up_msg, state_ptr),
+        WM_LBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Left, lparam, state_ptr),
+        WM_RBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Right, lparam, state_ptr),
+        WM_MBUTTONDOWN => handle_mouse_down_msg(handle, MouseButton::Middle, lparam, state_ptr),
+        WM_XBUTTONDOWN => {
+            handle_xbutton_msg(handle, wparam, lparam, handle_mouse_down_msg, state_ptr)
+        }
+        WM_LBUTTONUP => handle_mouse_up_msg(handle, MouseButton::Left, lparam, state_ptr),
+        WM_RBUTTONUP => handle_mouse_up_msg(handle, MouseButton::Right, lparam, state_ptr),
+        WM_MBUTTONUP => handle_mouse_up_msg(handle, MouseButton::Middle, lparam, state_ptr),
+        WM_XBUTTONUP => handle_xbutton_msg(handle, wparam, lparam, handle_mouse_up_msg, state_ptr),
         WM_MOUSEWHEEL => handle_mouse_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
@@ -96,13 +98,16 @@ fn handle_move_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let x = lparam.signed_loword() as i32;
-    let y = lparam.signed_hiword() as i32;
     let mut lock = state_ptr.state.borrow_mut();
-    lock.origin = point(x.into(), y.into());
-    let size = lock.physical_size;
-    let center_x = x + size.width.0 / 2;
-    let center_y = y + size.height.0 / 2;
+    let origin = logical_point(
+        lparam.signed_loword() as f32,
+        lparam.signed_hiword() as f32,
+        lock.scale_factor,
+    );
+    lock.origin = origin;
+    let size = lock.logical_size;
+    let center_x = origin.x.0 + size.width.0 / 2.;
+    let center_y = origin.y.0 + size.height.0 / 2.;
     let monitor_bounds = lock.display.bounds();
     if center_x < monitor_bounds.left().0
         || center_x > monitor_bounds.right().0
@@ -129,18 +134,15 @@ fn handle_move_msg(
 fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
-    let new_physical_size = size(width.into(), height.into());
     let mut lock = state_ptr.state.borrow_mut();
+    let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
-    lock.physical_size = new_physical_size;
-    lock.renderer.update_drawable_size(Size {
-        width: width as f64,
-        height: height as f64,
-    });
+    lock.renderer.update_drawable_size(new_size);
+    let new_size = new_size.to_pixels(scale_factor);
+    lock.logical_size = new_size;
     if let Some(mut callback) = lock.callbacks.resize.take() {
         drop(lock);
-        let logical_size = logical_size(new_physical_size, scale_factor);
-        callback(logical_size, scale_factor);
+        callback(new_size, scale_factor);
         state_ptr.state.borrow_mut().callbacks.resize = Some(callback);
     }
     Some(0)
@@ -409,10 +411,12 @@ fn handle_char_msg(
 }
 
 fn handle_mouse_down_msg(
+    handle: HWND,
     button: MouseButton,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    unsafe { SetCapture(handle) };
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let x = lparam.signed_loword() as f32;
@@ -443,10 +447,12 @@ fn handle_mouse_down_msg(
 }
 
 fn handle_mouse_up_msg(
+    _handle: HWND,
     button: MouseButton,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    unsafe { ReleaseCapture().log_err() };
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let x = lparam.signed_loword() as f32;
@@ -475,9 +481,10 @@ fn handle_mouse_up_msg(
 }
 
 fn handle_xbutton_msg(
+    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
-    handler: impl Fn(MouseButton, LPARAM, Rc<WindowsWindowStatePtr>) -> Option<isize>,
+    handler: impl Fn(HWND, MouseButton, LPARAM, Rc<WindowsWindowStatePtr>) -> Option<isize>,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let nav_dir = match wparam.hiword() {
@@ -485,7 +492,7 @@ fn handle_xbutton_msg(
         XBUTTON2 => NavigationDirection::Forward,
         _ => return Some(1),
     };
-    handler(MouseButton::Navigate(nav_dir), lparam, state_ptr)
+    handler(handle, MouseButton::Navigate(nav_dir), lparam, state_ptr)
 }
 
 fn handle_mouse_wheel_msg(
@@ -919,7 +926,7 @@ fn handle_nc_mouse_down_msg(
     }
 
     let mut lock = state_ptr.state.borrow_mut();
-    let result = if let Some(mut callback) = lock.callbacks.input.take() {
+    if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
@@ -943,13 +950,25 @@ fn handle_nc_mouse_down_msg(
         };
         state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
-        result
+        if result.is_some() {
+            return result;
+        }
     } else {
-        None
+        drop(lock);
     };
 
     // Since these are handled in handle_nc_mouse_up_msg we must prevent the default window proc
-    result.or_else(|| matches!(wparam.0 as u32, HTMINBUTTON | HTMAXBUTTON | HTCLOSE).then_some(0))
+    if button == MouseButton::Left {
+        match wparam.0 as u32 {
+            HTMINBUTTON => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTMINBUTTON),
+            HTMAXBUTTON => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTMAXBUTTON),
+            HTCLOSE => state_ptr.state.borrow_mut().nc_button_pressed = Some(HTCLOSE),
+            _ => return None,
+        };
+        Some(0)
+    } else {
+        None
+    }
 }
 
 fn handle_nc_mouse_up_msg(
@@ -991,24 +1010,41 @@ fn handle_nc_mouse_up_msg(
         drop(lock);
     }
 
-    if button == MouseButton::Left {
+    let last_pressed = state_ptr.state.borrow_mut().nc_button_pressed.take();
+    if button == MouseButton::Left && last_pressed.is_some() {
+        let last_button = last_pressed.unwrap();
+        let mut handled = false;
         match wparam.0 as u32 {
-            HTMINBUTTON => unsafe {
-                ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err();
-            },
-            HTMAXBUTTON => unsafe {
-                if state_ptr.state.borrow().is_maximized() {
-                    ShowWindowAsync(handle, SW_NORMAL).ok().log_err();
-                } else {
-                    ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err();
+            HTMINBUTTON => {
+                if last_button == HTMINBUTTON {
+                    unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
+                    handled = true;
                 }
-            },
-            HTCLOSE => unsafe {
-                PostMessageW(handle, WM_CLOSE, WPARAM::default(), LPARAM::default()).log_err();
-            },
-            _ => return None,
+            }
+            HTMAXBUTTON => {
+                if last_button == HTMAXBUTTON {
+                    if state_ptr.state.borrow().is_maximized() {
+                        unsafe { ShowWindowAsync(handle, SW_NORMAL).ok().log_err() };
+                    } else {
+                        unsafe { ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err() };
+                    }
+                    handled = true;
+                }
+            }
+            HTCLOSE => {
+                if last_button == HTCLOSE {
+                    unsafe {
+                        PostMessageW(handle, WM_CLOSE, WPARAM::default(), LPARAM::default())
+                            .log_err()
+                    };
+                    handled = true;
+                }
+            }
+            _ => {}
         };
-        return Some(0);
+        if handled {
+            return Some(0);
+        }
     }
 
     None
@@ -1046,37 +1082,30 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     }
 
     let vk_code = wparam.loword();
-    let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-    if basic_key.is_some() {
-        return basic_key;
-    }
 
     let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => Some("backspace"),
-        VK_RETURN => Some("enter"),
-        VK_TAB => Some("tab"),
-        VK_UP => Some("up"),
-        VK_DOWN => Some("down"),
-        VK_RIGHT => Some("right"),
-        VK_LEFT => Some("left"),
-        VK_HOME => Some("home"),
-        VK_END => Some("end"),
-        VK_PRIOR => Some("pageup"),
-        VK_NEXT => Some("pagedown"),
-        VK_ESCAPE => Some("escape"),
-        VK_INSERT => Some("insert"),
-        _ => None,
-    };
-
-    if let Some(key) = key {
-        Some(Keystroke {
-            modifiers,
-            key: key.to_string(),
-            ime_key: None,
-        })
-    } else {
-        None
+        VK_BACK => "backspace",
+        VK_RETURN => "enter",
+        VK_TAB => "tab",
+        VK_UP => "up",
+        VK_DOWN => "down",
+        VK_RIGHT => "right",
+        VK_LEFT => "left",
+        VK_HOME => "home",
+        VK_END => "end",
+        VK_PRIOR => "pageup",
+        VK_NEXT => "pagedown",
+        VK_ESCAPE => "escape",
+        VK_INSERT => "insert",
+        _ => return basic_vkcode_to_string(vk_code, modifiers),
     }
+    .to_owned();
+
+    Some(Keystroke {
+        modifiers,
+        key: key,
+        ime_key: None,
+    })
 }
 
 enum KeystrokeOrModifier {
@@ -1089,67 +1118,62 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
 
     let modifiers = current_modifiers();
 
-    if is_modifier(VIRTUAL_KEY(vk_code)) {
-        return Some(KeystrokeOrModifier::Modifier(modifiers));
-    }
+    let key = match VIRTUAL_KEY(vk_code) {
+        VK_BACK => "backspace",
+        VK_RETURN => "enter",
+        VK_TAB => "tab",
+        VK_UP => "up",
+        VK_DOWN => "down",
+        VK_RIGHT => "right",
+        VK_LEFT => "left",
+        VK_HOME => "home",
+        VK_END => "end",
+        VK_PRIOR => "pageup",
+        VK_NEXT => "pagedown",
+        VK_ESCAPE => "escape",
+        VK_INSERT => "insert",
+        VK_DELETE => "delete",
+        _ => {
+            if is_modifier(VIRTUAL_KEY(vk_code)) {
+                return Some(KeystrokeOrModifier::Modifier(modifiers));
+            }
 
-    if modifiers.control || modifiers.alt {
-        let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-        if let Some(basic_key) = basic_key {
-            return Some(KeystrokeOrModifier::Keystroke(basic_key));
+            if modifiers.control || modifiers.alt {
+                let basic_key = basic_vkcode_to_string(vk_code, modifiers);
+                if let Some(basic_key) = basic_key {
+                    return Some(KeystrokeOrModifier::Keystroke(basic_key));
+                }
+            }
+
+            if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
+                let offset = vk_code - VK_F1.0;
+                return Some(KeystrokeOrModifier::Keystroke(Keystroke {
+                    modifiers,
+                    key: format!("f{}", offset + 1),
+                    ime_key: None,
+                }));
+            };
+            return None;
         }
     }
+    .to_owned();
 
-    if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
-        let offset = vk_code - VK_F1.0;
-        return Some(KeystrokeOrModifier::Keystroke(Keystroke {
-            modifiers,
-            key: format!("f{}", offset + 1),
-            ime_key: None,
-        }));
-    }
-
-    let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => Some("backspace"),
-        VK_RETURN => Some("enter"),
-        VK_TAB => Some("tab"),
-        VK_UP => Some("up"),
-        VK_DOWN => Some("down"),
-        VK_RIGHT => Some("right"),
-        VK_LEFT => Some("left"),
-        VK_HOME => Some("home"),
-        VK_END => Some("end"),
-        VK_PRIOR => Some("pageup"),
-        VK_NEXT => Some("pagedown"),
-        VK_ESCAPE => Some("escape"),
-        VK_INSERT => Some("insert"),
-        VK_DELETE => Some("delete"),
-        _ => None,
-    };
-
-    if let Some(key) = key {
-        Some(KeystrokeOrModifier::Keystroke(Keystroke {
-            modifiers,
-            key: key.to_string(),
-            ime_key: None,
-        }))
-    } else {
-        None
-    }
+    Some(KeystrokeOrModifier::Keystroke(Keystroke {
+        modifiers,
+        key: key,
+        ime_key: None,
+    }))
 }
 
 fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
-    let src = [wparam.0 as u16];
-    let Ok(first_char) = char::decode_utf16(src).collect::<Vec<_>>()[0] else {
-        return None;
-    };
+    let first_char = char::from_u32((wparam.0 as u16).into())?;
     if first_char.is_control() {
         None
     } else {
         let mut modifiers = current_modifiers();
         // for characters that use 'shift' to type it is expected that the
         // shift is not reported if the uppercase/lowercase are the same and instead only the key is reported
-        if first_char.to_lowercase().to_string() == first_char.to_uppercase().to_string() {
+        if first_char.to_ascii_uppercase() == first_char.to_ascii_lowercase() {
             modifiers.shift = false;
         }
         let key = match first_char {
@@ -1226,56 +1250,25 @@ fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
 }
 
 fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> {
-    match code {
-        // VK_0 - VK_9
-        48..=57 => Some(Keystroke {
-            modifiers,
-            key: format!("{}", code - VK_0.0),
-            ime_key: None,
-        }),
-        // VK_A - VK_Z
-        65..=90 => Some(Keystroke {
-            modifiers,
-            key: format!("{}", (b'a' + code as u8 - VK_A.0 as u8) as char),
-            ime_key: None,
-        }),
-        // VK_F1 - VK_F24
-        112..=135 => Some(Keystroke {
-            modifiers,
-            key: format!("f{}", code - VK_F1.0 + 1),
-            ime_key: None,
-        }),
-        // OEM3: `/~, OEM_MINUS: -/_, OEM_PLUS: =/+, ...
-        _ => {
-            if let Some(key) = oemkey_vkcode_to_string(code) {
-                Some(Keystroke {
-                    modifiers,
-                    key,
-                    ime_key: None,
-                })
-            } else {
-                None
-            }
-        }
-    }
-}
+    let mapped_code = unsafe { MapVirtualKeyW(code as u32, MAPVK_VK_TO_CHAR) };
 
-fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
-    match code {
-        186 => Some(";".to_string()), // VK_OEM_1
-        187 => Some("=".to_string()), // VK_OEM_PLUS
-        188 => Some(",".to_string()), // VK_OEM_COMMA
-        189 => Some("-".to_string()), // VK_OEM_MINUS
-        190 => Some(".".to_string()), // VK_OEM_PERIOD
-        // https://kbdlayout.info/features/virtualkeys/VK_ABNT_C1
-        191 | 193 => Some("/".to_string()), // VK_OEM_2 VK_ABNT_C1
-        192 => Some("`".to_string()),       // VK_OEM_3
-        219 => Some("[".to_string()),       // VK_OEM_4
-        220 => Some("\\".to_string()),      // VK_OEM_5
-        221 => Some("]".to_string()),       // VK_OEM_6
-        222 => Some("'".to_string()),       // VK_OEM_7
-        _ => None,
-    }
+    let key = match mapped_code {
+        0 => None,
+        raw_code => char::from_u32(raw_code),
+    }?
+    .to_ascii_lowercase();
+
+    let key = if matches!(code as u32, 112..=135) {
+        format!("f{key}")
+    } else {
+        key.to_string()
+    };
+
+    Some(Keystroke {
+        modifiers,
+        key,
+        ime_key: None,
+    })
 }
 
 #[inline]

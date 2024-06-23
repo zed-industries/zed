@@ -80,7 +80,7 @@ pub struct ListScrollEvent {
 }
 
 /// The sizing behavior to apply during layout.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ListSizingBehavior {
     /// The list should calculate its size based on the size of its items.
     Infer,

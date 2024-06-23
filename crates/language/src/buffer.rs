@@ -382,16 +382,6 @@ pub trait LocalFile: File {
     /// Loads the file's contents from disk.
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
 
-    /// Called when the buffer is reloaded from disk.
-    fn buffer_reloaded(
-        &self,
-        buffer_id: BufferId,
-        version: &clock::Global,
-        line_ending: LineEnding,
-        mtime: Option<SystemTime>,
-        cx: &mut AppContext,
-    );
-
     /// Returns true if the file should not be shared with collaborators.
     fn is_private(&self, _: &AppContext) -> bool {
         false
@@ -807,6 +797,10 @@ impl Buffer {
             .set_language_registry(language_registry);
     }
 
+    pub fn language_registry(&self) -> Option<Arc<LanguageRegistry>> {
+        self.syntax_map.lock().language_registry()
+    }
+
     /// Assign the buffer a new [Capability].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
         self.capability = capability;
@@ -884,15 +878,6 @@ impl Buffer {
         self.saved_version = version;
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
-        if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
-            file.buffer_reloaded(
-                self.remote_id(),
-                &self.saved_version,
-                self.line_ending(),
-                self.saved_mtime,
-                cx,
-            );
-        }
         cx.emit(Event::Reloaded);
         cx.notify();
     }
@@ -1716,6 +1701,8 @@ impl Buffer {
             },
             cx,
         );
+        self.selections_update_count += 1;
+        cx.notify();
     }
 
     /// Clears the selections, so that other replicas of the buffer do not see any selections for
@@ -2753,12 +2740,13 @@ impl BufferSnapshot {
         Some(items)
     }
 
-    fn outline_items_containing(
+    pub fn outline_items_containing<T: ToOffset>(
         &self,
-        range: Range<usize>,
+        range: Range<T>,
         include_extra_context: bool,
         theme: Option<&SyntaxTheme>,
     ) -> Option<Vec<OutlineItem<Anchor>>> {
+        let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
         });
@@ -3369,9 +3357,10 @@ impl BufferSnapshot {
 
     /// Returns selections for remote peers intersecting the given range.
     #[allow(clippy::type_complexity)]
-    pub fn remote_selections_in_range(
+    pub fn selections_in_range(
         &self,
         range: Range<Anchor>,
+        include_local: bool,
     ) -> impl Iterator<
         Item = (
             ReplicaId,
@@ -3382,8 +3371,9 @@ impl BufferSnapshot {
     > + '_ {
         self.remote_selections
             .iter()
-            .filter(|(replica_id, set)| {
-                **replica_id != self.text.replica_id() && !set.selections.is_empty()
+            .filter(move |(replica_id, set)| {
+                (include_local || **replica_id != self.text.replica_id())
+                    && !set.selections.is_empty()
             })
             .map(move |(replica_id, set)| {
                 let start_ix = match set.selections.binary_search_by(|probe| {

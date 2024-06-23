@@ -267,7 +267,7 @@ impl Room {
                 .await
             {
                 Ok(()) => Ok(room),
-                Err(error) => Err(anyhow!("room creation failed: {:?}", error)),
+                Err(error) => Err(error.context("room creation failed")),
             }
         })
     }
@@ -697,7 +697,6 @@ impl Room {
     async fn handle_room_updated(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::RoomUpdated>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let room = envelope

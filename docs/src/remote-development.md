@@ -16,7 +16,7 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 
 1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview).
 1. Open the remote projects dialogue with `cmd-shift-p remote`.
-2. Click "Add Server".
+2. Click "New Server".
 3. Choose whether to setup via SSH, or to follow the manual setup.
    > **Note:** With both options your laptop and the remote machine will communicate
      via https://collab.zed.dev/, so you will need outbound internet access on the remote machine.
@@ -47,6 +47,7 @@ can specify:
 - `gh cs ssh -c example-codespace` to connect to a GitHub codespace
 - `doctl compute ssh example-droplet` to connect to a DigitalOcean Droplet
 - `gcloud compute ssh` for a Google Cloud instance
+- `ssh -i path_to_key_file user@host` to connect to a host using a key file or certificate
 
 ### zed --dev-server-token isn't connecting
 
@@ -61,15 +62,32 @@ There are a few likely causes of failure:
 The remote machine must be able to run Zed. The following platforms should work, though note that we have not exhaustively tested every Linux distribution:
 
 - macOS Catalina or later (Intel or Apple Silicon)
-- Linux (x86_64 only). You must have `glibc` installed at version 2.29 (released in 2019) or greater and available globally.
+- Linux (x86_64 or arm64, we do not yet support 32-bit platforms). You must have `glibc` installed at version 2.29 (released in 2019) or greater and available globally.
 - Windows is not yet supported.
+
+## Settings and extensions
+
+> **Note:** This may change as the alpha program continues.
+
+You can edit the settings file on the remote instance. To do so, add a new project to your server in the directory `~/.config/zed`. You can create a file called `settings.json` if it does not yet exist.
+
+Note that this is most useful for configuring language servers, as any UI related settings do not apply.
+
+If you'd like to install language-server extensions, you can add them to the list of `auto_installed_extensions`. Again you don't need to do this to get syntax highlighting (which is handled by the local zed).
+
+```
+{
+  "auto_install_extensions": {
+    "java": true
+  },
+}
+```
 
 ## Known Limitations
 
-- The Terminal does not work remotely unless you configure the machine to use SSH.
-- You cannot spawn Tasks remotely.
-- Extensions aren't yet supported in headless Zed.
-- You can not run `zed` in headless mode and in GUI mode at the same time on the same machine.
+- You can't use the Terminal or Tasks if you choose "Manual Connection"
+- You can't yet open additional files on the machine in the current project.
+- You can't run `zed` in headless mode and in GUI mode at the same time on the same machine.
 
 ## Feedback
 

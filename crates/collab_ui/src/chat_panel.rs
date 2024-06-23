@@ -22,7 +22,7 @@ use settings::Settings;
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    popover_menu, prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label,
+    prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label, PopoverMenu,
     TabBar, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
@@ -679,7 +679,7 @@ impl ChatPanel {
                         cx,
                         div()
                             .child(
-                                popover_menu(("menu", message_id))
+                                PopoverMenu::new(("menu", message_id))
                                     .trigger(IconButton::new(
                                         ("trigger", message_id),
                                         IconName::Ellipsis,

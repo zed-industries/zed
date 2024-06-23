@@ -19,7 +19,6 @@ gpui.workspace = true
 language.workspace = true
 ordered-float.workspace = true
 picker.workspace = true
-settings.workspace = true
 smol.workspace = true
 theme.workspace = true
 ui.workspace = true

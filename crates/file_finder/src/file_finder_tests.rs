@@ -6,7 +6,7 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::FS_WATCH_LATENCY;
 use serde_json::json;
-use workspace::{AppState, Workspace};
+use workspace::{AppState, ToggleFileFinder, Workspace};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -872,7 +872,7 @@ async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
     let current_history = open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
 
     for expected_selected_index in 0..current_history.len() {
-        cx.dispatch_action(Toggle::default());
+        cx.dispatch_action(ToggleFileFinder::default());
         let picker = active_file_picker(&workspace, cx);
         let selected_index = picker.update(cx, |picker, _| picker.delegate.selected_index());
         assert_eq!(
@@ -881,7 +881,7 @@ async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
         );
     }
 
-    cx.dispatch_action(Toggle::default());
+    cx.dispatch_action(ToggleFileFinder::default());
     let selected_index = workspace.update(cx, |workspace, cx| {
         workspace
             .active_modal::<FileFinder>(cx)
@@ -1201,7 +1201,7 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
     open_close_queried_buffer("lib", 1, "lib.rs", &workspace, cx).await;
     open_queried_buffer("main", 1, "main.rs", &workspace, cx).await;
 
-    cx.dispatch_action(Toggle::default());
+    cx.dispatch_action(ToggleFileFinder::default());
     let picker = active_file_picker(&workspace, cx);
     // main.rs is on top, previously used is selected
     picker.update(cx, |finder, _| {
@@ -1653,7 +1653,7 @@ async fn test_switches_between_release_norelease_modes_on_forward_nav(
     // Back to navigation with initial shortcut
     // Open file on modifiers release
     cx.simulate_modifiers_change(Modifiers::secondary_key());
-    cx.dispatch_action(Toggle::default());
+    cx.dispatch_action(ToggleFileFinder::default());
     cx.simulate_modifiers_change(Modifiers::none());
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
@@ -1747,6 +1747,45 @@ async fn test_extending_modifiers_does_not_confirm_selection(cx: &mut gpui::Test
     active_file_picker(&workspace, cx);
 }
 
+#[gpui::test]
+async fn test_repeat_toggle_action(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/test",
+            json!({
+                "00.txt": "",
+                "01.txt": "",
+                "02.txt": "",
+                "03.txt": "",
+                "04.txt": "",
+                "05.txt": "",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+    cx.dispatch_action(ToggleFileFinder::default());
+    let picker = active_file_picker(&workspace, cx);
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.selected_index, 0);
+        assert_eq!(picker.logical_scroll_top_index(), 0);
+    });
+
+    // When toggling repeatedly, the picker scrolls to reveal the selected item.
+    cx.dispatch_action(ToggleFileFinder::default());
+    cx.dispatch_action(ToggleFileFinder::default());
+    cx.dispatch_action(ToggleFileFinder::default());
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.selected_index, 3);
+        assert_eq!(picker.logical_scroll_top_index(), 3);
+    });
+}
+
 async fn open_close_queried_buffer(
     input: &str,
     expected_matches: usize,
@@ -1816,9 +1855,9 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
 }
 
 fn test_path_like(test_str: &str) -> PathLikeWithPosition<FileSearchQuery> {
-    PathLikeWithPosition::parse_str(test_str, |path_like_str| {
+    PathLikeWithPosition::parse_str(test_str, |normalized_query, path_like_str| {
         Ok::<_, std::convert::Infallible>(FileSearchQuery {
-            raw_query: test_str.to_owned(),
+            raw_query: normalized_query.to_owned(),
             file_query_end: if path_like_str == test_str {
                 None
             } else {
@@ -1847,7 +1886,7 @@ fn open_file_picker(
     workspace: &View<Workspace>,
     cx: &mut VisualTestContext,
 ) -> View<Picker<FileFinderDelegate>> {
-    cx.dispatch_action(Toggle {
+    cx.dispatch_action(ToggleFileFinder {
         separate_history: true,
     });
     active_file_picker(workspace, cx)
