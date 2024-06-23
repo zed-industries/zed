@@ -687,9 +687,6 @@ fn handle_calc_client_size(
     requested_client_rect[0].left += frame_x + padding;
     requested_client_rect[0].bottom -= frame_y + padding;
 
-    // Extra pixel not accounted for from the top border
-    requested_client_rect[0].top += 1;
-
     Some(0)
 }
 
