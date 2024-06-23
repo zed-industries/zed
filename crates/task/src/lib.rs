@@ -277,8 +277,14 @@ pub struct RunnableTag(pub SharedString);
 #[cfg(target_os = "windows")]
 pub fn to_powershell_variable(input: String) -> String {
     if let Some(var_str) = input.strip_prefix("${") {
-        // If the input starts with "${", remove the trailing "}"
-        format!("$env:{}", &var_str[..var_str.len() - 1])
+        if var_str.find(':').is_none() {
+            // If the input starts with "${", remove the trailing "}"
+            format!("$env:{}", &var_str[..var_str.len() - 1])
+        } else {
+            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
+            // which will result in the task failing to run in such cases.
+            input
+        }
     } else if let Some(var_str) = input.strip_prefix('$') {
         // If the input starts with "$", directly append to "$env:"
         format!("$env:{}", var_str)
