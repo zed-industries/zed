@@ -266,7 +266,7 @@ zed_actions = { path = "crates/zed_actions" }
 
 anyhow = "1.0.57"
 any_vec = "0.13"
-ashpd = {git = "https://github.com/XDeme1/ashpd", rev = "20a6cc75da72fe7fe45d4f08a1c9e3a44d6e2088"}
+ashpd = { git = "https://github.com/XDeme1/ashpd", rev = "20a6cc75da72fe7fe45d4f08a1c9e3a44d6e2088" }
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-fs = "1.6"
 async-recursion = "1.0.0"
