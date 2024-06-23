@@ -19,8 +19,8 @@ use client::{
     TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
-use dap::client::{DebugAdapterClient, DebugAdapterClientId, TransportType};
 use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
+use dap::client::{DebugAdapterClient, DebugAdapterClientId, TransportType};
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::{
@@ -86,7 +86,7 @@ use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
 use snippet::Snippet;
 use std::{
-    borrow::{BorrowMut, Cow},
+    borrow::Cow,
     cmp::{self, Ordering},
     convert::TryInto,
     env,
@@ -333,6 +333,11 @@ pub enum Event {
     Notification(String),
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
+    DebugClientStarted(DebugAdapterClientId),
+    DebugClientEvent {
+        client_id: DebugAdapterClientId,
+        event: dap::events::Event,
+    },
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
@@ -1042,22 +1047,41 @@ impl Project {
             })
     }
 
+    pub fn debug_adapter_by_id(
+        &self,
+        id: DebugAdapterClientId,
+    ) -> Option<&Arc<DebugAdapterClient>> {
+        self.debug_adapters.get(&id).and_then(|state| match state {
+            DebugAdapterClientState::Starting(_) => None,
+            DebugAdapterClientState::Running(client) => Some(client),
+        })
+    }
+
     pub fn start_debug_adapter_client(
         &mut self,
         id: DebugAdapterClientId,
         cx: &mut ModelContext<Self>,
     ) {
         let task = cx.spawn(|this, mut cx| async move {
+            let this2 = this.clone();
             let mut client = DebugAdapterClient::new(
                 TransportType::TCP,
                 "bun",
                 vec![
                     "/Users/remcosmits/Documents/code/vscode-php-debug/out/phpDebug.js",
-                    "--server=8130",
+                    "--server=8131",
                 ],
-                8130,
+                8131,
                 "/Users/remcosmits/Documents/code/symfony_demo".into(),
                 &mut cx,
+                move |event, cx| {
+                    this2.update(cx, |_, cx| {
+                        cx.emit(Event::DebugClientEvent {
+                            client_id: id,
+                            event,
+                        })
+                    });
+                },
             )
             .await
             .log_err()?;
@@ -1071,7 +1095,8 @@ impl Project {
                     "/Users/remcosmits/Documents/code/symfony_demo/src/Kernel.php".into(),
                     14,
                 )
-                .await;
+                .await
+                .log_err();
 
             // configuration done
             client.configuration_done().await.log_err()?;
@@ -1081,12 +1106,15 @@ impl Project {
 
             let client = Arc::new(client);
 
-            this.update(&mut cx, |this, _| {
+            this.update(&mut cx, |this, cx| {
                 let handle = this
                     .debug_adapters
                     .get_mut(&id)
                     .with_context(|| "Failed to find debug adapter with given id")?;
                 *handle = DebugAdapterClientState::Running(client.clone());
+
+                cx.emit(Event::DebugClientStarted(id));
+
                 anyhow::Ok(())
             })
             .log_err();

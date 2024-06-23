@@ -148,7 +148,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast,ToggleBreakpoint};
+use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast, ToggleBreakpoint};
 
 use crate::hover_links::find_url;
 

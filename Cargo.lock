@@ -3265,6 +3265,7 @@ dependencies = [
  "editor",
  "futures 0.3.28",
  "gpui",
+ "project",
  "serde",
  "serde_derive",
  "ui",

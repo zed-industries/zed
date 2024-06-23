@@ -1,9 +1,9 @@
 use crate::{
+    events::{self, Event},
     requests::{
         ConfigurationDone, Continue, ContinueArguments, Initialize, InitializeArguments, Launch,
-        LaunchRequestArguments, Next, NextArguments, ScopesResponse, SetBreakpoints,
-        SetBreakpointsArguments, SetBreakpointsResponse, StepIn, StepInArguments, StepOut,
-        StepOutArguments,
+        LaunchRequestArguments, Next, NextArguments, SetBreakpoints, SetBreakpointsArguments,
+        SetBreakpointsResponse, StepIn, StepInArguments, StepOut, StepOutArguments,
     },
     transport::{self, Payload, Request, Transport},
     types::{DebuggerCapabilities, Source, SourceBreakpoint, ThreadId},
@@ -13,8 +13,7 @@ use futures::{
     channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
     AsyncBufRead, AsyncReadExt, AsyncWrite, SinkExt as _, StreamExt,
 };
-use gpui::AsyncAppContext;
-use serde_json::Value;
+use gpui::{AppContext, AsyncAppContext};
 use smol::{
     io::BufReader,
     net::TcpStream,
@@ -22,6 +21,7 @@ use smol::{
 };
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
+    ops::DerefMut,
     path::PathBuf,
     process::Stdio,
     sync::atomic::{AtomicU64, Ordering},
@@ -43,22 +43,25 @@ pub struct DebugAdapterClient {
     server_tx: UnboundedSender<Payload>,
     request_count: AtomicU64,
     thread_id: Option<ThreadId>,
-    client_rx: UnboundedReceiver<Payload>,
     capabilities: Option<DebuggerCapabilities>,
 }
 
 impl DebugAdapterClient {
-    pub async fn new(
+    pub async fn new<F>(
         transport_type: TransportType,
         command: &str,
         args: Vec<&str>,
         port: u16,
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
-    ) -> Result<Self> {
+        event_handler: F,
+    ) -> Result<Self>
+    where
+        F: FnMut(events::Event, &mut AppContext) + 'static + Send + Sync + Clone,
+    {
         match transport_type {
             TransportType::TCP => {
-                Self::create_tcp_client(command, args, port, project_path, cx).await
+                Self::create_tcp_client(command, args, port, project_path, cx, event_handler).await
             }
             TransportType::STDIO => {
                 Self::create_stdio_client(command, args, port, project_path, cx).await
@@ -66,13 +69,17 @@ impl DebugAdapterClient {
         }
     }
 
-    async fn create_tcp_client(
+    async fn create_tcp_client<F>(
         command: &str,
         args: Vec<&str>,
         port: u16,
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
-    ) -> Result<Self> {
+        event_handler: F,
+    ) -> Result<Self>
+    where
+        F: FnMut(events::Event, &mut AppContext) + 'static + Send + Sync + Clone,
+    {
         let mut command = process::Command::new(command);
         command
             .current_dir(project_path)
@@ -101,6 +108,7 @@ impl DebugAdapterClient {
             None,
             Some(process),
             cx,
+            event_handler,
         )
     }
 
@@ -114,13 +122,17 @@ impl DebugAdapterClient {
         todo!("not implemented")
     }
 
-    pub fn handle_transport(
+    pub fn handle_transport<F>(
         rx: Box<dyn AsyncBufRead + Unpin + Send>,
         tx: Box<dyn AsyncWrite + Unpin + Send>,
         err: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
         process: Option<Child>,
         cx: &mut AsyncAppContext,
-    ) -> Result<Self> {
+        event_handler: F,
+    ) -> Result<Self>
+    where
+        F: FnMut(events::Event, &mut AppContext) + 'static + Send + Sync + Clone,
+    {
         let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
         let (client_tx, client_rx) = unbounded::<Payload>();
 
@@ -129,17 +141,37 @@ impl DebugAdapterClient {
             _process: process,
             request_count: AtomicU64::new(0),
             thread_id: Some(ThreadId(1)),
-            client_rx, // TODO: remove this here
             capabilities: None,
         };
 
-        cx.spawn(move |_| Self::recv(server_rx, server_tx, client_tx))
+        cx.spawn(move |cx| Self::handle_events(client_rx, event_handler, cx))
+            .detach();
+
+        cx.spawn(move |_| Self::handle_recv(server_rx, server_tx, client_tx))
             .detach();
 
         Ok(client)
     }
 
-    async fn recv(
+    async fn handle_events<F>(
+        mut client_rx: UnboundedReceiver<Payload>,
+        mut event_handler: F,
+        cx: AsyncAppContext,
+    ) -> Result<()>
+    where
+        F: FnMut(events::Event, &mut AppContext) + 'static + Send + Sync + Clone,
+    {
+        while let Some(payload) = client_rx.next().await {
+            cx.update(|cx| match payload {
+                Payload::Event(event) => event_handler(*event, cx),
+                _ => unreachable!(),
+            })?;
+        }
+
+        anyhow::Ok(())
+    }
+
+    async fn handle_recv(
         mut server_rx: UnboundedReceiver<Payload>,
         mut server_tx: UnboundedSender<Payload>,
         mut client_tx: UnboundedSender<Payload>,
@@ -183,6 +215,10 @@ impl DebugAdapterClient {
 
     pub fn next_request_id(&self) -> u64 {
         self.request_count.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub fn update_thread_id(&mut self, thread_id: ThreadId) {
+        self.thread_id = Some(thread_id);
     }
 
     pub async fn initialize(&mut self) -> Result<DebuggerCapabilities> {

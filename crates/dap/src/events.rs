@@ -2,7 +2,7 @@ use crate::types::{DebuggerCapabilities, Source, ThreadId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "event", content = "body")]
 // seq is omitted as unused and is not sent by some implementations

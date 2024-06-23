@@ -1,14 +1,10 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
-use dap::{
-    client::{DebugAdapterClient, DebugAdapterClientId, TransportType},
-    transport::Payload,
-};
-use futures::channel::mpsc::UnboundedReceiver;
+use anyhow::Result;
+use dap::client::{DebugAdapterClient, DebugAdapterClientId};
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
-    View, ViewContext, WeakView,
+    Subscription, View, ViewContext, WeakView,
 };
 use ui::{
     div, h_flex,
@@ -30,6 +26,7 @@ pub struct DebugPanel {
     pub focus_handle: FocusHandle,
     pub size: Pixels,
     pub workspace: WeakView<Workspace>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl DebugPanel {
@@ -38,6 +35,35 @@ impl DebugPanel {
         workspace: WeakView<Workspace>,
         cx: &mut WindowContext,
     ) -> Self {
+        let project = workspace
+            .update(cx, |workspace, cx| workspace.project().clone())
+            .unwrap();
+
+        let _subscriptions = vec![cx.subscribe(&project, {
+            move |this, event, cx| {
+                if let project::Event::DebugClientStarted(client_id) = event {
+                    dbg!(&event, &client_id);
+                }
+                if let project::Event::DebugClientEvent { client_id, event } = event {
+                    match event {
+                        dap::events::Event::Initialized(_) => todo!(),
+                        dap::events::Event::Stopped(_) => todo!(),
+                        dap::events::Event::Continued(_) => todo!(),
+                        dap::events::Event::Exited(_) => todo!(),
+                        dap::events::Event::Terminated(_) => todo!(),
+                        dap::events::Event::Thread(_) => todo!(),
+                        dap::events::Event::Output(_) => todo!(),
+                        dap::events::Event::Breakpoint(_) => todo!(),
+                        dap::events::Event::Module(_) => todo!(),
+                        dap::events::Event::LoadedSource(_) => todo!(),
+                        dap::events::Event::Process(_) => todo!(),
+                        dap::events::Event::Capabilities(_) => todo!(),
+                        dap::events::Event::Memory(_) => todo!(),
+                    }
+                }
+            }
+        })];
+
         Self {
             position,
             zoomed: false,
@@ -45,6 +71,7 @@ impl DebugPanel {
             focus_handle: cx.focus_handle(),
             size: px(300.),
             workspace,
+            _subscriptions,
         }
     }
 
