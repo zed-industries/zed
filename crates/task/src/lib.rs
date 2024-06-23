@@ -272,12 +272,18 @@ pub struct TaskContext {
 #[derive(Clone, Debug)]
 pub struct RunnableTag(pub SharedString);
 
-/// TODO:
+/// Convert `${SOME_VAR}`, `$SOME_VAR` to `$env:SOME_VAR`.
 #[inline]
 #[cfg(target_os = "windows")]
 pub fn to_powershell_variable(input: String) -> String {
-    input
-        .strip_prefix('$')
-        .map(|var_str| format!("$env:{var_str}"))
-        .unwrap_or(input)
+    if let Some(var_str) = input.strip_prefix("${") {
+        // If the input starts with "${", remove the trailing "}"
+        format!("$env:{}", &var_str[..var_str.len() - 1])
+    } else if let Some(var_str) = input.strip_prefix('$') {
+        // If the input starts with "$", directly append to "$env:"
+        format!("$env:{}", var_str)
+    } else {
+        // If no prefix is found, return the input as is
+        input
+    }
 }
