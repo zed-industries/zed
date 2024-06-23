@@ -96,12 +96,12 @@ impl WindowsCaptionButton {
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn get_font() -> &'static str {
+    fn get_font() -> &'static str {
         "Segoe Fluent Icons"
     }
 
     #[cfg(target_os = "windows")]
-    pub fn get_font() -> &'static str {
+    fn get_font() -> &'static str {
         use windows::Wdk::System::SystemServices::RtlGetVersion;
 
         let mut version = unsafe { std::mem::zeroed() };
