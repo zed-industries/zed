@@ -189,7 +189,7 @@
         }
       ],
       "cmd->": "assistant::QuoteSelection",
-      "cmd-alt-e": "editor::SelectContainingSymbol"
+      "cmd-alt-e": "editor::SelectEnclosingSymbol"
     }
   },
   {

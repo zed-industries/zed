@@ -153,7 +153,7 @@
       //   }
       // ],
       "ctrl->": "assistant::QuoteSelection",
-      "ctrl-alt-e": "editor::SelectContainingSymbol"
+      "ctrl-alt-e": "editor::SelectEnclosingSymbol"
     }
   },
   {

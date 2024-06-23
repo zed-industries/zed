@@ -8193,9 +8193,9 @@ impl Editor {
         });
     }
 
-    pub fn select_containing_symbol(
+    pub fn select_enclosing_symbol(
         &mut self,
-        _: &SelectContainingSymbol,
+        _: &SelectEnclosingSymbol,
         cx: &mut ViewContext<Self>,
     ) {
         let buffer = self.buffer.read(cx).snapshot(cx);
