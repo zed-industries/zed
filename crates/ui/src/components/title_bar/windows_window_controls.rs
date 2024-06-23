@@ -110,7 +110,17 @@ impl RenderOnce for WindowsCaptionButton {
             .content_center()
             .w(width)
             .h_full()
-            .font_family("Segoe Fluent Icons")
+            .font_family({
+                let mut version = unsafe { std::mem::zeroed() };
+                let status =
+                    unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+
+                if status.is_ok() && version.dwBuildNumber >= 22000 {
+                    "Segoe Fluent Icons"
+                } else {
+                    "Segoe MDL2 Assets"
+                }
+            })
             .text_size(px(10.0))
             .hover(|style| style.bg(self.hover_background_color))
             .active(|style| {
