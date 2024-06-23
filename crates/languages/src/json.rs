@@ -21,7 +21,7 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{maybe, ResultExt};
 
-const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
+const SERVER_PATH: &str = "node_modules/.bin/vscode-json-language-server";
 
 // Origin: https://github.com/SchemaStore/schemastore
 const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
@@ -133,7 +133,7 @@ impl LspAdapter for JsonLspAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(
             self.node
-                .npm_package_latest_version("vscode-json-languageserver")
+                .npm_package_latest_version("vscode-langservers-extracted")
                 .await?,
         ) as Box<_>)
     }
@@ -145,8 +145,9 @@ impl LspAdapter for JsonLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
+        println!("==> Latest ver: {}", latest_version);
         let server_path = container_dir.join(SERVER_PATH);
-        let package_name = "vscode-json-languageserver";
+        let package_name = "vscode-langservers-extracted";
 
         let should_install_language_server = self
             .node
@@ -158,6 +159,8 @@ impl LspAdapter for JsonLspAdapter {
                 .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
                 .await?;
         }
+
+        // panic!();
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
