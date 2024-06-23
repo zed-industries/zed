@@ -2246,8 +2246,7 @@ impl ProjectPanel {
             return None;
         }
         if total_list_length < scroll_handle.base_handle.bounds().size.height.0 as f64 {
-            percentage = 0.;
-            end_offset = 1.;
+            return None;
         }
         let end_offset = end_offset.clamp(percentage + 0.005, 1.);
         Some(
