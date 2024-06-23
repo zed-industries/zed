@@ -2233,8 +2233,7 @@ impl ProjectPanel {
         let total_list_length = height.0 as f64 * items_count as f64;
         let current_offset = scroll_handle.base_handle.offset().y.0.min(0.).abs() as f64;
         let mut percentage = current_offset / total_list_length;
-        let mut end_offset = (current_offset
-            + scroll_handle.base_handle.bounds().size.height.0 as f64)
+        let end_offset = (current_offset + scroll_handle.base_handle.bounds().size.height.0 as f64)
             / total_list_length;
         // Uniform scroll handle might briefly report an offset greater than the length of a list;
         // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
@@ -2242,14 +2241,15 @@ impl ProjectPanel {
         if overshoot > 0. {
             percentage -= overshoot;
         }
-        if percentage + 0.005 > 1.0 || end_offset > total_list_length {
+        const MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT: f64 = 0.005;
+        if percentage + MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT > 1.0 || end_offset > total_list_length
+        {
             return None;
         }
         if total_list_length < scroll_handle.base_handle.bounds().size.height.0 as f64 {
-            percentage = 0.;
-            end_offset = 1.;
+            return None;
         }
-        let end_offset = end_offset.clamp(percentage + 0.005, 1.);
+        let end_offset = end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT, 1.);
         Some(
             div()
                 .occlude()
