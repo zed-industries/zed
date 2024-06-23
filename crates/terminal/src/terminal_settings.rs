@@ -279,7 +279,7 @@ impl Shell {
                 .context("Error finding SHELL in env.")
                 .log_err();
         }
-        // `alacritty_terminal` uses this as default. See:
+        // `alacritty_terminal` uses this as default on Windows. See:
         // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
         #[cfg(target_os = "windows")]
         return Some("powershell".to_owned());
