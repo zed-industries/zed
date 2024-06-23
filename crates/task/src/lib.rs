@@ -286,7 +286,8 @@ pub fn to_windows_variable(shell: &str, input: String) -> String {
             } else if some_shell.ends_with("cmd.exe") {
                 to_cmd_variable(input)
             } else {
-                // someother shell detected
+                // Someother shell detected, the user might install and use a
+                // unix-like shell.
                 input
             }
         }
