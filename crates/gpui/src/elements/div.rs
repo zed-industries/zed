@@ -2493,6 +2493,11 @@ impl ScrollHandle {
         self.0.borrow().bounds
     }
 
+    /// Set the bounds into which this child is painted
+    pub(super) fn set_bounds(&self, bounds: Bounds<Pixels>) {
+        self.0.borrow_mut().bounds = bounds;
+    }
+
     /// Get the bounds for a specific child.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.borrow().child_bounds.get(ix).cloned()

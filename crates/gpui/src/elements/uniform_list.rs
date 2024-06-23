@@ -79,31 +79,37 @@ pub struct UniformListFrameState {
 
 /// A handle for controlling the scroll position of a uniform list.
 /// This should be stored in your view and passed to the uniform_list on each frame.
-#[derive(Clone, Default)]
-pub struct UniformListScrollHandle {
-    base_handle: ScrollHandle,
-    deferred_scroll_to_item: Rc<RefCell<Option<usize>>>,
+#[derive(Clone, Debug, Default)]
+pub struct UniformListScrollHandle(pub Rc<RefCell<UniformListScrollState>>);
+
+#[derive(Clone, Debug, Default)]
+#[allow(missing_docs)]
+pub struct UniformListScrollState {
+    pub base_handle: ScrollHandle,
+    pub deferred_scroll_to_item: Option<usize>,
+    pub last_item_height: Option<Pixels>,
 }
 
 impl UniformListScrollHandle {
     /// Create a new scroll handle to bind to a uniform list.
     pub fn new() -> Self {
-        Self {
+        Self(Rc::new(RefCell::new(UniformListScrollState {
             base_handle: ScrollHandle::new(),
-            deferred_scroll_to_item: Rc::new(RefCell::new(None)),
-        }
+            deferred_scroll_to_item: None,
+            last_item_height: None,
+        })))
     }
 
     /// Scroll the list to the given item index.
     pub fn scroll_to_item(&mut self, ix: usize) {
-        self.deferred_scroll_to_item.replace(Some(ix));
+        self.0.borrow_mut().deferred_scroll_to_item = Some(ix);
     }
 
     /// Get the index of the topmost visible child.
     pub fn logical_scroll_top_index(&self) -> usize {
-        self.deferred_scroll_to_item
-            .borrow()
-            .unwrap_or_else(|| self.base_handle.logical_scroll_top().0)
+        let this = self.0.borrow();
+        this.deferred_scroll_to_item
+            .unwrap_or_else(|| this.base_handle.logical_scroll_top().0)
     }
 }
 
@@ -195,10 +201,11 @@ impl Element for UniformList {
         let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
 
         let item_height = self.measure_item(Some(padded_bounds.size.width), cx).height;
-        let shared_scroll_to_item = self
-            .scroll_handle
-            .as_mut()
-            .and_then(|handle| handle.deferred_scroll_to_item.take());
+        let shared_scroll_to_item = self.scroll_handle.as_mut().and_then(|handle| {
+            let mut handle = handle.0.borrow_mut();
+            handle.last_item_height = Some(item_height);
+            handle.deferred_scroll_to_item.take()
+        });
 
         self.interactivity.prepaint(
             global_id,
@@ -213,6 +220,10 @@ impl Element for UniformList {
                     bounds.origin + point(border.left + padding.left, border.top),
                     bounds.lower_right() - point(border.right + padding.right, border.bottom),
                 );
+
+                if let Some(handle) = self.scroll_handle.as_mut() {
+                    handle.0.borrow_mut().base_handle.set_bounds(bounds);
+                }
 
                 if self.item_count > 0 {
                     let content_height =
@@ -326,7 +337,7 @@ impl UniformList {
 
     /// Track and render scroll state of this list with reference to the given scroll handle.
     pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {
-        self.interactivity.tracked_scroll_handle = Some(handle.base_handle.clone());
+        self.interactivity.tracked_scroll_handle = Some(handle.0.borrow().base_handle.clone());
         self.scroll_handle = Some(handle);
         self
     }
