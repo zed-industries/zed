@@ -272,8 +272,8 @@ pub struct TaskContext {
 #[derive(Clone, Debug)]
 pub struct RunnableTag(pub SharedString);
 
-/// Convert unix-shell variable sytax to windows-shell sytax.
-/// `powershell` and `cmd` are considered valide here.
+/// Convert unix-shell variable syntax to windows-shell syntax.
+/// `powershell` and `cmd` are considered valid here.
 #[inline]
 #[cfg(target_os = "windows")]
 pub fn to_windows_variable(shell: &str, input: String) -> String {
