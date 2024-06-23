@@ -9160,6 +9160,12 @@ impl Editor {
             Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), true, cx)
         });
         editor.update(cx, |editor, cx| {
+            if let Some(first_range) = ranges_to_highlight.first() {
+                editor.change_selections(None, cx, |selections| {
+                    selections.clear_disjoint();
+                    selections.select_anchor_ranges(std::iter::once(first_range.clone()));
+                });
+            }
             editor.highlight_background::<Self>(
                 &ranges_to_highlight,
                 |theme| theme.editor_highlighted_line_background,
