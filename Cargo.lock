@@ -306,9 +306,8 @@ dependencies = [
 
 [[package]]
 name = "ashpd"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd884d7c72877a94102c3715f3b1cd09ff4fac28221add3e57cfbe25c236d093"
+version = "0.9.0"
+source = "git+https://github.com/XDeme1/ashpd?rev=20a6cc75da72fe7fe45d4f08a1c9e3a44d6e2088#20a6cc75da72fe7fe45d4f08a1c9e3a44d6e2088"
 dependencies = [
  "async-fs 2.1.2",
  "async-net 2.0.0",
@@ -4784,7 +4783,6 @@ dependencies = [
  "x11rb",
  "xim",
  "xkbcommon",
- "zbus",
 ]
 
 [[package]]
