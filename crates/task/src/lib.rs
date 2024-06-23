@@ -274,6 +274,7 @@ pub struct RunnableTag(pub SharedString);
 
 /// TODO:
 #[inline]
+#[cfg(target_os = "windows")]
 pub fn to_powershell_variable(input: String) -> String {
     input
         .strip_prefix('$')
