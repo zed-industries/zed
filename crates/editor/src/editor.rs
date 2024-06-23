@@ -2660,7 +2660,7 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(tail) = self.columnar_selection_tail.as_ref() {
-            let tail: DisplayPoint = tail.to_display_point(&display_map);
+            let tail = tail.to_display_point(&display_map);
             self.select_columns(tail, position, goal_column, &display_map, cx);
         } else if let Some(mut pending) = self.selections.pending_anchor() {
             let buffer = self.buffer.read(cx).snapshot(cx);
