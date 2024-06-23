@@ -2,6 +2,7 @@ use gpui::{prelude::*, Rgba, WindowAppearance};
 
 use crate::prelude::*;
 
+#[cfg(target_os = "windows")]
 #[derive(IntoElement)]
 pub struct WindowsWindowControls {
     button_height: Pixels,
@@ -95,7 +96,6 @@ impl WindowsCaptionButton {
         }
     }
 
-    #[cfg(target_os = "windows")]
     pub fn get_font() -> &'static str {
         use windows::Wdk::System::SystemServices::RtlGetVersion;
 
