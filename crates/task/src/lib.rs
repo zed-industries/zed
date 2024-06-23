@@ -158,9 +158,9 @@ impl VariableName {
     pub fn template_value(&self) -> String {
         #[cfg(not(target_os = "windows"))]
         return format!("${self}");
-        // TODO: This is for cmd, for powershell, this should be "$env:{self}"
+        // TODO: This is for powershell, for cmd, this should be "%{self}%"
         #[cfg(target_os = "windows")]
-        return format!("%{self}%");
+        return format!("$env:{self}");
     }
 }
 

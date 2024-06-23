@@ -273,8 +273,10 @@ impl Shell {
     pub fn retrieve_system_shell() -> Option<String> {
         #[cfg(not(target_os = "windows"))]
         return std::env::var("SHELL").log_err();
+        // Alacritty uses this as default. See:
+        // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
         #[cfg(target_os = "windows")]
-        return std::env::var("COMSPEC").log_err();
+        return Some("powershell".to_owned());
     }
 }
 
