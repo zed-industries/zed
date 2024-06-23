@@ -156,7 +156,12 @@ pub enum VariableName {
 impl VariableName {
     /// Generates a `$VARIABLE`-like string value to be used in templates.
     pub fn template_value(&self) -> String {
-        format!("${self}")
+        #[cfg(not(target_os = "windows"))]
+        return format!("${self}");
+        // TODO: This is for cmd, for powershell, this should be
+        // "$env:{self}"
+        #[cfg(target_os = "windows")]
+        return format!("%{self}%");
     }
 }
 
