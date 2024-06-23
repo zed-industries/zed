@@ -244,3 +244,43 @@ fn schema_file_match(path: &Path) -> &Path {
     path.strip_prefix(path.parent().unwrap().parent().unwrap())
         .unwrap()
 }
+
+pub(super) struct NodeVersionAdapter;
+
+#[async_trait(?Send)]
+impl LspAdapter for NodeVersionAdapter {
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName("node-version-checker".into())
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<Box<dyn 'static + Send + Any>> {
+        Ok(Box::new(()))
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        latest_version: Box<dyn 'static + Send + Any>,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        Ok( LanguageServerBinary { path: PathBuf::from("/Users/hiro/Projects/node_package_version_checker/target/release/node_package_version_checker"), arguments: vec![], env: Default::default() })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        Some(LanguageServerBinary { path: PathBuf::from("/Users/hiro/Projects/node_package_version_checker/target/release/node_package_version_checker"), arguments: vec![], env: Default::default() })
+    }
+
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        Some(LanguageServerBinary { path: PathBuf::from("/Users/hiro/Projects/node_package_version_checker/target/release/node_package_version_checker"), arguments: vec![], env: Default::default() })
+    }
+}
