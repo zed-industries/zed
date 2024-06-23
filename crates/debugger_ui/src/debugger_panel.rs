@@ -1,11 +1,14 @@
-use std::sync::Arc;
-
 use anyhow::Result;
-use dap::client::{DebugAdapterClient, DebugAdapterClientId};
+use dap::{
+    client::{DebugAdapterClient, DebugAdapterClientId},
+    types::ThreadId,
+};
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
-    Subscription, View, ViewContext, WeakView,
+    Subscription, Task, View, ViewContext, WeakView,
 };
+use project::Project;
+use std::sync::Arc;
 use ui::{
     div, h_flex,
     prelude::{IntoElement, Pixels, WindowContext},
@@ -25,66 +28,67 @@ pub struct DebugPanel {
     pub active: bool,
     pub focus_handle: FocusHandle,
     pub size: Pixels,
-    pub workspace: WeakView<Workspace>,
     _subscriptions: Vec<Subscription>,
+    pub thread_id: Option<ThreadId>,
+    pub workspace: WeakView<Workspace>,
 }
 
 impl DebugPanel {
-    pub fn new(
-        position: DockPosition,
-        workspace: WeakView<Workspace>,
-        cx: &mut WindowContext,
-    ) -> Self {
-        let project = workspace
-            .update(cx, |workspace, cx| workspace.project().clone())
-            .unwrap();
+    pub fn new(workspace: WeakView<Workspace>, cx: &mut WindowContext) -> View<Self> {
+        cx.new_view(|cx: &mut ViewContext<Self>| {
+            let project = workspace
+                .update(cx, |workspace, _| workspace.project().clone())
+                .unwrap();
 
-        let _subscriptions = vec![cx.subscribe(&project, {
-            move |this, event, cx| {
-                if let project::Event::DebugClientStarted(client_id) = event {
-                    dbg!(&event, &client_id);
-                }
-                if let project::Event::DebugClientEvent { client_id, event } = event {
-                    match event {
-                        dap::events::Event::Initialized(_) => todo!(),
-                        dap::events::Event::Stopped(_) => todo!(),
-                        dap::events::Event::Continued(_) => todo!(),
-                        dap::events::Event::Exited(_) => todo!(),
-                        dap::events::Event::Terminated(_) => todo!(),
-                        dap::events::Event::Thread(_) => todo!(),
-                        dap::events::Event::Output(_) => todo!(),
-                        dap::events::Event::Breakpoint(_) => todo!(),
-                        dap::events::Event::Module(_) => todo!(),
-                        dap::events::Event::LoadedSource(_) => todo!(),
-                        dap::events::Event::Process(_) => todo!(),
-                        dap::events::Event::Capabilities(_) => todo!(),
-                        dap::events::Event::Memory(_) => todo!(),
+            let _subscriptions = vec![cx.subscribe(&project, {
+                move |this: &mut Self, model, event, cx| {
+                    if let project::Event::DebugClientStarted(client_id) = event {
+                        dbg!(&event, &client_id);
+                    }
+
+                    if let project::Event::DebugClientEvent { client_id, event } = event {
+                        match event {
+                            dap::events::Event::Initialized(_) => return,
+                            dap::events::Event::Stopped(_) => todo!(),
+                            dap::events::Event::Continued(_) => todo!(),
+                            dap::events::Event::Exited(_) => todo!(),
+                            dap::events::Event::Terminated(_) => todo!(),
+                            dap::events::Event::Thread(event) => {
+                                this.thread_id = Some(event.thread_id);
+                            }
+                            dap::events::Event::Output(_) => todo!(),
+                            dap::events::Event::Breakpoint(_) => todo!(),
+                            dap::events::Event::Module(_) => todo!(),
+                            dap::events::Event::LoadedSource(_) => todo!(),
+                            dap::events::Event::Process(_) => todo!(),
+                            dap::events::Event::Capabilities(_) => todo!(),
+                            dap::events::Event::Memory(_) => todo!(),
+                        }
                     }
                 }
-            }
-        })];
+            })];
 
-        Self {
-            position,
-            zoomed: false,
-            active: false,
-            focus_handle: cx.focus_handle(),
-            size: px(300.),
-            workspace,
-            _subscriptions,
-        }
+            Self {
+                position: DockPosition::Bottom,
+                zoomed: false,
+                active: false,
+                focus_handle: cx.focus_handle(),
+                size: px(300.),
+                _subscriptions,
+                thread_id: Some(ThreadId(1)),
+                workspace: workspace.clone(),
+            }
+        })
     }
 
-    pub async fn load(
+    pub fn load(
         workspace: WeakView<Workspace>,
         mut cx: AsyncWindowContext,
-    ) -> Result<View<Self>> {
-        workspace.update(&mut cx, |workspace, cx| {
-            workspace.project().update(cx, |project, cx| {
-                project.start_debug_adapter_client(DebugAdapterClientId(1), cx);
-            });
-        })?;
-        cx.new_view(|cx| DebugPanel::new(DockPosition::Bottom, workspace, cx))
+    ) -> Task<Result<View<Self>>> {
+        // workspace.project().update(cx, |project, cx| {
+        //     project.start_debug_adapter_client(DebugAdapterClientId(1), cx);
+        // });
+        cx.spawn(|mut cx| async move { cx.update(|cx| DebugPanel::new(workspace, cx)) })
     }
 
     fn debug_adapter(&self, cx: &mut ViewContext<Self>) -> Arc<DebugAdapterClient> {
@@ -175,9 +179,13 @@ impl Render for DebugPanel {
                         IconButton::new("debug-play", IconName::Play)
                             .on_click(cx.listener(|view, _, cx| {
                                 let client = view.debug_adapter(cx);
-                                cx.background_executor()
-                                    .spawn(async move { client.continue_thread().await })
-                                    .detach();
+                                if let Some(thread_id) = view.thread_id {
+                                    cx.background_executor()
+                                        .spawn(
+                                            async move { client.continue_thread(thread_id).await },
+                                        )
+                                        .detach();
+                                }
                             }))
                             .tooltip(move |cx| Tooltip::text("Start debug", cx)),
                     )
@@ -189,9 +197,12 @@ impl Render for DebugPanel {
                         IconButton::new("debug-go-in", IconName::Play)
                             .on_click(cx.listener(|view, _, cx| {
                                 let client = view.debug_adapter(cx);
-                                cx.background_executor()
-                                    .spawn(async move { client.step_in().await })
-                                    .detach();
+
+                                if let Some(thread_id) = view.thread_id {
+                                    cx.background_executor()
+                                        .spawn(async move { client.step_in(thread_id).await })
+                                        .detach();
+                                }
                             }))
                             .tooltip(move |cx| Tooltip::text("Go in", cx)),
                     )
@@ -199,9 +210,11 @@ impl Render for DebugPanel {
                         IconButton::new("debug-go-out", IconName::Play)
                             .on_click(cx.listener(|view, _, cx| {
                                 let client = view.debug_adapter(cx);
-                                cx.background_executor()
-                                    .spawn(async move { client.step_out().await })
-                                    .detach();
+                                if let Some(thread_id) = view.thread_id {
+                                    cx.background_executor()
+                                        .spawn(async move { client.step_out(thread_id).await })
+                                        .detach();
+                                }
                             }))
                             .tooltip(move |cx| Tooltip::text("Go out", cx)),
                     )

@@ -1,5 +1,5 @@
 use crate::{
-    events::{self, Event},
+    events::{self},
     requests::{
         ConfigurationDone, Continue, ContinueArguments, Initialize, InitializeArguments, Launch,
         LaunchRequestArguments, Next, NextArguments, SetBreakpoints, SetBreakpointsArguments,
@@ -21,7 +21,6 @@ use smol::{
 };
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
-    ops::DerefMut,
     path::PathBuf,
     process::Stdio,
     sync::atomic::{AtomicU64, Ordering},
@@ -42,7 +41,6 @@ pub struct DebugAdapterClient {
     _process: Option<Child>,
     server_tx: UnboundedSender<Payload>,
     request_count: AtomicU64,
-    thread_id: Option<ThreadId>,
     capabilities: Option<DebuggerCapabilities>,
 }
 
@@ -140,7 +138,6 @@ impl DebugAdapterClient {
             server_tx: server_tx.clone(),
             _process: process,
             request_count: AtomicU64::new(0),
-            thread_id: Some(ThreadId(1)),
             capabilities: None,
         };
 
@@ -217,10 +214,6 @@ impl DebugAdapterClient {
         self.request_count.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub fn update_thread_id(&mut self, thread_id: ThreadId) {
-        self.thread_id = Some(thread_id);
-    }
-
     pub async fn initialize(&mut self) -> Result<DebuggerCapabilities> {
         let args = InitializeArguments {
             client_id: Some("zed".to_owned()),
@@ -253,58 +246,48 @@ impl DebugAdapterClient {
         .await
     }
 
-    pub async fn next_thread(&self) {
-        if let Some(thread_id) = self.thread_id {
-            let _ = self
-                .request::<Next>(NextArguments {
-                    thread_id,
-                    granularity: None,
-                })
-                .await;
-        }
+    pub async fn next_thread(&self, thread_id: ThreadId) {
+        let _ = self
+            .request::<Next>(NextArguments {
+                thread_id,
+                granularity: None,
+            })
+            .await;
     }
 
-    pub async fn continue_thread(&self) {
-        if let Some(thread_id) = self.thread_id {
-            let _ = self
-                .request::<Continue>(ContinueArguments { thread_id })
-                .await;
-        }
+    pub async fn continue_thread(&self, thread_id: ThreadId) {
+        let _ = self
+            .request::<Continue>(ContinueArguments { thread_id })
+            .await;
     }
 
-    pub async fn step_in(&self) {
-        if let Some(thread_id) = self.thread_id {
-            let _ = self
-                .request::<StepIn>(StepInArguments {
-                    thread_id,
-                    target_id: None,
-                    granularity: None,
-                })
-                .await;
-        }
+    pub async fn step_in(&self, thread_id: ThreadId) {
+        let _ = self
+            .request::<StepIn>(StepInArguments {
+                thread_id,
+                target_id: None,
+                granularity: None,
+            })
+            .await;
     }
 
-    pub async fn step_out(&self) {
-        if let Some(thread_id) = self.thread_id {
-            let _ = self
-                .request::<StepOut>(StepOutArguments {
-                    thread_id,
-                    granularity: None,
-                })
-                .await;
-        }
+    pub async fn step_out(&self, thread_id: ThreadId) {
+        let _ = self
+            .request::<StepOut>(StepOutArguments {
+                thread_id,
+                granularity: None,
+            })
+            .await;
     }
 
-    pub async fn step_back(&self) {
-        if let Some(thread_id) = self.thread_id {
-            let _ = self
-                .request::<StepIn>(StepInArguments {
-                    thread_id,
-                    target_id: None,
-                    granularity: None,
-                })
-                .await;
-        }
+    pub async fn step_back(&self, thread_id: ThreadId) {
+        let _ = self
+            .request::<StepIn>(StepInArguments {
+                thread_id,
+                target_id: None,
+                granularity: None,
+            })
+            .await;
     }
 
     pub async fn set_breakpoints(
