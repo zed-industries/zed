@@ -1,11 +1,12 @@
 use crate::{
     requests::{
         ConfigurationDone, Continue, ContinueArguments, Initialize, InitializeArguments, Launch,
-        LaunchRequestArguments, Next, NextArguments, SetBreakpoints, SetBreakpointsArguments,
-        StepIn, StepInArguments, StepOut, StepOutArguments,
+        LaunchRequestArguments, Next, NextArguments, ScopesResponse, SetBreakpoints,
+        SetBreakpointsArguments, SetBreakpointsResponse, StepIn, StepInArguments, StepOut,
+        StepOutArguments,
     },
     transport::{self, Payload, Request, Transport},
-    types::{Source, SourceBreakpoint, ThreadId},
+    types::{DebuggerCapabilities, Source, SourceBreakpoint, ThreadId},
 };
 use anyhow::{anyhow, Context, Result};
 use futures::{
@@ -43,6 +44,7 @@ pub struct DebugAdapterClient {
     request_count: AtomicU64,
     thread_id: Option<ThreadId>,
     client_rx: UnboundedReceiver<Payload>,
+    capabilities: Option<DebuggerCapabilities>,
 }
 
 impl DebugAdapterClient {
@@ -128,6 +130,7 @@ impl DebugAdapterClient {
             request_count: AtomicU64::new(0),
             thread_id: Some(ThreadId(1)),
             client_rx, // TODO: remove this here
+            capabilities: None,
         };
 
         cx.spawn(move |_| Self::recv(server_rx, server_tx, client_tx))
@@ -153,7 +156,7 @@ impl DebugAdapterClient {
     pub async fn request<R: crate::requests::Request>(
         &self,
         arguments: R::Arguments,
-    ) -> Result<Value> {
+    ) -> Result<R::Result> {
         let serialized_arguments = serde_json::to_value(arguments)?;
 
         let (callback_tx, mut callback_rx) = channel::<Result<transport::Response>>(1);
@@ -173,7 +176,7 @@ impl DebugAdapterClient {
         let response = callback_rx.next().await.ok_or(anyhow!("no response"))??;
 
         match response.success {
-            true => Ok(response.body.unwrap_or_default()),
+            true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
             false => Err(anyhow!("Request failed")),
         }
     }
@@ -182,7 +185,7 @@ impl DebugAdapterClient {
         self.request_count.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub async fn initialize(&self) -> Result<Value> {
+    pub async fn initialize(&mut self) -> Result<DebuggerCapabilities> {
         let args = InitializeArguments {
             client_id: Some("zed".to_owned()),
             client_name: Some("Zed".to_owned()),
@@ -199,10 +202,14 @@ impl DebugAdapterClient {
             supports_invalidated_event: Some(false),
         };
 
-        self.request::<Initialize>(args).await
+        let capabilities = self.request::<Initialize>(args).await?;
+
+        self.capabilities = Some(capabilities.clone());
+
+        Ok(capabilities)
     }
 
-    pub async fn launch(&mut self) -> Result<Value> {
+    pub async fn launch(&mut self) -> Result<()> {
         self.request::<Launch>(LaunchRequestArguments {
             no_debug: Some(false),
             __restart: None,
@@ -264,7 +271,11 @@ impl DebugAdapterClient {
         }
     }
 
-    pub async fn set_breakpoints(&self, path: PathBuf, line: usize) -> Result<Value> {
+    pub async fn set_breakpoints(
+        &self,
+        path: PathBuf,
+        line: usize,
+    ) -> Result<SetBreakpointsResponse> {
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
                 path: Some(path),
@@ -282,7 +293,7 @@ impl DebugAdapterClient {
         .await
     }
 
-    pub async fn configuration_done(&self) -> Result<Value> {
+    pub async fn configuration_done(&self) -> Result<()> {
         self.request::<ConfigurationDone>(()).await
     }
 }
