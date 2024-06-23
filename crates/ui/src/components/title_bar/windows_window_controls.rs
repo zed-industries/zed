@@ -111,9 +111,10 @@ impl RenderOnce for WindowsCaptionButton {
             .w(width)
             .h_full()
             .font_family({
+                use windows::Wdk::System::SystemServices::RtlGetVersion;
+
                 let mut version = unsafe { std::mem::zeroed() };
-                let status =
-                    unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+                let status = unsafe { RtlGetVersion(&mut version) };
 
                 if status.is_ok() && version.dwBuildNumber >= 22000 {
                     "Segoe Fluent Icons"
