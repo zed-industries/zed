@@ -90,7 +90,7 @@ pub fn deploy_context_menu(
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
                 .separator()
-                .action("Reveal in Finder", Box::new(RevealInFinder))
+                .action("Reveal in Files", Box::new(RevealInFinder))
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .action("Copy Permalink", Box::new(CopyPermalinkToLine));
             match focus {

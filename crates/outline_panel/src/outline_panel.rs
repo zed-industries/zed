@@ -832,7 +832,7 @@ impl OutlinePanel {
 
         let context_menu = ContextMenu::build(cx, |menu, _| {
             menu.context(self.focus_handle.clone())
-                .action("Reveal in Finder", Box::new(RevealInFinder))
+                .action("Reveal in Files", Box::new(RevealInFinder))
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .when(is_unfoldable, |menu| {
                     menu.action("Unfold Directory", Box::new(UnfoldDirectory))

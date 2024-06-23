@@ -474,7 +474,7 @@ impl ProjectPanel {
                         menu.action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
-                            .action("Reveal in Finder", Box::new(RevealInFinder))
+                            .action("Reveal in Files", Box::new(RevealInFinder))
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
