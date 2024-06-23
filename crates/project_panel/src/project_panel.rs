@@ -2236,7 +2236,12 @@ impl ProjectPanel {
         let mut end_offset = (current_offset
             + scroll_handle.base_handle.bounds().size.height.0 as f64)
             / total_list_length;
-
+        // Uniform scroll handle might briefly report an offset greater than the length of a list;
+        // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
+        let overshoot = (end_offset - 1.).clamp(0., 1.);
+        if overshoot > 0. {
+            percentage -= overshoot;
+        }
         if percentage + 0.005 > 1.0 || end_offset > total_list_length {
             return None;
         }
