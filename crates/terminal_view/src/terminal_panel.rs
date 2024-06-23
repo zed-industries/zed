@@ -14,7 +14,7 @@ use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{RevealStrategy, SpawnInTerminal, TaskId, TerminalWorkDir};
+use task::{to_powershell_variable, RevealStrategy, SpawnInTerminal, TaskId, TerminalWorkDir};
 use terminal::{
     terminal_settings::{Shell, TerminalDockPosition, TerminalSettings},
     Terminal,
@@ -371,7 +371,7 @@ impl TerminalPanel {
             .into_iter()
             .fold(task_command, |mut command, arg| {
                 command.push(' ');
-                command.push_str(&arg);
+                command.push_str(&to_powershell_variable(arg));
                 command
             });
         #[cfg(not(target_os = "windows"))]
