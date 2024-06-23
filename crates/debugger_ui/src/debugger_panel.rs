@@ -176,7 +176,7 @@ impl Render for DebugPanel {
                     .p_2()
                     .gap_2()
                     .child(
-                        IconButton::new("debug-play", IconName::Play)
+                        IconButton::new("debug-continue", IconName::Play)
                             .on_click(cx.listener(|view, _, cx| {
                                 let client = view.debug_adapter(cx);
                                 if let Some(thread_id) = view.thread_id {
@@ -187,7 +187,7 @@ impl Render for DebugPanel {
                                         .detach();
                                 }
                             }))
-                            .tooltip(move |cx| Tooltip::text("Start debug", cx)),
+                            .tooltip(move |cx| Tooltip::text("Continue debug", cx)),
                     )
                     .child(
                         IconButton::new("debug-step-over", IconName::Play)
