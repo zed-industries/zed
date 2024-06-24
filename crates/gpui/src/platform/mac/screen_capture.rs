@@ -5,9 +5,13 @@ use cocoa::{
     base::{id, nil, YES},
     foundation::NSArray,
 };
+use core_foundation::base::TCFType;
 use ctor::ctor;
 use futures::channel::oneshot;
-use media::core_video::CVImageBuffer;
+use media::{
+    core_media::{CMSampleBuffer, CMSampleBufferRef},
+    core_video::CVImageBuffer,
+};
 use metal::NSInteger;
 use objc::{
     class,
@@ -16,7 +20,7 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
-use std::{cell::RefCell, ffi::c_void, ptr, rc::Rc};
+use std::{cell::RefCell, ffi::c_void, mem, ptr, rc::Rc};
 
 #[derive(Clone)]
 pub struct MacScreenCaptureSource {
@@ -61,7 +65,7 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
 
             output.as_mut().unwrap().set_ivar(
                 FRAME_CALLBACK_IVAR,
-                Box::into_raw(frame_callback) as *mut c_void,
+                Box::into_raw(Box::new(frame_callback)) as *mut c_void,
             );
 
             let stream: id = msg_send![stream, initWithFilter:filter configuration:configuration delegate:delegate];
@@ -210,11 +214,17 @@ extern "C" fn stream_did_output_sample_buffer_of_type(
     this: &Object,
     _: Sel,
     _stream: id,
-    _sample_buffer: id,
-    _buffer_type: NSInteger,
+    sample_buffer: id,      // CMSampleBuffer
+    buffer_type: NSInteger, // SCStreamOutputType (either .screen or .audio)
 ) {
+    eprintln!("did output sample buffer");
     unsafe {
-        let callback = this.get_ivar::<*mut c_void>(FRAME_CALLBACK_IVAR);
-        //
+        let callback: Box<Box<dyn Fn(ScreenCaptureFrame)>> =
+            Box::from_raw(*this.get_ivar::<*mut c_void>(FRAME_CALLBACK_IVAR) as *mut _);
+        let sample_buffer = sample_buffer as CMSampleBufferRef;
+        let sample_buffer = CMSampleBuffer::wrap_under_get_rule(sample_buffer);
+        let buffer = sample_buffer.image_buffer();
+        callback(ScreenCaptureFrame(buffer));
+        mem::forget(callback);
     }
 }

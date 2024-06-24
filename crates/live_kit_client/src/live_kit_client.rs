@@ -59,7 +59,7 @@ pub async fn capture_local_video_track(
         .stream({
             let track_source = track_source.clone();
             Box::new(move |frame| {
-                let buffer: NativeBuffer = todo!();
+                let buffer: NativeBuffer = frame.0.into();
                 track_source.capture_frame(&VideoFrame {
                     rotation: VideoRotation::VideoRotation0,
                     timestamp_us: 0,
