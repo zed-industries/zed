@@ -88,7 +88,6 @@ members = [
     "crates/tasks_ui",
     "crates/search",
     "crates/semantic_index",
-    "crates/semantic_mining",
     "crates/semantic_version",
     "crates/settings",
     "crates/snippet",
@@ -242,7 +241,6 @@ task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
-semantic_mining = { path = "crates/semantic_mining" }
 semantic_version = { path = "crates/semantic_version" }
 settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
