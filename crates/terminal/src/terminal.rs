@@ -1083,6 +1083,31 @@ impl Terminal {
         }
     }
 
+    pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
+        let term = self.term.clone();
+        let terminal = term.lock_unfair();
+
+        let mut lines = Vec::new();
+        let mut current_line = terminal.bottommost_line();
+        while lines.len() < n {
+            let mut line_buffer = String::new();
+            for cell in &terminal.grid()[current_line] {
+                line_buffer.push(cell.c);
+            }
+            let line = line_buffer.trim_end();
+            if !line.is_empty() {
+                lines.push(line.to_string());
+            }
+
+            if current_line == terminal.topmost_line() {
+                break;
+            }
+            current_line = Line(current_line.0 - 1);
+        }
+        lines.reverse();
+        lines
+    }
+
     pub fn focus_in(&self) {
         if self.last_content.mode.contains(TermMode::FOCUS_IN_OUT) {
             self.write_to_pty("\x1b[I".to_string());

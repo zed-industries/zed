@@ -55,7 +55,7 @@ impl OpenRequest {
     fn parse_file_path(&mut self, file: &str) {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
             if let Some(path_buf) =
-                PathLikeWithPosition::parse_str(&decoded, |s| PathBuf::try_from(s)).log_err()
+                PathLikeWithPosition::parse_str(&decoded, |_, s| PathBuf::try_from(s)).log_err()
             {
                 self.open_paths.push(path_buf)
             }
@@ -113,9 +113,8 @@ impl OpenListener {
 pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::unix::net::UnixDatagram;
-    use util::paths;
 
-    let sock_path = paths::SUPPORT_DIR.join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
+    let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
     // remove the socket if the process listening on it has died
     if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path) {
         if e.kind() == std::io::ErrorKind::ConnectionRefused {
@@ -296,7 +295,7 @@ pub async fn handle_cli_connection(
                         .map(|path_with_position_string| {
                             PathLikeWithPosition::parse_str(
                                 &path_with_position_string,
-                                |path_str| {
+                                |_, path_str| {
                                     Ok::<_, std::convert::Infallible>(
                                         Path::new(path_str).to_path_buf(),
                                     )

@@ -93,6 +93,16 @@ struct WindowFocusEvent {
     current_focus_path: SmallVec<[FocusId; 8]>,
 }
 
+impl WindowFocusEvent {
+    pub fn is_focus_in(&self, focus_id: FocusId) -> bool {
+        !self.previous_focus_path.contains(&focus_id) && self.current_focus_path.contains(&focus_id)
+    }
+
+    pub fn is_focus_out(&self, focus_id: FocusId) -> bool {
+        self.previous_focus_path.contains(&focus_id) && !self.current_focus_path.contains(&focus_id)
+    }
+}
+
 /// This is provided when subscribing for `ViewContext::on_focus_out` events.
 pub struct FocusOutEvent {
     /// A weak focus handle representing what was blurred.
@@ -539,6 +549,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
 }
 
@@ -810,6 +821,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            pending_input_observers: SubscriberSet::new(),
             prompt: None,
         })
     }
@@ -1158,7 +1170,7 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_fullscreen()
     }
 
-    fn appearance_changed(&mut self) {
+    pub(crate) fn appearance_changed(&mut self) {
         self.window.appearance = self.window.platform_window.appearance();
 
         self.window
@@ -2881,6 +2893,53 @@ impl<'a> WindowContext<'a> {
             ));
     }
 
+    /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
+    /// This does not fire if the given focus handle - or one of its descendants - was previously focused.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_in(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(&mut WindowContext) + 'static,
+    ) -> Subscription {
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
+                if event.is_focus_in(focus_id) {
+                    listener(cx);
+                }
+                true
+            }));
+        self.app.defer(move |_| activate());
+        subscription
+    }
+
+    /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_out(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(FocusOutEvent, &mut WindowContext) + 'static,
+    ) -> Subscription {
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
+                if let Some(blurred_id) = event.previous_focus_path.last().copied() {
+                    if event.is_focus_out(focus_id) {
+                        let event = FocusOutEvent {
+                            blurred: WeakFocusHandle {
+                                id: blurred_id,
+                                handles: Arc::downgrade(&cx.window.focus_handles),
+                            },
+                        };
+                        listener(event, cx)
+                    }
+                }
+                true
+            }));
+        self.app.defer(move |_| activate());
+        subscription
+    }
+
     fn reset_cursor_style(&self) {
         // Set the cursor only if we're the active window.
         if self.is_window_active() {
@@ -3128,16 +3187,20 @@ impl<'a> WindowContext<'a> {
                         let Some(currently_pending) = cx.window.pending_input.take() else {
                             return;
                         };
-                        cx.replay_pending_input(currently_pending)
+                        cx.pending_input_changed();
+                        cx.replay_pending_input(currently_pending);
                     })
                     .log_err();
                 }));
 
                 self.window.pending_input = Some(currently_pending);
+                self.pending_input_changed();
 
                 self.propagate_event = false;
+
                 return;
             } else if let Some(currently_pending) = self.window.pending_input.take() {
+                self.pending_input_changed();
                 if bindings
                     .iter()
                     .all(|binding| !currently_pending.used_by_binding(binding))
@@ -3171,6 +3234,13 @@ impl<'a> WindowContext<'a> {
         }
 
         self.dispatch_keystroke_observers(event, None);
+    }
+
+    fn pending_input_changed(&mut self) {
+        self.window
+            .pending_input_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
     }
 
     fn dispatch_key_down_up_event(
@@ -3228,6 +3298,14 @@ impl<'a> WindowContext<'a> {
             .rendered_frame
             .dispatch_tree
             .has_pending_keystrokes()
+    }
+
+    /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
+    pub fn pending_input_keystrokes(&self) -> Option<&[Keystroke]> {
+        self.window
+            .pending_input
+            .as_ref()
+            .map(|pending_input| pending_input.keystrokes.as_slice())
     }
 
     fn replay_pending_input(&mut self, currently_pending: PendingInput) {
@@ -4037,6 +4115,20 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
+    /// Register a callback to be invoked when the window's pending input changes.
+    pub fn observe_pending_input(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let (subscription, activate) = self.window.pending_input_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        );
+        activate();
+        subscription
+    }
+
     /// Register a listener to be called when the given focus handle receives focus.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus(
@@ -4074,9 +4166,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let (subscription, activate) =
             self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if !event.previous_focus_path.contains(&focus_id)
-                        && event.current_focus_path.contains(&focus_id)
-                    {
+                    if event.is_focus_in(focus_id) {
                         listener(view, cx)
                     }
                 })
@@ -4140,9 +4230,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if let Some(blurred_id) = event.previous_focus_path.last().copied() {
-                        if event.previous_focus_path.contains(&focus_id)
-                            && !event.current_focus_path.contains(&focus_id)
-                        {
+                        if event.is_focus_out(focus_id) {
                             let event = FocusOutEvent {
                                 blurred: WeakFocusHandle {
                                     id: blurred_id,

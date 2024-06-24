@@ -27,11 +27,11 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, impl_actions, point, relative, size, Action, AnyElement, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DragMoveEvent, Entity as _, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke, ManagedView, Model,
-    ModelContext, PathPromptOptions, Point, PromptLevel, Render, Size, Subscription, Task, View,
-    WeakView, WindowBounds, WindowHandle, WindowOptions,
+    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size, Action,
+    AnyElement, AnyView, AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds,
+    DragMoveEvent, Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
+    KeyContext, Keystroke, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel,
+    Render, Size, Subscription, Task, View, WeakView, WindowBounds, WindowHandle, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -112,30 +112,31 @@ pub struct RemoveWorktreeFromProject(pub WorktreeId);
 actions!(
     workspace,
     [
+        ActivateNextPane,
+        ActivatePreviousPane,
+        AddFolderToProject,
+        ClearAllNotifications,
+        CloseAllDocks,
+        CloseWindow,
+        Feedback,
+        FollowNextCollaborator,
+        NewCenterTerminal,
+        NewFile,
+        NewSearch,
+        NewTerminal,
+        NewWindow,
         Open,
         OpenInTerminal,
-        NewFile,
-        NewWindow,
-        CloseWindow,
-        AddFolderToProject,
-        Unfollow,
+        ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
-        ReloadActiveItem,
-        ActivatePreviousPane,
-        ActivateNextPane,
-        FollowNextCollaborator,
-        NewTerminal,
-        NewCenterTerminal,
-        NewSearch,
-        Feedback,
-        Welcome,
-        ToggleZoom,
-        ToggleLeftDock,
-        ToggleRightDock,
         ToggleBottomDock,
         ToggleCenteredLayout,
-        CloseAllDocks,
+        ToggleLeftDock,
+        ToggleRightDock,
+        ToggleZoom,
+        Unfollow,
+        Welcome,
     ]
 );
 
@@ -187,6 +188,16 @@ pub struct SendKeystrokes(pub String);
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
+
+action_as!(project_symbols, ToggleProjectSymbols as Toggle);
+
+#[derive(Default, PartialEq, Eq, Clone, serde::Deserialize)]
+pub struct ToggleFileFinder {
+    #[serde(default)]
+    pub separate_history: bool,
+}
+
+impl_action_as!(file_finder, ToggleFileFinder as Toggle);
 
 impl_actions!(
     workspace,
@@ -793,7 +804,7 @@ impl Workspace {
                         .await;
                     this.update(&mut cx, |this, cx| {
                         if let Some(display) = cx.display() {
-                            if let Some(display_uuid) = display.uuid().log_err() {
+                            if let Some(display_uuid) = display.uuid().ok() {
                                 let window_bounds = cx.window_bounds();
                                 if let Some(database_id) = workspace_id {
                                     cx.background_executor()
@@ -3491,11 +3502,11 @@ impl Workspace {
                     if let Some(item) = pane.active_item() {
                         item.workspace_deactivated(cx);
                     }
-                    if matches!(
-                        WorkspaceSettings::get_global(cx).autosave,
-                        AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
-                    ) {
-                        for item in pane.items() {
+                    for item in pane.items() {
+                        if matches!(
+                            item.workspace_settings(cx).autosave,
+                            AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
+                        ) {
                             Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
                                 .detach_and_log_err(cx);
                         }
@@ -3886,6 +3897,11 @@ impl Workspace {
                     workspace.close_all_docks(cx);
                 }),
             )
+            .on_action(
+                cx.listener(|workspace: &mut Workspace, _: &ClearAllNotifications, cx| {
+                    workspace.clear_all_notifications(cx);
+                }),
+            )
             .on_action(cx.listener(Workspace::open))
             .on_action(cx.listener(Workspace::close_window))
             .on_action(cx.listener(Workspace::activate_pane_at_index))
@@ -4144,14 +4160,10 @@ impl Render for Workspace {
         } else {
             (None, None)
         };
-        let (ui_font, ui_font_size) = {
-            let theme_settings = ThemeSettings::get_global(cx);
-            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
-        };
+        let ui_font = theme::setup_ui_font(cx);
 
         let theme = cx.theme().clone();
         let colors = theme.colors();
-        cx.set_rem_size(ui_font_size);
 
         self.actions(div(), cx)
             .key_context(context)
@@ -4338,7 +4350,6 @@ impl WorkspaceStore {
     pub async fn handle_follow(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::Follow>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::FollowResponse> {
         this.update(&mut cx, |this, cx| {
@@ -4384,7 +4395,6 @@ impl WorkspaceStore {
     async fn handle_update_followers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateFollowers>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let leader_id = envelope.original_sender_id()?;

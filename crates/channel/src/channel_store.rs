@@ -888,7 +888,6 @@ impl ChannelStore {
     async fn handle_update_channels(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateChannels>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
@@ -902,7 +901,6 @@ impl ChannelStore {
     async fn handle_update_user_channels(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateUserChannels>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {

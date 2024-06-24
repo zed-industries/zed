@@ -112,6 +112,8 @@ pub struct LanguageSettings {
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
     pub use_autoclose: bool,
+    /// Whether to automatically surround text with brackets.
+    pub use_auto_surround: bool,
     // Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
@@ -194,13 +196,13 @@ pub struct AllLanguageSettingsContent {
     #[serde(default)]
     pub features: Option<FeaturesContent>,
     /// The inline completion settings.
-    #[serde(default, alias = "copilot")]
+    #[serde(default)]
     pub inline_completions: Option<InlineCompletionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
-    #[serde(default, alias = "language_overrides")]
+    #[serde(default)]
     pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
     /// Settings for associating file extensions and filenames
     /// with languages.
@@ -297,7 +299,7 @@ pub struct LanguageSettingsContent {
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     ///
     /// Default: true
-    #[serde(default, alias = "show_copilot_suggestions")]
+    #[serde(default)]
     pub show_inline_completions: Option<bool>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
@@ -315,6 +317,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
+    /// Whether to automatically surround text with characters for you. For example,
+    /// when you select text and type (, Zed will automatically surround text with ().
+    ///
+    /// Default: true
+    pub use_auto_surround: Option<bool>,
     // Controls how the editor handles the autoclosed characters.
     // When set to `false`(default), skipping over and auto-removing of the closing characters
     // happen only for auto-inserted characters.
@@ -443,6 +450,11 @@ pub struct IndentGuideSettings {
     /// Default: 1
     #[serde(default = "line_width")]
     pub line_width: u32,
+    /// The width of the active indent guide in pixels, between 1 and 10.
+    ///
+    /// Default: 1
+    #[serde(default = "active_line_width")]
+    pub active_line_width: u32,
     /// Determines how indent guides are colored.
     ///
     /// Default: Fixed
@@ -457,6 +469,10 @@ pub struct IndentGuideSettings {
 
 fn line_width() -> u32 {
     1
+}
+
+fn active_line_width() -> u32 {
+    line_width()
 }
 
 /// Determines how indent guides are colored.
@@ -754,17 +770,10 @@ impl settings::Settings for AllLanguageSettings {
             .as_mut()
             .unwrap()
             .properties
-            .extend([
-                (
-                    "languages".to_owned(),
-                    Schema::new_ref("#/definitions/Languages".into()),
-                ),
-                // For backward compatibility
-                (
-                    "language_overrides".to_owned(),
-                    Schema::new_ref("#/definitions/Languages".into()),
-                ),
-            ]);
+            .extend([(
+                "languages".to_owned(),
+                Schema::new_ref("#/definitions/Languages".into()),
+            )]);
 
         root_schema
     }
@@ -781,6 +790,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
+    merge(&mut settings.use_auto_surround, src.use_auto_surround);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,
         src.always_treat_brackets_as_autoclosed,

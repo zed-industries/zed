@@ -5,7 +5,7 @@ use assistant_slash_command::SlashCommandOutputSection;
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use workspace::Workspace;
 
 pub(crate) struct PromptSlashCommand;
@@ -28,7 +28,7 @@ impl SlashCommand for PromptSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         query: String,
         _cancellation_flag: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
@@ -69,42 +69,20 @@ impl SlashCommand for PromptSlashCommand {
             }
         });
         cx.foreground_executor().spawn(async move {
-            let prompt = prompt.await?;
+            let mut prompt = prompt.await?;
+            if prompt.is_empty() {
+                prompt.push('\n');
+            }
             let range = 0..prompt.len();
             Ok(SlashCommandOutput {
                 text: prompt,
                 sections: vec![SlashCommandOutputSection {
                     range,
-                    render_placeholder: Arc::new(move |id, unfold, _cx| {
-                        PromptPlaceholder {
-                            id,
-                            unfold,
-                            title: title.clone(),
-                        }
-                        .into_any_element()
-                    }),
+                    icon: IconName::Library,
+                    label: title,
                 }],
                 run_commands_in_text: true,
             })
         })
-    }
-}
-
-#[derive(IntoElement)]
-pub struct PromptPlaceholder {
-    pub title: SharedString,
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-}
-
-impl RenderOnce for PromptPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::Library))
-            .child(Label::new(self.title))
-            .on_click(move |_, cx| unfold(cx))
     }
 }

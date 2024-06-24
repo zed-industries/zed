@@ -40,7 +40,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
-use util::{maybe, parse_env_output, paths, with_clone, ResultExt, TryFutureExt};
+use util::{maybe, parse_env_output, with_clone, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
@@ -221,6 +221,8 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
 
     assistant::init(app_state.client.clone(), cx);
 
+    repl::init(app_state.fs.clone(), cx);
+
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
         let http = app_state.client.http_client();
@@ -341,12 +343,12 @@ fn main() {
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
-        paths::SETTINGS.clone(),
+        paths::settings_file().clone(),
     );
     let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
-        paths::KEYMAP.clone(),
+        paths::keymap_file().clone(),
     );
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
@@ -397,7 +399,7 @@ fn main() {
         cx.update_http_client(client.http_client().clone());
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
-        languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
+        languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(client.http_client());
 
@@ -666,12 +668,12 @@ async fn restore_or_create_workspace(
 
 fn init_paths() -> anyhow::Result<()> {
     for path in [
-        &*util::paths::CONFIG_DIR,
-        &*util::paths::EXTENSIONS_DIR,
-        &*util::paths::LANGUAGES_DIR,
-        &*util::paths::DB_DIR,
-        &*util::paths::LOGS_DIR,
-        &*util::paths::TEMP_DIR,
+        paths::config_dir(),
+        paths::extensions_dir(),
+        paths::languages_dir(),
+        paths::database_dir(),
+        paths::logs_dir(),
+        paths::temp_dir(),
     ]
     .iter()
     {
@@ -691,22 +693,31 @@ fn init_logger() {
         const KIB: u64 = 1024;
         const MIB: u64 = 1024 * KIB;
         const MAX_LOG_BYTES: u64 = MIB;
-        if std::fs::metadata(&*paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
+        if std::fs::metadata(paths::log_file())
+            .map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
         {
-            let _ = std::fs::rename(&*paths::LOG, &*paths::OLD_LOG);
+            let _ = std::fs::rename(paths::log_file(), paths::old_log_file());
         }
 
         match OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&*paths::LOG)
+            .open(paths::log_file())
         {
             Ok(log_file) => {
-                let config = ConfigBuilder::new()
-                    .set_time_format_str("%Y-%m-%dT%T%:z")
-                    .set_time_to_local(true)
-                    .build();
+                let mut config_builder = ConfigBuilder::new();
 
+                config_builder.set_time_format_str("%Y-%m-%dT%T%:z");
+                config_builder.set_time_to_local(true);
+
+                #[cfg(target_os = "linux")]
+                {
+                    config_builder.add_filter_ignore_str("zbus");
+                    config_builder.add_filter_ignore_str("blade_graphics::hal::resource");
+                    config_builder.add_filter_ignore_str("naga::back::spv::writer");
+                }
+
+                let config = config_builder.build();
                 simplelog::WriteLogger::init(level, config, log_file)
                     .expect("could not initialize logger");
             }
@@ -916,7 +927,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             if let Some(theme_registry) =
                 cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
             {
-                let themes_dir = paths::THEMES_DIR.as_ref();
+                let themes_dir = paths::themes_dir().as_ref();
                 match fs
                     .metadata(themes_dir)
                     .await
@@ -947,7 +958,7 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
     cx.spawn(|cx| async move {
         let (mut events, _) = fs
-            .watch(&paths::THEMES_DIR.clone(), Duration::from_millis(100))
+            .watch(paths::themes_dir(), Duration::from_millis(100))
             .await;
 
         while let Some(paths) = events.next().await {

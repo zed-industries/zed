@@ -101,7 +101,10 @@ impl CloudCompletionProvider {
                 count_open_ai_tokens(request, cx.background_executor())
             }
             LanguageModel::Cloud(
-                CloudModel::Claude3Opus | CloudModel::Claude3Sonnet | CloudModel::Claude3Haiku,
+                CloudModel::Claude3_5Sonnet
+                | CloudModel::Claude3Opus
+                | CloudModel::Claude3Sonnet
+                | CloudModel::Claude3Haiku,
             ) => {
                 // Can't find a tokenizer for Claude 3, so for now just use the same as OpenAI's as an approximation.
                 count_open_ai_tokens(request, cx.background_executor())

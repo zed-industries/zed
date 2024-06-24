@@ -210,6 +210,7 @@ pub fn count_open_ai_tokens(
 
             match request.model {
                 LanguageModel::Anthropic(_)
+                | LanguageModel::Cloud(CloudModel::Claude3_5Sonnet)
                 | LanguageModel::Cloud(CloudModel::Claude3Opus)
                 | LanguageModel::Cloud(CloudModel::Claude3Sonnet)
                 | LanguageModel::Cloud(CloudModel::Claude3Haiku) => {

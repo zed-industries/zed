@@ -612,13 +612,13 @@
   {
     "context": "Editor && vim_mode == normal && !VimWaiting",
     "bindings": {
-      "g c c": "editor::ToggleComments"
+      "g c c": "vim::ToggleComments"
     }
   },
   {
     "context": "Editor && vim_mode == visual",
     "bindings": {
-      "g c": "editor::ToggleComments"
+      "g c": "vim::ToggleComments"
     }
   },
   {
@@ -645,16 +645,25 @@
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
+      "tab": "vim::Tab",
+      "enter": "vim::Enter",
       "backspace": "vim::UndoReplace"
     }
   },
   {
-    "context": "Editor && VimWaiting",
+    "context": "Editor && vim_mode != replace && VimWaiting",
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter",
       "escape": ["vim::SwitchMode", "Normal"],
       "ctrl-[": ["vim::SwitchMode", "Normal"]
+    }
+  },
+  {
+    "context": "Editor && vim_mode == insert && VimWaiting",
+    "bindings": {
+      "escape": "vim::NormalBefore",
+      "ctrl-[": "vim::NormalBefore"
     }
   },
   {

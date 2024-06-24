@@ -4503,6 +4503,7 @@ async fn complete_with_google_ai(
         session.http_client.clone(),
         google_ai::API_URL,
         api_key.as_ref(),
+        &request.model.clone(),
         crate::ai::language_model_request_to_google_ai(request)?,
     )
     .await

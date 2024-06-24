@@ -637,7 +637,7 @@ fn possible_open_targets(
     maybe_path: &String,
     cx: &mut ViewContext<TerminalView>,
 ) -> Task<Vec<(PathLikeWithPosition<PathBuf>, Metadata)>> {
-    let path_like = PathLikeWithPosition::parse_str(maybe_path.as_str(), |path_str| {
+    let path_like = PathLikeWithPosition::parse_str(maybe_path.as_str(), |_, path_str| {
         Ok::<_, std::convert::Infallible>(Path::new(path_str).to_path_buf())
     })
     .expect("infallible");
@@ -1024,8 +1024,8 @@ impl SearchableItem for TerminalView {
                     query.whole_word(),
                     query.case_sensitive(),
                     query.include_ignored(),
-                    query.files_to_include().to_vec(),
-                    query.files_to_exclude().to_vec(),
+                    query.files_to_include().clone(),
+                    query.files_to_exclude().clone(),
                 )
                 .unwrap()),
             ),

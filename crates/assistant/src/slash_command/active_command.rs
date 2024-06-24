@@ -1,11 +1,15 @@
-use super::{file_command::FilePlaceholder, SlashCommand, SlashCommandOutput};
+use super::{
+    diagnostics_command::write_single_file_diagnostics,
+    file_command::{build_entry_output_section, codeblock_fence_for_path},
+    SlashCommand, SlashCommandOutput,
+};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandOutputSection;
 use editor::Editor;
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
-use std::{borrow::Cow, sync::Arc};
-use ui::{IntoElement, WindowContext};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use ui::WindowContext;
 use workspace::Workspace;
 
 pub(crate) struct ActiveSlashCommand;
@@ -24,9 +28,9 @@ impl SlashCommand for ActiveSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         _query: String,
-        _cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
@@ -57,46 +61,38 @@ impl SlashCommand for ActiveSlashCommand {
 
             let snapshot = buffer.read(cx).snapshot();
             let path = snapshot.resolve_file_path(cx, true);
-            let text = cx.background_executor().spawn({
+            let task = cx.background_executor().spawn({
                 let path = path.clone();
                 async move {
-                    let path = path
-                        .as_ref()
-                        .map(|path| path.to_string_lossy())
-                        .unwrap_or_else(|| Cow::Borrowed("untitled"));
-
-                    let mut output = String::with_capacity(path.len() + snapshot.len() + 9);
-                    output.push_str("```");
-                    output.push_str(&path);
-                    output.push('\n');
+                    let mut output = String::new();
+                    output.push_str(&codeblock_fence_for_path(path.as_deref(), None));
                     for chunk in snapshot.as_rope().chunks() {
                         output.push_str(chunk);
                     }
                     if !output.ends_with('\n') {
                         output.push('\n');
                     }
-                    output.push_str("```");
-                    output
+                    output.push_str("```\n");
+                    let has_diagnostics =
+                        write_single_file_diagnostics(&mut output, path.as_deref(), &snapshot);
+                    if output.ends_with('\n') {
+                        output.pop();
+                    }
+                    (output, has_diagnostics)
                 }
             });
             cx.foreground_executor().spawn(async move {
-                let text = text.await;
+                let (text, has_diagnostics) = task.await;
                 let range = 0..text.len();
                 Ok(SlashCommandOutput {
                     text,
-                    sections: vec![SlashCommandOutputSection {
+                    sections: vec![build_entry_output_section(
                         range,
-                        render_placeholder: Arc::new(move |id, unfold, _| {
-                            FilePlaceholder {
-                                id,
-                                path: path.clone(),
-                                line_range: None,
-                                unfold,
-                            }
-                            .into_any_element()
-                        }),
-                    }],
-                    run_commands_in_text: false,
+                        path.as_deref(),
+                        false,
+                        None,
+                    )],
+                    run_commands_in_text: has_diagnostics,
                 })
             })
         });

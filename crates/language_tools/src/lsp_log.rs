@@ -11,7 +11,7 @@ use language::{LanguageServerId, LanguageServerName};
 use lsp::{IoKind, LanguageServer};
 use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
-use ui::{popover_menu, prelude::*, Button, Checkbox, ContextMenu, Label, Selection};
+use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, Selection};
 use workspace::{
     item::{Item, ItemHandle, TabContentParams},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
@@ -821,7 +821,7 @@ impl Render for LspLogToolbarItemView {
         });
 
         let log_toolbar_view = cx.view().clone();
-        let lsp_menu = popover_menu("LspLogView")
+        let lsp_menu = PopoverMenu::new("LspLogView")
             .anchor(AnchorCorner::TopLeft)
             .trigger(Button::new(
                 "language_server_menu_header",

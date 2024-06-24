@@ -88,7 +88,7 @@ A common request is to be able to map from one sequence of keys to another. As o
   {
     "context": "Editor && vim_mode == insert",
     "bindings": {
-      "j k": ["workspace::SendKeystrokes", "escape"],
+      "j k": ["workspace::SendKeystrokes", "escape"]
     }
   }
 ]
@@ -101,6 +101,26 @@ There are some limitations to this, notably:
 - There is a limit of 100 simulated keys at a time, this is to avoid accidental infinite recursion if you trigger SendKeystrokes again inside your bindings.
 
 The argument to `SendKeystrokes` is a space-separated list of keystrokes (using the same syntax as above). Due to the way that keystrokes are parsed, any segment that is not recognized as a keypress will be sent verbatim to the currently focused input field.
+
+### Forward keys to terminal
+
+If you're on Linux or Windows, you might find yourself wanting to forward key combinations to the built-in terminal instead of them being handled by Zed.
+
+For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ctrl-n` to the built-in terminal when it's focused, add the following to your keymap:
+
+```json
+{
+  "context": "Terminal",
+  "bindings": {
+    "ctrl-n": ["terminal::SendKeystroke", "ctrl-n"]
+  }
+}
+```
+
+### Task Key bindings
+
+You can also bind keys to launch Zed Tasks defined in your tasks.json.
+See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more.
 
 ### All key bindings
 
@@ -347,7 +367,7 @@ The argument to `SendKeystrokes` is a space-separated list of keystrokes (using 
 | Close all items               | Pane           | `⌘ + K, ⌘ + W`          |
 | Close clean items             | Pane           | `⌘ + K, U`              |
 | Close inactive items          | Pane           | `Alt + ⌘ + T`           |
-| Go back                       | Pane           | `Control + `            |
+| Go back                       | Pane           | `Control + -`           |
 | Go forward                    | Pane           | `Control + _`           |
 | Reopen closed item            | Pane           | `⌘ + Shift + T`         |
 | Split down                    | Pane           | `⌘ + K, Down`           |
