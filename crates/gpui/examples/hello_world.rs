@@ -19,6 +19,9 @@ impl Render for HelloWorld {
         let tiling = dbg!(cx.window_tiling());
         let rounding = px(10.0);
         let shadow_size = px(20.0);
+        let border_size = px(1.0);
+        let grey = rgb(0x808080);
+
         div()
             .id("window-backdrop")
             .when(decorations == WindowDecorations::Client, |div| {
@@ -49,25 +52,23 @@ impl Render for HelloWorld {
                     })
             })
             .size_full()
-            // .child(
-            //     canvas(
-            //         |_, _| {},
-            //         |bounds, _, cx| {
-            //             cx.set_content_area(bounds);
-            //         },
-            //     )
-            //     .size_full()
-            //     .absolute(),
-            // )
             .child(
                 div()
                     .when(decorations == WindowDecorations::Client, |div| {
-                        div.rounded_t(px(10.0))
+                        div.border_color(grey)
+                            .when(!(tiling.top || tiling.right), |div| {
+                                div.rounded_tr(rounding)
+                            })
+                            .when(!(tiling.top || tiling.left), |div| div.rounded_tl(rounding))
+                            .when(!tiling.top, |div| div.border_t(border_size))
+                            .when(!tiling.bottom, |div| div.border_b(border_size))
+                            .when(!tiling.left, |div| div.border_l(border_size))
+                            .when(!tiling.right, |div| div.border_r(border_size))
                     })
                     .on_mouse_move(|_e, cx| {
                         cx.stop_propagation();
                     })
-                    .bg(gpui::black())
+                    .bg(gpui::rgb(0xCCCCFF))
                     .size_full()
                     .flex()
                     .flex_col()
