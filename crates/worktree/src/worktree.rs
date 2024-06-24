@@ -4154,54 +4154,53 @@ impl BackgroundScanner {
     async fn update_ignore_statuses(&self, scan_job_tx: Sender<ScanJob>) {
         use futures::FutureExt as _;
 
-        let mut snapshot = self.state.lock().snapshot.clone();
         let mut ignores_to_update = Vec::new();
-        let mut ignores_to_delete = Vec::new();
-        let abs_path = snapshot.abs_path.clone();
-        for (parent_abs_path, (_, needs_update)) in &mut snapshot.ignores_by_parent_abs_path {
-            if let Ok(parent_path) = parent_abs_path.strip_prefix(&abs_path) {
-                if *needs_update {
-                    *needs_update = false;
-                    if snapshot.snapshot.entry_for_path(parent_path).is_some() {
-                        ignores_to_update.push(parent_abs_path.clone());
-                    }
-                }
-
-                let ignore_path = parent_path.join(&*GITIGNORE);
-                if snapshot.snapshot.entry_for_path(ignore_path).is_none() {
-                    ignores_to_delete.push(parent_abs_path.clone());
-                }
-            }
-        }
-
-        for parent_abs_path in ignores_to_delete {
-            snapshot.ignores_by_parent_abs_path.remove(&parent_abs_path);
-            self.state
-                .lock()
-                .snapshot
-                .ignores_by_parent_abs_path
-                .remove(&parent_abs_path);
-        }
-
         let (ignore_queue_tx, ignore_queue_rx) = channel::unbounded();
-        ignores_to_update.sort_unstable();
-        let mut ignores_to_update = ignores_to_update.into_iter().peekable();
-        while let Some(parent_abs_path) = ignores_to_update.next() {
-            while ignores_to_update
-                .peek()
-                .map_or(false, |p| p.starts_with(&parent_abs_path))
-            {
-                ignores_to_update.next().unwrap();
+        let prev_snapshot;
+        {
+            let snapshot = &mut self.state.lock().snapshot;
+            let abs_path = snapshot.abs_path.clone();
+            snapshot
+                .ignores_by_parent_abs_path
+                .retain(|parent_abs_path, (_, needs_update)| {
+                    if let Ok(parent_path) = parent_abs_path.strip_prefix(&abs_path) {
+                        if *needs_update {
+                            *needs_update = false;
+                            if snapshot.snapshot.entry_for_path(parent_path).is_some() {
+                                ignores_to_update.push(parent_abs_path.clone());
+                            }
+                        }
+
+                        let ignore_path = parent_path.join(&*GITIGNORE);
+                        if snapshot.snapshot.entry_for_path(ignore_path).is_none() {
+                            return false;
+                        }
+                    }
+                    true
+                });
+
+            ignores_to_update.sort_unstable();
+            let mut ignores_to_update = ignores_to_update.into_iter().peekable();
+            while let Some(parent_abs_path) = ignores_to_update.next() {
+                while ignores_to_update
+                    .peek()
+                    .map_or(false, |p| p.starts_with(&parent_abs_path))
+                {
+                    ignores_to_update.next().unwrap();
+                }
+
+                let ignore_stack = snapshot.ignore_stack_for_abs_path(&parent_abs_path, true);
+                ignore_queue_tx
+                    .send_blocking(UpdateIgnoreStatusJob {
+                        abs_path: parent_abs_path,
+                        ignore_stack,
+                        ignore_queue: ignore_queue_tx.clone(),
+                        scan_queue: scan_job_tx.clone(),
+                    })
+                    .unwrap();
             }
 
-            let ignore_stack = snapshot.ignore_stack_for_abs_path(&parent_abs_path, true);
-            smol::block_on(ignore_queue_tx.send(UpdateIgnoreStatusJob {
-                abs_path: parent_abs_path,
-                ignore_stack,
-                ignore_queue: ignore_queue_tx.clone(),
-                scan_queue: scan_job_tx.clone(),
-            }))
-            .unwrap();
+            prev_snapshot = snapshot.clone();
         }
         drop(ignore_queue_tx);
 
@@ -4223,7 +4222,7 @@ impl BackgroundScanner {
                                 // Recursively process directories whose ignores have changed.
                                 job = ignore_queue_rx.recv().fuse() => {
                                     let Ok(job) = job else { break };
-                                    self.update_ignore_status(job, &snapshot).await;
+                                    self.update_ignore_status(job, &prev_snapshot).await;
                                 }
                             }
                         }
