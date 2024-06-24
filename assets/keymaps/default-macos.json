@@ -166,12 +166,18 @@
     }
   },
   {
+    "context": "Editor",
+    "bindings": {
+      "cmd-enter": "repl::Run"
+    }
+  },
+  {
     "context": "Editor && mode == full",
     "bindings": {
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
       "cmd-shift-enter": "editor::NewlineAbove",
-      "cmd-enter": "editor::NewlineBelow",
+      // "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
       "cmd-alt-f": [
