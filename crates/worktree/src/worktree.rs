@@ -70,6 +70,12 @@ pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
 
+impl From<WorktreeId> for usize {
+    fn from(value: WorktreeId) -> Self {
+        value.0
+    }
+}
+
 /// A set of local or remote files that are being opened as part of a project.
 /// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
 /// Stores git repositories data and the diagnostics for the file(s).
