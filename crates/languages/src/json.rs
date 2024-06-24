@@ -246,7 +246,19 @@ async fn get_cached_server_binary(
     .log_err()
 }
 
-fn schema_file_match(path: &Path) -> &Path {
-    path.strip_prefix(path.parent().unwrap().parent().unwrap())
+#[inline]
+fn schema_file_match(path: &Path) -> String {
+    #[cfg(not(target_os = "windows"))]
+    return path
+        .strip_prefix(path.parent().unwrap().parent().unwrap())
         .unwrap()
+        .display()
+        .to_string();
+    #[cfg(target_os = "windows")]
+    return path
+        .strip_prefix(path.parent().unwrap().parent().unwrap())
+        .unwrap()
+        .display()
+        .to_string()
+        .replace("\\", "/");
 }
