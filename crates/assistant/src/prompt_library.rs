@@ -734,6 +734,8 @@ impl PromptLibrary {
                     v_flex()
                         .id("prompt-editor-inner")
                         .size_full()
+                        .relative()
+                        .overflow_hidden()
                         .pl(Spacing::XXLarge.rems(cx))
                         .pt(Spacing::Large.rems(cx))
                         .on_click(cx.listener(move |_, _, cx| {
@@ -742,9 +744,9 @@ impl PromptLibrary {
                         .child(
                             h_flex()
                                 .group("active-editor-header")
-                                .pr(Spacing::Large.rems(cx) + Spacing::Large.rems(cx))
-                                .pt(Spacing::Large.rems(cx))
-                                .pb(Spacing::Large.rems(cx) + Spacing::Large.rems(cx))
+                                .pr(Spacing::XXLarge.rems(cx))
+                                .pt(Spacing::XSmall.rems(cx))
+                                .pb(Spacing::Large.rems(cx))
                                 .justify_between()
                                 .child(
                                     h_flex()
@@ -804,37 +806,70 @@ impl PromptLibrary {
                                                     },
                                                 )),
                                         )
-                                        .children(prompt_editor.token_count.map(|token_count| {
-                                            let token_count = token_count.to_string();
-                                            // This isn't actually a button, it just let's us easily add
-                                            // a tooltip to the token count.
-                                            Button::new(
-                                                "token_count",
-                                                format!("{} tokens", token_count),
-                                            )
-                                            .style(ButtonStyle::Transparent)
-                                            .color(Color::Muted)
-                                            .cursor_style(gpui::CursorStyle::Arrow)
-                                            .tooltip(
-                                                move |cx| {
-                                                    Tooltip::with_meta(
-                                                        format!("{} tokens", token_count),
-                                                        None,
-                                                        format!(
-                                                            "Model: {}",
-                                                            current_model.display_name()
-                                                        ),
-                                                        cx,
-                                                    )
-                                                },
-                                            )
-                                        })),
                                 )
                                 .child(
-                                    h_flex().h_full().gap_12().child(
+                                    h_flex().h_full()
+                                        .child(h_flex()
+                                            .h_full()
+                                            .gap(Spacing::XXLarge.rems(cx))
+                                            .child(div()))
+                                        .child(
                                         h_flex()
                                             .h_full()
-                                            .gap_3()
+                                            .gap(Spacing::XXLarge.rems(cx))
+                                            .child(
+                                                IconButton::new(
+                                                    "add-to-shared-library",
+                                                    IconName::BookPlus,
+                                                )
+                                                .size(ButtonSize::Large)
+                                                .style(ButtonStyle::Transparent)
+                                                .shape(IconButtonShape::Square)
+                                                .tooltip(move |cx| {
+                                                    Tooltip::with_meta(
+                                                        "Add to Shared Library",
+                                                        None,
+                                                        "Coming soon – Create shared prompt libraries to collaborate with others.",
+                                                        cx,
+                                                    )
+                                                })
+                                                .disabled(true),
+                                            )
+                                            .child(
+                                                IconButton::new("delete-prompt", IconName::Trash)
+                                                    .size(ButtonSize::Large)
+                                                    .style(ButtonStyle::Transparent)
+                                                    .shape(IconButtonShape::Square)
+                                                    .size(ButtonSize::Large)
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::for_action(
+                                                            "Delete Prompt",
+                                                            &DeletePrompt,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(Box::new(DeletePrompt));
+                                                    }),
+                                            )
+                                            .child(
+                                                IconButton::new(
+                                                    "duplicate-prompt",
+                                                    IconName::BookCopy,
+                                                )
+                                                .size(ButtonSize::Large)
+                                                .style(ButtonStyle::Transparent)
+                                                .shape(IconButtonShape::Square)
+                                                .size(ButtonSize::Large)
+                                                .tooltip(move |cx| {
+                                                    Tooltip::for_action(
+                                                        "Duplicate Prompt",
+                                                        &gpui::NoAction,
+                                                        cx,
+                                                    )
+                                                })
+                                                .disabled(true),
+                                            )
                                             .child(
                                                 IconButton::new(
                                                     "toggle-default-prompt",
@@ -849,6 +884,7 @@ impl PromptLibrary {
                                                     Color::Muted
                                                 })
                                                 .shape(IconButtonShape::Square)
+                                                .size(ButtonSize::Large)
                                                 .tooltip(move |cx| {
                                                     Tooltip::text(
                                                         if prompt_metadata.default {
@@ -864,22 +900,6 @@ impl PromptLibrary {
                                                         ToggleDefaultPrompt,
                                                     ));
                                                 }),
-                                            )
-                                            .child(
-                                                IconButton::new("delete-prompt", IconName::Trash)
-                                                    .size(ButtonSize::Large)
-                                                    .style(ButtonStyle::Transparent)
-                                                    .shape(IconButtonShape::Square)
-                                                    .tooltip(move |cx| {
-                                                        Tooltip::for_action(
-                                                            "Delete Prompt",
-                                                            &DeletePrompt,
-                                                            cx,
-                                                        )
-                                                    })
-                                                    .on_click(|_, cx| {
-                                                        cx.dispatch_action(Box::new(DeletePrompt));
-                                                    }),
                                             ),
                                     ),
                                 ),
@@ -891,7 +911,35 @@ impl PromptLibrary {
                                 .on_action(cx.listener(Self::move_up_from_body))
                                 .flex_grow()
                                 .h_full()
-                                .child(prompt_editor.body_editor.clone()),
+                                .child(prompt_editor.body_editor.clone())
+                                .children(prompt_editor.token_count.map(|token_count| {
+                                    let token_count:SharedString = token_count.to_string().into();
+                                    let label_token_count:SharedString = token_count.to_string().into();
+
+                                    h_flex()
+                                        .id("token_count")
+                                        .absolute()
+                                        .bottom_1()
+                                        .right_4()
+                                        .flex_initial()
+                                        .px_2()
+                                        .py_1()
+                                        .tooltip(move |cx| {
+                                            let token_count = token_count.clone();
+
+                                            Tooltip::with_meta(
+                                                format!("{} tokens", token_count.clone()),
+                                                None,
+                                                format!(
+                                                    "Model: {}",
+                                                    current_model.display_name()
+                                                ),
+                                                cx,
+                                            )
+                                        })
+                                        .child(Label::new(format!("{} tokens", label_token_count.clone())).color(Color::Muted)
+                                        )
+                                })),
                         ),
                 )
             }))
