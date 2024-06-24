@@ -3840,6 +3840,7 @@ impl BackgroundScanner {
             let child_path: Arc<Path> = job.path.join(child_name).into();
 
             if child_name == *DOT_GIT {
+                dbg!("dot git");
                 let repo = self
                     .state
                     .lock()
@@ -3858,6 +3859,7 @@ impl BackgroundScanner {
                 }
                 self.watcher.add(child_abs_path.as_ref()).log_err();
             } else if child_name == *GITIGNORE {
+                dbg!("git ignore");
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
                     Ok(ignore) => {
                         let ignore = Arc::new(ignore);
@@ -3933,12 +3935,12 @@ impl BackgroundScanner {
             }
 
             if child_entry.is_dir() {
+                // ***THIS SHOULD GET IT
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
 
-                if child_entry.is_ignored {
-                    dbg!("ignored");
+                if child_entry.path.ends_with(Path::new("target")) {
+                    dbg!(&child_entry);
                 }
-
                 // Avoid recursing until crash in the case of a recursive symlink
                 if job.ancestor_inodes.contains(&child_entry.inode) {
                     new_jobs.push(None);
