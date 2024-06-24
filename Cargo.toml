@@ -464,6 +464,7 @@ pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "4968
 [profile.dev]
 split-debuginfo = "unpacked"
 debug = "limited"
+codegen-units = 16
 
 [profile.dev.package]
 taffy = { opt-level = 3 }
