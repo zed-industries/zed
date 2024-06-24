@@ -13,7 +13,6 @@ use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
-use wayland_protocols::wp::fullscreen_shell::zv1::client::zwp_fullscreen_shell_v1::Capability;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
@@ -420,15 +419,37 @@ impl WaylandWindowStatePtr {
                     Some(size(px(width as f32), px(height as f32)))
                 };
 
-                let tiling = Tiling {
-                    top: states.contains(&(xdg_toplevel::State::TiledTop as u8)),
-                    left: states.contains(&(xdg_toplevel::State::TiledLeft as u8)),
-                    right: states.contains(&(xdg_toplevel::State::TiledRight as u8)),
-                    bottom: states.contains(&(xdg_toplevel::State::TiledBottom as u8)),
-                };
+                let states = extract_states::<xdg_toplevel::State>(&states);
 
-                let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
-                let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
+                let mut tiling = Tiling::default();
+                let mut fullscreen = false;
+                let mut maximized = false;
+
+                for state in states {
+                    match state {
+                        xdg_toplevel::State::Maximized => {
+                            maximized = true;
+                        }
+                        xdg_toplevel::State::Fullscreen => {
+                            fullscreen = true;
+                        }
+                        xdg_toplevel::State::TiledTop => {
+                            tiling.top = true;
+                        }
+                        xdg_toplevel::State::TiledLeft => {
+                            tiling.left = true;
+                        }
+                        xdg_toplevel::State::TiledRight => {
+                            tiling.right = true;
+                        }
+                        xdg_toplevel::State::TiledBottom => {
+                            tiling.bottom = true;
+                        }
+                        _ => {
+                            // noop
+                        }
+                    }
+                }
 
                 let mut state = self.state.borrow_mut();
                 state.in_progress_configure = Some(InProgressConfigure {
@@ -455,16 +476,27 @@ impl WaylandWindowStatePtr {
                 }
             }
             xdg_toplevel::Event::WmCapabilities { capabilities } => {
-                let window_controls = WindowControls {
-                    maximize: capabilities
-                        .contains(&(xdg_toplevel::WmCapabilities::Maximize as u8)),
-                    minimize: capabilities
-                        .contains(&(xdg_toplevel::WmCapabilities::Minimize as u8)),
-                    fullscreen: capabilities
-                        .contains(&(xdg_toplevel::WmCapabilities::Fullscreen as u8)),
-                    window_menu: capabilities
-                        .contains(&(xdg_toplevel::WmCapabilities::Fullscreen as u8)),
-                };
+                let mut window_controls = WindowControls::default();
+
+                let states = extract_states::<xdg_toplevel::WmCapabilities>(&capabilities);
+
+                for state in states {
+                    match state {
+                        xdg_toplevel::WmCapabilities::Maximize => {
+                            window_controls.maximize = true;
+                        }
+                        xdg_toplevel::WmCapabilities::Minimize => {
+                            window_controls.minimize = true;
+                        }
+                        xdg_toplevel::WmCapabilities::Fullscreen => {
+                            window_controls.fullscreen = true;
+                        }
+                        xdg_toplevel::WmCapabilities::WindowMenu => {
+                            window_controls.window_menu = true;
+                        }
+                        _ => {}
+                    }
+                }
 
                 let mut state = self.state.borrow_mut();
                 state.in_progress_window_controls = Some(window_controls);
@@ -640,6 +672,17 @@ impl WaylandWindowStatePtr {
             (fun)()
         }
     }
+}
+
+fn extract_states<'a, S: TryFrom<u32> + 'a>(states: &'a [u8]) -> impl Iterator<Item = S> + 'a
+where
+    <S as TryFrom<u32>>::Error: 'a,
+{
+    states
+        .chunks_exact(4)
+        .flat_map(TryInto::<[u8; 4]>::try_into)
+        .map(u32::from_ne_bytes)
+        .flat_map(S::try_from)
 }
 
 fn primary_output_scale(state: &mut RefMut<WaylandWindowState>) -> i32 {

@@ -16,7 +16,9 @@ Things to do:
 impl Render for HelloWorld {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let decorations = cx.window_decorations();
-
+        let tiling = dbg!(cx.window_tiling());
+        let rounding = px(10.0);
+        let shadow_size = px(20.0);
         div()
             .id("window-backdrop")
             .when(decorations == WindowDecorations::Client, |div| {
@@ -28,13 +30,18 @@ impl Render for HelloWorld {
                             l: 0.,
                             a: 1.0,
                         },
-                        blur_radius: px(20.0),
+                        blur_radius: shadow_size,
                         spread_radius: px(0.0),
                         offset: point(px(0.0), px(0.0)),
                     }])
-                    .rounded_t(px(10.0))
-                    .p(px(20.0))
-                    .m(px(20.0))
+                    .when(!(tiling.top || tiling.right), |div| {
+                        div.rounded_tr(rounding)
+                    })
+                    .when(!(tiling.top || tiling.left), |div| div.rounded_tl(rounding))
+                    .when(!tiling.top, |div| div.pt(shadow_size))
+                    .when(!tiling.bottom, |div| div.pb(shadow_size))
+                    .when(!tiling.left, |div| div.pl(shadow_size))
+                    .when(!tiling.right, |div| div.pr(shadow_size))
                     .on_mouse_move(|e, cx| {
                         if e.dragging() {
                             cx.start_window_resize(ResizeEdge::Left)
@@ -42,16 +49,16 @@ impl Render for HelloWorld {
                     })
             })
             .size_full()
-            .child(
-                canvas(
-                    |_, _| {},
-                    |bounds, _, cx| {
-                        cx.set_content_area(bounds);
-                    },
-                )
-                .size_full()
-                .absolute(),
-            )
+            // .child(
+            //     canvas(
+            //         |_, _| {},
+            //         |bounds, _, cx| {
+            //             cx.set_content_area(bounds);
+            //         },
+            //     )
+            //     .size_full()
+            //     .absolute(),
+            // )
             .child(
                 div()
                     .when(decorations == WindowDecorations::Client, |div| {
@@ -113,8 +120,14 @@ fn main() {
                 ..Default::default()
             },
             |cx| {
-                cx.new_view(|_cx| HelloWorld {
-                    text: "World".into(),
+                cx.new_view(|cx| {
+                    cx.observe_window_appearance(|_, cx| {
+                        cx.notify();
+                    })
+                    .detach();
+                    HelloWorld {
+                        text: "World".into(),
+                    }
                 })
             },
         )

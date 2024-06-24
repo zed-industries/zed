@@ -997,8 +997,8 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_maximized()
     }
 
-    /// Check if the platform window is current tiled
-    pub fn tiling(&self) -> crate::Tiling {
+    /// Get the current window's tiling, if available (Wayland)
+    pub fn window_tiling(&self) -> crate::Tiling {
         self.window.platform_window.tiling()
     }
 
