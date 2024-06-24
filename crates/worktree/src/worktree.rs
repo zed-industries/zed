@@ -3825,19 +3825,8 @@ impl BackgroundScanner {
             .collect::<Vec<_>>()
             .await;
 
-        // Ensure .git and gitignore files are processed first.
-        let mut ixs_to_move_to_front = Vec::new();
-        for (ix, child_abs_path) in child_paths.iter().enumerate() {
-            let filename = child_abs_path.file_name().unwrap();
-            if filename == *DOT_GIT {
-                ixs_to_move_to_front.insert(0, ix);
-            } else if filename == *GITIGNORE {
-                ixs_to_move_to_front.push(ix);
-            }
-        }
-        for (dest_ix, src_ix) in ixs_to_move_to_front.into_iter().enumerate() {
-            child_paths.swap(dest_ix, src_ix);
-        }
+        // Ensure that .git and .gitignore are processed first.
+        child_paths.sort_unstable();
 
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
@@ -4087,6 +4076,7 @@ impl BackgroundScanner {
 
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
+
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
                     fs_entry.is_private = self.is_path_private(path);
 
@@ -4248,6 +4238,7 @@ impl BackgroundScanner {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
             entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
+
             if entry.is_dir() {
                 let child_ignore_stack = if entry.is_ignored {
                     IgnoreStack::all()
