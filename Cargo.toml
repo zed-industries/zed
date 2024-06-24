@@ -136,6 +136,7 @@ members = [
     "extensions/prisma",
     "extensions/purescript",
     "extensions/ruby",
+    "extensions/snippets",
     "extensions/svelte",
     "extensions/terraform",
     "extensions/toml",
@@ -280,9 +281,9 @@ async-tar = "0.4.2"
 async-trait = "0.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "33fd51359d113c03b785e28f4a6cf75bacb0b26d" }
-blade-macros = { git = "https://github.com/zed-industries/blade", rev =  "33fd51359d113c03b785e28f4a6cf75bacb0b26d" }
-blade-util = { git = "https://github.com/zed-industries/blade", rev = "33fd51359d113c03b785e28f4a6cf75bacb0b26d"  }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
+blade-macros = { git = "https://github.com/kvark/blade", rev =  "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"  }
 cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
@@ -311,10 +312,7 @@ image = "0.23"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "1"
 # We explicitly disable http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = [
-    "static-curl",
-    "text-decoding",
-] }
+isahc = { version = "1.7.2", default-features = false, features = [ "text-decoding" ] }
 itertools = "0.11.0"
 lazy_static = "1.4.0"
 libc = "0.2"
@@ -461,11 +459,12 @@ features = [
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7b4894ba2ae81b988846676f54c0988d4027ef4f" }
 # Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
-pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "30419d07660dc11a21e42ef4a7fa329600cff152" }
+pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "4968e819c0d9b015437ffc694511e175801a17c7" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
 debug = "limited"
+codegen-units = 16
 
 [profile.dev.package]
 taffy = { opt-level = 3 }
@@ -483,6 +482,11 @@ codegen-units = 1
 
 [profile.release.package]
 zed = { codegen-units = 16 }
+
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

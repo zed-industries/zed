@@ -13,5 +13,4 @@ path = "src/paths.rs"
 
 [dependencies]
 dirs.workspace = true
-lazy_static.workspace = true
 util.workspace = true

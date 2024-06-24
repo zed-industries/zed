@@ -134,7 +134,13 @@ impl Render for CursorPosition {
                             });
                         }
                     }))
-                    .tooltip(|cx| Tooltip::for_action("Go to Line/Column", &crate::Toggle, cx)),
+                    .tooltip(|cx| {
+                        Tooltip::for_action(
+                            "Go to Line/Column",
+                            &editor::actions::ToggleGoToLine,
+                            cx,
+                        )
+                    }),
             )
         })
     }

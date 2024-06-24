@@ -1,9 +1,15 @@
 mod project_panel_settings;
+mod scrollbar;
 use client::{ErrorCode, ErrorExt};
+use scrollbar::ProjectPanelScrollbar;
 use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
-use editor::{items::entry_git_aware_label_color, scroll::Autoscroll, Editor};
+use editor::{
+    items::entry_git_aware_label_color,
+    scroll::{Autoscroll, ScrollbarAutoHide},
+    Editor,
+};
 use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
@@ -19,14 +25,17 @@ use gpui::{
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
-use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
+use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowScrollbar};
 use serde::{Deserialize, Serialize};
 use std::{
+    cell::{Cell, OnceCell},
     collections::HashSet,
     ffi::OsStr,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
@@ -46,7 +55,7 @@ pub struct ProjectPanel {
     fs: Arc<dyn Fs>,
     scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
-    visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
+    visible_entries: Vec<(WorktreeId, Vec<Entry>, OnceCell<HashSet<Arc<Path>>>)>,
     last_worktree_root_id: Option<ProjectEntryId>,
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
@@ -62,6 +71,9 @@ pub struct ProjectPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
+    show_scrollbar: bool,
+    is_dragging_scrollbar: Rc<Cell<bool>>,
+    hide_scrollbar_task: Option<Task<()>>,
 }
 
 #[derive(Clone, Debug)]
@@ -187,7 +199,10 @@ impl ProjectPanel {
         let project_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
-
+            cx.on_focus_out(&focus_handle, |this, _, cx| {
+                this.hide_scrollbar(cx);
+            })
+            .detach();
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
@@ -272,6 +287,9 @@ impl ProjectPanel {
                 workspace: workspace.weak_handle(),
                 width: None,
                 pending_serialization: Task::ready(None),
+                show_scrollbar: !Self::should_autohide_scrollbar(cx),
+                hide_scrollbar_task: None,
+                is_dragging_scrollbar: Default::default(),
             };
             this.update_visible_entries(None, cx);
 
@@ -675,7 +693,7 @@ impl ProjectPanel {
                 return;
             }
 
-            let (worktree_id, worktree_entries) = &self.visible_entries[worktree_ix];
+            let (worktree_id, worktree_entries, _) = &self.visible_entries[worktree_ix];
             let selection = SelectedEntry {
                 worktree_id: *worktree_id,
                 entry_id: worktree_entries[entry_ix].id,
@@ -1120,7 +1138,7 @@ impl ProjectPanel {
         if let Some(selection) = self.selection {
             let (mut worktree_ix, mut entry_ix, _) =
                 self.index_for_selection(selection).unwrap_or_default();
-            if let Some((_, worktree_entries)) = self.visible_entries.get(worktree_ix) {
+            if let Some((_, worktree_entries, _)) = self.visible_entries.get(worktree_ix) {
                 if entry_ix + 1 < worktree_entries.len() {
                     entry_ix += 1;
                 } else {
@@ -1129,7 +1147,8 @@ impl ProjectPanel {
                 }
             }
 
-            if let Some((worktree_id, worktree_entries)) = self.visible_entries.get(worktree_ix) {
+            if let Some((worktree_id, worktree_entries, _)) = self.visible_entries.get(worktree_ix)
+            {
                 if let Some(entry) = worktree_entries.get(entry_ix) {
                     let selection = SelectedEntry {
                         worktree_id: *worktree_id,
@@ -1170,7 +1189,9 @@ impl ProjectPanel {
         let worktree = self
             .visible_entries
             .first()
-            .and_then(|(worktree_id, _)| self.project.read(cx).worktree_for_id(*worktree_id, cx));
+            .and_then(|(worktree_id, _, _)| {
+                self.project.read(cx).worktree_for_id(*worktree_id, cx)
+            });
         if let Some(worktree) = worktree {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
@@ -1190,10 +1211,9 @@ impl ProjectPanel {
     }
 
     fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
-        let worktree = self
-            .visible_entries
-            .last()
-            .and_then(|(worktree_id, _)| self.project.read(cx).worktree_for_id(*worktree_id, cx));
+        let worktree = self.visible_entries.last().and_then(|(worktree_id, _, _)| {
+            self.project.read(cx).worktree_for_id(*worktree_id, cx)
+        });
         if let Some(worktree) = worktree {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
@@ -1461,7 +1481,7 @@ impl ProjectPanel {
     fn index_for_selection(&self, selection: SelectedEntry) -> Option<(usize, usize, usize)> {
         let mut entry_index = 0;
         let mut visible_entries_index = 0;
-        for (worktree_index, (worktree_id, worktree_entries)) in
+        for (worktree_index, (worktree_id, worktree_entries, _)) in
             self.visible_entries.iter().enumerate()
         {
             if *worktree_id == selection.worktree_id {
@@ -1623,7 +1643,7 @@ impl ProjectPanel {
             snapshot.propagate_git_statuses(&mut visible_worktree_entries);
             project::sort_worktree_entries(&mut visible_worktree_entries);
             self.visible_entries
-                .push((worktree_id, visible_worktree_entries));
+                .push((worktree_id, visible_worktree_entries, OnceCell::new()));
         }
 
         if let Some((worktree_id, entry_id)) = new_selected_entry {
@@ -1794,7 +1814,7 @@ impl ProjectPanel {
         mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<ProjectPanel>),
     ) {
         let mut ix = 0;
-        for (worktree_id, visible_worktree_entries) in &self.visible_entries {
+        for (worktree_id, visible_worktree_entries, entries_paths) in &self.visible_entries {
             if ix >= range.end {
                 return;
             }
@@ -1823,10 +1843,12 @@ impl ProjectPanel {
                     .unwrap_or(&[]);
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-                let entries = visible_worktree_entries
-                    .iter()
-                    .map(|e| (e.path.clone()))
-                    .collect();
+                let entries = entries_paths.get_or_init(|| {
+                    visible_worktree_entries
+                        .iter()
+                        .map(|e| (e.path.clone()))
+                        .collect()
+                });
                 for entry in visible_worktree_entries[entry_range].iter() {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
@@ -2196,6 +2218,88 @@ impl ProjectPanel {
             )
     }
 
+    fn render_scrollbar(
+        &self,
+        items_count: usize,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Stateful<Div>> {
+        let settings = ProjectPanelSettings::get_global(cx);
+        if settings.scrollbar.show == ShowScrollbar::Never {
+            return None;
+        }
+        let scroll_handle = self.scroll_handle.0.borrow();
+
+        let height = scroll_handle
+            .last_item_height
+            .filter(|_| self.show_scrollbar || self.is_dragging_scrollbar.get())?;
+
+        let total_list_length = height.0 as f64 * items_count as f64;
+        let current_offset = scroll_handle.base_handle.offset().y.0.min(0.).abs() as f64;
+        let mut percentage = current_offset / total_list_length;
+        let end_offset = (current_offset + scroll_handle.base_handle.bounds().size.height.0 as f64)
+            / total_list_length;
+        // Uniform scroll handle might briefly report an offset greater than the length of a list;
+        // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
+        let overshoot = (end_offset - 1.).clamp(0., 1.);
+        if overshoot > 0. {
+            percentage -= overshoot;
+        }
+        const MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT: f64 = 0.005;
+        if percentage + MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT > 1.0 || end_offset > total_list_length
+        {
+            return None;
+        }
+        if total_list_length < scroll_handle.base_handle.bounds().size.height.0 as f64 {
+            return None;
+        }
+        let end_offset = end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT, 1.);
+        Some(
+            div()
+                .occlude()
+                .id("project-panel-scroll")
+                .on_mouse_move(cx.listener(|_, _, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_any_mouse_down(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, cx| {
+                        if !this.is_dragging_scrollbar.get()
+                            && !this.focus_handle.contains_focused(cx)
+                        {
+                            this.hide_scrollbar(cx);
+                            cx.notify();
+                        }
+
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_scroll_wheel(cx.listener(|_, _, cx| {
+                    cx.notify();
+                }))
+                .h_full()
+                .absolute()
+                .right_0()
+                .top_0()
+                .bottom_0()
+                .w_3()
+                .cursor_default()
+                .child(ProjectPanelScrollbar::new(
+                    percentage as f32..end_offset as f32,
+                    self.scroll_handle.clone(),
+                    self.is_dragging_scrollbar.clone(),
+                    cx.view().clone().into(),
+                    items_count,
+                )),
+        )
+    }
+
     fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("ProjectPanel");
@@ -2209,6 +2313,29 @@ impl ProjectPanel {
 
         dispatch_context.add(identifier);
         dispatch_context
+    }
+
+    fn should_autohide_scrollbar(cx: &AppContext) -> bool {
+        cx.try_global::<ScrollbarAutoHide>()
+            .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0)
+    }
+
+    fn hide_scrollbar(&mut self, cx: &mut ViewContext<Self>) {
+        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+        if !Self::should_autohide_scrollbar(cx) {
+            return;
+        }
+        self.hide_scrollbar_task = Some(cx.spawn(|panel, mut cx| async move {
+            cx.background_executor()
+                .timer(SCROLLBAR_SHOW_INTERVAL)
+                .await;
+            panel
+                .update(&mut cx, |panel, cx| {
+                    panel.show_scrollbar = false;
+                    cx.notify();
+                })
+                .log_err();
+        }))
     }
 
     fn reveal_entry(
@@ -2244,10 +2371,26 @@ impl Render for ProjectPanel {
         let project = self.project.read(cx);
 
         if has_worktree {
+            let items_count = self
+                .visible_entries
+                .iter()
+                .map(|(_, worktree_entries, _)| worktree_entries.len())
+                .sum();
+
             h_flex()
                 .id("project-panel")
+                .group("project-panel")
                 .size_full()
                 .relative()
+                .on_hover(cx.listener(|this, hovered, cx| {
+                    if *hovered {
+                        this.show_scrollbar = true;
+                        this.hide_scrollbar_task.take();
+                        cx.notify();
+                    } else if !this.focus_handle.contains_focused(cx) {
+                        this.hide_scrollbar(cx);
+                    }
+                }))
                 .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
@@ -2293,27 +2436,20 @@ impl Render for ProjectPanel {
                 )
                 .track_focus(&self.focus_handle)
                 .child(
-                    uniform_list(
-                        cx.view().clone(),
-                        "entries",
-                        self.visible_entries
-                            .iter()
-                            .map(|(_, worktree_entries)| worktree_entries.len())
-                            .sum(),
-                        {
-                            |this, range, cx| {
-                                let mut items = Vec::new();
-                                this.for_each_visible_entry(range, cx, |id, details, cx| {
-                                    items.push(this.render_entry(id, details, cx));
-                                });
-                                items
-                            }
-                        },
-                    )
+                    uniform_list(cx.view().clone(), "entries", items_count, {
+                        |this, range, cx| {
+                            let mut items = Vec::new();
+                            this.for_each_visible_entry(range, cx, |id, details, cx| {
+                                items.push(this.render_entry(id, details, cx));
+                            });
+                            items
+                        }
+                    })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
                     .track_scroll(self.scroll_handle.clone()),
                 )
+                .children(self.render_scrollbar(items_count, cx))
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
                         anchored()

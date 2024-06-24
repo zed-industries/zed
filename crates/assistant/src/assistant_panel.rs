@@ -15,10 +15,11 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use client::telemetry::Telemetry;
 use collections::{BTreeSet, HashMap, HashSet};
-use editor::actions::ShowCompletions;
 use editor::{
-    actions::{FoldAt, MoveToEndOfLine, Newline, UnfoldAt},
-    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, ToDisplayPoint},
+    actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
+    display_map::{
+        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, RenderBlock, ToDisplayPoint,
+    },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorEvent, RowExt, ToOffset as _, ToPoint,
 };
@@ -36,11 +37,11 @@ use gpui::{
     WindowContext,
 };
 use language::{
-    language_settings::SoftWrap, AnchorRangeExt, AutoindentMode, Buffer, LanguageRegistry,
+    language_settings::SoftWrap, AnchorRangeExt as _, AutoindentMode, Buffer, LanguageRegistry,
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
 };
 use multi_buffer::MultiBufferRow;
-use paths::CONTEXTS_DIR;
+use paths::contexts_dir;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
 use rustdoc::{CrateName, RustdocStore};
@@ -1013,6 +1014,7 @@ pub struct Context {
     edit_suggestions: Vec<EditSuggestion>,
     pending_slash_commands: Vec<PendingSlashCommand>,
     edits_since_last_slash_command_parse: language::Subscription,
+    slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1054,6 +1056,7 @@ impl Context {
             next_message_id: Default::default(),
             edit_suggestions: Vec::new(),
             pending_slash_commands: Vec::new(),
+            slash_command_output_sections: Vec::new(),
             edits_since_last_slash_command_parse,
             summary: None,
             pending_summary: Task::ready(None),
@@ -1090,11 +1093,12 @@ impl Context {
     }
 
     fn serialize(&self, cx: &AppContext) -> SavedContext {
+        let buffer = self.buffer.read(cx);
         SavedContext {
             id: self.id.clone(),
             zed: "context".into(),
             version: SavedContext::VERSION.into(),
-            text: self.buffer.read(cx).text(),
+            text: buffer.text(),
             message_metadata: self.messages_metadata.clone(),
             messages: self
                 .messages(cx)
@@ -1108,6 +1112,22 @@ impl Context {
                 .as_ref()
                 .map(|summary| summary.text.clone())
                 .unwrap_or_default(),
+            slash_command_output_sections: self
+                .slash_command_output_sections
+                .iter()
+                .filter_map(|section| {
+                    let range = section.range.to_offset(buffer);
+                    if section.range.start.is_valid(buffer) && !range.is_empty() {
+                        Some(SlashCommandOutputSection {
+                            range,
+                            icon: section.icon,
+                            label: section.label.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -1159,6 +1179,19 @@ impl Context {
                 next_message_id,
                 edit_suggestions: Vec::new(),
                 pending_slash_commands: Vec::new(),
+                slash_command_output_sections: saved_context
+                    .slash_command_output_sections
+                    .into_iter()
+                    .map(|section| {
+                        let buffer = buffer.read(cx);
+                        SlashCommandOutputSection {
+                            range: buffer.anchor_after(section.range.start)
+                                ..buffer.anchor_before(section.range.end),
+                            icon: section.icon,
+                            label: section.label,
+                        }
+                    })
+                    .collect(),
                 edits_since_last_slash_command_parse,
                 summary: Some(Summary {
                     text: saved_context.summary,
@@ -1457,10 +1490,17 @@ impl Context {
                                 .map(|section| SlashCommandOutputSection {
                                     range: buffer.anchor_after(start + section.range.start)
                                         ..buffer.anchor_before(start + section.range.end),
-                                    render_placeholder: section.render_placeholder,
+                                    icon: section.icon,
+                                    label: section.label,
                                 })
                                 .collect::<Vec<_>>();
                             sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
+
+                            this.slash_command_output_sections
+                                .extend(sections.iter().cloned());
+                            this.slash_command_output_sections
+                                .sort_by(|a, b| a.range.cmp(&b.range, buffer));
+
                             ContextEvent::SlashCommandFinished {
                                 output_range: buffer.anchor_after(start)
                                     ..buffer.anchor_before(new_end),
@@ -2004,7 +2044,7 @@ impl Context {
                     let mut discriminant = 1;
                     let mut new_path;
                     loop {
-                        new_path = CONTEXTS_DIR.join(&format!(
+                        new_path = contexts_dir().join(&format!(
                             "{} - {}.zed.json",
                             summary.trim(),
                             discriminant
@@ -2018,7 +2058,7 @@ impl Context {
                     new_path
                 };
 
-                fs.create_dir(CONTEXTS_DIR.as_ref()).await?;
+                fs.create_dir(contexts_dir().as_ref()).await?;
                 fs.atomic_write(path.clone(), serde_json::to_string(&context).unwrap())
                     .await?;
                 this.update(&mut cx, |this, _| this.path = Some(path))?;
@@ -2162,6 +2202,7 @@ pub struct ContextEditor {
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
+    pending_slash_command_blocks: HashMap<Range<language::Anchor>, BlockId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2212,6 +2253,7 @@ impl ContextEditor {
             editor.set_show_line_numbers(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_code_actions(false, cx);
+            editor.set_show_runnables(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Box::new(completion_provider));
@@ -2224,6 +2266,7 @@ impl ContextEditor {
             cx.subscribe(&editor, Self::handle_editor_event),
         ];
 
+        let sections = context.read(cx).slash_command_output_sections.clone();
         let mut this = Self {
             context,
             editor,
@@ -2234,9 +2277,11 @@ impl ContextEditor {
             fs,
             workspace: workspace.downgrade(),
             pending_slash_command_creases: HashMap::default(),
+            pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
         };
         this.update_message_headers(cx);
+        this.insert_slash_command_output_sections(sections, cx);
         this
     }
 
@@ -2494,12 +2539,23 @@ impl ContextEditor {
             ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let excerpt_id = *buffer.as_singleton().unwrap().0;
+                    let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
+                    let excerpt_id = *excerpt_id;
 
                     editor.remove_creases(
                         removed
                             .iter()
                             .filter_map(|range| self.pending_slash_command_creases.remove(range)),
+                        cx,
+                    );
+
+                    editor.remove_blocks(
+                        HashSet::from_iter(
+                            removed.iter().filter_map(|range| {
+                                self.pending_slash_command_blocks.remove(range)
+                            }),
+                        ),
+                        None,
                         cx,
                     );
 
@@ -2535,7 +2591,7 @@ impl ContextEditor {
                                 move |row, _, _, _cx: &mut WindowContext| {
                                     render_pending_slash_command_gutter_decoration(
                                         row,
-                                        command.status.clone(),
+                                        &command.status,
                                         confirm_command.clone(),
                                     )
                                 }
@@ -2569,11 +2625,42 @@ impl ContextEditor {
                         cx,
                     );
 
+                    let block_ids = editor.insert_blocks(
+                        updated
+                            .iter()
+                            .filter_map(|command| match &command.status {
+                                PendingSlashCommandStatus::Error(error) => {
+                                    Some((command, error.clone()))
+                                }
+                                _ => None,
+                            })
+                            .map(|(command, error_message)| BlockProperties {
+                                style: BlockStyle::Fixed,
+                                position: Anchor {
+                                    buffer_id: Some(buffer_id),
+                                    excerpt_id,
+                                    text_anchor: command.source_range.start,
+                                },
+                                height: 1,
+                                disposition: BlockDisposition::Below,
+                                render: slash_command_error_block_renderer(error_message),
+                            }),
+                        None,
+                        cx,
+                    );
+
                     self.pending_slash_command_creases.extend(
                         updated
                             .iter()
                             .map(|command| command.source_range.clone())
                             .zip(crease_ids),
+                    );
+
+                    self.pending_slash_command_blocks.extend(
+                        updated
+                            .iter()
+                            .map(|command| command.source_range.clone())
+                            .zip(block_ids),
                     );
                 })
             }
@@ -2631,21 +2718,27 @@ impl ContextEditor {
                     FoldPlaceholder {
                         render: Arc::new({
                             let editor = cx.view().downgrade();
-                            let render_placeholder = section.render_placeholder.clone();
-                            move |fold_id, fold_range, cx| {
+                            let icon = section.icon;
+                            let label = section.label.clone();
+                            move |fold_id, fold_range, _cx| {
                                 let editor = editor.clone();
-                                let unfold = Arc::new(move |cx: &mut WindowContext| {
-                                    editor
-                                        .update(cx, |editor, cx| {
-                                            let buffer_start = fold_range
-                                                .start
-                                                .to_point(&editor.buffer().read(cx).read(cx));
-                                            let buffer_row = MultiBufferRow(buffer_start.row);
-                                            editor.unfold_at(&UnfoldAt { buffer_row }, cx);
-                                        })
-                                        .ok();
-                                });
-                                render_placeholder(fold_id.into(), unfold, cx)
+                                ButtonLike::new(fold_id)
+                                    .style(ButtonStyle::Filled)
+                                    .layer(ElevationIndex::ElevatedSurface)
+                                    .child(Icon::new(icon))
+                                    .child(Label::new(label.clone()).single_line())
+                                    .on_click(move |_, cx| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                let buffer_start = fold_range
+                                                    .start
+                                                    .to_point(&editor.buffer().read(cx).read(cx));
+                                                let buffer_row = MultiBufferRow(buffer_start.row);
+                                                editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                                            })
+                                            .ok();
+                                    })
+                                    .into_any_element()
                             }
                         }),
                         constrain_width: false,
@@ -3158,7 +3251,7 @@ fn render_slash_command_output_toggle(
 
 fn render_pending_slash_command_gutter_decoration(
     row: MultiBufferRow,
-    status: PendingSlashCommandStatus,
+    status: &PendingSlashCommandStatus,
     confirm_command: Arc<dyn Fn(&mut WindowContext)>,
 ) -> AnyElement {
     let mut icon = IconButton::new(
@@ -3176,11 +3269,7 @@ fn render_pending_slash_command_gutter_decoration(
         PendingSlashCommandStatus::Running { .. } => {
             icon = icon.selected(true);
         }
-        PendingSlashCommandStatus::Error(error) => {
-            icon = icon
-                .icon_color(Color::Error)
-                .tooltip(move |cx| Tooltip::text(format!("error: {error}"), cx));
-        }
+        PendingSlashCommandStatus::Error(_) => icon = icon.icon_color(Color::Error),
     }
 
     icon.into_any_element()
@@ -3228,6 +3317,19 @@ fn make_lsp_adapter_delegate(
             .next()
             .ok_or_else(|| anyhow!("no worktrees when constructing ProjectLspAdapterDelegate"))?;
         Ok(ProjectLspAdapterDelegate::new(project, &worktree, cx) as Arc<dyn LspAdapterDelegate>)
+    })
+}
+
+fn slash_command_error_block_renderer(message: String) -> RenderBlock {
+    Box::new(move |_| {
+        div()
+            .pl_6()
+            .child(
+                Label::new(format!("error: {}", message))
+                    .single_line()
+                    .color(Color::Error),
+            )
+            .into_any()
     })
 }
 

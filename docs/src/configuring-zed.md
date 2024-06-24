@@ -725,6 +725,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
   "indent_guides": {
     "enabled": true,
     "line_width": 1,
+    "active_line_width": 1,
     "coloring": "fixed",
     "background_coloring": "disabled"
   }
@@ -758,7 +759,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 ```
 
 3. Enable indent aware coloring ("rainbow indentation").
-The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+   The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
 
 ```json
 {
@@ -770,7 +771,7 @@ The colors that are used for different indentation levels are defined in the the
 ```
 
 4. Enable indent aware background coloring ("rainbow indentation").
-The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+   The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
 
 ```json
 {
@@ -1109,13 +1110,14 @@ These values take in the same options as the root-level settings with the same n
 
 - Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
 - Setting: `soft_wrap`
-- Default: `none`
+- Default: `prefer_line`
 
 **Options**
 
-1. `editor_width`
-2. `preferred_line_length`
-3. `none`
+1. `none` to stop the soft-wrapping
+2. `prefer_line` to avoid wrapping generally, unless the line is too long
+3. `editor_width` to wrap lines that overflow the editor width
+4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
 
 ## Wrap Guides (Vertical Rulers)
 

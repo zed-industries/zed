@@ -5,8 +5,8 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleZoom, Workspace,
+    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenTerminal, OpenVisible, SplitDirection,
+    ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -366,8 +366,24 @@ impl Pane {
                             .on_click(cx.listener(|pane, _, cx| {
                                 let menu = ContextMenu::build(cx, |menu, _| {
                                     menu.action("New File", NewFile.boxed_clone())
-                                        .action("New Terminal", NewCenterTerminal.boxed_clone())
-                                        .action("New Search", NewSearch.boxed_clone())
+                                        .action(
+                                            "Open File",
+                                            ToggleFileFinder::default().boxed_clone(),
+                                        )
+                                        .separator()
+                                        .action(
+                                            "Search Project",
+                                            DeploySearch {
+                                                replace_enabled: false,
+                                            }
+                                            .boxed_clone(),
+                                        )
+                                        .action(
+                                            "Search Symbols",
+                                            ToggleProjectSymbols.boxed_clone(),
+                                        )
+                                        .separator()
+                                        .action("New Terminal", NewTerminal.boxed_clone())
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
                                     pane.focus(cx);
@@ -1405,7 +1421,7 @@ impl Pane {
             if save_intent == SaveIntent::Close {
                 let will_autosave = cx.update(|cx| {
                     matches!(
-                        WorkspaceSettings::get_global(cx).autosave,
+                        item.workspace_settings(cx).autosave,
                         AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
                     ) && Self::can_autosave_item(item, cx)
                 })?;
@@ -1474,13 +1490,12 @@ impl Pane {
         project: Model<Project>,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
-        let format = if let AutosaveSetting::AfterDelay { .. } =
-            WorkspaceSettings::get_global(cx).autosave
-        {
-            false
-        } else {
-            true
-        };
+        let format =
+            if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
+                false
+            } else {
+                true
+            };
         if Self::can_autosave_item(item, cx) {
             item.save(format, project, cx)
         } else {
@@ -1818,7 +1833,11 @@ impl Pane {
             .track_scroll(self.tab_bar_scroll_handle.clone())
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
-                |tab_bar| tab_bar.start_children(vec![navigate_backward, navigate_forward]),
+                |tab_bar| {
+                    tab_bar
+                        .start_child(navigate_backward)
+                        .start_child(navigate_forward)
+                },
             )
             .when(self.has_focus(cx), |tab_bar| {
                 tab_bar.end_child({

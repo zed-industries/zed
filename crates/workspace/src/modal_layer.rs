@@ -96,7 +96,9 @@ impl ModalLayer {
             previous_focus_handle: cx.focused(),
             focus_handle,
         });
-        cx.focus_view(&new_modal);
+        cx.defer(move |_, cx| {
+            cx.focus_view(&new_modal);
+        });
         cx.notify();
     }
 

@@ -16,7 +16,7 @@ language = "Ruby"
 
 [grammars.ruby]
 repository = "https://github.com/tree-sitter/tree-sitter-ruby"
-commit = "9d86f3761bb30e8dcc81e754b81d3ce91848477e"
+commit = "dc2d7d6b50f9975bc3c35bbec0ba11b2617b736b"
 
 [grammars.embedded_template]
 repository = "https://github.com/tree-sitter/tree-sitter-embedded-template"

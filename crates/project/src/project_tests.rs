@@ -3929,7 +3929,15 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text("TWO", false, true, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                "TWO",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -3954,7 +3962,15 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text("TWO", false, true, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                "TWO",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -3994,8 +4010,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.odd").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -4014,8 +4030,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.rs").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -4037,11 +4053,10 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
-                Vec::new()
+
+                    PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
+                Default::default(),
             ).unwrap(),
             cx
         )
@@ -4062,12 +4077,10 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.rs").unwrap(),
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
-                Vec::new()
+
+                    PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
+               Default::default(),
             ).unwrap(),
             cx
         )
@@ -4110,8 +4123,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![PathMatcher::new("*.odd").unwrap()],
+                Default::default(),
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4135,8 +4148,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![PathMatcher::new("*.rs").unwrap()],
+                Default::default(),
+                PathMatcher::new(&["*.rs".to_owned()]).unwrap()
             )
             .unwrap(),
             cx
@@ -4158,11 +4171,10 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
+                Default::default(),
+
+                    PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
             ).unwrap(),
             cx
         )
@@ -4183,12 +4195,10 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Vec::new(),
-                vec![
-                    PathMatcher::new("*.rs").unwrap(),
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap(),
-                ],
+                 Default::default(),
+
+                    PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+
             ).unwrap(),
             cx
         )
@@ -4225,8 +4235,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.odd").unwrap()],
-                vec![PathMatcher::new("*.odd").unwrap()],
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4245,8 +4255,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.ts").unwrap()],
-                vec![PathMatcher::new("*.ts").unwrap()],
+                PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
             ).unwrap(),
             cx
         )
@@ -4264,14 +4274,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4290,14 +4294,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                vec![
-                    PathMatcher::new("*.ts").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
-                vec![
-                    PathMatcher::new("*.rs").unwrap(),
-                    PathMatcher::new("*.odd").unwrap()
-                ],
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                PathMatcher::new(&["*.rs".to_owned(), "*.odd".to_owned()]).unwrap(),
             )
             .unwrap(),
             cx
@@ -4349,8 +4347,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("worktree-a/*.rs").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["worktree-a/*.rs".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -4368,8 +4366,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("worktree-b/*.rs").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["worktree-b/*.rs".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -4388,8 +4386,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 true,
                 false,
-                vec![PathMatcher::new("*.ts").unwrap()],
-                Vec::new()
+                PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
+                Default::default()
             )
             .unwrap(),
             cx
@@ -4437,7 +4435,15 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text(query, false, false, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                query,
+                false,
+                false,
+                false,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4450,7 +4456,15 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(
             &project,
-            SearchQuery::text(query, false, false, true, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                query,
+                false,
+                false,
+                true,
+                Default::default(),
+                Default::default()
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4475,8 +4489,8 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         "Unrestricted search with ignored directories should find every file with the query"
     );
 
-    let files_to_include = vec![PathMatcher::new("/dir/node_modules/prettier/**").unwrap()];
-    let files_to_exclude = vec![PathMatcher::new("*.ts").unwrap()];
+    let files_to_include = PathMatcher::new(&["/dir/node_modules/prettier/**".to_owned()]).unwrap();
+    let files_to_exclude = PathMatcher::new(&["*.ts".to_owned()]).unwrap();
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     assert_eq!(
         search(

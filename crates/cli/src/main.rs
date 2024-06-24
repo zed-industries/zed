@@ -3,10 +3,12 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
+use parking_lot::Mutex;
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
     process::ExitStatus,
+    sync::Arc,
     thread::{self, JoinHandle},
 };
 use util::paths::PathLikeWithPosition;
@@ -54,7 +56,7 @@ struct Args {
 fn parse_path_with_position(
     argument_str: &str,
 ) -> Result<PathLikeWithPosition<PathBuf>, std::convert::Infallible> {
-    PathLikeWithPosition::parse_str(argument_str, |path_str| {
+    PathLikeWithPosition::parse_str(argument_str, |_, path_str| {
         Ok(Path::new(path_str).to_path_buf())
     })
 }
@@ -123,26 +125,34 @@ fn main() -> Result<()> {
         None
     };
 
-    let sender: JoinHandle<anyhow::Result<()>> = thread::spawn(move || {
-        let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
-        let (tx, rx) = (handshake.requests, handshake.responses);
-        tx.send(CliRequest::Open {
-            paths,
-            wait: args.wait,
-            open_new_workspace,
-            dev_server_token: args.dev_server_token,
-        })?;
+    let exit_status = Arc::new(Mutex::new(None));
 
-        while let Ok(response) = rx.recv() {
-            match response {
-                CliResponse::Ping => {}
-                CliResponse::Stdout { message } => println!("{message}"),
-                CliResponse::Stderr { message } => eprintln!("{message}"),
-                CliResponse::Exit { status } => std::process::exit(status),
+    let sender: JoinHandle<anyhow::Result<()>> = thread::spawn({
+        let exit_status = exit_status.clone();
+        move || {
+            let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+            let (tx, rx) = (handshake.requests, handshake.responses);
+            tx.send(CliRequest::Open {
+                paths,
+                wait: args.wait,
+                open_new_workspace,
+                dev_server_token: args.dev_server_token,
+            })?;
+
+            while let Ok(response) = rx.recv() {
+                match response {
+                    CliResponse::Ping => {}
+                    CliResponse::Stdout { message } => println!("{message}"),
+                    CliResponse::Stderr { message } => eprintln!("{message}"),
+                    CliResponse::Exit { status } => {
+                        exit_status.lock().replace(status);
+                        return Ok(());
+                    }
+                }
             }
-        }
 
-        Ok(())
+            Ok(())
+        }
     });
 
     if args.foreground {
@@ -152,6 +162,9 @@ fn main() -> Result<()> {
         sender.join().unwrap()?;
     }
 
+    if let Some(exit_status) = exit_status.lock().take() {
+        std::process::exit(exit_status);
+    }
     Ok(())
 }
 
@@ -220,7 +233,7 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let sock_path = paths::SUPPORT_DIR.join(format!("zed-{}.sock", *RELEASE_CHANNEL));
+            let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL));
             let sock = UnixDatagram::unbound()?;
             if sock.connect(&sock_path).is_err() {
                 self.boot_background(ipc_url)?;

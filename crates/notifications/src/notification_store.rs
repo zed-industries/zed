@@ -209,7 +209,6 @@ impl NotificationStore {
     async fn handle_new_notification(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::AddNotification>,
-        _: Arc<Client>,
         cx: AsyncAppContext,
     ) -> Result<()> {
         Self::add_notifications(
@@ -228,7 +227,6 @@ impl NotificationStore {
     async fn handle_delete_notification(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::DeleteNotification>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -240,7 +238,6 @@ impl NotificationStore {
     async fn handle_update_notification(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateNotification>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {

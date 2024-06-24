@@ -1,9 +1,11 @@
-use editor::{scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode};
+use editor::{
+    actions::ToggleOutline, scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode,
+};
 use fuzzy::StringMatch;
 use gpui::{
-    actions, div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    HighlightStyle, ParentElement, Point, Render, Styled, Task, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, HighlightStyle,
+    ParentElement, Point, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
@@ -18,13 +20,11 @@ use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
 
-actions!(outline, [Toggle]);
-
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(OutlineView::register).detach();
 }
 
-pub fn toggle(editor: View<Editor>, _: &Toggle, cx: &mut WindowContext) {
+pub fn toggle(editor: View<Editor>, _: &ToggleOutline, cx: &mut WindowContext) {
     let outline = editor
         .read(cx)
         .buffer()
@@ -423,7 +423,7 @@ mod tests {
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
     ) -> View<Picker<OutlineViewDelegate>> {
-        cx.dispatch_action(Toggle);
+        cx.dispatch_action(ToggleOutline);
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<OutlineView>(cx)

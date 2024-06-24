@@ -20,7 +20,6 @@ use gpui::{
 use heed::{types::SerdeBincode, Database, RoTxn};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
 use parking_lot::RwLock;
-use paths::PROMPTS_DIR;
 use picker::{Picker, PickerDelegate};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
@@ -49,7 +48,7 @@ actions!(
 /// Init starts loading the PromptStore in the background and assigns
 /// a shared future to a global.
 pub fn init(cx: &mut AppContext) {
-    let db_path = PROMPTS_DIR.join("prompts-library-db.0.mdb");
+    let db_path = paths::prompts_dir().join("prompts-library-db.0.mdb");
     let prompt_store_future = PromptStore::new(db_path, cx.background_executor().clone())
         .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
         .boxed()
@@ -833,13 +832,8 @@ impl PromptLibrary {
 
 impl Render for PromptLibrary {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let (ui_font, ui_font_size) = {
-            let theme_settings = ThemeSettings::get_global(cx);
-            (theme_settings.ui_font.clone(), theme_settings.ui_font_size)
-        };
-
+        let ui_font = theme::setup_ui_font(cx);
         let theme = cx.theme().clone();
-        cx.set_rem_size(ui_font_size);
 
         h_flex()
             .id("prompt-manager")

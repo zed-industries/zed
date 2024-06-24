@@ -67,7 +67,8 @@ use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use paths::{
-    LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
+    local_settings_file_relative_path, local_tasks_file_relative_path,
+    local_vscode_tasks_file_relative_path,
 };
 use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
@@ -4027,7 +4028,6 @@ impl Project {
     async fn handle_restart_language_servers(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::RestartLanguageServers>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         project.update(&mut cx, |project, cx| {
@@ -4148,20 +4148,34 @@ impl Project {
             .collect::<HashSet<_>>();
 
         for server_id in servers {
-            let status = self.language_server_statuses.get(&server_id);
-            let server = self.language_servers.get(&server_id);
-            if let Some((server, status)) = server.zip(status) {
-                if let LanguageServerState::Running { server, .. } = server {
-                    for (token, progress) in &status.pending_work {
-                        if progress.is_cancellable {
-                            server
-                                .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                    WorkDoneProgressCancelParams {
-                                        token: lsp::NumberOrString::String(token.clone()),
-                                    },
-                                )
-                                .ok();
+            self.cancel_language_server_work(server_id, None, cx);
+        }
+    }
+
+    pub fn cancel_language_server_work(
+        &mut self,
+        server_id: LanguageServerId,
+        token_to_cancel: Option<String>,
+        _cx: &mut ModelContext<Self>,
+    ) {
+        let status = self.language_server_statuses.get(&server_id);
+        let server = self.language_servers.get(&server_id);
+        if let Some((server, status)) = server.zip(status) {
+            if let LanguageServerState::Running { server, .. } = server {
+                for (token, progress) in &status.pending_work {
+                    if let Some(token_to_cancel) = token_to_cancel.as_ref() {
+                        if token != token_to_cancel {
+                            continue;
                         }
+                    }
+                    if progress.is_cancellable {
+                        server
+                            .notify::<lsp::notification::WorkDoneProgressCancel>(
+                                WorkDoneProgressCancelParams {
+                                    token: lsp::NumberOrString::String(token.clone()),
+                                },
+                            )
+                            .ok();
                     }
                 }
             }
@@ -4579,8 +4593,10 @@ impl Project {
 
     pub fn language_server_statuses(
         &self,
-    ) -> impl DoubleEndedIterator<Item = &LanguageServerStatus> {
-        self.language_server_statuses.values()
+    ) -> impl DoubleEndedIterator<Item = (LanguageServerId, &LanguageServerStatus)> {
+        self.language_server_statuses
+            .iter()
+            .map(|(key, value)| (*key, value))
     }
 
     pub fn last_formatting_failure(&self) -> Option<&str> {
@@ -8176,10 +8192,10 @@ impl Project {
                 }
             };
 
-            if abs_path.ends_with(&*LOCAL_SETTINGS_RELATIVE_PATH) {
+            if abs_path.ends_with(local_settings_file_relative_path()) {
                 let settings_dir = Arc::from(
                     path.ancestors()
-                        .nth(LOCAL_SETTINGS_RELATIVE_PATH.components().count())
+                        .nth(local_settings_file_relative_path().components().count())
                         .unwrap(),
                 );
                 let fs = self.fs.clone();
@@ -8193,7 +8209,7 @@ impl Project {
                         },
                     )
                 });
-            } else if abs_path.ends_with(&*LOCAL_TASKS_RELATIVE_PATH) {
+            } else if abs_path.ends_with(local_tasks_file_relative_path()) {
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
@@ -8213,7 +8229,7 @@ impl Project {
                         );
                     }
                 })
-            } else if abs_path.ends_with(&*LOCAL_VSCODE_TASKS_RELATIVE_PATH) {
+            } else if abs_path.ends_with(local_vscode_tasks_file_relative_path()) {
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
@@ -8544,7 +8560,6 @@ impl Project {
     async fn handle_blame_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::BlameBuffer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::BlameBufferResponse> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
@@ -8575,7 +8590,6 @@ impl Project {
     async fn handle_multi_lsp_query(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::MultiLspQuery>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::MultiLspQueryResponse> {
         let sender_id = envelope.original_sender_id()?;
@@ -8687,7 +8701,6 @@ impl Project {
     async fn handle_unshare_project(
         this: Model<Self>,
         _: TypedEnvelope<proto::UnshareProject>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -8703,7 +8716,6 @@ impl Project {
     async fn handle_add_collaborator(
         this: Model<Self>,
         mut envelope: TypedEnvelope<proto::AddProjectCollaborator>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let collaborator = envelope
@@ -8727,7 +8739,6 @@ impl Project {
     async fn handle_update_project_collaborator(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateProjectCollaborator>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let old_peer_id = envelope
@@ -8776,7 +8787,6 @@ impl Project {
     async fn handle_remove_collaborator(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::RemoveProjectCollaborator>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -8805,7 +8815,6 @@ impl Project {
     async fn handle_update_project(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateProject>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -8820,7 +8829,6 @@ impl Project {
     async fn handle_update_worktree(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateWorktree>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -8838,7 +8846,6 @@ impl Project {
     async fn handle_update_worktree_settings(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -8862,7 +8869,6 @@ impl Project {
     async fn handle_create_project_entry(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::CreateProjectEntry>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let worktree = this.update(&mut cx, |this, cx| {
@@ -8876,7 +8882,6 @@ impl Project {
     async fn handle_rename_project_entry(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::RenameProjectEntry>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
@@ -8890,7 +8895,6 @@ impl Project {
     async fn handle_copy_project_entry(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::CopyProjectEntry>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
@@ -8904,7 +8908,6 @@ impl Project {
     async fn handle_delete_project_entry(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::DeleteProjectEntry>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
@@ -8919,7 +8922,6 @@ impl Project {
     async fn handle_expand_project_entry(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ExpandProjectEntry>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ExpandProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
@@ -8932,7 +8934,6 @@ impl Project {
     async fn handle_update_diagnostic_summary(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateDiagnosticSummary>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -8980,7 +8981,6 @@ impl Project {
     async fn handle_start_language_server(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::StartLanguageServer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let server = envelope
@@ -9005,7 +9005,6 @@ impl Project {
     async fn handle_update_language_server(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateLanguageServer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -9068,7 +9067,6 @@ impl Project {
     async fn handle_update_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |this, cx| {
@@ -9106,7 +9104,6 @@ impl Project {
     async fn handle_create_buffer_for_peer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::CreateBufferForPeer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -9192,7 +9189,6 @@ impl Project {
     async fn handle_update_diff_base(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateDiffBase>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -9215,7 +9211,6 @@ impl Project {
     async fn handle_update_buffer_file(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateBufferFile>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let buffer_id = envelope.payload.buffer_id;
@@ -9246,7 +9241,6 @@ impl Project {
     async fn handle_save_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::SaveBuffer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
@@ -9288,7 +9282,6 @@ impl Project {
     async fn handle_reload_buffers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ReloadBuffers>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ReloadBuffersResponse> {
         let sender_id = envelope.original_sender_id()?;
@@ -9318,7 +9311,6 @@ impl Project {
     async fn handle_synchronize_buffers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::SynchronizeBuffers>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::SynchronizeBuffersResponse> {
         let project_id = envelope.payload.project_id;
@@ -9409,7 +9401,6 @@ impl Project {
     async fn handle_format_buffers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::FormatBuffers>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::FormatBuffersResponse> {
         let sender_id = envelope.original_sender_id()?;
@@ -9440,7 +9431,6 @@ impl Project {
     async fn handle_apply_additional_edits_for_completion(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ApplyCompletionAdditionalEditsResponse> {
         let (buffer, completion) = this.update(&mut cx, |this, _| {
@@ -9492,7 +9482,6 @@ impl Project {
     async fn handle_resolve_completion_documentation(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ResolveCompletionDocumentation>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ResolveCompletionDocumentationResponse> {
         let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
@@ -9560,7 +9549,6 @@ impl Project {
     async fn handle_apply_code_action(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ApplyCodeAction>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ApplyCodeActionResponse> {
         let sender_id = envelope.original_sender_id()?;
@@ -9592,7 +9580,6 @@ impl Project {
     async fn handle_on_type_formatting(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::OnTypeFormatting>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OnTypeFormattingResponse> {
         let on_type_formatting = this.update(&mut cx, |this, cx| {
@@ -9625,7 +9612,6 @@ impl Project {
     async fn handle_inlay_hints(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::InlayHints>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::InlayHintsResponse> {
         let sender_id = envelope.original_sender_id()?;
@@ -9674,7 +9660,6 @@ impl Project {
     async fn handle_resolve_inlay_hint(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ResolveInlayHint>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ResolveInlayHintResponse> {
         let proto_hint = envelope
@@ -9709,7 +9694,6 @@ impl Project {
     async fn handle_task_context_for_location(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::TaskContextForLocation>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::TaskContext> {
         let location = envelope
@@ -9752,7 +9736,6 @@ impl Project {
     async fn handle_task_templates(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::TaskTemplates>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::TaskTemplatesResponse> {
         let worktree = envelope.payload.worktree_id.map(WorktreeId::from_proto);
@@ -9918,7 +9901,6 @@ impl Project {
     async fn handle_refresh_inlay_hints(
         this: Model<Self>,
         _: TypedEnvelope<proto::RefreshInlayHints>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |_, cx| {
@@ -9930,7 +9912,6 @@ impl Project {
     async fn handle_lsp_command<T: LspCommand>(
         this: Model<Self>,
         envelope: TypedEnvelope<T::ProtoRequest>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<<T::ProtoRequest as proto::RequestMessage>::Response>
     where
@@ -9976,7 +9957,6 @@ impl Project {
     async fn handle_get_project_symbols(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::GetProjectSymbols>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::GetProjectSymbolsResponse> {
         let symbols = this
@@ -9993,7 +9973,6 @@ impl Project {
     async fn handle_search_project(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::SearchProject>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::SearchProjectResponse> {
         let peer_id = envelope.original_sender_id()?;
@@ -10033,7 +10012,6 @@ impl Project {
     async fn handle_open_buffer_for_symbol(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::OpenBufferForSymbol>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferForSymbolResponse> {
         let peer_id = envelope.original_sender_id()?;
@@ -10099,7 +10077,6 @@ impl Project {
     async fn handle_open_buffer_by_id(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::OpenBufferById>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
@@ -10113,7 +10090,6 @@ impl Project {
     async fn handle_open_buffer_by_path(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::OpenBufferByPath>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
@@ -10135,7 +10111,6 @@ impl Project {
     async fn handle_open_new_buffer(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::OpenNewBuffer>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
         let buffer = this.update(&mut cx, |this, cx| this.create_local_buffer("", None, cx))?;
@@ -10530,7 +10505,6 @@ impl Project {
     async fn handle_buffer_saved(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::BufferSaved>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let version = deserialize_version(&envelope.payload.version);
@@ -10555,7 +10529,6 @@ impl Project {
     async fn handle_buffer_reloaded(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::BufferReloaded>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let payload = envelope.payload;

@@ -18,4 +18,5 @@ derive_more.workspace = true
 gpui.workspace = true
 language.workspace = true
 parking_lot.workspace = true
+serde.workspace = true
 workspace.workspace = true

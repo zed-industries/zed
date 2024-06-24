@@ -93,6 +93,16 @@ struct WindowFocusEvent {
     current_focus_path: SmallVec<[FocusId; 8]>,
 }
 
+impl WindowFocusEvent {
+    pub fn is_focus_in(&self, focus_id: FocusId) -> bool {
+        !self.previous_focus_path.contains(&focus_id) && self.current_focus_path.contains(&focus_id)
+    }
+
+    pub fn is_focus_out(&self, focus_id: FocusId) -> bool {
+        self.previous_focus_path.contains(&focus_id) && !self.current_focus_path.contains(&focus_id)
+    }
+}
+
 /// This is provided when subscribing for `ViewContext::on_focus_out` events.
 pub struct FocusOutEvent {
     /// A weak focus handle representing what was blurred.
@@ -2883,6 +2893,53 @@ impl<'a> WindowContext<'a> {
             ));
     }
 
+    /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
+    /// This does not fire if the given focus handle - or one of its descendants - was previously focused.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_in(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(&mut WindowContext) + 'static,
+    ) -> Subscription {
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
+                if event.is_focus_in(focus_id) {
+                    listener(cx);
+                }
+                true
+            }));
+        self.app.defer(move |_| activate());
+        subscription
+    }
+
+    /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
+    /// Returns a subscription and persists until the subscription is dropped.
+    pub fn on_focus_out(
+        &mut self,
+        handle: &FocusHandle,
+        mut listener: impl FnMut(FocusOutEvent, &mut WindowContext) + 'static,
+    ) -> Subscription {
+        let focus_id = handle.id;
+        let (subscription, activate) =
+            self.window.new_focus_listener(Box::new(move |event, cx| {
+                if let Some(blurred_id) = event.previous_focus_path.last().copied() {
+                    if event.is_focus_out(focus_id) {
+                        let event = FocusOutEvent {
+                            blurred: WeakFocusHandle {
+                                id: blurred_id,
+                                handles: Arc::downgrade(&cx.window.focus_handles),
+                            },
+                        };
+                        listener(event, cx)
+                    }
+                }
+                true
+            }));
+        self.app.defer(move |_| activate());
+        subscription
+    }
+
     fn reset_cursor_style(&self) {
         // Set the cursor only if we're the active window.
         if self.is_window_active() {
@@ -4109,9 +4166,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let (subscription, activate) =
             self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if !event.previous_focus_path.contains(&focus_id)
-                        && event.current_focus_path.contains(&focus_id)
-                    {
+                    if event.is_focus_in(focus_id) {
                         listener(view, cx)
                     }
                 })
@@ -4175,9 +4230,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             self.window.new_focus_listener(Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
                     if let Some(blurred_id) = event.previous_focus_path.last().copied() {
-                        if event.previous_focus_path.contains(&focus_id)
-                            && !event.current_focus_path.contains(&focus_id)
-                        {
+                        if event.is_focus_out(focus_id) {
                             let event = FocusOutEvent {
                                 blurred: WeakFocusHandle {
                                     id: blurred_id,

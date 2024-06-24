@@ -33,35 +33,32 @@ pub fn generate_content_prompt(
         )?;
     }
 
-    // Include file content.
-    for chunk in buffer.text_for_range(0..range.start) {
-        prompt.push_str(chunk);
-    }
-
+    writeln!(
+        prompt,
+        "The user has the following file open in the editor:"
+    )?;
     if range.is_empty() {
-        prompt.push_str("<|START|>");
-    } else {
-        prompt.push_str("<|START|");
-    }
+        write!(prompt, "```")?;
+        if let Some(language_name) = language_name {
+            write!(prompt, "{language_name}")?;
+        }
 
-    for chunk in buffer.text_for_range(range.clone()) {
-        prompt.push_str(chunk);
-    }
+        for chunk in buffer.as_rope().chunks_in_range(0..range.start) {
+            prompt.push_str(chunk);
+        }
+        prompt.push_str("<|CURSOR|>");
+        for chunk in buffer.as_rope().chunks_in_range(range.start..buffer.len()) {
+            prompt.push_str(chunk);
+        }
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+        writeln!(prompt, "```")?;
+        prompt.push('\n');
 
-    if !range.is_empty() {
-        prompt.push_str("|END|>");
-    }
-
-    for chunk in buffer.text_for_range(range.end..buffer.len()) {
-        prompt.push_str(chunk);
-    }
-
-    prompt.push('\n');
-
-    if range.is_empty() {
         writeln!(
             prompt,
-            "Assume the cursor is located where the `<|START|>` span is."
+            "Assume the cursor is located where the `<|CURSOR|>` span is."
         )
         .unwrap();
         writeln!(
@@ -75,11 +72,42 @@ pub fn generate_content_prompt(
         )
         .unwrap();
     } else {
-        writeln!(prompt, "Modify the user's selected {content_type} based upon the users prompt: '{user_prompt}'").unwrap();
-        writeln!(prompt, "You must reply with only the adjusted {content_type} (within the '<|START|' and '|END|>' spans) not the entire file.").unwrap();
+        write!(prompt, "```")?;
+        for chunk in buffer.as_rope().chunks() {
+            prompt.push_str(chunk);
+        }
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+        writeln!(prompt, "```")?;
+        prompt.push('\n');
+
         writeln!(
             prompt,
-            "Double check that you only return code and not the '<|START|' and '|END|'> spans"
+            "In particular, the following piece of text is selected:"
+        )?;
+        write!(prompt, "```")?;
+        if let Some(language_name) = language_name {
+            write!(prompt, "{language_name}")?;
+        }
+        prompt.push('\n');
+        for chunk in buffer.text_for_range(range.clone()) {
+            prompt.push_str(chunk);
+        }
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+        writeln!(prompt, "```")?;
+        prompt.push('\n');
+
+        writeln!(
+            prompt,
+            "Modify the user's selected {content_type} based upon the users prompt: {user_prompt}"
+        )
+        .unwrap();
+        writeln!(
+            prompt,
+            "You must reply with only the adjusted {content_type}, not the entire file."
         )
         .unwrap();
     }
