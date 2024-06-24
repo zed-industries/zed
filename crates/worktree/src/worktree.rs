@@ -3803,7 +3803,7 @@ impl BackgroundScanner {
         let mut root_canonical_path = None;
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
-        let mut child_paths = self
+        let child_paths = self
             .fs
             .read_dir(&job.abs_path)
             .await?
