@@ -1,6 +1,7 @@
 use crate::{
-    prompts::generate_content_prompt, AssistantPanel, CompletionProvider, Hunk,
-    LanguageModelRequest, LanguageModelRequestMessage, Role, StreamingDiff,
+    assistant_settings::AssistantSettings, prompts::generate_content_prompt, AssistantPanel,
+    CompletionProvider, Hunk, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    StreamingDiff,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -14,6 +15,7 @@ use editor::{
     Anchor, AnchorRangeExt, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
     ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
+use fs::Fs;
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{
     point, AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global,
@@ -24,7 +26,7 @@ use language::{Buffer, Point, Selection, TransactionId};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use rope::Rope;
-use settings::Settings;
+use settings::{update_settings_file, Settings};
 use similar::TextDiff;
 use std::{
     cmp, mem,
@@ -35,12 +37,12 @@ use std::{
     time::Instant,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, Tooltip};
+use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 use util::RangeExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
-pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
-    cx.set_global(InlineAssistant::new(telemetry));
+pub fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
+    cx.set_global(InlineAssistant::new(fs, telemetry));
 }
 
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
@@ -53,12 +55,13 @@ pub struct InlineAssistant {
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
     prompt_history: VecDeque<String>,
     telemetry: Option<Arc<Telemetry>>,
+    fs: Arc<dyn Fs>,
 }
 
 impl Global for InlineAssistant {}
 
 impl InlineAssistant {
-    pub fn new(telemetry: Arc<Telemetry>) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>) -> Self {
         Self {
             next_assist_id: InlineAssistId::default(),
             next_assist_group_id: InlineAssistGroupId::default(),
@@ -67,6 +70,7 @@ impl InlineAssistant {
             assist_groups: HashMap::default(),
             prompt_history: VecDeque::default(),
             telemetry: Some(telemetry),
+            fs,
         }
     }
 
@@ -151,7 +155,7 @@ impl InlineAssistant {
                     self.prompt_history.clone(),
                     prompt_buffer.clone(),
                     codegen.clone(),
-                    workspace.clone(),
+                    self.fs.clone(),
                     cx,
                 )
             });
@@ -1142,6 +1146,7 @@ enum PromptEditorEvent {
 
 struct PromptEditor {
     id: InlineAssistId,
+    fs: Arc<dyn Fs>,
     height_in_lines: u8,
     editor: View<Editor>,
     edited_since_done: bool,
@@ -1150,7 +1155,6 @@ struct PromptEditor {
     prompt_history_ix: Option<usize>,
     pending_prompt: String,
     codegen: Model<Codegen>,
-    workspace: Option<WeakView<Workspace>>,
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
 }
@@ -1160,6 +1164,7 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let gutter_dimensions = *self.gutter_dimensions.lock();
+        let fs = self.fs.clone();
 
         let buttons = match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
@@ -1245,85 +1250,94 @@ impl Render for PromptEditor {
             }
         };
 
-        v_flex().h_full().w_full().justify_end().child(
-            h_flex()
-                .bg(cx.theme().colors().editor_background)
-                .border_y_1()
-                .border_color(cx.theme().status().info_border)
-                .py_1p5()
-                .w_full()
-                .on_action(cx.listener(Self::confirm))
-                .on_action(cx.listener(Self::cancel))
-                .on_action(cx.listener(Self::move_up))
-                .on_action(cx.listener(Self::move_down))
-                .child(
-                    h_flex()
-                        .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
-                        // .pr(gutter_dimensions.fold_area_width())
-                        .justify_center()
-                        .gap_2()
-                        .children(self.workspace.clone().map(|workspace| {
-                            IconButton::new("context", IconName::Context)
-                                .size(ButtonSize::None)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted)
-                                .on_click({
-                                    let workspace = workspace.clone();
-                                    cx.listener(move |_, _, cx| {
-                                        workspace
-                                            .update(cx, |workspace, cx| {
-                                                workspace.focus_panel::<AssistantPanel>(cx);
-                                            })
-                                            .ok();
-                                    })
+        h_flex()
+            .bg(cx.theme().colors().editor_background)
+            .border_y_1()
+            .border_color(cx.theme().status().info_border)
+            .py_1p5()
+            .h_full()
+            .w_full()
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::move_up))
+            .on_action(cx.listener(Self::move_down))
+            .child(
+                h_flex()
+                    .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
+                    .justify_center()
+                    .gap_2()
+                    .child(
+                        PopoverMenu::new("model-switcher")
+                            .menu(move |cx| {
+                                ContextMenu::build(cx, |mut menu, cx| {
+                                    for model in CompletionProvider::global(cx).available_models() {
+                                        menu = menu.custom_entry(
+                                            {
+                                                let model = model.clone();
+                                                move |_| {
+                                                    Label::new(model.display_name())
+                                                        .into_any_element()
+                                                }
+                                            },
+                                            {
+                                                let fs = fs.clone();
+                                                let model = model.clone();
+                                                move |cx| {
+                                                    let model = model.clone();
+                                                    update_settings_file::<AssistantSettings>(
+                                                        fs.clone(),
+                                                        cx,
+                                                        move |settings| settings.set_model(model),
+                                                    );
+                                                }
+                                            },
+                                        );
+                                    }
+                                    menu
                                 })
-                                .tooltip(move |cx| {
-                                    let token_count = workspace.upgrade().and_then(|workspace| {
-                                        let panel =
-                                            workspace.read(cx).panel::<AssistantPanel>(cx)?;
-                                        let context = panel.read(cx).active_context(cx)?;
-                                        context.read(cx).token_count()
-                                    });
-                                    if let Some(token_count) = token_count {
+                                .into()
+                            })
+                            .trigger(
+                                IconButton::new("context", IconName::Settings)
+                                    .size(ButtonSize::None)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(move |cx| {
                                         Tooltip::with_meta(
                                             format!(
-                                                "{} Additional Context Tokens from Assistant",
-                                                token_count
+                                                "Using {}",
+                                                CompletionProvider::global(cx)
+                                                    .model()
+                                                    .display_name()
                                             ),
-                                            Some(&crate::ToggleFocus),
-                                            "Click to open…",
+                                            None,
+                                            "Click to Change Model",
                                             cx,
                                         )
-                                    } else {
-                                        Tooltip::for_action(
-                                            "Toggle Assistant Panel",
-                                            &crate::ToggleFocus,
-                                            cx,
-                                        )
-                                    }
-                                })
-                        }))
-                        .children(
-                            if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
-                                let error_message = SharedString::from(error.to_string());
-                                Some(
-                                    div()
-                                        .id("error")
-                                        .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
-                                        .child(
-                                            Icon::new(IconName::XCircle)
-                                                .size(IconSize::Small)
-                                                .color(Color::Error),
-                                        ),
-                                )
-                            } else {
-                                None
-                            },
-                        ),
-                )
-                .child(div().flex_1().child(self.render_prompt_editor(cx)))
-                .child(h_flex().gap_2().pr_4().children(buttons)),
-        )
+                                    }),
+                            )
+                            .anchor(gpui::AnchorCorner::BottomRight),
+                    )
+                    .children(
+                        if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
+                            let error_message = SharedString::from(error.to_string());
+                            Some(
+                                div()
+                                    .id("error")
+                                    .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
+                                    .child(
+                                        Icon::new(IconName::XCircle)
+                                            .size(IconSize::Small)
+                                            .color(Color::Error),
+                                    ),
+                            )
+                        } else {
+                            None
+                        },
+                    ),
+            )
+            .child(div().flex_1().child(self.render_prompt_editor(cx)))
+            .child(h_flex().gap_2().pr_4().children(buttons))
     }
 }
 
@@ -1342,7 +1356,7 @@ impl PromptEditor {
         prompt_history: VecDeque<String>,
         prompt_buffer: Model<MultiBuffer>,
         codegen: Model<Codegen>,
-        workspace: Option<WeakView<Workspace>>,
+        fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let prompt_editor = cx.new_view(|cx| {
@@ -1375,7 +1389,7 @@ impl PromptEditor {
             _codegen_subscription: cx.observe(&codegen, Self::handle_codegen_changed),
             editor_subscriptions: Vec::new(),
             codegen,
-            workspace,
+            fs,
         };
         this.count_lines(cx);
         this.subscribe_to_editor(cx);

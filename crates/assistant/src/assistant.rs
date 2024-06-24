@@ -18,6 +18,7 @@ use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
 pub(crate) use context_store::*;
+use fs::Fs;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 pub(crate) use inline_assistant::*;
 pub(crate) use model_selector::*;
@@ -264,7 +265,7 @@ impl Assistant {
     }
 }
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
 
@@ -288,7 +289,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     assistant_slash_command::init(cx);
     register_slash_commands(cx);
     assistant_panel::init(cx);
-    inline_assistant::init(client.telemetry().clone(), cx);
+    inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
     RustdocStore::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
