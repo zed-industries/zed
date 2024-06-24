@@ -110,8 +110,8 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn editor_views(workspace: &Workspace, cx: &AppContext) -> Vec<View<Editor>> {
-    let panes = workspace.panes();
-    panes
+    workspace
+        .panes()
         .iter()
         .flat_map(|pane| {
             pane.read(cx)
@@ -127,16 +127,18 @@ fn sync(init: bool, cx: &mut AppContext) {
 
     if !settings.enabled {
         if was_enabled {
-            // TODO: there also must be a better way to do this
-            let _ = cx.active_window().map(|window| {
-                window.update(cx, |_, cx| {
-                    Vim::update(cx, |vim, cx| {
-                        if vim.mode() == Mode::EasyMotion {
+            for window in cx.windows().iter_mut() {
+                window
+                    .update(cx, |_, cx| {
+                        Vim::update(cx, |vim, cx| {
+                            if vim.mode() != Mode::EasyMotion {
+                                return;
+                            }
                             vim.switch_mode(Mode::Normal, false, cx);
-                        }
-                    });
-                })
-            });
+                        });
+                    })
+                    .unwrap();
+            }
             cx.remove_global::<GlobalEasyMotion>();
         }
         return;
@@ -151,21 +153,25 @@ fn sync(init: bool, cx: &mut AppContext) {
             Vec::new()
         } else {
             // if the application is already open then we need to add listeners to all the open editors
-            // TODO: there must be a better way to do this
-            cx.windows()[0]
-                .downcast::<Workspace>()
-                .unwrap()
-                .update(cx, |workspace, cx| {
-                    editor_views(workspace, cx)
-                        .into_iter()
-                        .flat_map(|editor| {
-                            editor
-                                .update(cx, |editor, cx| register_actions(editor, cx))
+            cx.windows()
+                .iter()
+                .flat_map(|window| {
+                    window
+                        .downcast::<Workspace>()
+                        .unwrap()
+                        .update(cx, |workspace, cx| {
+                            editor_views(workspace, cx)
                                 .into_iter()
+                                .flat_map(|editor| {
+                                    editor
+                                        .update(cx, |editor, cx| register_actions(editor, cx))
+                                        .into_iter()
+                                })
+                                .collect_vec()
                         })
-                        .collect_vec()
+                        .unwrap()
                 })
-                .unwrap()
+                .collect_vec()
         };
         subs.push(cx.observe_new_views(|editor: &mut Editor, cx| {
             let mut hi = register_actions(editor, cx);
