@@ -645,11 +645,13 @@
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
+      "tab": "vim::Tab",
+      "enter": "vim::Enter",
       "backspace": "vim::UndoReplace"
     }
   },
   {
-    "context": "Editor && VimWaiting",
+    "context": "Editor && vim_mode != replace && VimWaiting",
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter",
