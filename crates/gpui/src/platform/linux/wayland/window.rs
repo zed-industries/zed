@@ -176,6 +176,13 @@ impl WaylandWindowState {
             appearance,
             handle,
             active: false,
+            in_progress_window_controls: None,
+            window_controls: WindowControls {
+                fullscreen: false,
+                maximize: false,
+                minimize: false,
+                window_menu: false,
+            },
         })
     }
 }
@@ -449,14 +456,19 @@ impl WaylandWindowStatePtr {
             }
             xdg_toplevel::Event::WmCapabilities { capabilities } => {
                 let window_controls = WindowControls {
-                    maximize: capabilities.contains(xdg_toplevel::WmCapabilities::Maximize),
-                    minimize: capabilities.contains(xdg_toplevel::WmCapabilities::Minimize),
-                    fullscreen: capabilities.contains(xdg_toplevel::WmCapabilities::Fullscreen),
-                    window_menu: capabilities.contains(xdg_toplevel::WmCapabilities::Fullscreen),
+                    maximize: capabilities
+                        .contains(&(xdg_toplevel::WmCapabilities::Maximize as u8)),
+                    minimize: capabilities
+                        .contains(&(xdg_toplevel::WmCapabilities::Minimize as u8)),
+                    fullscreen: capabilities
+                        .contains(&(xdg_toplevel::WmCapabilities::Fullscreen as u8)),
+                    window_menu: capabilities
+                        .contains(&(xdg_toplevel::WmCapabilities::Fullscreen as u8)),
                 };
 
                 let mut state = self.state.borrow_mut();
-                state.window_controls = Some(window_controls);
+                state.in_progress_window_controls = Some(window_controls);
+                false
             }
             _ => false,
         }
