@@ -291,7 +291,7 @@ impl X11Client {
             .insert_source(
                 Generic::new_with_error::<EventHandlerError>(
                     fd,
-                    calloop::Interest::BOTH,
+                    calloop::Interest::READ,
                     calloop::Mode::Level,
                 ),
                 {
