@@ -84,7 +84,8 @@ pub fn init(cx: &mut AppContext) {
                     workspace.toggle_panel_focus::<AssistantPanel>(cx);
                 })
                 .register_action(AssistantPanel::inline_assist)
-                .register_action(ContextEditor::quote_selection);
+                .register_action(ContextEditor::quote_selection)
+                .register_action(ContextEditor::insert_selection);
         },
     )
     .detach();
@@ -2884,6 +2885,42 @@ impl ContextEditor {
         });
     }
 
+    fn insert_selection(
+        workspace: &mut Workspace,
+        _: &InsertSelection,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+        let Some(context_editor_view) = panel.read(cx).active_context_editor().cloned() else {
+            return;
+        };
+        let Some(active_editor_view) = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+        else {
+            return;
+        };
+
+        let context_editor = context_editor_view.read(cx).editor.read(cx);
+        let anchor = context_editor.selections.newest_anchor();
+        let text = context_editor
+            .buffer()
+            .read(cx)
+            .read(cx)
+            .text_for_range(anchor.range())
+            .collect::<String>();
+
+        // If nothing is selected, don't delete the current selection; instead, be a no-op.
+        if !text.is_empty() {
+            active_editor_view.update(cx, |editor, cx| {
+                editor.insert(&text, cx);
+                editor.focus(cx);
+            })
+        }
+    }
+
     fn quote_selection(
         workspace: &mut Workspace,
         _: &QuoteSelection,
@@ -2983,27 +3020,6 @@ impl ContextEditor {
         }
 
         cx.propagate();
-    }
-
-    fn insert_selection(&mut self, _: &InsertSelection, cx: &mut ViewContext<Self>) {
-        let editor = self.editor.read(cx);
-        let anchor = editor.selections.newest_anchor();
-        let text = editor
-            .buffer()
-            .read(cx)
-            .read(cx)
-            .text_for_range(anchor.range())
-            .collect::<String>();
-
-        self.workspace
-            .update(cx, |workspace, cx| {
-                if let Some(editor_view) = workspace.active_item_as::<Editor>(cx) {
-                    editor_view.update(cx, |editor, cx| {
-                        editor.insert(&text, cx);
-                    })
-                }
-            })
-            .ok();
     }
 
     fn split(&mut self, _: &Split, cx: &mut ViewContext<Self>) {
@@ -3215,7 +3231,6 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
             .on_action(cx.listener(ContextEditor::apply_edit))
-            .on_action(cx.listener(ContextEditor::insert_selection))
             .size_full()
             .v_flex()
             .child(
