@@ -5,15 +5,11 @@ use crate::prelude::*;
 #[derive(IntoElement)]
 pub struct WindowsWindowControls {
     button_height: Pixels,
-    font: SharedString,
 }
 
 impl WindowsWindowControls {
     pub fn new(button_height: Pixels) -> Self {
-        Self {
-            button_height,
-            font: SharedString::from(Self::get_font()),
-        }
+        Self { button_height }
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -62,6 +58,7 @@ impl RenderOnce for WindowsWindowControls {
 
         div()
             .id("windows-window-controls")
+            .font_family(Self::get_font())
             .flex()
             .flex_row()
             .justify_center()
@@ -72,7 +69,6 @@ impl RenderOnce for WindowsWindowControls {
                 "minimize",
                 WindowsCaptionButtonIcon::Minimize,
                 button_hover_color,
-                self.font.clone(),
             ))
             .child(WindowsCaptionButton::new(
                 "maximize-or-restore",
@@ -82,13 +78,11 @@ impl RenderOnce for WindowsWindowControls {
                     WindowsCaptionButtonIcon::Maximize
                 },
                 button_hover_color,
-                self.font.clone(),
             ))
             .child(WindowsCaptionButton::new(
                 "close",
                 WindowsCaptionButtonIcon::Close,
                 close_button_hover_color,
-                self.font.clone(),
             ))
     }
 }
@@ -106,7 +100,6 @@ struct WindowsCaptionButton {
     id: ElementId,
     icon: WindowsCaptionButtonIcon,
     hover_background_color: Rgba,
-    font: SharedString,
 }
 
 impl WindowsCaptionButton {
@@ -114,13 +107,11 @@ impl WindowsCaptionButton {
         id: impl Into<ElementId>,
         icon: WindowsCaptionButtonIcon,
         hover_background_color: Rgba,
-        font: SharedString,
     ) -> Self {
         Self {
             id: id.into(),
             icon,
             hover_background_color,
-            font,
         }
     }
 }
@@ -139,7 +130,6 @@ impl RenderOnce for WindowsCaptionButton {
             .content_center()
             .w(width)
             .h_full()
-            .font_family(self.font)
             .text_size(px(10.0))
             .hover(|style| style.bg(self.hover_background_color))
             .active(|style| {
