@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
@@ -298,7 +299,24 @@ impl X11Client {
                 {
                     let xcb_connection = xcb_connection.clone();
                     move |_readiness, _, client| {
+                        let mut events = Vec::new();
+                        let mut windows_to_refresh = HashSet::new();
+
                         while let Some(event) = xcb_connection.poll_for_event()? {
+                            if let Event::Expose(event) = event {
+                                windows_to_refresh.insert(event.window);
+                            } else {
+                                events.push(event);
+                            }
+                        }
+
+                        for window in windows_to_refresh.into_iter() {
+                            if let Some(window) = client.get_window(window) {
+                                window.refresh();
+                            }
+                        }
+
+                        for event in events.into_iter() {
                             let mut state = client.0.borrow_mut();
                             if state.ximc.is_none() || state.xim_handler.is_none() {
                                 drop(state);
