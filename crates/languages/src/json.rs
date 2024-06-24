@@ -146,7 +146,6 @@ impl LspAdapter for JsonLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
-        println!("==> Latest ver: {}", latest_version);
         let server_path = container_dir.join(SERVER_PATH);
         let package_name = "vscode-langservers-extracted";
 
@@ -156,14 +155,11 @@ impl LspAdapter for JsonLspAdapter {
             .await;
 
         if should_install_language_server {
-            let ret = self
-                .node
+            self.node
                 .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
-                .await;
-            println!("==>{:#?}", ret);
+                .await
+                .log_err();
         }
-
-        // panic!();
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
