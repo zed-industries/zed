@@ -249,5 +249,5 @@ fn schema_file_match(path: &Path) -> String {
         .unwrap()
         .display()
         .to_string()
-        .replace("\\", "/")
+        .replace('\\', "/")
 }
