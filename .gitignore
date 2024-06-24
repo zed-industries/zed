@@ -28,3 +28,4 @@ DerivedData/
 .vscode
 .wrangler
 .flatpak-builder
+.aider*
