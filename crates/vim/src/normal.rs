@@ -489,8 +489,7 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
                     .into_iter()
                     .map(|selection| {
                         let mut range = selection.range();
-                        *range.end.column_mut() += count as u32;
-                        range.end = map.clip_point(range.end, Bias::Right);
+                        range.end = right(&map, range.end, count);
                         let repeated_text = text.repeat(count);
 
                         (
