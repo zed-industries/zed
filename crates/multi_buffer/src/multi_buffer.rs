@@ -152,11 +152,7 @@ pub trait ToPointUtf16: 'static + fmt::Debug {
 struct BufferState {
     buffer: Model<Buffer>,
     last_version: clock::Global,
-    last_parse_count: usize,
-    last_selections_update_count: usize,
-    last_diagnostics_update_count: usize,
-    last_file_update_count: usize,
-    last_git_diff_update_count: usize,
+    last_non_text_state_update_count: usize,
     excerpts: Vec<Locator>,
     _subscriptions: [gpui::Subscription; 2],
 }
@@ -167,10 +163,8 @@ pub struct MultiBufferSnapshot {
     singleton: bool,
     excerpts: SumTree<Excerpt>,
     excerpt_ids: SumTree<ExcerptIdMapping>,
-    parse_count: usize,
-    diagnostics_update_count: usize,
     trailing_excerpt_update_count: usize,
-    git_diff_update_count: usize,
+    non_text_state_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
     has_conflict: bool,
@@ -396,11 +390,7 @@ impl MultiBuffer {
                 BufferState {
                     buffer: buffer_state.buffer.clone(),
                     last_version: buffer_state.last_version.clone(),
-                    last_parse_count: buffer_state.last_parse_count,
-                    last_selections_update_count: buffer_state.last_selections_update_count,
-                    last_diagnostics_update_count: buffer_state.last_diagnostics_update_count,
-                    last_file_update_count: buffer_state.last_file_update_count,
-                    last_git_diff_update_count: buffer_state.last_git_diff_update_count,
+                    last_non_text_state_update_count: buffer_state.last_non_text_state_update_count,
                     excerpts: buffer_state.excerpts.clone(),
                     _subscriptions: [
                         new_cx.observe(&buffer_state.buffer, |_, _, cx| cx.notify()),
@@ -1244,11 +1234,7 @@ impl MultiBuffer {
         let mut buffers = self.buffers.borrow_mut();
         let buffer_state = buffers.entry(buffer_id).or_insert_with(|| BufferState {
             last_version: buffer_snapshot.version().clone(),
-            last_parse_count: buffer_snapshot.parse_count(),
-            last_selections_update_count: buffer_snapshot.selections_update_count(),
-            last_diagnostics_update_count: buffer_snapshot.diagnostics_update_count(),
-            last_file_update_count: buffer_snapshot.file_update_count(),
-            last_git_diff_update_count: buffer_snapshot.git_diff_update_count(),
+            last_non_text_state_update_count: buffer_snapshot.non_text_state_update_count(),
             excerpts: Default::default(),
             _subscriptions: [
                 cx.observe(&buffer, |_, _, cx| cx.notify()),
@@ -1823,9 +1809,7 @@ impl MultiBuffer {
     fn sync(&self, cx: &AppContext) {
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpts_to_edit = Vec::new();
-        let mut reparsed = false;
-        let mut diagnostics_updated = false;
-        let mut git_diff_updated = false;
+        let mut non_text_state_updated = false;
         let mut is_dirty = false;
         let mut has_conflict = false;
         let mut edited = false;
@@ -1833,34 +1817,14 @@ impl MultiBuffer {
         for buffer_state in buffers.values_mut() {
             let buffer = buffer_state.buffer.read(cx);
             let version = buffer.version();
-            let parse_count = buffer.parse_count();
-            let selections_update_count = buffer.selections_update_count();
-            let diagnostics_update_count = buffer.diagnostics_update_count();
-            let file_update_count = buffer.file_update_count();
-            let git_diff_update_count = buffer.git_diff_update_count();
+            let non_text_state_update_count = buffer.non_text_state_update_count();
 
             let buffer_edited = version.changed_since(&buffer_state.last_version);
-            let buffer_reparsed = parse_count > buffer_state.last_parse_count;
-            let buffer_selections_updated =
-                selections_update_count > buffer_state.last_selections_update_count;
-            let buffer_diagnostics_updated =
-                diagnostics_update_count > buffer_state.last_diagnostics_update_count;
-            let buffer_file_updated = file_update_count > buffer_state.last_file_update_count;
-            let buffer_git_diff_updated =
-                git_diff_update_count > buffer_state.last_git_diff_update_count;
-            if buffer_edited
-                || buffer_reparsed
-                || buffer_selections_updated
-                || buffer_diagnostics_updated
-                || buffer_file_updated
-                || buffer_git_diff_updated
-            {
+            let buffer_non_text_state_updated =
+                non_text_state_update_count > buffer_state.last_non_text_state_update_count;
+            if buffer_edited || buffer_non_text_state_updated {
                 buffer_state.last_version = version;
-                buffer_state.last_parse_count = parse_count;
-                buffer_state.last_selections_update_count = selections_update_count;
-                buffer_state.last_diagnostics_update_count = diagnostics_update_count;
-                buffer_state.last_file_update_count = file_update_count;
-                buffer_state.last_git_diff_update_count = git_diff_update_count;
+                buffer_state.last_non_text_state_update_count = non_text_state_update_count;
                 excerpts_to_edit.extend(
                     buffer_state
                         .excerpts
@@ -1870,23 +1834,15 @@ impl MultiBuffer {
             }
 
             edited |= buffer_edited;
-            reparsed |= buffer_reparsed;
-            diagnostics_updated |= buffer_diagnostics_updated;
-            git_diff_updated |= buffer_git_diff_updated;
+            non_text_state_updated |= buffer_non_text_state_updated;
             is_dirty |= buffer.is_dirty();
             has_conflict |= buffer.has_conflict();
         }
         if edited {
             snapshot.edit_count += 1;
         }
-        if reparsed {
-            snapshot.parse_count += 1;
-        }
-        if diagnostics_updated {
-            snapshot.diagnostics_update_count += 1;
-        }
-        if git_diff_updated {
-            snapshot.git_diff_update_count += 1;
+        if non_text_state_updated {
+            snapshot.non_text_state_update_count += 1;
         }
         snapshot.is_dirty = is_dirty;
         snapshot.has_conflict = has_conflict;
@@ -3198,8 +3154,8 @@ impl MultiBufferSnapshot {
         self.edit_count
     }
 
-    pub fn parse_count(&self) -> usize {
-        self.parse_count
+    pub fn non_text_state_update_count(&self) -> usize {
+        self.non_text_state_update_count
     }
 
     /// Returns the smallest enclosing bracket ranges containing the given range or
@@ -3410,14 +3366,6 @@ impl MultiBufferSnapshot {
                     })
             })
             .collect()
-    }
-
-    pub fn diagnostics_update_count(&self) -> usize {
-        self.diagnostics_update_count
-    }
-
-    pub fn git_diff_update_count(&self) -> usize {
-        self.git_diff_update_count
     }
 
     pub fn trailing_excerpt_update_count(&self) -> usize {
