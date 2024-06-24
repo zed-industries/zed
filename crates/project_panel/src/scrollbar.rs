@@ -92,7 +92,7 @@ impl gpui::Element for ProjectPanelScrollbar {
                 );
                 Bounds::from_corners(thumb_upper_left, thumb_lower_right)
             };
-            cx.paint_quad(gpui::fill(thumb_bounds.clone(), thumb_background));
+            cx.paint_quad(gpui::fill(thumb_bounds, thumb_background));
             let scroll = self.scroll.clone();
             let item_count = self.item_count;
             cx.on_mouse_event({
