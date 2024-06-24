@@ -35,10 +35,8 @@ fn main() {
         println!("USING REAL LIVEKIT");
 
         cx.activate(true);
-
         cx.on_action(quit);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-
         cx.set_menus(vec![Menu {
             name: "Zed",
             items: vec![MenuItem::Action {
@@ -51,42 +49,26 @@ fn main() {
         let live_kit_url = std::env::var("LIVE_KIT_URL").unwrap_or("http://localhost:7880".into());
         let live_kit_key = std::env::var("LIVE_KIT_KEY").unwrap_or("devkey".into());
         let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap_or("secret".into());
+        let height = px(800.);
+        let width = px(800.);
 
         cx.spawn(|cx| async move {
-            let user_1_token = token::create(
-                &live_kit_key,
-                &live_kit_secret,
-                Some("test-participant-1"),
-                VideoGrant::to_join("test-room"),
-            )
-            .unwrap();
+            let mut windows = Vec::new();
+            for i in 0..3 {
+                let token = token::create(
+                    &live_kit_key,
+                    &live_kit_secret,
+                    Some(&format!("test-participant-{i}")),
+                    VideoGrant::to_join("test-room"),
+                )
+                .unwrap();
 
-            let user2_token = token::create(
-                &live_kit_key,
-                &live_kit_secret,
-                Some("test-participant-2"),
-                VideoGrant::to_join("test-room"),
-            )
-            .unwrap();
-
-            let bounds1 = bounds(point(px(0.0), px(0.0)), size(px(800.0), px(800.0)));
-            let bounds2 = bounds(point(px(800.0), px(0.0)), size(px(800.0), px(800.0)));
-
-            let window1 = LivekitWindow::new(
-                live_kit_url.as_str(),
-                user_1_token.as_str(),
-                bounds1,
-                cx.clone(),
-            )
-            .await;
-
-            let window2 = LivekitWindow::new(
-                live_kit_url.as_str(),
-                user2_token.as_str(),
-                bounds2,
-                cx.clone(),
-            )
-            .await;
+                let bounds = bounds(point(width * i, px(0.0)), size(width, height));
+                let window =
+                    LivekitWindow::new(live_kit_url.as_str(), token.as_str(), bounds, cx.clone())
+                        .await;
+                windows.push(window);
+            }
         })
         .detach();
     });
@@ -160,7 +142,7 @@ impl LivekitWindow {
     }
 
     fn handle_room_event(&mut self, event: RoomEvent, cx: &mut ViewContext<Self>) {
-        eprintln!("room event: {event:?}");
+        eprintln!("event: {event:?}");
 
         match event {
             RoomEvent::TrackUnpublished {
@@ -311,64 +293,58 @@ impl LivekitWindow {
 
 impl Render for LivekitWindow {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        fn button() -> gpui::Div {
+            div()
+                .w(px(120.0))
+                .h(px(30.0))
+                .px_2()
+                .m_2()
+                .bg(rgb(0x8888ff))
+        }
+
         div()
-            .bg(rgb(0xffa8d4))
+            .bg(rgb(0xffffff))
             .size_full()
             .flex()
             .flex_col()
             .child(
-                div()
-                    .p_1()
-                    .bg(rgb(0xffd4a8))
-                    .h(px(80.0))
-                    .flex()
-                    .flex_row()
-                    .children([
-                        div()
-                            .id("toggle-mute")
-                            .w(px(100.0))
-                            .h(px(30.0))
-                            .bg(rgb(0x6666ff))
-                            .flex()
-                            .flex_row()
-                            .child(if let Some(track) = &self.microphone_track {
-                                if track.is_muted() {
-                                    "Unmute"
-                                } else {
-                                    "Mute"
-                                }
+                div().bg(rgb(0xffd4a8)).flex().flex_row().children([
+                    button()
+                        .id("toggle-mute")
+                        .child(if let Some(track) = &self.microphone_track {
+                            if track.is_muted() {
+                                "Unmute"
                             } else {
-                                "Publish mic"
-                            })
-                            .on_click(cx.listener(|this, _, cx| this.toggle_mute(cx))),
-                        div()
-                            .id("toggle-screen-share")
-                            .w(px(100.0))
-                            .h(px(30.0))
-                            .bg(rgb(0x6666ff))
-                            .flex()
-                            .flex_row()
-                            .child(if self.screen_share_track.is_none() {
-                                "Share screen"
-                            } else {
-                                "Unshare screen"
-                            })
-                            .on_click(cx.listener(|this, _, cx| this.toggle_screen_share(cx))),
-                    ]),
+                                "Mute"
+                            }
+                        } else {
+                            "Publish mic"
+                        })
+                        .on_click(cx.listener(|this, _, cx| this.toggle_mute(cx))),
+                    button()
+                        .id("toggle-screen-share")
+                        .child(if self.screen_share_track.is_none() {
+                            "Share screen"
+                        } else {
+                            "Unshare screen"
+                        })
+                        .on_click(cx.listener(|this, _, cx| this.toggle_screen_share(cx))),
+                ]),
             )
             .child(
                 div()
                     .id("remote-participants")
                     .overflow_y_scroll()
-                    .p_1()
-                    .bg(gpui::rgb(0xaaaaff))
                     .flex()
                     .flex_col()
                     .flex_grow()
                     .children(self.remote_participants.iter().map(|(identity, state)| {
                         div()
                             .w_full()
-                            .h(px(400.0))
+                            .h(px(300.0))
+                            .m_2()
+                            .px_2()
+                            .bg(rgb(0x8888ff))
                             .child(SharedString::from(if state.speaking {
                                 format!("{} (speaking)", &identity.0)
                             } else if state.muted {
