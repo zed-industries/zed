@@ -22,7 +22,7 @@ pub struct LocalAudioTrack {}
 #[derive(Clone, Debug)]
 pub struct RemoteVideoTrack {
     pub(super) server_track: Arc<TestServerVideoTrack>,
-    pub(super) room: WeakRoom,
+    pub(super) _room: WeakRoom,
 }
 
 #[derive(Clone, Debug)]
@@ -37,11 +37,11 @@ pub enum RtcTrack {
 }
 
 pub struct RtcAudioTrack {
-    pub(super) server_track: Arc<TestServerAudioTrack>,
+    pub(super) _server_track: Arc<TestServerAudioTrack>,
 }
 
 pub struct RtcVideoTrack {
-    pub(super) server_track: Arc<TestServerVideoTrack>,
+    pub(super) _server_track: Arc<TestServerVideoTrack>,
 }
 
 impl RemoteTrack {
@@ -108,7 +108,7 @@ impl RemoteAudioTrack {
 
     pub fn rtc_track(&self) -> RtcAudioTrack {
         RtcAudioTrack {
-            server_track: self.server_track.clone(),
+            _server_track: self.server_track.clone(),
         }
     }
 }
@@ -124,7 +124,7 @@ impl RemoteVideoTrack {
 
     pub fn rtc_track(&self) -> RtcVideoTrack {
         RtcVideoTrack {
-            server_track: self.server_track.clone(),
+            _server_track: self.server_track.clone(),
         }
     }
 }
@@ -137,9 +137,7 @@ impl RtcTrack {
         }
     }
 
-    pub fn set_enabled(&self, enabled: bool) {
-        //
-    }
+    pub fn set_enabled(&self, _enabled: bool) {}
 }
 
 impl RtcAudioTrack {

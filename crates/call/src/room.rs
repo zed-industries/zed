@@ -15,8 +15,11 @@ use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
 use language::LanguageRegistry;
-use live_kit_client::{self as livekit, id::ParticipantIdentity, RoomEvent};
-use livekit::options::TrackPublishOptions;
+use live_kit_client as livekit;
+use livekit::{
+    capture_local_audio_track, capture_local_video_track, id::ParticipantIdentity,
+    options::TrackPublishOptions, publication::LocalTrackPublication, RoomEvent, RoomOptions,
+};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
@@ -115,7 +118,7 @@ impl Room {
                 let (room, mut events) = livekit::Room::connect(
                     &connection_info.server_url,
                     &connection_info.token,
-                    livekit::RoomOptions::default(),
+                    RoomOptions::default(),
                 )
                 .await?;
 
@@ -1320,7 +1323,7 @@ impl Room {
         };
 
         cx.spawn(move |this, mut cx| async move {
-            let (track, stream) = cx.update(livekit::capture_local_audio_track)??;
+            let (track, stream) = cx.update(capture_local_audio_track)??;
 
             let publication = participant
                 .publish_track(
@@ -1354,7 +1357,6 @@ impl Room {
                                 .detach_and_log_err(cx)
                         } else {
                             if live_kit.muted_by_user || live_kit.deafened {
-                                // publication
                                 publication.mute();
                             }
                             live_kit.microphone_track = LocalTrack::Published {
@@ -1401,7 +1403,7 @@ impl Room {
             let sources = sources.await??;
             let source = sources.first().ok_or_else(|| anyhow!("no display found"))?;
 
-            let (track, _stream) = livekit::capture_local_video_track(&**source).await?;
+            let (track, _stream) = capture_local_video_track(&**source).await?;
 
             let publication = participant
                 .publish_track(
@@ -1631,7 +1633,7 @@ enum LocalTrack {
         publish_id: usize,
     },
     Published {
-        track_publication: livekit::publication::LocalTrackPublication,
+        track_publication: LocalTrackPublication,
     },
 }
 

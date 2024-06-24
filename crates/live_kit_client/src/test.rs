@@ -130,7 +130,7 @@ impl TestServer {
                     .blocking_send(RoomEvent::TrackSubscribed {
                         track: RemoteTrack::Video(RemoteVideoTrack {
                             server_track: track.clone(),
-                            room: client_room.downgrade(),
+                            _room: client_room.downgrade(),
                         }),
                         publication: RemoteTrackPublication {
                             sid: track.sid.clone(),
@@ -289,7 +289,7 @@ impl TestServer {
                     .blocking_send(RoomEvent::TrackSubscribed {
                         track: RemoteTrack::Video(RemoteVideoTrack {
                             server_track: track.clone(),
-                            room: client_room.downgrade(),
+                            _room: client_room.downgrade(),
                         }),
                         publication: RemoteTrackPublication { sid: sid.clone() },
                         participant: RemoteParticipant {
@@ -452,7 +452,7 @@ impl TestServer {
             .map(|track| {
                 Arc::new(RemoteVideoTrack {
                     server_track: track.clone(),
-                    room: client_room.downgrade(),
+                    _room: client_room.downgrade(),
                 })
             })
             .collect())
@@ -659,7 +659,7 @@ struct RoomState {
 pub struct Room(Arc<Mutex<RoomState>>);
 
 #[derive(Clone, Debug)]
-struct WeakRoom(Weak<Mutex<RoomState>>);
+pub(crate) struct WeakRoom(Weak<Mutex<RoomState>>);
 
 impl std::fmt::Debug for RoomState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
