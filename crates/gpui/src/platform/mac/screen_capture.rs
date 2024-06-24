@@ -102,6 +102,14 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
     }
 }
 
+impl Drop for MacScreenCaptureSource {
+    fn drop(&mut self) {
+        unsafe {
+            let _: () = msg_send![self.sc_display, release];
+        }
+    }
+}
+
 impl ScreenCaptureStream for MacScreenCaptureStream {}
 
 impl Drop for MacScreenCaptureStream {
@@ -122,6 +130,8 @@ impl Drop for MacScreenCaptureStream {
             });
             let block = handler.copy();
             let _: () = msg_send![self.sc_stream, stopCaptureWithCompletionHandler:block];
+            let _: () = msg_send![self.sc_stream, release];
+            let _: () = msg_send![self.sc_stream_output, release];
         }
     }
 }
@@ -141,7 +151,7 @@ pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptur
                 for i in 0..displays.count() {
                     let display = displays.objectAtIndex(i);
                     let source = MacScreenCaptureSource {
-                        sc_display: display,
+                        sc_display: msg_send![display, retain],
                     };
                     result.push(Box::new(source) as Box<dyn ScreenCaptureSource>);
                 }
