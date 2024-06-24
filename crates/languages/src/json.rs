@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
+use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
@@ -13,7 +14,7 @@ use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
-    fs::{self, File},
+    fs::{self},
     io::BufReader,
 };
 use std::{
@@ -276,7 +277,7 @@ impl LspAdapter for NodeVersionAdapter {
             "windows" => "pc-windows-msvc",
             other => bail!("Running on unsupported os: {other}"),
         };
-        let asset_name = format!("package-version-server-{}-{os}.gz", consts::ARCH);
+        let asset_name = format!("package-version-server-{}-{os}.tar.gz", consts::ARCH);
         let asset = release
             .assets
             .iter()
@@ -297,7 +298,8 @@ impl LspAdapter for NodeVersionAdapter {
         let version = latest_version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path =
             container_dir.join(format!("package-version-server-{}", version.name));
-
+        let destination_container_path =
+            container_dir.join(format!("package-version-server-{}-tmp", version.name));
         if fs::metadata(&destination_path).await.is_err() {
             let mut response = delegate
                 .http_client()
@@ -305,8 +307,13 @@ impl LspAdapter for NodeVersionAdapter {
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let mut file = File::create(&destination_path).await?;
-            futures::io::copy(decompressed_bytes, &mut file).await?;
+            let archive = Archive::new(decompressed_bytes);
+            archive.unpack(&destination_container_path).await?;
+            fs::copy(
+                destination_container_path.join("package-version-server"),
+                &destination_path,
+            )
+            .await?;
             // todo("windows")
             #[cfg(not(windows))]
             {
@@ -316,12 +323,11 @@ impl LspAdapter for NodeVersionAdapter {
                 )
                 .await?;
             }
-
             remove_matching(&container_dir, |entry| entry != destination_path).await;
         }
 
         Ok(LanguageServerBinary {
-            path: destination_path,
+            path: destination_path.join("package-version-server"),
             env: None,
             arguments: Default::default(),
         })
