@@ -3803,7 +3803,7 @@ impl BackgroundScanner {
         let mut root_canonical_path = None;
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
-        let child_paths = self
+        let mut child_paths = self
             .fs
             .read_dir(&job.abs_path)
             .await?
@@ -3819,58 +3819,48 @@ impl BackgroundScanner {
             .collect::<Vec<_>>()
             .await;
 
-        if let Some(dot_git_path) = child_paths
-            .iter()
-            .find(|abs_path| abs_path.file_name().unwrap() == *DOT_GIT)
-        {
-            let dot_git_path: Arc<Path> = job.path.join(dot_git_path.file_name().unwrap()).into();
-
-            let repo = self
-                .state
-                .lock()
-                .build_git_repository(dot_git_path.clone(), self.fs.as_ref());
-            if let Some((work_directory, repository)) = repo {
-                let t0 = Instant::now();
-                let statuses = repository
-                    .statuses(Path::new(""))
-                    .log_err()
-                    .unwrap_or_default();
-                log::trace!("computed git status in {:?}", t0.elapsed());
-                containing_repository = Some(ScanJobContainingRepository {
-                    work_directory,
-                    statuses,
-                });
-            }
-            self.watcher.add(dot_git_path.as_ref()).log_err();
-        }
-
-        if let Some(gitignore_path) = child_paths
-            .iter()
-            .find(|abs_path| abs_path.file_name().unwrap() == *GITIGNORE)
-        {
-            let child_name = gitignore_path.file_name().unwrap();
-            let gitignore_path: Arc<Path> = job.path.join(child_name).into();
-
-            match build_gitignore(&gitignore_path, self.fs.as_ref()).await {
-                Ok(ignore) => {
-                    let ignore = Arc::new(ignore);
-                    ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
-                    new_ignore = Some(ignore);
-                }
-                Err(error) => {
-                    log::error!(
-                        "error loading .gitignore file {:?} - {:?}",
-                        child_name,
-                        error
-                    );
-                }
-            }
-        }
+        // Ensure that .git and .gitignore are processed first.
+        child_paths.sort_unstable();
 
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
             let child_name = child_abs_path.file_name().unwrap();
             let child_path: Arc<Path> = job.path.join(child_name).into();
+
+            if child_name == *DOT_GIT {
+                let repo = self
+                    .state
+                    .lock()
+                    .build_git_repository(child_path.clone(), self.fs.as_ref());
+                if let Some((work_directory, repository)) = repo {
+                    let t0 = Instant::now();
+                    let statuses = repository
+                        .statuses(Path::new(""))
+                        .log_err()
+                        .unwrap_or_default();
+                    log::trace!("computed git status in {:?}", t0.elapsed());
+                    containing_repository = Some(ScanJobContainingRepository {
+                        work_directory,
+                        statuses,
+                    });
+                }
+                self.watcher.add(child_abs_path.as_ref()).log_err();
+            } else if child_name == *GITIGNORE {
+                match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
+                    Ok(ignore) => {
+                        let ignore = Arc::new(ignore);
+                        ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
+                        new_ignore = Some(ignore);
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "error loading .gitignore file {:?} - {:?}",
+                            child_name,
+                            error
+                        );
+                    }
+                }
+            }
 
             if self.settings.is_path_excluded(&child_path) {
                 log::debug!("skipping excluded child entry {child_path:?}");
