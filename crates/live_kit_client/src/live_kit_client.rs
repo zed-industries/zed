@@ -1,3 +1,7 @@
+mod remote_video_track_view;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test;
+
 use anyhow::Result;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait as _},
@@ -16,13 +20,12 @@ use webrtc::{
     video_stream::native::NativeVideoStream,
 };
 
-#[cfg(any(test, feature = "test-support"))]
-pub mod test;
-
 #[cfg(not(any(test, feature = "test-support")))]
 pub use livekit::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
+
+pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 
 pub fn init(dispatcher: Arc<dyn gpui::PlatformDispatcher>) {
     struct Dispatcher(Arc<dyn gpui::PlatformDispatcher>);

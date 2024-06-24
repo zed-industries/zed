@@ -1,18 +1,21 @@
 use gpui::{
-    actions, bounds, div, point, px, rgb, size, AsyncAppContext, Bounds, InteractiveElement,
-    KeyBinding, Menu, MenuItem, ParentElement, Pixels, Render, SharedString,
-    StatefulInteractiveElement as _, Styled, Task, ViewContext, VisualContext, WindowBounds,
-    WindowHandle, WindowOptions,
+    actions, bounds, div, point, prelude::IntoElement, px, rgb, size, AsyncAppContext, Bounds,
+    InteractiveElement, KeyBinding, Menu, MenuItem, ParentElement, Pixels, Render,
+    ScreenCaptureStream, SharedString, StatefulInteractiveElement as _, Styled, Task, View,
+    ViewContext, VisualContext, WindowBounds, WindowHandle, WindowOptions,
 };
 use live_kit_client::{
-    capture_local_audio_track,
+    capture_local_audio_track, capture_local_video_track,
+    id::TrackSid,
     options::TrackPublishOptions,
+    participant::{Participant, RemoteParticipant},
     play_remote_audio_track,
     publication::LocalTrackPublication,
     track::{LocalTrack, RemoteTrack},
-    AudioStream, Room, RoomEvent, RoomOptions,
+    AudioStream, RemoteVideoTrackView, Room, RoomEvent, RoomOptions,
 };
 use live_kit_server::token::{self, VideoGrant};
+use livekit::id::ParticipantIdentity;
 use log::LevelFilter;
 use postage::stream::Stream as _;
 use simplelog::SimpleLogger;
@@ -66,8 +69,8 @@ fn main() {
             )
             .unwrap();
 
-            let bounds1 = bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0)));
-            let bounds2 = bounds(point(px(400.0), px(0.0)), size(px(400.0), px(400.0)));
+            let bounds1 = bounds(point(px(0.0), px(0.0)), size(px(800.0), px(800.0)));
+            let bounds2 = bounds(point(px(800.0), px(0.0)), size(px(800.0), px(800.0)));
 
             let window1 = LivekitWindow::new(
                 live_kit_url.as_str(),
@@ -84,60 +87,6 @@ fn main() {
                 cx.clone(),
             )
             .await;
-
-            // let (local_video_track, stream) =
-            //     create_video_track_from_screen_capture_source(&*source)
-            //         .await
-            //         .unwrap();
-            // let local_video_track_publication = room_a
-            //     .local_participant()
-            //     .publish_track(
-            //         LocalTrack::Video(local_video_track),
-            //         TrackPublishOptions::default(),
-            //     )
-            //     .await
-            //     .unwrap();
-
-            // if let RoomEvent::TrackSubscribed {
-            //     track, participant, ..
-            // } = room_b_events.recv().await.unwrap()
-            // {
-            //     let remote_publications = room_b
-            //         .remote_participants()
-            //         .get(&ParticipantIdentity("test-participant-1".into()))
-            //         .unwrap()
-            //         .track_publications();
-
-            //     assert_eq!(remote_publications.len(), 1);
-            //     assert_eq!(participant.identity().0, "test-participant-1");
-            // } else {
-            //     panic!("unexpected message");
-            // }
-
-            // room_a
-            //     .local_participant()
-            //     .unpublish_track(&local_video_track_publication.sid())
-            //     .await
-            //     .unwrap();
-            // if let RoomEvent::TrackUnpublished {
-            //     publication,
-            //     participant,
-            // } = room_b_events.recv().await.unwrap()
-            // {
-            //     assert_eq!(participant.identity().0, "test-participant-1");
-            //     assert_eq!(publication.sid(), local_video_track_publication.sid());
-
-            //     let remote_publications = room_b
-            //         .remote_participants()
-            //         .get(&ParticipantIdentity("test-participant-1".into()))
-            //         .unwrap()
-            //         .track_publications();
-            //     assert_eq!(remote_publications.len(), 0);
-            // } else {
-            //     panic!("unexpected message");
-            // }
-
-            // cx.update(|cx| cx.shutdown()).ok();
         })
         .detach();
     });
@@ -150,9 +99,19 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
 struct LivekitWindow {
     room: Room,
     microphone_track: Option<LocalTrackPublication>,
+    screen_share_track: Option<LocalTrackPublication>,
     microphone_stream: Option<AudioStream>,
-    speaker_stream: Option<AudioStream>,
+    screen_share_stream: Option<Box<dyn ScreenCaptureStream>>,
+    remote_participants: Vec<(ParticipantIdentity, ParticipantState)>,
     _events_task: Task<()>,
+}
+
+#[derive(Default)]
+struct ParticipantState {
+    audio_output_stream: Option<(TrackSid, AudioStream)>,
+    muted: bool,
+    screen_share_output_view: Option<(TrackSid, View<RemoteVideoTrackView>)>,
+    speaking: bool,
 }
 
 impl LivekitWindow {
@@ -187,7 +146,9 @@ impl LivekitWindow {
                             room,
                             microphone_track: None,
                             microphone_stream: None,
-                            speaker_stream: None,
+                            screen_share_track: None,
+                            screen_share_stream: None,
+                            remote_participants: Vec::new(),
                             _events_task,
                         }
                     })
@@ -199,47 +160,96 @@ impl LivekitWindow {
     }
 
     fn handle_room_event(&mut self, event: RoomEvent, cx: &mut ViewContext<Self>) {
-        match event {
-            RoomEvent::ParticipantConnected(participant) => {
-                println!("Participant connected: {:?}", participant.identity());
-            }
-            RoomEvent::ParticipantDisconnected(participant) => {
-                println!("Participant disconnected: {:?}", participant.identity());
-            }
-            RoomEvent::TrackPublished { publication, .. } => {
-                println!("Track published: {:?}", publication.sid());
-            }
-            RoomEvent::TrackUnpublished { publication, .. } => {
-                println!("Track unpublished: {:?}", publication.sid());
-            }
-            RoomEvent::TrackSubscribed { track, .. } => {
-                println!("Track subscribed: {:?}", track.sid());
+        eprintln!("room event: {event:?}");
 
-                if let RemoteTrack::Audio(track) = track {
-                    let stream = play_remote_audio_track(&track, cx);
-                    self.speaker_stream = Some(stream);
+        match event {
+            RoomEvent::TrackUnpublished {
+                publication,
+                participant,
+            } => {
+                let output = self.remote_participant(participant);
+                let unpublish_sid = publication.sid();
+                if output
+                    .audio_output_stream
+                    .as_ref()
+                    .map_or(false, |(sid, _)| *sid == unpublish_sid)
+                {
+                    output.audio_output_stream.take();
+                }
+                if output
+                    .screen_share_output_view
+                    .as_ref()
+                    .map_or(false, |(sid, _)| *sid == unpublish_sid)
+                {
+                    output.screen_share_output_view.take();
+                }
+                cx.notify();
+            }
+
+            RoomEvent::TrackSubscribed {
+                track, participant, ..
+            } => {
+                let output = self.remote_participant(participant);
+                match track {
+                    RemoteTrack::Audio(track) => {
+                        output.audio_output_stream =
+                            Some((track.sid(), play_remote_audio_track(&track, cx)));
+                    }
+                    RemoteTrack::Video(track) => {
+                        output.screen_share_output_view = Some((
+                            track.sid(),
+                            cx.new_view(|cx| RemoteVideoTrackView::new(track, cx)),
+                        ));
+                    }
+                }
+                cx.notify();
+            }
+
+            RoomEvent::TrackMuted { participant, .. } => {
+                if let Participant::Remote(participant) = participant {
+                    self.remote_participant(participant).muted = true;
+                    cx.notify();
                 }
             }
-            RoomEvent::TrackUnsubscribed { publication, .. } => {
-                println!("Track unsubscribed: {:?}", publication.sid());
+
+            RoomEvent::TrackUnmuted { participant, .. } => {
+                if let Participant::Remote(participant) = participant {
+                    self.remote_participant(participant).muted = false;
+                    cx.notify();
+                }
             }
+
             RoomEvent::ActiveSpeakersChanged { speakers } => {
-                println!("Active speakers changed: {:?}", speakers);
+                for (identity, output) in &mut self.remote_participants {
+                    output.speaking = speakers.iter().any(|speaker| {
+                        if let Participant::Remote(speaker) = speaker {
+                            speaker.identity() == *identity
+                        } else {
+                            false
+                        }
+                    });
+                }
+                cx.notify();
             }
-            RoomEvent::Disconnected { .. } => {
-                println!("Room disconnected");
-            }
+
             _ => {}
         }
 
         cx.notify();
     }
 
-    fn is_muted(&self) -> bool {
-        self.microphone_track
-            .as_ref()
-            .map(|t| t.is_muted())
-            .unwrap_or(true)
+    fn remote_participant(&mut self, participant: RemoteParticipant) -> &mut ParticipantState {
+        match self
+            .remote_participants
+            .binary_search_by_key(&&participant.identity(), |row| &row.0)
+        {
+            Ok(ix) => &mut self.remote_participants[ix].1,
+            Err(ix) => {
+                self.remote_participants
+                    .insert(ix, (participant.identity(), ParticipantState::default()));
+                &mut self.remote_participants[ix].1
+            }
+        }
     }
 
     fn toggle_mute(&mut self, cx: &mut ViewContext<Self>) {
@@ -267,64 +277,107 @@ impl LivekitWindow {
             .detach();
         }
     }
+
+    fn toggle_screen_share(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(track) = self.screen_share_track.take() {
+            self.screen_share_stream.take();
+            let participant = self.room.local_participant();
+            cx.background_executor()
+                .spawn(async move {
+                    participant.unpublish_track(&track.sid()).await.unwrap();
+                })
+                .detach();
+            cx.notify();
+        } else {
+            let participant = self.room.local_participant();
+            let sources = cx.screen_capture_sources();
+            cx.spawn(|this, mut cx| async move {
+                let sources = sources.await.unwrap()?;
+                let source = sources.into_iter().next().unwrap();
+                let (track, stream) = capture_local_video_track(&*source).await?;
+                let publication = participant
+                    .publish_track(LocalTrack::Video(track), TrackPublishOptions::default())
+                    .await?;
+                this.update(&mut cx, |this, cx| {
+                    this.screen_share_track = Some(publication);
+                    this.screen_share_stream = Some(stream);
+                    cx.notify();
+                })
+            })
+            .detach();
+        }
+    }
 }
 
 impl Render for LivekitWindow {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl gpui::prelude::IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
-            .p(px(10.0))
             .bg(rgb(0xffa8d4))
             .size_full()
             .flex()
-            .flex_row()
-            .justify_between()
+            .flex_col()
             .child(
                 div()
-                    .bg(gpui::rgb(0xffd4a8))
-                    .w(px(120.0))
+                    .p_1()
+                    .bg(rgb(0xffd4a8))
+                    .h(px(80.0))
                     .flex()
-                    .flex_col()
-                    .justify_around()
-                    .child(
+                    .flex_row()
+                    .children([
                         div()
                             .id("toggle-mute")
                             .w(px(100.0))
                             .h(px(30.0))
                             .bg(rgb(0x6666ff))
-                            .justify_around()
                             .flex()
                             .flex_row()
-                            .child(if self.microphone_track.is_none() {
-                                "Publish mic"
-                            } else if self.is_muted() {
-                                "Unmute"
+                            .child(if let Some(track) = &self.microphone_track {
+                                if track.is_muted() {
+                                    "Unmute"
+                                } else {
+                                    "Mute"
+                                }
                             } else {
-                                "Mute"
+                                "Publish mic"
                             })
                             .on_click(cx.listener(|this, _, cx| this.toggle_mute(cx))),
-                    ),
+                        div()
+                            .id("toggle-screen-share")
+                            .w(px(100.0))
+                            .h(px(30.0))
+                            .bg(rgb(0x6666ff))
+                            .flex()
+                            .flex_row()
+                            .child(if self.screen_share_track.is_none() {
+                                "Share screen"
+                            } else {
+                                "Unshare screen"
+                            })
+                            .on_click(cx.listener(|this, _, cx| this.toggle_screen_share(cx))),
+                    ]),
             )
             .child(
                 div()
+                    .id("remote-participants")
+                    .overflow_y_scroll()
+                    .p_1()
                     .bg(gpui::rgb(0xaaaaff))
-                    .w(px(300.0))
                     .flex()
                     .flex_col()
-                    .child(format!(
-                        "mic: {:?}",
-                        self.microphone_track.as_ref().map(|track| track.sid())
-                    ))
-                    .children(self.room.remote_participants().into_values().flat_map(
-                        |participant| {
-                            let identity = participant.identity();
-                            participant.track_publications().into_values().map({
-                                let identity = identity.clone();
-                                move |publication| {
-                                    SharedString::from(format!("{:?} {:?}", &identity, publication))
-                                }
-                            })
-                        },
-                    )),
+                    .flex_grow()
+                    .children(self.remote_participants.iter().map(|(identity, state)| {
+                        div()
+                            .w_full()
+                            .h(px(400.0))
+                            .child(SharedString::from(if state.speaking {
+                                format!("{} (speaking)", &identity.0)
+                            } else if state.muted {
+                                format!("{} (muted)", &identity.0)
+                            } else {
+                                identity.0.clone()
+                            }))
+                            .children(state.screen_share_output_view.as_ref().map(|e| e.1.clone()))
+                    })),
             )
     }
 }
