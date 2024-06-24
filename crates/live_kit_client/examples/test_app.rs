@@ -16,7 +16,6 @@ use live_kit_server::token::{self, VideoGrant};
 use log::LevelFilter;
 use postage::stream::Stream as _;
 use simplelog::SimpleLogger;
-use util::ResultExt as _;
 
 actions!(live_kit_client, [Quit]);
 
@@ -217,7 +216,7 @@ impl LivekitWindow {
                 println!("Track subscribed: {:?}", track.sid());
 
                 if let RemoteTrack::Audio(track) = track {
-                    let stream = play_remote_audio_track(&track, cx.background_executor());
+                    let stream = play_remote_audio_track(&track, cx);
                     self.speaker_stream = Some(stream);
                 }
             }
@@ -254,8 +253,7 @@ impl LivekitWindow {
         } else {
             let participant = self.room.local_participant();
             cx.spawn(|this, mut cx| async move {
-                let track = capture_local_audio_track(cx.background_executor());
-                let (track, stream) = track.await?;
+                let (track, stream) = cx.update(|cx| capture_local_audio_track(cx))??;
                 let publication = participant
                     .publish_track(LocalTrack::Audio(track), TrackPublishOptions::default())
                     .await
