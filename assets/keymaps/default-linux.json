@@ -3,21 +3,32 @@
   {
     "bindings": {
       "up": "menu::SelectPrev",
+      "numpad_up": "menu::SelectPrev",
       "pageup": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
+      "numpad_pageup": "menu::SelectFirst",
+      "shift-numpad_pageup": "menu::SelectFirst",
       "ctrl-p": "menu::SelectPrev",
       "down": "menu::SelectNext",
+      "numpad_down": "menu::SelectNext",
       "pagedown": "menu::SelectLast",
-      "shift-pagedown": "menu::SelectFirst",
+      "shift-pagedown": "menu::SelectLast",
+      "numpad_pagedown": "menu::SelectLast",
+      "shift-numpad_pagedown": "menu::SelectLast",
       "ctrl-n": "menu::SelectNext",
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
+      "numpad_enter": "menu::Confirm",
+      "ctrl-numpad_enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "shift-enter": "picker::UseSelectedQuery",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
+      "shift_numpad_enter": "picker::UseSelectedQuery",
+      "alt-numpad_enter": ["picker::ConfirmInput", { "secondary": false }],
+      "ctrl-alt-numpad_enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "ctrl-o": "workspace::Open",
@@ -37,6 +48,7 @@
       "backspace": "editor::Backspace",
       "shift-backspace": "editor::Backspace",
       "delete": "editor::Delete",
+      "numpad_delete": "editor::Delete",
       "ctrl-d": "editor::Delete",
       "tab": "editor::Tab",
       "shift-tab": "editor::TabPrev",
@@ -44,40 +56,69 @@
       "ctrl-t": "editor::Transpose",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "ctrl-numpad_delete": "editor::DeleteToNextWordEnd",
       "ctrl-x": "editor::Cut",
       "ctrl-insert": "editor::Copy",
+      "ctrl-numpad_insert": "editor::Copy",
       "ctrl-c": "editor::Copy",
       "shift-insert": "editor::Paste",
+      "shift-numpad_insert": "editor::Paste",
       "ctrl-v": "editor::Paste",
       "ctrl-y": "editor::Redo",
       "ctrl-z": "editor::Undo",
       "ctrl-shift-z": "editor::Redo",
       "up": "editor::MoveUp",
+      "numpad_up": "editor::MoveUp",
       "ctrl-up": "editor::LineUp",
+      "ctrl-numpad_up": "editor::LineUp",
       "ctrl-down": "editor::LineDown",
+      "ctrl-numpad_down": "editor::LineDown",
       "pageup": "editor::PageUp",
+      "numpad_pageup": "editor::PageUp",
       "shift-pageup": "editor::SelectPageUp",
+      "shift-numpad_pageup": "editor::SelectPageUp",
       "home": "editor::MoveToBeginningOfLine",
+      "numpad_home": "editor::MoveToBeginningOfLine",
       "down": "editor::MoveDown",
+      "numpad_down": "editor::MoveDown",
       "pagedown": "editor::PageDown",
+      "numpad_pagedown": "editor::PageDown",
       "shift-pagedown": "editor::SelectPageDown",
+      "shift-numpad_pagedown": "editor::SelectPageDown",
       "end": "editor::MoveToEndOfLine",
+      "numpad_end": "editor::MoveToEndOfLine",
       "left": "editor::MoveLeft",
+      "numpad_left": "editor::MoveLeft",
       "right": "editor::MoveRight",
+      "numpad_right": "editor::MoveRight",
       "ctrl-left": "editor::MoveToPreviousWordStart",
       "ctrl-right": "editor::MoveToNextWordEnd",
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-end": "editor::MoveToEnd",
+      "ctrl-numpad_left": "editor::MoveToPreviousWordStart",
+      "ctrl-numpad_right": "editor::MoveToNextWordEnd",
+      "ctrl-numpad_home": "editor::MoveToBeginning",
+      "ctrl-numpad_end": "editor::MoveToEnd",
       "shift-up": "editor::SelectUp",
       "shift-down": "editor::SelectDown",
       "shift-left": "editor::SelectLeft",
       "shift-right": "editor::SelectRight",
+      "shift-numpad_up": "editor::SelectUp",
+      "shift-numpad_down": "editor::SelectDown",
+      "shift-numpad_left": "editor::SelectLeft",
+      "shift-numpad_right": "editor::SelectRight",
       "ctrl-shift-left": "editor::SelectToPreviousWordStart",
       "ctrl-shift-right": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::AddSelectionAbove",
       "ctrl-shift-down": "editor::AddSelectionBelow",
+      "ctrl-shift-numpad_left": "editor::SelectToPreviousWordStart",
+      "ctrl-shift-numpad_right": "editor::SelectToNextWordEnd",
+      "ctrl-shift-numpad_up": "editor::AddSelectionAbove",
+      "ctrl-shift-numpad_down": "editor::AddSelectionBelow",
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
+      "ctrl-shift-numpad_home": "editor::SelectToBeginning",
+      "ctrl-shift-numpad_end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
       "ctrl-l": "editor::SelectLine",
       "ctrl-shift-i": "editor::Format",
@@ -88,6 +129,12 @@
       //   }
       // ],
       "shift-home": [
+        "editor::SelectToBeginningOfLine",
+        {
+          "stop_at_soft_wraps": true
+        }
+      ],
+      "shift-numpad_home": [
         "editor::SelectToBeginningOfLine",
         {
           "stop_at_soft_wraps": true
@@ -106,6 +153,12 @@
       //   }
       // ],
       "shift-end": [
+        "editor::SelectToEndOfLine",
+        {
+          "stop_at_soft_wraps": true
+        }
+      ],
+      "shift-numpad_end": [
         "editor::SelectToEndOfLine",
         {
           "stop_at_soft_wraps": true
@@ -138,6 +191,10 @@
       "shift-enter": "editor::Newline",
       "ctrl-shift-enter": "editor::NewlineBelow",
       "ctrl-enter": "editor::NewlineAbove",
+      "numpad_enter": "editor::Newline",
+      "shift-numpad_enter": "editor::Newline",
+      "ctrl-shift-numpad_enter": "editor::NewlineBelow",
+      "ctrl-numpad_enter": "editor::NewlineAbove",
       "alt-z": "editor::ToggleSoftWrap",
       "ctrl-f": "buffer_search::Deploy",
       "ctrl-h": [
@@ -160,7 +217,8 @@
     "bindings": {
       "alt-]": "editor::NextInlineCompletion",
       "alt-[": "editor::PreviousInlineCompletion",
-      "alt-right": "editor::AcceptPartialInlineCompletion"
+      "alt-right": "editor::AcceptPartialInlineCompletion",
+      "alt-numpad_right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
@@ -174,7 +232,10 @@
     "bindings": {
       "ctrl-enter": "editor::Newline",
       "shift-enter": "editor::Newline",
-      "ctrl-shift-enter": "editor::NewlineBelow"
+      "ctrl-shift-enter": "editor::NewlineBelow",
+      "ctrl-numpad_enter": "editor::Newline",
+      "shift-numpad_enter": "editor::Newline",
+      "ctrl-shift-numpad_enter": "editor::NewlineBelow"
     }
   },
   {
@@ -206,6 +267,9 @@
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
+      "numpad_enter": "search::SelectNextMatch",
+      "shift-numpad_enter": "search::SelectPrevMatch",
+      "alt-numpad_enter": "search::SelectAllMatches",
       "ctrl-f": "search::FocusSearch",
       "ctrl-h": "search::ToggleReplace",
       "ctrl-l": "search::ToggleSelection"
@@ -215,14 +279,18 @@
     "context": "BufferSearchBar && in_replace",
     "bindings": {
       "enter": "search::ReplaceNext",
-      "ctrl-enter": "search::ReplaceAll"
+      "ctrl-enter": "search::ReplaceAll",
+      "numpad_enter": "search::ReplaceNext",
+      "ctrl-numpad_enter": "search::ReplaceAll"
     }
   },
   {
     "context": "BufferSearchBar && !in_replace > Editor",
     "bindings": {
       "up": "search::PreviousHistoryQuery",
-      "down": "search::NextHistoryQuery"
+      "down": "search::NextHistoryQuery",
+      "numpad_up": "search::PreviousHistoryQuery",
+      "numpad_down": "search::NextHistoryQuery"
     }
   },
   {
@@ -239,14 +307,18 @@
     "context": "ProjectSearchBar > Editor",
     "bindings": {
       "up": "search::PreviousHistoryQuery",
-      "down": "search::NextHistoryQuery"
+      "down": "search::NextHistoryQuery",
+      "numpad_up": "search::PreviousHistoryQuery",
+      "numpad_down": "search::NextHistoryQuery"
     }
   },
   {
     "context": "ProjectSearchBar && in_replace",
     "bindings": {
       "enter": "search::ReplaceNext",
-      "ctrl-alt-enter": "search::ReplaceAll"
+      "ctrl-alt-enter": "search::ReplaceAll",
+      "numpad_enter": "search::ReplaceNext",
+      "ctrl-alt-numpad_enter": "search::ReplaceAll"
     }
   },
   {
@@ -263,6 +335,8 @@
     "bindings": {
       "ctrl-pageup": "pane::ActivatePrevItem",
       "ctrl-pagedown": "pane::ActivateNextItem",
+      "ctrl-numpad_pageup": "pane::ActivatePrevItem",
+      "ctrl-numpad_pagedown": "pane::ActivateNextItem",
       "ctrl-w": "pane::CloseActiveItem",
       "alt-ctrl-t": "pane::CloseInactiveItems",
       "alt-ctrl-shift-w": "workspace::CloseInactiveTabsAndPanes",
@@ -274,6 +348,7 @@
       "ctrl-alt-shift-h": "search::ToggleReplace",
       "ctrl-alt-shift-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
+      "alt-numpad_enter": "search::SelectAllMatches",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
       "alt-r": "search::ToggleRegex",
@@ -297,15 +372,25 @@
       "ctrl-]": "editor::Indent",
       "shift-alt-up": "editor::AddSelectionAbove",
       "shift-alt-down": "editor::AddSelectionBelow",
+      "shift-alt-numpad_up": "editor::AddSelectionAbove",
+      "shift-alt-numpad_down": "editor::AddSelectionBelow",
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
+      "alt-numpad_up": "editor::MoveLineUp",
+      "alt-numpad_down": "editor::MoveLineDown",
       "ctrl-alt-shift-up": "editor::DuplicateLineUp",
       "ctrl-alt-shift-down": "editor::DuplicateLineDown",
+      "ctrl-alt-shift-numpad_up": "editor::DuplicateLineUp",
+      "ctrl-alt-shift-numpad_down": "editor::DuplicateLineDown",
       "ctrl-shift-left": "editor::SelectToPreviousWordStart",
       "ctrl-shift-right": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::SelectLargerSyntaxNode", //todo(linux) tmp keybinding
       "ctrl-shift-down": "editor::SelectSmallerSyntaxNode", //todo(linux) tmp keybinding
+      "ctrl-shift-numpad_left": "editor::SelectToPreviousWordStart",
+      "ctrl-shift-numpad_right": "editor::SelectToNextWordEnd",
+      "ctrl-shift-numpad_up": "editor::SelectLargerSyntaxNode", //todo(linux) tmp keybinding
+      "ctrl-shift-numpad_down": "editor::SelectSmallerSyntaxNode", //todo(linux) tmp keybinding
       "ctrl-d": [
         "editor::SelectNext",
         {
@@ -442,10 +527,21 @@
       "ctrl-k ctrl-right": ["workspace::ActivatePaneInDirection", "Right"],
       "ctrl-k ctrl-up": ["workspace::ActivatePaneInDirection", "Up"],
       "ctrl-k ctrl-down": ["workspace::ActivatePaneInDirection", "Down"],
+      "ctrl-k ctrl-numpad_left": ["workspace::ActivatePaneInDirection", "Left"],
+      "ctrl-k ctrl-numpad_right": [
+        "workspace::ActivatePaneInDirection",
+        "Right"
+      ],
+      "ctrl-k ctrl-numpad_up": ["workspace::ActivatePaneInDirection", "Up"],
+      "ctrl-k ctrl-numpad_down": ["workspace::ActivatePaneInDirection", "Down"],
       "ctrl-k shift-left": ["workspace::SwapPaneInDirection", "Left"],
       "ctrl-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
       "ctrl-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
       "ctrl-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
+      "ctrl-k shift-numpad_left": ["workspace::SwapPaneInDirection", "Left"],
+      "ctrl-k shift-numpad_right": ["workspace::SwapPaneInDirection", "Right"],
+      "ctrl-k shift-numpad_up": ["workspace::SwapPaneInDirection", "Up"],
+      "ctrl-k shift-numpad_down": ["workspace::SwapPaneInDirection", "Down"],
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn"
     }
@@ -460,14 +556,19 @@
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-delete": "editor::DeleteToNextSubwordEnd",
+      "ctrl-alt-numpad_delete": "editor::DeleteToNextSubwordEnd",
       "ctrl-alt-d": "editor::DeleteToNextSubwordEnd",
       "ctrl-alt-left": "editor::MoveToPreviousSubwordStart",
+      "ctrl-alt-numpad_left": "editor::MoveToPreviousSubwordStart",
       "ctrl-alt-b": "editor::MoveToPreviousSubwordStart",
       "ctrl-alt-right": "editor::MoveToNextSubwordEnd",
+      "ctrl-alt-numpad_right": "editor::MoveToNextSubwordEnd",
       "ctrl-alt-f": "editor::MoveToNextSubwordEnd",
       "ctrl-alt-shift-left": "editor::SelectToPreviousSubwordStart",
+      "ctrl-alt-shift-numpad_left": "editor::SelectToPreviousSubwordStart",
       "ctrl-alt-shift-b": "editor::SelectToPreviousSubwordStart",
       "ctrl-alt-shift-right": "editor::SelectToNextSubwordEnd",
+      "ctrl-alt-shift-numpad_right": "editor::SelectToNextSubwordEnd",
       "ctrl-alt-shift-f": "editor::SelectToNextSubwordEnd"
     }
   },
@@ -478,20 +579,26 @@
       "ctrl-k up": "pane::SplitUp",
       "ctrl-k down": "pane::SplitDown",
       "ctrl-k left": "pane::SplitLeft",
-      "ctrl-k right": "pane::SplitRight"
+      "ctrl-k right": "pane::SplitRight",
+      "ctrl-k numpad_up": "pane::SplitUp",
+      "ctrl-k numpad_down": "pane::SplitDown",
+      "ctrl-k numpad_left": "pane::SplitLeft",
+      "ctrl-k numpad_right": "pane::SplitRight"
     }
   },
   // Bindings that should be unified with bindings for more general actions
   {
     "context": "Editor && renaming",
     "bindings": {
-      "enter": "editor::ConfirmRename"
+      "enter": "editor::ConfirmRename",
+      "numpad_enter": "editor::ConfirmRename"
     }
   },
   {
     "context": "Editor && showing_completions",
     "bindings": {
       "enter": "editor::ConfirmCompletion",
+      "numpad_enter": "editor::ConfirmCompletion",
       "tab": "editor::ConfirmCompletion"
     }
   },
@@ -504,18 +611,23 @@
   {
     "context": "Editor && showing_code_actions",
     "bindings": {
-      "enter": "editor::ConfirmCodeAction"
+      "enter": "editor::ConfirmCodeAction",
+      "numpad_enter": "editor::ConfirmCodeAction"
     }
   },
   {
     "context": "Editor && (showing_code_actions || showing_completions)",
     "bindings": {
       "up": "editor::ContextMenuPrev",
+      "numpad_up": "editor::ContextMenuPrev",
       "ctrl-p": "editor::ContextMenuPrev",
       "down": "editor::ContextMenuNext",
+      "numpad_down": "editor::ContextMenuNext",
       "ctrl-n": "editor::ContextMenuNext",
       "pageup": "editor::ContextMenuFirst",
-      "pagedown": "editor::ContextMenuLast"
+      "pagedown": "editor::ContextMenuLast",
+      "numpad_pageup": "editor::ContextMenuFirst",
+      "numpad_pagedown": "editor::ContextMenuLast"
     }
   },
   // Custom bindings
@@ -534,27 +646,36 @@
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
       "ctrl-k enter": "editor::OpenExcerptsSplit",
+      "alt-numpad_enter": "editor::OpenExcerpts",
+      "shift-numpad_enter": "editor::ExpandExcerpts",
+      "ctrl-k numpad_enter": "editor::OpenExcerptsSplit",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPrevHunk",
-      "ctrl-enter": "assistant::InlineAssist"
+      "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-numpad_enter": "assistant::InlineAssist"
     }
   },
   {
     "context": "ContextEditor > Editor",
     "bindings": {
       "ctrl-enter": "assistant::Assist",
+      "ctrl-numpad_enter": "assistant::Assist",
       "ctrl-s": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
       "shift-enter": "assistant::Split",
+      "shift-numpad_enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
-      "alt-enter": "editor::Newline"
+      "numpad_enter": "assistant::ConfirmCommand",
+      "alt-enter": "editor::Newline",
+      "alt-numpad_enter": "editor::Newline"
     }
   },
   {
     "context": "ProjectSearchBar && !in_replace",
     "bindings": {
-      "ctrl-enter": "project_search::SearchInNew"
+      "ctrl-enter": "project_search::SearchInNew",
+      "ctrl-numpad_enter": "project_search::SearchInNew"
     }
   },
   {
@@ -562,12 +683,16 @@
     "bindings": {
       "left": "outline_panel::CollapseSelectedEntry",
       "right": "outline_panel::ExpandSelectedEntry",
+      "numpad_left": "outline_panel::CollapseSelectedEntry",
+      "numpad_right": "outline_panel::ExpandSelectedEntry",
       "ctrl-alt-c": "outline_panel::CopyPath",
       "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
       "alt-ctrl-r": "outline_panel::RevealInFinder",
       "space": "outline_panel::Open",
       "shift-down": "menu::SelectNext",
-      "shift-up": "menu::SelectPrev"
+      "shift-up": "menu::SelectPrev",
+      "shift-numpad_down": "menu::SelectNext",
+      "shift-numpad_up": "menu::SelectPrev"
     }
   },
   {
@@ -575,25 +700,34 @@
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",
       "right": "project_panel::ExpandSelectedEntry",
+      "numpad_left": "project_panel::CollapseSelectedEntry",
+      "numpad_right": "project_panel::ExpandSelectedEntry",
       "ctrl-n": "project_panel::NewFile",
       "alt-ctrl-n": "project_panel::NewDirectory",
       "ctrl-x": "project_panel::Cut",
       "ctrl-c": "project_panel::Copy",
       "ctrl-insert": "project_panel::Copy",
+      "ctrl-numpad_insert": "project_panel::Copy",
       "ctrl-v": "project_panel::Paste",
       "shift-insert": "project_panel::Paste",
+      "shift-numpad_insert": "project_panel::Paste",
       "ctrl-alt-c": "project_panel::CopyPath",
       "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
       "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
+      "numpad_enter": "project_panel::Rename",
       "backspace": "project_panel::Trash",
       "delete": "project_panel::Trash",
+      "numpad_delete": "project_panel::Trash",
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
+      "ctrl-numpad_delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
+      "shift-numpad_down": "menu::SelectNext",
+      "shift-numpad_up": "menu::SelectPrev",
       "escape": "menu::Cancel"
     }
   },
@@ -637,6 +771,8 @@
     "bindings": {
       "ctrl-up": "menu::SelectPrev",
       "ctrl-down": "menu::SelectNext",
+      "ctrl-numpad_up": "menu::SelectPrev",
+      "ctrl-numpad_down": "menu::SelectNext",
       "ctrl-shift-tab": "menu::SelectPrev",
       "ctrl-backspace": "tab_switcher::CloseSelectedItem"
     }
@@ -647,14 +783,21 @@
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
       "shift-ctrl-c": "terminal::Copy",
       "ctrl-insert": "terminal::Copy",
+      "ctrl-numpad_insert": "terminal::Copy",
       "shift-ctrl-v": "terminal::Paste",
       "shift-insert": "terminal::Paste",
+      "shift-numpad_insert": "terminal::Paste",
       "up": ["terminal::SendKeystroke", "up"],
       "pageup": ["terminal::SendKeystroke", "pageup"],
       "down": ["terminal::SendKeystroke", "down"],
       "pagedown": ["terminal::SendKeystroke", "pagedown"],
+      "numpad_up": ["terminal::SendKeystroke", "up"],
+      "numpad_pageup": ["terminal::SendKeystroke", "pageup"],
+      "numpad_down": ["terminal::SendKeystroke", "down"],
+      "numpad_pagedown": ["terminal::SendKeystroke", "pagedown"],
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
+      "numpad_enter": ["terminal::SendKeystroke", "enter"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"]
     }
   }

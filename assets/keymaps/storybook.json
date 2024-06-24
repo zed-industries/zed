@@ -3,17 +3,27 @@
   {
     "bindings": {
       "up": "menu::SelectPrev",
+      "numpad_up": "menu::SelectPrev",
       "pageup": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
+      "numpad_pageup": "menu::SelectFirst",
+      "shift-numpad_pageup": "menu::SelectFirst",
       "ctrl-p": "menu::SelectPrev",
       "down": "menu::SelectNext",
+      "numpad_down": "menu::SelectNext",
       "pagedown": "menu::SelectLast",
-      "shift-pagedown": "menu::SelectFirst",
+      "shift-pagedown": "menu::SelectLast",
+      "numpad_pagedown": "menu::SelectLast",
+      "shift-numpad_pagedown": "menu::SelectLast",
       "ctrl-n": "menu::SelectNext",
       "cmd-up": "menu::SelectFirst",
       "cmd-down": "menu::SelectLast",
+      "cmd-numpad_up": "menu::SelectFirst",
+      "cmd-numpad_down": "menu::SelectLast",
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
+      "numpad_enter": "menu::Confirm",
+      "ctrl-numpad_enter": "menu::SecondaryConfirm",
       "cmd-enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
@@ -21,7 +31,10 @@
       "backspace": "editor::Backspace",
       "delete": "editor::Delete",
       "left": "editor::MoveLeft",
-      "right": "editor::MoveRight"
+      "right": "editor::MoveRight",
+      "numpad_delete": "editor::Delete",
+      "numpad_left": "editor::MoveLeft",
+      "numpad_right": "editor::MoveRight"
     }
   }
 ]
