@@ -1641,13 +1641,6 @@ impl ProjectPanel {
                 });
             }
         }
-
-        let any_ignored = self
-            .visible_entries
-            .iter()
-            .flat_map(|entry| entry.1.iter().map(|e| e.is_ignored))
-            .any(|ignored| ignored);
-        dbg!(any_ignored);
     }
 
     fn expand_entry(

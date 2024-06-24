@@ -37,11 +37,6 @@ impl IgnoreStack {
             return true;
         }
 
-        if abs_path.ends_with(Path::new("target")) {
-            dbg!(abs_path, is_dir);
-            dbg!(self);
-        }
-
         match self {
             Self::None => false,
             Self::All => true,

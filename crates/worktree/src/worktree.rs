@@ -3439,7 +3439,6 @@ impl BackgroundScanner {
                     .ignore_stack_for_abs_path(&root_abs_path, true);
                 if ignore_stack.is_abs_path_ignored(&root_abs_path, true) {
                     root_entry.is_ignored = true;
-                    dbg!("ignored");
                     state.insert_entry(root_entry.clone(), self.fs.as_ref());
                 }
                 state.enqueue_scan_dir(root_abs_path, &root_entry, &scan_job_tx);
@@ -3820,61 +3819,60 @@ impl BackgroundScanner {
             .collect::<Vec<_>>()
             .await;
 
-        // Ensure .git and gitignore files are processed first.
-        let mut ixs_to_move_to_front = Vec::new();
-        for (ix, child_abs_path) in child_paths.iter().enumerate() {
-            let filename = child_abs_path.file_name().unwrap();
-            if filename == *DOT_GIT {
-                ixs_to_move_to_front.insert(0, ix);
-            } else if filename == *GITIGNORE {
-                ixs_to_move_to_front.push(ix);
+        if let Some(dot_git_position) = child_paths
+            .iter()
+            .position(|abs_path| abs_path.file_name().unwrap() == *DOT_GIT)
+        {
+            let dot_git_path = child_paths.remove(dot_git_position);
+            let dot_git_path: Arc<Path> = job.path.join(dot_git_path.file_name().unwrap()).into();
+
+            let repo = self
+                .state
+                .lock()
+                .build_git_repository(dot_git_path.clone(), self.fs.as_ref());
+            if let Some((work_directory, repository)) = repo {
+                let t0 = Instant::now();
+                let statuses = repository
+                    .statuses(Path::new(""))
+                    .log_err()
+                    .unwrap_or_default();
+                log::trace!("computed git status in {:?}", t0.elapsed());
+                containing_repository = Some(ScanJobContainingRepository {
+                    work_directory,
+                    statuses,
+                });
             }
+            self.watcher.add(dot_git_path.as_ref()).log_err();
         }
-        for (dest_ix, src_ix) in ixs_to_move_to_front.into_iter().enumerate() {
-            child_paths.swap(dest_ix, src_ix);
+
+        if let Some(gitignore_position) = child_paths
+            .iter()
+            .position(|abs_path| abs_path.file_name().unwrap() == *GITIGNORE)
+        {
+            let gitignore_path = child_paths.remove(gitignore_position);
+            let child_name = gitignore_path.file_name().unwrap();
+            let gitignore_path: Arc<Path> = job.path.join(child_name).into();
+
+            match build_gitignore(&gitignore_path, self.fs.as_ref()).await {
+                Ok(ignore) => {
+                    let ignore = Arc::new(ignore);
+                    ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
+                    new_ignore = Some(ignore);
+                }
+                Err(error) => {
+                    log::error!(
+                        "error loading .gitignore file {:?} - {:?}",
+                        child_name,
+                        error
+                    );
+                }
+            }
         }
 
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
             let child_name = child_abs_path.file_name().unwrap();
             let child_path: Arc<Path> = job.path.join(child_name).into();
-
-            if child_name == *DOT_GIT {
-                dbg!("dot git");
-                let repo = self
-                    .state
-                    .lock()
-                    .build_git_repository(child_path.clone(), self.fs.as_ref());
-                if let Some((work_directory, repository)) = repo {
-                    let t0 = Instant::now();
-                    let statuses = repository
-                        .statuses(Path::new(""))
-                        .log_err()
-                        .unwrap_or_default();
-                    log::trace!("computed git status in {:?}", t0.elapsed());
-                    containing_repository = Some(ScanJobContainingRepository {
-                        work_directory,
-                        statuses,
-                    });
-                }
-                self.watcher.add(child_abs_path.as_ref()).log_err();
-            } else if child_name == *GITIGNORE {
-                dbg!("git ignore");
-                match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
-                    Ok(ignore) => {
-                        let ignore = Arc::new(ignore);
-                        ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
-                        new_ignore = Some(ignore);
-                    }
-                    Err(error) => {
-                        log::error!(
-                            "error loading .gitignore file {:?} - {:?}",
-                            child_name,
-                            error
-                        );
-                    }
-                }
-            }
 
             if self.settings.is_path_excluded(&child_path) {
                 log::debug!("skipping excluded child entry {child_path:?}");
@@ -3935,12 +3933,8 @@ impl BackgroundScanner {
             }
 
             if child_entry.is_dir() {
-                // ***THIS SHOULD GET IT
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
 
-                if child_entry.path.ends_with(Path::new("target")) {
-                    dbg!(&child_entry);
-                }
                 // Avoid recursing until crash in the case of a recursive symlink
                 if job.ancestor_inodes.contains(&child_entry.inode) {
                     new_jobs.push(None);
@@ -4088,9 +4082,6 @@ impl BackgroundScanner {
 
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
-                    if fs_entry.is_ignored {
-                        dbg!("ignored");
-                    }
 
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
                     fs_entry.is_private = self.is_path_private(path);
@@ -4254,9 +4245,7 @@ impl BackgroundScanner {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
             entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
-            if entry.is_ignored {
-                dbg!("ignored");
-            }
+
             if entry.is_dir() {
                 let child_ignore_stack = if entry.is_ignored {
                     IgnoreStack::all()
