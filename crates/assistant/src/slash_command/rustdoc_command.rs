@@ -37,6 +37,8 @@ impl RustdocSlashCommand {
             if let Ok(contents) = fs.load(&local_cargo_doc_path).await {
                 let (markdown, _items) = convert_rustdoc_to_markdown(contents.as_bytes())?;
 
+                dbg!(_items);
+
                 return Ok((RustdocSource::Local, markdown));
             }
         }

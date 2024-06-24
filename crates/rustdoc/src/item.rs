@@ -37,13 +37,17 @@ impl RustdocItemKind {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct RustdocItem {
     pub kind: RustdocItemKind,
     /// The item path, up until the name of the item.
     pub path: Vec<Arc<str>>,
     /// The name of the item.
     pub name: Arc<str>,
+    /// The target of the link, which contains more information about the item.
+    pub href: Arc<str>,
+    /// The position of the item's text in the markdown output.
+    pub output_range: std::ops::Range<usize>,
 }
 
 impl RustdocItem {

@@ -263,7 +263,7 @@ impl RustdocItemCollector {
         }
     }
 
-    fn parse_item(tag: &HtmlElement) -> Option<RustdocItem> {
+    fn parse_item(tag: &HtmlElement, output_offset: usize) -> Option<RustdocItem> {
         if tag.tag() != "a" {
             return None;
         }
@@ -291,6 +291,8 @@ impl RustdocItemCollector {
                         kind,
                         name: name.into(),
                         path: parts.map(Into::into).collect(),
+                        href: href.into(),
+                        output_range: output_offset..output_offset,
                     });
                 }
             }
@@ -321,7 +323,7 @@ impl HandleTag for RustdocItemCollector {
                 });
 
                 if !is_reexport {
-                    if let Some(item) = Self::parse_item(tag) {
+                    if let Some(item) = Self::parse_item(tag, writer.len()) {
                         self.items.insert(item);
                     }
                 }
@@ -330,6 +332,26 @@ impl HandleTag for RustdocItemCollector {
         }
 
         StartTagOutcome::Continue
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        match tag.tag() {
+            "a" => {
+                if let Some(href) = tag.attr("href") {
+                    if self
+                        .items
+                        .last()
+                        .map_or(false, |item| item.href.as_ref() == href)
+                    {
+                        if let Some(mut last_item) = self.items.pop() {
+                            last_item.output_range.end = writer.len();
+                            self.items.insert(last_item);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 

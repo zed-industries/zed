@@ -43,6 +43,10 @@ impl MarkdownWriter {
         &self.current_element_stack
     }
 
+    pub fn len(&self) -> usize {
+        self.markdown.len()
+    }
+
     pub fn is_inside(&self, tag: &str) -> bool {
         self.current_element_stack
             .iter()
