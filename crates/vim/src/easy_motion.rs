@@ -503,7 +503,6 @@ impl EasyMotion {
         editor.add_overlays_with_reserve::<Self>(overlays, len, cx);
     }
 
-    // TODO: there is a bug with a single match appearing after a folded block
     // TODO: overlays which are folded should probably not be selectable.
     // Probably will need to add an "active" field to the overlay state struct.
     fn update_overlays(

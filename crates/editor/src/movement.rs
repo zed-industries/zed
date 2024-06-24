@@ -482,8 +482,15 @@ pub fn find_boundary_point_in_range_fold(
                 return Some(map.clip_point(offset.to_point(map), Bias::Right));
             }
         }
+
         prev_offset = offset;
-        offset += FoldOffset(1);
+        // not really sure why this is necessary but this fixes the bug with a match
+        // appearing at the end of a folded block
+        offset += if ch == '⋯' {
+            FoldOffset(3)
+        } else {
+            FoldOffset(1)
+        };
         prev_ch = ch;
     }
     None
