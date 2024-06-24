@@ -24,6 +24,15 @@ enum TrieNode<T> {
     Node(Vec<TrieNode<T>>),
 }
 
+impl<T> TrieNode<T> {
+    fn len(&self) -> usize {
+        match self {
+            TrieNode::Node(node) => node.iter().fold(0, |acc, curr| acc + curr.len()),
+            TrieNode::Leaf(_) => 1,
+        }
+    }
+}
+
 impl<T: Default> Default for TrieNode<T> {
     fn default() -> Self {
         TrieNode::Leaf(Default::default())
@@ -33,14 +42,12 @@ impl<T: Default> Default for TrieNode<T> {
 pub(crate) struct Trie<T> {
     keys: String,
     root: TrieNode<T>,
-    len: usize,
 }
 
 impl<T> Debug for Trie<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Trie")
             .field("keys", &self.keys)
-            .field("len", &self.len)
             .finish_non_exhaustive()
     }
 }
@@ -55,10 +62,9 @@ impl<T> Trie<T> {
     }
 
     pub fn len(&self) -> usize {
-        self.len
+        self.root.len()
     }
 
-    // TODO: update len
     pub fn trim(&mut self, character: char) -> TrimResult<&T> {
         let node = match &mut self.root {
             TrieNode::Leaf(_) => {
@@ -216,7 +222,6 @@ impl<TItem, TOut, F: Fn(usize, TItem) -> TOut> TrieBuilder<TItem, TOut, F> {
         Trie {
             root,
             keys: self.keys,
-            len: self.total_leaf_count,
         }
     }
 
@@ -326,6 +331,8 @@ impl<'a, T> Iterator for TrieIterator<'a, T> {
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
+    use rand::prelude::*;
+    use rand::random;
 
     use super::*;
 
@@ -628,5 +635,17 @@ mod tests {
                 ("ccb".to_string(), &(3, 9)),
             ]
         );
+    }
+
+    #[gpui::test(iterations = 30)]
+    fn test_len(mut rng: StdRng) {
+        let keys_len = random::<usize>() % 500;
+        let keys = util::RandomCharIter::new(&mut rng)
+            .take(keys_len)
+            .collect::<String>();
+        let len = random::<usize>() % 1000;
+        let values = vec![0; len];
+        let trie = Trie::new_from_vec(keys, values, |len, val| (len, val));
+        assert_eq!(trie.len(), len);
     }
 }

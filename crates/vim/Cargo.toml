@@ -52,6 +52,7 @@ futures.workspace = true
 rope.workspace = true
 project.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+rand.workspace = true
 release_channel.workspace = true
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }

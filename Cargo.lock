@@ -11828,6 +11828,7 @@ dependencies = [
  "nvim-rs",
  "parking_lot",
  "project",
+ "rand 0.8.5",
  "regex",
  "release_channel",
  "rope",
