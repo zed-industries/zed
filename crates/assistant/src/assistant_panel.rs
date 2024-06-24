@@ -6,6 +6,7 @@ use crate::{
         default_command::DefaultSlashCommand, SlashCommandCompletionProvider, SlashCommandLine,
         SlashCommandRegistry,
     },
+    terminal_inline_assistant::TerminalInlineAssistant,
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, ContextStore, CycleMessageRole,
     InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, MessageId,
     MessageMetadata, MessageStatus, ModelSelector, QuoteSelection, ResetKey, Role, SavedContext,
@@ -57,6 +58,7 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::AssistantKind;
+use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::{
     prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tab, TabBar, Tooltip,
@@ -117,6 +119,11 @@ struct SavedContextPickerDelegate {
 
 enum SavedContextPickerEvent {
     Confirmed { path: PathBuf },
+}
+
+enum InlineAssistTarget {
+    Editor(View<Editor>, bool),
+    Terminal(View<TerminalView>),
 }
 
 impl EventEmitter<SavedContextPickerEvent> for Picker<SavedContextPickerDelegate> {}
@@ -364,6 +371,88 @@ impl AssistantPanel {
             return;
         };
 
+        let Some(inline_assist_target) =
+            Self::resolve_inline_assist_target(workspace, &assistant, cx)
+        else {
+            return;
+        };
+
+        if assistant.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
+            match inline_assist_target {
+                InlineAssistTarget::Editor(active_editor, include_context) => {
+                    InlineAssistant::update_global(cx, |assistant, cx| {
+                        assistant.assist(
+                            &active_editor,
+                            Some(cx.view().downgrade()),
+                            include_context,
+                            cx,
+                        )
+                    })
+                }
+                InlineAssistTarget::Terminal(active_terminal) => {
+                    TerminalInlineAssistant::update_global(cx, |assistant, cx| {
+                        assistant.assist(&active_terminal, Some(cx.view().downgrade()), cx)
+                    })
+                }
+            }
+        } else {
+            let assistant = assistant.downgrade();
+            cx.spawn(|workspace, mut cx| async move {
+                assistant
+                    .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
+                    .await?;
+                if assistant.update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))? {
+                    cx.update(|cx| match inline_assist_target {
+                        InlineAssistTarget::Editor(active_editor, include_context) => {
+                            InlineAssistant::update_global(cx, |assistant, cx| {
+                                assistant.assist(
+                                    &active_editor,
+                                    Some(workspace),
+                                    include_context,
+                                    cx,
+                                )
+                            })
+                        }
+                        InlineAssistTarget::Terminal(active_terminal) => {
+                            TerminalInlineAssistant::update_global(cx, |assistant, cx| {
+                                assistant.assist(&active_terminal, Some(workspace), cx)
+                            })
+                        }
+                    })?
+                } else {
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.focus_panel::<AssistantPanel>(cx)
+                    })?;
+                }
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx)
+        }
+    }
+
+    fn resolve_inline_assist_target(
+        workspace: &mut Workspace,
+        assistant: &View<AssistantPanel>,
+        cx: &mut WindowContext,
+    ) -> Option<InlineAssistTarget> {
+        if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) {
+            if terminal_panel
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(cx)
+            {
+                if let Some(terminal_view) = terminal_panel
+                    .read(cx)
+                    .pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|t| t.downcast::<TerminalView>())
+                {
+                    return Some(InlineAssistTarget::Terminal(terminal_view));
+                }
+            }
+        }
         let context_editor = assistant
             .read(cx)
             .active_context_editor()
@@ -376,51 +465,15 @@ impl AssistantPanel {
                 }
             });
 
-        let include_context;
-        let active_editor;
         if let Some(context_editor) = context_editor {
-            active_editor = context_editor;
-            include_context = false;
+            Some(InlineAssistTarget::Editor(context_editor, false))
         } else if let Some(workspace_editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
         {
-            active_editor = workspace_editor;
-            include_context = true;
+            Some(InlineAssistTarget::Editor(workspace_editor, true))
         } else {
-            return;
-        };
-
-        if assistant.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
-            InlineAssistant::update_global(cx, |assistant, cx| {
-                assistant.assist(
-                    &active_editor,
-                    Some(cx.view().downgrade()),
-                    include_context,
-                    cx,
-                )
-            })
-        } else {
-            let assistant = assistant.downgrade();
-            cx.spawn(|workspace, mut cx| async move {
-                assistant
-                    .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
-                    .await?;
-                if assistant.update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))? {
-                    cx.update(|cx| {
-                        InlineAssistant::update_global(cx, |assistant, cx| {
-                            assistant.assist(&active_editor, Some(workspace), include_context, cx)
-                        })
-                    })?
-                } else {
-                    workspace.update(&mut cx, |workspace, cx| {
-                        workspace.focus_panel::<AssistantPanel>(cx)
-                    })?;
-                }
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx)
+            None
         }
     }
 
