@@ -7,9 +7,10 @@ use crate::{
         SlashCommandRegistry,
     },
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, ContextStore, CycleMessageRole,
-    InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, MessageId,
-    MessageMetadata, MessageStatus, ModelSelector, QuoteSelection, ResetKey, Role, SavedContext,
-    SavedContextMetadata, SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleModelSelector,
+    InlineAssist, InlineAssistant, InsertSelection, LanguageModelRequest,
+    LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus, ModelSelector,
+    QuoteSelection, ResetKey, Role, SavedContext, SavedContextMetadata, SavedMessage, Split,
+    ToggleFocus, ToggleHistory, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
@@ -2984,6 +2985,27 @@ impl ContextEditor {
         cx.propagate();
     }
 
+    fn insert_selection(&mut self, _: &InsertSelection, cx: &mut ViewContext<Self>) {
+        let editor = self.editor.read(cx);
+        let anchor = editor.selections.newest_anchor();
+        let text = editor
+            .buffer()
+            .read(cx)
+            .read(cx)
+            .text_for_range(anchor.range())
+            .collect::<String>();
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                if let Some(editor_view) = workspace.active_item_as::<Editor>(cx) {
+                    editor_view.update(cx, |editor, cx| {
+                        editor.insert(&text, cx);
+                    })
+                }
+            })
+            .ok();
+    }
+
     fn split(&mut self, _: &Split, cx: &mut ViewContext<Self>) {
         self.context.update(cx, |context, cx| {
             let selections = self.editor.read(cx).selections.disjoint_anchors();
@@ -3193,6 +3215,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
             .on_action(cx.listener(ContextEditor::apply_edit))
+            .on_action(cx.listener(ContextEditor::insert_selection))
             .size_full()
             .v_flex()
             .child(
