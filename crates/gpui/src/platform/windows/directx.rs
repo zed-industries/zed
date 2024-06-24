@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use ::util::ResultExt;
 use anyhow::Result;
-use util::ResultExt;
 use windows::{
     core::*,
     Win32::{
@@ -36,10 +36,7 @@ use windows::{
     },
 };
 
-use crate::{
-    point, DevicePixels, DirectXAtlas, PlatformAtlas, Point, Scene, Shadow, Size,
-    WindowBackgroundAppearance,
-};
+use crate::*;
 
 pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
@@ -84,8 +81,9 @@ impl DirectXRenderer {
                 self.context.back_buffer.as_ref().unwrap(),
                 &[0.0, 0.2, 0.4, 0.6],
             );
-            self.context.swap_chain.Present(0, 0).ok().log_err();
         }
+        self.draw_primitives(scene);
+        unsafe { self.context.swap_chain.Present(0, 0).ok().log_err() };
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) {
@@ -138,14 +136,19 @@ impl DirectXRenderer {
     fn draw_primitives(&mut self, scene: &Scene) {
         for batch in scene.batches() {
             let ok = match batch {
-                crate::PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
-                // crate::PrimitiveBatch::Quads(_) => todo!(),
-                // crate::PrimitiveBatch::Paths(_) => todo!(),
-                // crate::PrimitiveBatch::Underlines(_) => todo!(),
-                // crate::PrimitiveBatch::MonochromeSprites { texture_id, sprites } => todo!(),
-                // crate::PrimitiveBatch::PolychromeSprites { texture_id, sprites } => todo!(),
-                // crate::PrimitiveBatch::Surfaces(_) => todo!(),
-                _ => true,
+                PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
+                PrimitiveBatch::Quads(quads) => self.draw_quads(quads),
+                PrimitiveBatch::Paths(paths) => self.draw_paths(paths),
+                PrimitiveBatch::Underlines(underlines) => self.draw_underlines(underlines),
+                PrimitiveBatch::MonochromeSprites {
+                    texture_id,
+                    sprites,
+                } => self.draw_monochrome_sprites(texture_id, sprites),
+                PrimitiveBatch::PolychromeSprites {
+                    texture_id,
+                    sprites,
+                } => self.draw_polychrome_sprites(texture_id, sprites),
+                PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(surfaces),
             };
             if !ok {
                 log::error!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
@@ -163,6 +166,56 @@ impl DirectXRenderer {
 
     fn draw_shadows(&mut self, shadows: &[Shadow]) -> bool {
         if shadows.is_empty() {
+            return true;
+        }
+        true
+    }
+
+    fn draw_quads(&mut self, quads: &[Quad]) -> bool {
+        if quads.is_empty() {
+            return true;
+        }
+        true
+    }
+
+    fn draw_paths(&mut self, paths: &[Path<ScaledPixels>]) -> bool {
+        if paths.is_empty() {
+            return true;
+        }
+        true
+    }
+
+    fn draw_underlines(&mut self, underlines: &[Underline]) -> bool {
+        if underlines.is_empty() {
+            return true;
+        }
+        true
+    }
+
+    fn draw_monochrome_sprites(
+        &mut self,
+        texture_id: AtlasTextureId,
+        sprites: &[MonochromeSprite],
+    ) -> bool {
+        if sprites.is_empty() {
+            return true;
+        }
+        true
+    }
+
+    fn draw_polychrome_sprites(
+        &mut self,
+        texture_id: AtlasTextureId,
+        sprites: &[PolychromeSprite],
+    ) -> bool {
+        if sprites.is_empty() {
+            return true;
+        }
+        true
+    }
+
+    fn draw_surfaces(&mut self, surfaces: &[Surface]) -> bool {
+        if surfaces.is_empty() {
             return true;
         }
         true
