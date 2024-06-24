@@ -3819,11 +3819,10 @@ impl BackgroundScanner {
             .collect::<Vec<_>>()
             .await;
 
-        if let Some(dot_git_position) = child_paths
+        if let Some(dot_git_path) = child_paths
             .iter()
-            .position(|abs_path| abs_path.file_name().unwrap() == *DOT_GIT)
+            .find(|abs_path| abs_path.file_name().unwrap() == *DOT_GIT)
         {
-            let dot_git_path = child_paths.remove(dot_git_position);
             let dot_git_path: Arc<Path> = job.path.join(dot_git_path.file_name().unwrap()).into();
 
             let repo = self
@@ -3845,11 +3844,10 @@ impl BackgroundScanner {
             self.watcher.add(dot_git_path.as_ref()).log_err();
         }
 
-        if let Some(gitignore_position) = child_paths
+        if let Some(gitignore_path) = child_paths
             .iter()
-            .position(|abs_path| abs_path.file_name().unwrap() == *GITIGNORE)
+            .find(|abs_path| abs_path.file_name().unwrap() == *GITIGNORE)
         {
-            let gitignore_path = child_paths.remove(gitignore_position);
             let child_name = gitignore_path.file_name().unwrap();
             let gitignore_path: Arc<Path> = job.path.join(child_name).into();
 
