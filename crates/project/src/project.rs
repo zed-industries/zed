@@ -1,5 +1,6 @@
 pub mod connection_manager;
 pub mod debounced_delay;
+mod debugger_inventory;
 pub mod lsp_command;
 pub mod lsp_ext_command;
 mod prettier_support;
@@ -68,7 +69,8 @@ use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use paths::{
-    local_settings_file_relative_path, local_tasks_file_relative_path,
+    local_launch_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
     local_vscode_tasks_file_relative_path,
 };
 use postage::watch;
@@ -8412,6 +8414,10 @@ impl Project {
                         );
                     }
                 })
+            } else if abs_path.ends_with(local_launch_file_relative_path()) {
+                // TODO: handle local launch file (.zed/launch.json)
+            } else if abs_path.ends_with(local_vscode_launch_file_relative_path()) {
+                // TODO: handle vscode launch file (.vscode/launch.json)
             }
         }
 
