@@ -58,6 +58,7 @@ members = [
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
+    "crates/miner",
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",
