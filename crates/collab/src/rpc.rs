@@ -4411,21 +4411,34 @@ async fn complete_with_language_model(
         .check::<CompleteWithLanguageModelRateLimit>(session.user_id())
         .await?;
 
-    if request.model.starts_with("gpt") {
+    let span = info_span!(
+        "complete_with_language_model",
+        user_id = %session.user_id(),
+        model = %request.model
+    );
+    let _enter = span.enter();
+
+    let result = if request.model.starts_with("gpt") {
         let api_key =
             open_ai_api_key.ok_or_else(|| anyhow!("no OpenAI API key configured on the server"))?;
-        complete_with_open_ai(request, response, session, api_key).await?;
+        complete_with_open_ai(request, response, session, api_key).await
     } else if request.model.starts_with("gemini") {
         let api_key = google_ai_api_key
             .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
-        complete_with_google_ai(request, response, session, api_key).await?;
+        complete_with_google_ai(request, response, session, api_key).await
     } else if request.model.starts_with("claude") {
         let api_key = anthropic_api_key
             .ok_or_else(|| anyhow!("no Anthropic AI API key configured on the server"))?;
-        complete_with_anthropic(request, response, session, api_key).await?;
+        complete_with_anthropic(request, response, session, api_key).await
+    } else {
+        Err(anyhow!("Unsupported model"))?
+    };
+
+    if let Err(e) = &result {
+        tracing::error!(error = ?e, "Error in language model completion");
     }
 
-    Ok(())
+    result
 }
 
 async fn complete_with_open_ai(
@@ -4434,6 +4447,7 @@ async fn complete_with_open_ai(
     session: UserSession,
     api_key: Arc<str>,
 ) -> Result<()> {
+    let model = request.model.clone();
     let mut completion_stream = open_ai::stream_completion(
         session.http_client.as_ref(),
         OPEN_AI_API_URL,
@@ -4446,6 +4460,18 @@ async fn complete_with_open_ai(
 
     while let Some(event) = completion_stream.next().await {
         let event = event?;
+
+        if let Some(usage) = event.usage {
+            tracing::info!(
+                provider = "openai",
+                model = model,
+                input_tokens = usage.prompt_tokens,
+                output_tokens = usage.completion_tokens,
+                total_tokens = usage.total_tokens,
+                "language model completion"
+            );
+        }
+
         response.send(proto::LanguageModelResponse {
             choices: event
                 .choices
