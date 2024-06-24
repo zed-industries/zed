@@ -244,17 +244,9 @@ async fn get_cached_server_binary(
 
 #[inline]
 fn schema_file_match(path: &Path) -> String {
-    #[cfg(not(target_os = "windows"))]
-    return path
-        .strip_prefix(path.parent().unwrap().parent().unwrap())
-        .unwrap()
-        .display()
-        .to_string();
-    #[cfg(target_os = "windows")]
-    return path
-        .strip_prefix(path.parent().unwrap().parent().unwrap())
+    path.strip_prefix(path.parent().unwrap().parent().unwrap())
         .unwrap()
         .display()
         .to_string()
-        .replace("\\", "/");
+        .replace("\\", "/")
 }
