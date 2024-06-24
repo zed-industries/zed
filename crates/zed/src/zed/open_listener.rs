@@ -398,7 +398,8 @@ pub async fn handle_cli_connection(
                         }
                     }
                 } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-                    cx.update(|cx| show_welcome_view(app_state, cx)).log_err();
+                    cx.update(|cx| show_welcome_view(app_state, cx).detach())
+                        .log_err();
                 } else {
                     cx.update(|cx| {
                         workspace::open_new(app_state, cx, |workspace, cx| {
