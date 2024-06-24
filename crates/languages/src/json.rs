@@ -21,7 +21,8 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{maybe, ResultExt};
 
-const SERVER_PATH: &str = "node_modules/.bin/vscode-json-language-server";
+const SERVER_PATH: &str =
+    "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
 
 // Origin: https://github.com/SchemaStore/schemastore
 const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
