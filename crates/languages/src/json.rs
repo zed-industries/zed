@@ -1,25 +1,31 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext};
+use http::github::{latest_github_release, GitHubLspBinaryVersion};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
-use smol::fs;
+use smol::{
+    fs::{self, File},
+    io::BufReader,
+};
 use std::{
     any::Any,
+    env::consts,
     ffi::OsString,
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, OnceLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{maybe, ResultExt};
+use util::{fs::remove_matching, maybe, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
 
@@ -250,14 +256,36 @@ pub(super) struct NodeVersionAdapter;
 #[async_trait(?Send)]
 impl LspAdapter for NodeVersionAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("node-version-checker".into())
+        LanguageServerName("package-version-server".into())
     }
 
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        Ok(Box::new(()))
+        let release = latest_github_release(
+            "zed-industries/package-version-server",
+            true,
+            false,
+            delegate.http_client(),
+        )
+        .await?;
+        let os = match consts::OS {
+            "macos" => "apple-darwin",
+            "linux" => "unknown-linux-gnu",
+            "windows" => "pc-windows-msvc",
+            other => bail!("Running on unsupported os: {other}"),
+        };
+        let asset_name = format!("package-version-server-{}-{os}.gz", consts::ARCH);
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == asset_name)
+            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
+        Ok(Box::new(GitHubLspBinaryVersion {
+            name: release.tag_name,
+            url: asset.browser_download_url.clone(),
+        }))
     }
 
     async fn fetch_server_binary(
@@ -266,21 +294,74 @@ impl LspAdapter for NodeVersionAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        Ok( LanguageServerBinary { path: PathBuf::from("/Users/hiro/Projects/node_package_version_checker/target/release/node_package_version_checker"), arguments: vec![], env: Default::default() })
+        let version = latest_version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let destination_path =
+            container_dir.join(format!("package-version-server-{}", version.name));
+
+        if fs::metadata(&destination_path).await.is_err() {
+            let mut response = delegate
+                .http_client()
+                .get(&version.url, Default::default(), true)
+                .await
+                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let mut file = File::create(&destination_path).await?;
+            futures::io::copy(decompressed_bytes, &mut file).await?;
+            // todo("windows")
+            #[cfg(not(windows))]
+            {
+                fs::set_permissions(
+                    &destination_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+            }
+
+            remove_matching(&container_dir, |entry| entry != destination_path).await;
+        }
+
+        Ok(LanguageServerBinary {
+            path: destination_path,
+            env: None,
+            arguments: Default::default(),
+        })
     }
 
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
+        _delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        Some(LanguageServerBinary { path: PathBuf::from("/Users/hiro/Projects/node_package_version_checker/target/release/node_package_version_checker"), arguments: vec![], env: Default::default() })
+        get_cached_version_server_binary(container_dir).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        Some(LanguageServerBinary { path: PathBuf::from("/Users/hiro/Projects/node_package_version_checker/target/release/node_package_version_checker"), arguments: vec![], env: Default::default() })
+        get_cached_version_server_binary(container_dir)
+            .await
+            .map(|mut binary| {
+                binary.arguments = vec!["--version".into()];
+                binary
+            })
     }
+}
+
+async fn get_cached_version_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    maybe!(async {
+        let mut last = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            last = Some(entry?.path());
+        }
+
+        anyhow::Ok(LanguageServerBinary {
+            path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            env: None,
+            arguments: Default::default(),
+        })
+    })
+    .await
+    .log_err()
 }
