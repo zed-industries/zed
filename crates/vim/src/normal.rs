@@ -64,6 +64,7 @@ actions!(
         JoinLines,
         Indent,
         Outdent,
+        ToggleComments,
     ]
 );
 
@@ -79,6 +80,7 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(convert_to_upper_case);
     workspace.register_action(convert_to_lower_case);
     workspace.register_action(yank_line);
+    workspace.register_action(toggle_comments);
 
     workspace.register_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
@@ -435,6 +437,22 @@ fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
         let count = vim.take_count(cx);
         yank_motion(vim, motion::Motion::CurrentLine, count, cx)
     })
+}
+
+fn toggle_comments(_: &mut Workspace, _: &ToggleComments, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.record_current_action(cx);
+        vim.update_active_editor(cx, |_, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                let mut original_positions = save_selection_starts(editor, cx);
+                editor.toggle_comments(&Default::default(), cx);
+                restore_selection_cursors(editor, cx, &mut original_positions);
+            });
+        });
+        if vim.state().mode.is_visual() {
+            vim.switch_mode(Mode::Normal, false, cx)
+        }
+    });
 }
 
 fn save_selection_starts(editor: &Editor, cx: &mut ViewContext<Editor>) -> HashMap<usize, Anchor> {
