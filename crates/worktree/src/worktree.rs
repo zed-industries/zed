@@ -3439,6 +3439,7 @@ impl BackgroundScanner {
                     .ignore_stack_for_abs_path(&root_abs_path, true);
                 if ignore_stack.is_abs_path_ignored(&root_abs_path, true) {
                     root_entry.is_ignored = true;
+                    dbg!("ignored");
                     state.insert_entry(root_entry.clone(), self.fs.as_ref());
                 }
                 state.enqueue_scan_dir(root_abs_path, &root_entry, &scan_job_tx);
@@ -3934,6 +3935,10 @@ impl BackgroundScanner {
             if child_entry.is_dir() {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
 
+                if child_entry.is_ignored {
+                    dbg!("ignored");
+                }
+
                 // Avoid recursing until crash in the case of a recursive symlink
                 if job.ancestor_inodes.contains(&child_entry.inode) {
                     new_jobs.push(None);
@@ -4081,6 +4086,10 @@ impl BackgroundScanner {
 
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
+                    if fs_entry.is_ignored {
+                        dbg!("ignored");
+                    }
+
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
                     fs_entry.is_private = self.is_path_private(path);
 
@@ -4243,6 +4252,9 @@ impl BackgroundScanner {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
             entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
+            if entry.is_ignored {
+                dbg!("ignored");
+            }
             if entry.is_dir() {
                 let child_ignore_stack = if entry.is_ignored {
                     IgnoreStack::all()
