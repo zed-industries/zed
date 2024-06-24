@@ -34,8 +34,8 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
-pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
-use fold_map::{FoldMap, FoldSnapshot};
+use fold_map::FoldMap;
+pub use fold_map::{Fold, FoldId, FoldOffset, FoldPlaceholder, FoldPoint, FoldSnapshot};
 use gpui::{
     AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
@@ -589,7 +589,7 @@ impl DisplaySnapshot {
         new_start..new_end
     }
 
-    fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
+    pub fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
         let inlay_point = self.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
         let tab_point = self.tab_snapshot.to_tab_point(fold_point);
@@ -898,6 +898,10 @@ impl DisplaySnapshot {
 
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
         self.fold_snapshot.is_line_folded(buffer_row)
+    }
+
+    pub fn is_point_folded(&self, point: Point) -> bool {
+        self.fold_snapshot.is_point_folded(point)
     }
 
     pub fn is_block_line(&self, display_row: DisplayRow) -> bool {

@@ -440,7 +440,7 @@ impl NeovimConnection {
                     Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col),
                 )
             }
-            Mode::Insert | Mode::Normal | Mode::Replace => selections
+            Mode::Insert | Mode::Normal | Mode::Replace | Mode::EasyMotion => selections
                 .push(Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col)),
         }
 

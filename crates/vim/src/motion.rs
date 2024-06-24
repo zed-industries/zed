@@ -414,6 +414,7 @@ pub(crate) fn search_motion(m: Motion, cx: &mut WindowContext) {
                     return;
                 }
             }
+            _ => {}
         }
     }
 
@@ -443,8 +444,8 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
             visual_motion(motion.clone(), count, cx)
         }
-        Mode::Insert => {
-            // Shouldn't execute a motion in insert mode. Ignoring
+        Mode::Insert | Mode::EasyMotion => {
+            // Shouldn't execute in these modes. Ignoring
         }
     }
     Vim::update(cx, |vim, cx| {
@@ -1671,7 +1672,7 @@ pub(crate) fn next_line_end(
     end_of_line(map, false, point, 1)
 }
 
-fn window_top(
+pub(crate) fn window_top(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     text_layout_details: &TextLayoutDetails,
@@ -1732,7 +1733,7 @@ fn window_middle(
     }
 }
 
-fn window_bottom(
+pub(crate) fn window_bottom(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     text_layout_details: &TextLayoutDetails,

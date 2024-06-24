@@ -36,6 +36,8 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+text.workspace = true
+theme.workspace = true
 tokio = { version = "1.15", "optional" = true }
 ui.workspace = true
 workspace.workspace = true
@@ -47,6 +49,8 @@ util.workspace = true
 command_palette.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 futures.workspace = true
+rope.workspace = true
+project.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 indoc.workspace = true

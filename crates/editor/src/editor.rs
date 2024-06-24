@@ -31,6 +31,7 @@ pub mod items;
 mod linked_editing_ranges;
 mod mouse_context_menu;
 pub mod movement;
+pub mod overlay;
 mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
@@ -91,6 +92,7 @@ use language::{
 };
 use language::{BufferRow, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
+use overlay::Overlay;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
@@ -474,7 +476,7 @@ pub struct Editor {
     project: Option<Model<Project>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
-    blink_manager: Model<BlinkManager>,
+    pub blink_manager: Model<BlinkManager>,
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
@@ -520,6 +522,7 @@ pub struct Editor {
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
     hover_state: HoverState,
+    overlay_map: HashMap<TypeId, Vec<Overlay>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
@@ -1756,6 +1759,7 @@ impl Editor {
         };
 
         let mut this = Self {
+            overlay_map: Default::default(),
             focus_handle,
             show_cursor_when_unfocused: false,
             last_focused_descendant: None,
@@ -2028,7 +2032,7 @@ impl Editor {
         self.buffer().read(cx).title(cx)
     }
 
-    pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
+    pub fn snapshot(&self, cx: &mut WindowContext) -> EditorSnapshot {
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
@@ -9835,7 +9839,7 @@ impl Editor {
                 end.column = buffer.line_len(MultiBufferRow(end.row));
                 start..end
             })
-            .collect::<Vec<_>>();
+            .collect_vec();
 
         self.unfold_ranges(ranges, true, true, cx);
     }
@@ -9910,6 +9914,7 @@ impl Editor {
             }
 
             cx.notify();
+            cx.emit(EditorEvent::Fold);
 
             if let Some(active_diagnostics) = self.active_diagnostics.take() {
                 // Clear diagnostics block when folding a range that contains it.
@@ -9957,6 +9962,8 @@ impl Editor {
             }
 
             cx.notify();
+            cx.emit(EditorEvent::UnFold);
+
             self.scrollbar_marker_state.dirty = true;
             self.active_indent_guides_state.dirty = true;
         }
@@ -10353,7 +10360,7 @@ impl Editor {
         self.blame.as_ref()
     }
 
-    pub fn render_git_blame_gutter(&mut self, cx: &mut WindowContext) -> bool {
+    pub fn render_git_blame_gutter(&self, cx: &mut WindowContext) -> bool {
         self.show_git_blame_gutter && self.has_blame_entries(cx)
     }
 
@@ -10916,6 +10923,29 @@ impl Editor {
                     ..range.end.to_display_point(display_snapshot)
             })
             .collect()
+    }
+
+    pub fn add_overlay<T: 'static>(&mut self, overlay: Overlay, cx: &mut ViewContext<Self>) {
+        let list = self.overlay_map.entry(TypeId::of::<T>()).or_default();
+        list.push(overlay);
+        cx.notify();
+    }
+
+    pub fn add_overlays_with_reserve<T: 'static>(
+        &mut self,
+        overlays: impl IntoIterator<Item = Overlay>,
+        reserve: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let list = self.overlay_map.entry(TypeId::of::<T>()).or_default();
+        list.reserve_exact(reserve);
+        list.extend(overlays);
+        cx.notify();
+    }
+
+    pub fn clear_overlays<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
+        self.overlay_map.remove(&TypeId::of::<T>());
+        cx.notify();
     }
 
     pub fn highlight_text<T: 'static>(
@@ -12012,6 +12042,8 @@ pub enum EditorEvent {
     TransactionBegun {
         transaction_id: clock::Lamport,
     },
+    Fold,
+    UnFold,
 }
 
 impl EventEmitter<EditorEvent> for Editor {}
@@ -12693,7 +12725,7 @@ impl RowExt for MultiBufferRow {
     }
 }
 
-trait RowRangeExt {
+pub trait RowRangeExt {
     type Row;
 
     fn len(&self) -> usize;

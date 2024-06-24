@@ -85,6 +85,13 @@ impl BlinkManager {
         }
     }
 
+    pub fn hide_cursor(&mut self, cx: &mut ModelContext<'_, BlinkManager>) {
+        if self.visible {
+            self.visible = false;
+            cx.notify();
+        }
+    }
+
     pub fn enable(&mut self, cx: &mut ModelContext<Self>) {
         if self.enabled {
             return;

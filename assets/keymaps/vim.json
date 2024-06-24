@@ -338,7 +338,12 @@
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
       "ctrl-w g space": "editor::OpenExcerptsSplit",
-      "-": "pane::RevealInProjectPanel"
+      "-": "pane::RevealInProjectPanel",
+
+      // easy motion
+      "g w": ["easy_motion::Word", "both"],
+      "g shift-w": ["easy_motion::FullWord", "both"],
+      "g r": ["easy_motion::Row", "both"]
     }
   },
   {
@@ -701,6 +706,12 @@
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
       "-": "project_panel::SelectParent"
+    }
+  },
+  {
+    "context": "Editor && VimWaiting",
+    "bindings": {
+      "ctrl-c": "easy_motion::Cancel"
     }
   }
 ]

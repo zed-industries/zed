@@ -5,6 +5,7 @@ mod test;
 
 mod change_list;
 mod command;
+mod easy_motion;
 mod editor_events;
 mod insert;
 mod mode_indicator;
@@ -92,6 +93,8 @@ pub fn init(cx: &mut AppContext) {
     cx.set_global(Vim::default());
     VimModeSetting::register(cx);
     VimSettings::register(cx);
+
+    easy_motion::init(cx);
 
     cx.observe_keystrokes(observe_keystrokes).detach();
     editor_events::init(cx);
@@ -497,6 +500,10 @@ impl Vim {
                 });
             })
         });
+    }
+
+    fn mode(&self) -> Mode {
+        self.state().mode
     }
 
     fn push_count_digit(&mut self, number: usize, cx: &mut WindowContext) {
