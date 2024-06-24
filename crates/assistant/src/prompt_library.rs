@@ -814,6 +814,7 @@ impl PromptLibrary {
                                             )
                                             .style(ButtonStyle::Transparent)
                                             .color(Color::Muted)
+                                            .cursor_style(gpui::CursorStyle::Arrow)
                                             .tooltip(
                                                 move |cx| {
                                                     Tooltip::with_meta(
