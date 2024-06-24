@@ -1,5 +1,3 @@
-use anyhow::{anyhow, Context as _, Result};
-use async_dispatcher::{set_dispatcher, timeout, Dispatcher, Runnable};
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{
@@ -7,120 +5,31 @@ use editor::{
     },
     Anchor, AnchorRangeExt, Editor,
 };
-use futures::{
-    channel::mpsc::{self, UnboundedSender},
-    future::Shared,
-    Future, FutureExt, SinkExt as _, StreamExt,
-};
-use gpui::prelude::*;
-use gpui::{
-    actions, AppContext, Context, EntityId, Global, Model, ModelContext, PlatformDispatcher, Task,
-    WeakView,
-};
+use futures::{future::Shared, StreamExt};
+use gpui::{actions, Task};
+use gpui::{prelude::*, AppContext};
 use gpui::{Entity, View};
 use language::Point;
 use outputs::{ExecutionStatus, ExecutionView, LineHeight as _};
-use project::Fs;
 use runtime_settings::JupyterSettings;
-use runtimelib::JupyterMessageContent;
-use settings::{Settings as _, SettingsStore};
-use std::{ops::Range, time::Instant};
-use std::{sync::Arc, time::Duration};
+use settings::Settings as _;
+use std::ops::Range;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::prelude::*;
 use workspace::Workspace;
 
 mod outputs;
-// mod runtime_panel;
+mod runtime_manager;
+mod runtime_panel;
 mod runtime_settings;
 mod runtimes;
 mod stdio;
 
-use runtimes::{get_runtime_specifications, Request, RunningKernel, RuntimeSpecification};
+pub use runtime_manager::RuntimeManager;
+pub use runtime_panel::RuntimePanel;
+use runtimes::RunningKernel;
 
-actions!(repl, [Run]);
-
-#[derive(Clone)]
-pub struct RuntimeManagerGlobal(Model<RuntimeManager>);
-
-impl Global for RuntimeManagerGlobal {}
-
-pub fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
-    struct ZedDispatcher {
-        dispatcher: Arc<dyn PlatformDispatcher>,
-    }
-
-    // PlatformDispatcher is _super_ close to the same interface we put in
-    // async-dispatcher, except for the task label in dispatch. Later we should
-    // just make that consistent so we have this dispatcher ready to go for
-    // other crates in Zed.
-    impl Dispatcher for ZedDispatcher {
-        fn dispatch(&self, runnable: Runnable) {
-            self.dispatcher.dispatch(runnable, None)
-        }
-
-        fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
-            self.dispatcher.dispatch_after(duration, runnable);
-        }
-    }
-
-    ZedDispatcher {
-        dispatcher: cx.background_executor().dispatcher.clone(),
-    }
-}
-
-pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    set_dispatcher(zed_dispatcher(cx));
-    JupyterSettings::register(cx);
-
-    observe_jupyter_settings_changes(fs.clone(), cx);
-
-    cx.observe_new_views(
-        |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
-            workspace.register_action(run);
-        },
-    )
-    .detach();
-
-    let settings = JupyterSettings::get_global(cx);
-
-    if !settings.enabled {
-        return;
-    }
-
-    initialize_runtime_manager(fs, cx);
-}
-
-fn initialize_runtime_manager(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    let runtime_manager = cx.new_model(|cx| RuntimeManager::new(fs.clone(), cx));
-    RuntimeManager::set_global(runtime_manager.clone(), cx);
-
-    cx.spawn(|mut cx| async move {
-        let fs = fs.clone();
-
-        let runtime_specifications = get_runtime_specifications(fs).await?;
-
-        runtime_manager.update(&mut cx, |this, _cx| {
-            this.runtime_specifications = runtime_specifications;
-        })?;
-
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
-}
-
-fn observe_jupyter_settings_changes(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    cx.observe_global::<SettingsStore>(move |cx| {
-        let settings = JupyterSettings::get_global(cx);
-        if settings.enabled && RuntimeManager::global(cx).is_none() {
-            initialize_runtime_manager(fs.clone(), cx);
-        } else {
-            RuntimeManager::remove_global(cx);
-            // todo!(): Remove action from workspace(s)
-        }
-    })
-    .detach();
-}
+actions!(repl, [Run, ToggleFocus]);
 
 #[derive(Debug)]
 pub enum Kernel {
@@ -129,235 +38,19 @@ pub enum Kernel {
     FailedLaunch,
 }
 
-// Per workspace
-pub struct RuntimeManager {
-    fs: Arc<dyn Fs>,
-    runtime_specifications: Vec<RuntimeSpecification>,
-
-    instances: HashMap<EntityId, Kernel>,
-    editors: HashMap<WeakView<Editor>, EditorRuntimeState>,
-    // todo!(): Next
-    // To reduce the number of open tasks and channels we have, let's feed the response
-    // messages by ID over to the paired ExecutionView
-    _execution_views_by_id: HashMap<String, View<ExecutionView>>,
-}
-
 #[derive(Debug, Clone)]
-struct EditorRuntimeState {
-    blocks: Vec<EditorRuntimeBlock>,
+pub struct EditorRuntimeState {
+    pub blocks: Vec<EditorRuntimeBlock>,
     // todo!(): Store a subscription to the editor so we can drop them when the editor is dropped
     // subscription: gpui::Subscription,
 }
 
 #[derive(Debug, Clone)]
-struct EditorRuntimeBlock {
-    code_range: Range<Anchor>,
-    _execution_id: String,
-    block_id: BlockId,
-    _execution_view: View<ExecutionView>,
-}
-
-impl RuntimeManager {
-    pub fn new(fs: Arc<dyn Fs>, _cx: &mut AppContext) -> Self {
-        Self {
-            fs,
-            runtime_specifications: Default::default(),
-            instances: Default::default(),
-            editors: Default::default(),
-            _execution_views_by_id: Default::default(),
-        }
-    }
-
-    fn get_or_launch_kernel(
-        &mut self,
-        entity_id: EntityId,
-        language_name: Arc<str>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<UnboundedSender<Request>>> {
-        let kernel = self.instances.get(&entity_id);
-        let pending_kernel_start = match kernel {
-            Some(Kernel::RunningKernel(running_kernel)) => {
-                return Task::ready(anyhow::Ok(running_kernel.request_tx.clone()));
-            }
-            Some(Kernel::StartingKernel(task)) => task.clone(),
-            Some(Kernel::FailedLaunch) | None => {
-                self.instances.remove(&entity_id);
-
-                let kernel = self.launch_kernel(entity_id, language_name, cx);
-                let pending_kernel = cx
-                    .spawn(|this, mut cx| async move {
-                        let running_kernel = kernel.await;
-
-                        match running_kernel {
-                            Ok(running_kernel) => {
-                                let _ = this.update(&mut cx, |this, _cx| {
-                                    this.instances
-                                        .insert(entity_id, Kernel::RunningKernel(running_kernel));
-                                });
-                            }
-                            Err(_err) => {
-                                let _ = this.update(&mut cx, |this, _cx| {
-                                    this.instances.insert(entity_id, Kernel::FailedLaunch);
-                                });
-                            }
-                        }
-                    })
-                    .shared();
-
-                self.instances
-                    .insert(entity_id, Kernel::StartingKernel(pending_kernel.clone()));
-
-                pending_kernel
-            }
-        };
-
-        cx.spawn(|this, mut cx| async move {
-            pending_kernel_start.await;
-
-            this.update(&mut cx, |this, _cx| {
-                let kernel = this
-                    .instances
-                    .get(&entity_id)
-                    .ok_or(anyhow!("unable to get a running kernel"))?;
-
-                match kernel {
-                    Kernel::RunningKernel(running_kernel) => Ok(running_kernel.request_tx.clone()),
-                    _ => Err(anyhow!("unable to get a running kernel")),
-                }
-            })?
-        })
-    }
-
-    fn launch_kernel(
-        &mut self,
-        entity_id: EntityId,
-        language_name: Arc<str>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<RunningKernel>> {
-        // Get first runtime that matches the language name (for now)
-        let runtime_specification =
-            self.runtime_specifications
-                .iter()
-                .find(|runtime_specification| {
-                    runtime_specification.kernelspec.language == language_name.to_string()
-                });
-
-        let runtime_specification = match runtime_specification {
-            Some(runtime_specification) => runtime_specification,
-            None => {
-                return Task::ready(Err(anyhow::anyhow!(
-                    "No runtime found for language {}",
-                    language_name
-                )));
-            }
-        };
-
-        let runtime_specification = runtime_specification.clone();
-
-        let fs = self.fs.clone();
-
-        cx.spawn(|_, cx| async move {
-            let running_kernel =
-                RunningKernel::new(runtime_specification, entity_id, fs.clone(), cx);
-
-            let running_kernel = running_kernel.await?;
-
-            let mut request_tx = running_kernel.request_tx.clone();
-
-            let overall_timeout_duration = Duration::from_secs(10);
-
-            let start_time = Instant::now();
-
-            loop {
-                if start_time.elapsed() > overall_timeout_duration {
-                    // todo!(): Kill the kernel
-                    return Err(anyhow::anyhow!("Kernel did not respond in time"));
-                }
-
-                let (tx, rx) = mpsc::unbounded();
-                match request_tx
-                    .send(Request {
-                        request: runtimelib::KernelInfoRequest {}.into(),
-                        responses_rx: tx,
-                    })
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(_err) => {
-                        break;
-                    }
-                };
-
-                let mut rx = rx.fuse();
-
-                let kernel_info_timeout = Duration::from_secs(1);
-
-                let mut got_kernel_info = false;
-                while let Ok(Some(message)) = timeout(kernel_info_timeout, rx.next()).await {
-                    match message {
-                        JupyterMessageContent::KernelInfoReply(_) => {
-                            got_kernel_info = true;
-                        }
-                        _ => {}
-                    }
-                }
-
-                if got_kernel_info {
-                    break;
-                }
-            }
-
-            anyhow::Ok(running_kernel)
-        })
-    }
-
-    fn execute_code(
-        &mut self,
-        entity_id: EntityId,
-        language_name: Arc<str>,
-        code: String,
-        cx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = Result<mpsc::UnboundedReceiver<JupyterMessageContent>>> {
-        let (tx, rx) = mpsc::unbounded();
-
-        let request_tx = self.get_or_launch_kernel(entity_id, language_name, cx);
-
-        async move {
-            let request_tx = request_tx.await?;
-
-            request_tx
-                .unbounded_send(Request {
-                    request: runtimelib::ExecuteRequest {
-                        code,
-                        allow_stdin: false,
-                        silent: false,
-                        store_history: true,
-                        stop_on_error: true,
-                        ..Default::default()
-                    }
-                    .into(),
-                    responses_rx: tx,
-                })
-                .context("Failed to send execution request")?;
-
-            Ok(rx)
-        }
-    }
-
-    pub fn global(cx: &AppContext) -> Option<Model<Self>> {
-        cx.try_global::<RuntimeManagerGlobal>()
-            .map(|runtime_manager| runtime_manager.0.clone())
-    }
-
-    pub fn set_global(runtime_manager: Model<Self>, cx: &mut AppContext) {
-        cx.set_global(RuntimeManagerGlobal(runtime_manager));
-    }
-
-    pub fn remove_global(cx: &mut AppContext) {
-        if RuntimeManager::global(cx).is_some() {
-            cx.remove_global::<RuntimeManagerGlobal>();
-        }
-    }
+pub struct EditorRuntimeBlock {
+    pub code_range: Range<Anchor>,
+    pub _execution_id: String,
+    pub block_id: BlockId,
+    pub _execution_view: View<ExecutionView>,
 }
 
 pub fn get_active_editor(
@@ -367,6 +60,10 @@ pub fn get_active_editor(
     workspace
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx))
+}
+
+pub fn init(cx: &mut AppContext) {
+    runtime_panel::init(cx)
 }
 
 // Gets the active selection in the editor or the current line
@@ -412,14 +109,17 @@ pub fn selection(editor: View<Editor>, cx: &mut ViewContext<Workspace>) -> Range
 }
 
 pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
+    dbg!();
     let (editor, runtime_manager) = if let (Some(editor), Some(runtime_manager)) =
         (get_active_editor(workspace, cx), RuntimeManager::global(cx))
     {
         (editor, runtime_manager)
     } else {
+        dbg!(RuntimeManager::global(cx));
         log::warn!("No active editor or runtime manager found");
         return;
     };
+    dbg!();
 
     let anchor_range = selection(editor.clone(), cx);
 
@@ -448,6 +148,8 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
     };
 
     let entity_id = editor.entity_id();
+
+    dbg!();
 
     let execution_view = cx.new_view(|cx| ExecutionView::new(cx));
 
