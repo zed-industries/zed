@@ -265,10 +265,6 @@ impl PlatformWindow for TestWindow {
     fn start_window_move(&self) {
         unimplemented!()
     }
-
-    fn should_render_window_controls(&self) -> bool {
-        false
-    }
 }
 
 pub(crate) struct TestAtlasState {
