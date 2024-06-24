@@ -2,7 +2,7 @@ mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
 
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::{scroll::Autoscroll, Editor};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
@@ -22,6 +22,7 @@ use terminal::{
     },
     terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, TaskStatus, Terminal,
+    TerminalSize,
 };
 use terminal_element::TerminalElement;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
@@ -78,6 +79,16 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+pub struct BlockProperties {
+    pub line: usize,
+    pub render: Box<dyn Send + Fn(&mut BlockContext) -> AnyElement>,
+}
+
+pub struct BlockContext<'a, 'b> {
+    pub context: &'b mut WindowContext<'a>,
+    pub dimensions: TerminalSize,
+}
+
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
 pub struct TerminalView {
     terminal: Model<Terminal>,
@@ -93,6 +104,7 @@ pub struct TerminalView {
     can_navigate_to_selected_word: bool,
     workspace_id: Option<WorkspaceId>,
     show_title: bool,
+    blocks: HashMap<usize, Arc<BlockProperties>>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -156,6 +168,24 @@ impl TerminalView {
             terminal_view.focus_out(cx);
         });
 
+        let mut blocks = HashMap::default();
+
+        blocks.insert(
+            0,
+            Arc::new(BlockProperties {
+                line: 0,
+                render: Box::new(|_| div().child("Line 0").into_any_element()),
+            }),
+        );
+
+        blocks.insert(
+            2,
+            Arc::new(BlockProperties {
+                line: 2,
+                render: Box::new(|_| div().debug().child("Line 2").into_any_element()),
+            }),
+        );
+
         Self {
             terminal,
             workspace: workspace_handle,
@@ -169,6 +199,7 @@ impl TerminalView {
             can_navigate_to_selected_word: false,
             workspace_id,
             show_title: TerminalSettings::get_global(cx).toolbar.title,
+            blocks,
             _subscriptions: vec![
                 focus_in,
                 focus_out,
@@ -304,6 +335,18 @@ impl TerminalView {
 
     pub fn terminal(&self) -> &Model<Terminal> {
         &self.terminal
+    }
+
+    pub fn insert_block(&mut self, block: BlockProperties) {
+        self.blocks.insert(block.line, Arc::new(block));
+    }
+
+    pub fn clear_blocks(&mut self) {
+        self.blocks.clear();
+    }
+
+    pub fn clear_block_at(&mut self, line: usize) {
+        self.blocks.remove(&line);
     }
 
     fn next_blink_epoch(&mut self) -> usize {
@@ -764,6 +807,7 @@ impl Render for TerminalView {
                     focused,
                     self.should_show_cursor(focused, cx),
                     self.can_navigate_to_selected_word,
+                    self.blocks.clone(),
                 )),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {

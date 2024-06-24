@@ -1,3 +1,4 @@
+use collections::HashMap;
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, ElementId,
@@ -27,8 +28,10 @@ use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::Tooltip;
 use workspace::Workspace;
 
-use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive};
+use std::{mem, sync::Arc};
+
+use crate::{BlockContext, BlockProperties};
 
 /// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
@@ -69,15 +72,19 @@ impl DisplayCursor {
     }
 }
 
-#[derive(Debug, Default)]
+pub enum CellContent {
+    Text(gpui::ShapedLine),
+    Block(Arc<BlockProperties>),
+}
+
 struct LayoutCell {
     point: AlacPoint<i32, i32>,
-    text: gpui::ShapedLine,
+    content: CellContent,
 }
 
 impl LayoutCell {
-    fn new(point: AlacPoint<i32, i32>, text: gpui::ShapedLine) -> LayoutCell {
-        LayoutCell { point, text }
+    fn new(point: AlacPoint<i32, i32>, content: CellContent) -> LayoutCell {
+        LayoutCell { point, content }
     }
 
     fn paint(
@@ -96,7 +103,19 @@ impl LayoutCell {
             )
         };
 
-        self.text.paint(pos, layout.dimensions.line_height, cx).ok();
+        match &self.content {
+            CellContent::Text(line) => {
+                line.paint(pos, layout.dimensions.line_height, cx).ok();
+            }
+            CellContent::Block(block) => {
+                let mut cx = BlockContext {
+                    context: cx,
+                    dimensions: layout.dimensions,
+                };
+                let render = &block.render;
+                render(&mut cx);
+            }
+        }
     }
 }
 
@@ -152,6 +171,7 @@ pub struct TerminalElement {
     cursor_visible: bool,
     can_navigate_to_selected_word: bool,
     interactivity: Interactivity,
+    blocks: HashMap<usize, Arc<BlockProperties>>,
 }
 
 impl InteractiveElement for TerminalElement {
@@ -170,6 +190,7 @@ impl TerminalElement {
         focused: bool,
         cursor_visible: bool,
         can_navigate_to_selected_word: bool,
+        blocks: HashMap<usize, Arc<BlockProperties>>,
     ) -> TerminalElement {
         TerminalElement {
             terminal,
@@ -178,6 +199,7 @@ impl TerminalElement {
             focus: focus.clone(),
             cursor_visible,
             can_navigate_to_selected_word,
+            blocks,
             interactivity: Default::default(),
         }
         .track_focus(&focus)
@@ -189,6 +211,8 @@ impl TerminalElement {
     fn layout_grid(
         grid: &Vec<IndexedCell>,
         text_style: &TextStyle,
+        first_visible_line: usize,
+        blocks: &HashMap<usize, Arc<BlockProperties>>,
         // terminal_theme: &TerminalStyle,
         text_system: &WindowTextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
@@ -201,8 +225,13 @@ impl TerminalElement {
         let mut cur_rect: Option<LayoutRect> = None;
         let mut cur_alac_color = None;
 
+        let mut inserted_block_height = 0;
         let linegroups = grid.into_iter().group_by(|i| i.point.line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
+            let current_line = first_visible_line + line_index;
+            let block = blocks.get(&current_line);
+            let line_index = (line_index + inserted_block_height) as i32;
+
             for cell in line {
                 let mut fg = cell.fg;
                 let mut bg = cell.bg;
@@ -283,7 +312,7 @@ impl TerminalElement {
 
                         cells.push(LayoutCell::new(
                             AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
-                            layout_cell,
+                            CellContent::Text(layout_cell),
                         ))
                     };
                 }
@@ -291,6 +320,14 @@ impl TerminalElement {
 
             if cur_rect.is_some() {
                 rects.push(cur_rect.take().unwrap());
+            }
+
+            if let Some(block) = block {
+                cells.push(LayoutCell {
+                    point: AlacPoint::new((line_index) as i32, 0),
+                    content: CellContent::Block(block.clone()),
+                });
+                inserted_block_height += 1;
             }
         }
         (cells, rects)
@@ -692,7 +729,7 @@ impl Element for TerminalElement {
                     display_offset,
                     cursor_char,
                     selection,
-                    cursor,
+                    mut cursor,
                     ..
                 } = &self.terminal.read(cx).last_content;
 
@@ -708,15 +745,27 @@ impl Element for TerminalElement {
 
                 // then have that representation be converted to the appropriate highlight data structure
 
+                let first_visible_line = self.terminal.read(cx).visible_line_range().start;
                 let (cells, rects) = TerminalElement::layout_grid(
                     cells,
                     &text_style,
+                    first_visible_line,
+                    &self.blocks,
                     &cx.text_system(),
                     last_hovered_word
                         .as_ref()
                         .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
                     cx,
                 );
+
+                // Move the cursor to the correct line, when blocks are inserted
+                let mut cursor_offset = 0;
+                for line in self.blocks.keys() {
+                    if *line >= first_visible_line && *line <= cursor.point.line.0 as usize {
+                        cursor_offset += 1;
+                    }
+                }
+                cursor.point.line.0 += cursor_offset;
 
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
