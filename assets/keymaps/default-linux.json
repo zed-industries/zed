@@ -545,6 +545,7 @@
       "ctrl-enter": "assistant::Assist",
       "ctrl-s": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
+      "ctrl-<": "assistant::InsertSelection",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
