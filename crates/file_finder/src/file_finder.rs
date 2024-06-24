@@ -162,6 +162,7 @@ pub struct FileFinderDelegate {
     currently_opened_path: Option<FoundPath>,
     matches: Matches,
     selected_index: usize,
+    selected_path: Option<Arc<Path>>,
     has_changed_selected_index: bool,
     cancel_flag: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
@@ -436,6 +437,7 @@ impl FileFinderDelegate {
             matches: Matches::default(),
             has_changed_selected_index: false,
             selected_index: 0,
+            selected_path: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
             separate_history,
@@ -537,11 +539,34 @@ impl FileFinderDelegate {
                 matches.into_iter(),
                 extend_old_matches,
             );
+
+            self.update_selected_index(self.calculate_selected_index(!self.query_changed(&query)));
             self.latest_search_query = Some(query);
             self.latest_search_did_cancel = did_cancel;
-            self.selected_index = self.calculate_selected_index();
             cx.notify();
         }
+    }
+
+    fn query_changed(&self, new_query: &PathLikeWithPosition<FileSearchQuery>) -> bool {
+        return self
+            .latest_search_query
+            .as_ref()
+            .map(|q| q.path_like.raw_query != new_query.path_like.raw_query)
+            .unwrap_or(true);
+    }
+
+    fn update_selected_index(&mut self, selected_index: usize) {
+        dbg!(selected_index);
+        dbg!(self.selected_index);
+        dbg!(&self.selected_path);
+
+        self.selected_index = selected_index;
+        self.selected_path = self.matches.get(self.selected_index).map(|m| match m {
+            Match::History(found_path, _) => found_path.project.path.clone(),
+            Match::Search(ord) => ord.0.path.clone(),
+        });
+
+        dbg!(&self.selected_path);
     }
 
     fn labels_for_match(
@@ -717,7 +742,14 @@ impl FileFinderDelegate {
     }
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
-    fn calculate_selected_index(&self) -> usize {
+    /// If any match was selected earlier and still present in the set, keep it selected.
+    fn calculate_selected_index(&self, preserve_selected_entry: bool) -> usize {
+        if preserve_selected_entry {
+            if let Some(selected_entry_index) = self.selected_entry_index() {
+                return selected_entry_index;
+            }
+        }
+
         if let Some(Match::History(path, _)) = self.matches.get(0) {
             if Some(path) == self.currently_opened_path.as_ref() {
                 let elements_after_first = self.matches.len() - 1;
@@ -726,7 +758,20 @@ impl FileFinderDelegate {
                 }
             }
         }
+
         0
+    }
+
+    fn selected_entry_index(&self) -> Option<usize> {
+        self.selected_path
+            .as_ref()
+            .map(|selected_path| {
+                self.matches.matches.iter().position(|m| match m {
+                    Match::History(path, _) => path.project.path == *selected_path,
+                    Match::Search(path) => path.0.path == *selected_path,
+                })
+            })
+            .flatten()
     }
 }
 
@@ -747,7 +792,7 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         self.has_changed_selected_index = true;
-        self.selected_index = ix;
+        self.update_selected_index(ix);
         cx.notify();
     }
 
