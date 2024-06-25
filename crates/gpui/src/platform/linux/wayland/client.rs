@@ -75,8 +75,8 @@ use crate::platform::linux::LinuxClient;
 use crate::platform::linux::{get_xkb_compose_state, is_within_click_distance};
 use crate::platform::PlatformWindow;
 use crate::{
-    point, px, size, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor, MouseExitEvent, Size,
-    SCROLL_LINES,
+    point, px, size, BackgroundExecutor, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor,
+    MouseExitEvent, Size, SCROLL_LINES,
 };
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
@@ -107,13 +107,15 @@ pub struct Globals {
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
-    pub executor: ForegroundExecutor,
+    pub background_executor: BackgroundExecutor,
+    pub foreground_executor: ForegroundExecutor,
 }
 
 impl Globals {
     fn new(
         globals: GlobalList,
-        executor: ForegroundExecutor,
+        background_executor: BackgroundExecutor,
+        foreground_executor: ForegroundExecutor,
         qh: QueueHandle<WaylandClientStatePtr>,
         seat: wl_seat::WlSeat,
     ) -> Self {
@@ -144,7 +146,8 @@ impl Globals {
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
-            executor,
+            background_executor,
+            foreground_executor,
             qh,
         }
     }
@@ -425,6 +428,7 @@ impl WaylandClient {
         let seat = seat.unwrap();
         let globals = Globals::new(
             globals,
+            common.background_executor.clone(),
             common.foreground_executor.clone(),
             qh.clone(),
             seat.clone(),
@@ -1066,6 +1070,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 if let Some(window) = state.keyboard_focused_window.clone() {
                     drop(state);
                     window.set_focused(true);
+                    window.set_urgency_hint(false);
                 }
             }
             wl_keyboard::Event::Leave { surface, .. } => {

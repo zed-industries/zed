@@ -20,6 +20,7 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
 use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
+use crate::platform::linux::dbus::unity_launcher::{LauncherEntryProxy, UpdateOptions};
 use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
@@ -76,6 +77,7 @@ pub struct WaylandWindowState {
     acknowledged_first_configure: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+    app_id: Option<String>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
@@ -158,6 +160,7 @@ impl WaylandWindowState {
             xdg_surface,
             acknowledged_first_configure: false,
             surface,
+            app_id: None,
             decoration,
             blur: None,
             toplevel,
@@ -230,7 +233,7 @@ impl Drop for WaylandWindow {
         let state_ptr = self.0.clone();
         state
             .globals
-            .executor
+            .foreground_executor
             .spawn(async move {
                 state_ptr.close();
                 client.drop_window(&surface_id)
@@ -691,6 +694,22 @@ impl WaylandWindowStatePtr {
             (fun)()
         }
     }
+
+    pub fn set_urgency_hint(&self, urgent: bool) {
+        if let Some(app_id) = &self.state.borrow().app_id {
+            let app_uri = format!("application://{app_id}.desktop");
+            self.state
+                .borrow()
+                .globals
+                .background_executor
+                .spawn(async move {
+                    LauncherEntryProxy::update(&app_uri, UpdateOptions::default().urgent(urgent))
+                        .await
+                        .ok();
+                })
+                .detach();
+        }
+    }
 }
 
 fn extract_states<'a, S: TryFrom<u32> + 'a>(states: &'a [u8]) -> impl Iterator<Item = S> + 'a
@@ -808,7 +827,9 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn activate(&self) {
-        log::info!("Wayland does not support this API");
+        if !self.is_active() {
+            self.0.set_urgency_hint(true);
+        }
     }
 
     fn is_active(&self) -> bool {
@@ -820,7 +841,9 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_app_id(&mut self, app_id: &str) {
-        self.borrow().toplevel.set_app_id(app_id.to_owned());
+        let mut state = self.borrow_mut();
+        state.app_id = Some(app_id.to_owned());
+        state.toplevel.set_app_id(app_id.to_owned());
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
