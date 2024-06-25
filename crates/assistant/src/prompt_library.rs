@@ -774,94 +774,78 @@ impl PromptLibrary {
                                 .pb(Spacing::Large.rems(cx))
                                 .justify_between()
                                 .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .max_w_80()
-                                                .on_action(cx.listener(Self::move_down_from_title))
-                                                .border_1()
-                                                .border_color(transparent_black())
-                                                .rounded_md()
-                                                .group_hover("active-editor-header", |this| {
-                                                    this.border_color(
-                                                        cx.theme().colors().border_variant,
-                                                    )
-                                                })
-                                                .child(EditorElement::new(
-                                                    &prompt_editor.title_editor,
-                                                    EditorStyle {
-                                                        background: cx.theme().system().transparent,
-                                                        local_player: cx.theme().players().local(),
-                                                        text: TextStyle {
-                                                            color: cx
-                                                                .theme()
-                                                                .colors()
-                                                                .editor_foreground,
-                                                            font_family: settings
-                                                                .ui_font
-                                                                .family
-                                                                .clone(),
-                                                            font_features: settings
-                                                                .ui_font
-                                                                .features
-                                                                .clone(),
-                                                            font_size: HeadlineSize::Large
-                                                                .size()
-                                                                .into(),
-                                                            font_weight: settings.ui_font.weight,
-                                                            line_height: relative(
-                                                                settings.buffer_line_height.value(),
-                                                            ),
-                                                            ..Default::default()
-                                                        },
-                                                        scrollbar_width: Pixels::ZERO,
-                                                        syntax: cx.theme().syntax().clone(),
-                                                        status: cx.theme().status().clone(),
-                                                        inlay_hints_style: HighlightStyle {
-                                                            color: Some(cx.theme().status().hint),
-                                                            ..HighlightStyle::default()
-                                                        },
-                                                        suggestions_style: HighlightStyle {
-                                                            color: Some(
-                                                                cx.theme().status().predictive,
-                                                            ),
-                                                            ..HighlightStyle::default()
-                                                        },
+                                    h_flex().gap_1().child(
+                                        div()
+                                            .max_w_80()
+                                            .on_action(cx.listener(Self::move_down_from_title))
+                                            .border_1()
+                                            .border_color(transparent_black())
+                                            .rounded_md()
+                                            .group_hover("active-editor-header", |this| {
+                                                this.border_color(
+                                                    cx.theme().colors().border_variant,
+                                                )
+                                            })
+                                            .child(EditorElement::new(
+                                                &prompt_editor.title_editor,
+                                                EditorStyle {
+                                                    background: cx.theme().system().transparent,
+                                                    local_player: cx.theme().players().local(),
+                                                    text: TextStyle {
+                                                        color: cx
+                                                            .theme()
+                                                            .colors()
+                                                            .editor_foreground,
+                                                        font_family: settings
+                                                            .ui_font
+                                                            .family
+                                                            .clone(),
+                                                        font_features: settings
+                                                            .ui_font
+                                                            .features
+                                                            .clone(),
+                                                        font_size: HeadlineSize::Large
+                                                            .size()
+                                                            .into(),
+                                                        font_weight: settings.ui_font.weight,
+                                                        line_height: relative(
+                                                            settings.buffer_line_height.value(),
+                                                        ),
+                                                        ..Default::default()
                                                     },
-                                                )),
-                                        )
+                                                    scrollbar_width: Pixels::ZERO,
+                                                    syntax: cx.theme().syntax().clone(),
+                                                    status: cx.theme().status().clone(),
+                                                    inlay_hints_style: HighlightStyle {
+                                                        color: Some(cx.theme().status().hint),
+                                                        ..HighlightStyle::default()
+                                                    },
+                                                    suggestions_style: HighlightStyle {
+                                                        color: Some(cx.theme().status().predictive),
+                                                        ..HighlightStyle::default()
+                                                    },
+                                                },
+                                            )),
+                                    ),
                                 )
                                 .child(
-                                    h_flex().h_full()
-                                        .child(h_flex()
-                                            .h_full()
-                                            .gap(Spacing::XXLarge.rems(cx))
-                                            .child(div()))
+                                    h_flex()
+                                        .h_full()
                                         .child(
-                                        h_flex()
-                                            .h_full()
-                                            .gap(Spacing::XXLarge.rems(cx))
-                                            .child(
-                                                IconButton::new(
-                                                    "add-to-shared-library",
-                                                    IconName::BookPlus,
-                                                )
-                                                .size(ButtonSize::Large)
-                                                .style(ButtonStyle::Transparent)
-                                                .shape(IconButtonShape::Square)
-                                                .tooltip(move |cx| {
-                                                    Tooltip::with_meta(
-                                                        "Add to Shared Library",
-                                                        None,
-                                                        "Coming soon – Create shared prompt libraries to collaborate with others.",
-                                                        cx,
+                                            h_flex()
+                                                .h_full()
+                                                .gap(Spacing::XXLarge.rems(cx))
+                                                .child(div()),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .h_full()
+                                                .gap(Spacing::XXLarge.rems(cx))
+                                                .child(
+                                                    IconButton::new(
+                                                        "delete-prompt",
+                                                        IconName::Trash,
                                                     )
-                                                })
-                                                .disabled(true),
-                                            )
-                                            .child(
-                                                IconButton::new("delete-prompt", IconName::Trash)
                                                     .size(ButtonSize::Large)
                                                     .style(ButtonStyle::Transparent)
                                                     .shape(IconButtonShape::Square)
@@ -876,57 +860,57 @@ impl PromptLibrary {
                                                     .on_click(|_, cx| {
                                                         cx.dispatch_action(Box::new(DeletePrompt));
                                                     }),
-                                            )
-                                            .child(
-                                                IconButton::new(
-                                                    "duplicate-prompt",
-                                                    IconName::BookCopy,
                                                 )
-                                                .size(ButtonSize::Large)
-                                                .style(ButtonStyle::Transparent)
-                                                .shape(IconButtonShape::Square)
-                                                .size(ButtonSize::Large)
-                                                .tooltip(move |cx| {
-                                                    Tooltip::for_action(
-                                                        "Duplicate Prompt",
-                                                        &gpui::NoAction,
-                                                        cx,
+                                                // .child(
+                                                //     IconButton::new(
+                                                //         "duplicate-prompt",
+                                                //         IconName::BookCopy,
+                                                //     )
+                                                //     .size(ButtonSize::Large)
+                                                //     .style(ButtonStyle::Transparent)
+                                                //     .shape(IconButtonShape::Square)
+                                                //     .size(ButtonSize::Large)
+                                                //     .tooltip(move |cx| {
+                                                //         Tooltip::for_action(
+                                                //             "Duplicate Prompt",
+                                                //             &gpui::NoAction,
+                                                //             cx,
+                                                //         )
+                                                //     })
+                                                //     .disabled(true),
+                                                // )
+                                                .child(
+                                                    IconButton::new(
+                                                        "toggle-default-prompt",
+                                                        IconName::Sparkle,
                                                     )
-                                                })
-                                                .disabled(true),
-                                            )
-                                            .child(
-                                                IconButton::new(
-                                                    "toggle-default-prompt",
-                                                    IconName::Sparkle,
-                                                )
-                                                .style(ButtonStyle::Transparent)
-                                                .selected(prompt_metadata.default)
-                                                .selected_icon(IconName::SparkleFilled)
-                                                .icon_color(if prompt_metadata.default {
-                                                    Color::Accent
-                                                } else {
-                                                    Color::Muted
-                                                })
-                                                .shape(IconButtonShape::Square)
-                                                .size(ButtonSize::Large)
-                                                .tooltip(move |cx| {
-                                                    Tooltip::text(
-                                                        if prompt_metadata.default {
-                                                            "Remove from Default Prompt"
-                                                        } else {
-                                                            "Add to Default Prompt"
-                                                        },
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_click(|_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        ToggleDefaultPrompt,
-                                                    ));
-                                                }),
-                                            ),
-                                    ),
+                                                    .style(ButtonStyle::Transparent)
+                                                    .selected(prompt_metadata.default)
+                                                    .selected_icon(IconName::SparkleFilled)
+                                                    .icon_color(if prompt_metadata.default {
+                                                        Color::Accent
+                                                    } else {
+                                                        Color::Muted
+                                                    })
+                                                    .shape(IconButtonShape::Square)
+                                                    .size(ButtonSize::Large)
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::text(
+                                                            if prompt_metadata.default {
+                                                                "Remove from Default Prompt"
+                                                            } else {
+                                                                "Add to Default Prompt"
+                                                            },
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(Box::new(
+                                                            ToggleDefaultPrompt,
+                                                        ));
+                                                    }),
+                                                ),
+                                        ),
                                 ),
                         )
                         .child(
@@ -938,8 +922,9 @@ impl PromptLibrary {
                                 .h_full()
                                 .child(prompt_editor.body_editor.clone())
                                 .children(prompt_editor.token_count.map(|token_count| {
-                                    let token_count:SharedString = token_count.to_string().into();
-                                    let label_token_count:SharedString = token_count.to_string().into();
+                                    let token_count: SharedString = token_count.to_string().into();
+                                    let label_token_count: SharedString =
+                                        token_count.to_string().into();
 
                                     h_flex()
                                         .id("token_count")
@@ -955,14 +940,16 @@ impl PromptLibrary {
                                             Tooltip::with_meta(
                                                 format!("{} tokens", token_count.clone()),
                                                 None,
-                                                format!(
-                                                    "Model: {}",
-                                                    current_model.display_name()
-                                                ),
+                                                format!("Model: {}", current_model.display_name()),
                                                 cx,
                                             )
                                         })
-                                        .child(Label::new(format!("{} tokens", label_token_count.clone())).color(Color::Muted)
+                                        .child(
+                                            Label::new(format!(
+                                                "{} tokens",
+                                                label_token_count.clone()
+                                            ))
+                                            .color(Color::Muted),
                                         )
                                 })),
                         ),
