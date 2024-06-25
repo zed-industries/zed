@@ -1384,6 +1384,7 @@ impl FocusableView for PromptEditor {
 impl PromptEditor {
     const MAX_LINES: u8 = 8;
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
