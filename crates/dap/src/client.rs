@@ -1,12 +1,12 @@
 use crate::{
-    events::{self},
+    events,
     requests::{
         ConfigurationDone, Continue, ContinueArguments, Initialize, InitializeArguments, Launch,
         LaunchRequestArguments, Next, NextArguments, SetBreakpoints, SetBreakpointsArguments,
         SetBreakpointsResponse, StepIn, StepInArguments, StepOut, StepOutArguments,
     },
     transport::{self, Payload, Request, Transport},
-    types::{DebuggerCapabilities, Source, SourceBreakpoint, ThreadId},
+    types::{DebuggerCapabilities, Source, SourceBreakpoint, SteppingGranularity, ThreadId},
 };
 use anyhow::{anyhow, Context, Result};
 use futures::{
@@ -246,18 +246,18 @@ impl DebugAdapterClient {
         .await
     }
 
-    pub async fn next_thread(&self, thread_id: ThreadId) {
+    pub async fn resume(&self, thread_id: ThreadId) {
         let _ = self
-            .request::<Next>(NextArguments {
-                thread_id,
-                granularity: None,
-            })
+            .request::<Continue>(ContinueArguments { thread_id })
             .await;
     }
 
-    pub async fn continue_thread(&self, thread_id: ThreadId) {
+    pub async fn step_over(&self, thread_id: ThreadId) {
         let _ = self
-            .request::<Continue>(ContinueArguments { thread_id })
+            .request::<Next>(NextArguments {
+                thread_id,
+                granularity: Some(SteppingGranularity::Line),
+            })
             .await;
     }
 
