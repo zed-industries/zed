@@ -1,5 +1,4 @@
 use std::cell::{RefCell, RefMut};
-use std::ffi::OsString;
 use std::hash::Hash;
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
