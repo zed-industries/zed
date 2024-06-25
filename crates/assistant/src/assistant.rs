@@ -325,6 +325,24 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 }
 
+pub fn humanize_token_count(count: usize) -> String {
+    match count {
+        0..=999 => count.to_string(),
+        1000..=9999 => {
+            let thousands = count / 1000;
+            let hundreds = (count % 1000 + 50) / 100;
+            if hundreds == 0 {
+                format!("{}k", thousands)
+            } else if hundreds == 10 {
+                format!("{}k", thousands + 1)
+            } else {
+                format!("{}.{}k", thousands, hundreds)
+            }
+        }
+        _ => format!("{}k", (count + 500) / 1000),
+    }
+}
+
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {

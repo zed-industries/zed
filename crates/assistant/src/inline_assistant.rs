@@ -1,7 +1,7 @@
 use crate::{
-    assistant_settings::AssistantSettings, prompts::generate_content_prompt, AssistantPanel,
-    CompletionProvider, Hunk, LanguageModelRequest, LanguageModelRequestMessage, Role,
-    StreamingDiff,
+    assistant_settings::AssistantSettings, humanize_token_count, prompts::generate_content_prompt,
+    AssistantPanel, CompletionProvider, Hunk, LanguageModelRequest, LanguageModelRequestMessage,
+    Role, StreamingDiff,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -1337,6 +1337,7 @@ impl Render for PromptEditor {
                     ),
             )
             .child(div().flex_1().child(self.render_prompt_editor(cx)))
+            .child(self.render_token_count(cx))
             .child(h_flex().gap_2().pr_4().children(buttons))
     }
 }
@@ -1563,6 +1564,37 @@ impl PromptEditor {
                 });
             }
         }
+    }
+
+    fn render_token_count(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let model = CompletionProvider::global(cx).model();
+        let token_count = context.read(cx).token_count()?;
+        let max_token_count = model.max_token_count();
+
+        let remaining_tokens = max_token_count as isize - token_count as isize;
+        let token_count_color = if remaining_tokens <= 0 {
+            Color::Error
+        } else if token_count as f32 / max_token_count as f32 >= 0.8 {
+            Color::Warning
+        } else {
+            Color::Muted
+        };
+
+        Some(
+            h_flex()
+                .gap_0p5()
+                .child(
+                    Label::new(humanize_token_count(token_count))
+                        .size(LabelSize::Small)
+                        .color(token_count_color),
+                )
+                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                .child(
+                    Label::new(humanize_token_count(max_token_count))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+        )
     }
 
     fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {

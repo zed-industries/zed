@@ -1,5 +1,6 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
+    humanize_token_count,
     prompt_library::open_prompt_library,
     search::*,
     slash_command::{
@@ -1551,11 +1552,6 @@ impl Context {
                 updated: vec![pending_command.clone()],
             });
         }
-    }
-
-    fn remaining_tokens(&self, cx: &AppContext) -> Option<isize> {
-        let model = CompletionProvider::global(cx).model();
-        Some(model.max_token_count() as isize - self.token_count? as isize)
     }
 
     fn completion_provider_changed(&mut self, cx: &mut ModelContext<Self>) {
@@ -3941,23 +3937,5 @@ mod tests {
             .messages(cx)
             .map(|message| (message.id, message.role, message.offset_range))
             .collect()
-    }
-}
-
-fn humanize_token_count(count: usize) -> String {
-    match count {
-        0..=999 => count.to_string(),
-        1000..=9999 => {
-            let thousands = count / 1000;
-            let hundreds = (count % 1000 + 50) / 100;
-            if hundreds == 0 {
-                format!("{}k", thousands)
-            } else if hundreds == 10 {
-                format!("{}k", thousands + 1)
-            } else {
-                format!("{}.{}k", thousands, hundreds)
-            }
-        }
-        _ => format!("{}k", (count + 500) / 1000),
     }
 }
