@@ -1893,6 +1893,11 @@ impl Codegen {
 
                                         if lines.peek().is_some() {
                                             hunks_tx.send(diff.push_new("\n")).await?;
+                                            if line_indent.is_none() {
+                                                // Don't write out the leading indentation in empty lines on the next line
+                                                // This is the case where the above if statement didn't clear the buffer
+                                                new_text.clear();
+                                            }
                                             line_indent = None;
                                             first_line = false;
                                         }
