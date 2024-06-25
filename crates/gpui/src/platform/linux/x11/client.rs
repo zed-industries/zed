@@ -29,9 +29,9 @@ use xkbcommon::xkb as xkbc;
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
-    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId,
-    Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
+    DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput,
+    Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
 use super::{
@@ -129,6 +129,7 @@ pub struct X11ClientState {
 
     pub(crate) common: LinuxCommon,
     pub(crate) clipboard: x11_clipboard::Clipboard,
+    pub(crate) clipboard_item: Option<ClipboardItem>,
 }
 
 #[derive(Clone)]
@@ -413,6 +414,7 @@ impl X11Client {
             scroll_y: None,
 
             clipboard,
+            clipboard_item: None,
         })))
     }
 
@@ -1097,7 +1099,7 @@ impl LinuxClient for X11Client {
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
-        let state = self.0.borrow_mut();
+        let mut state = self.0.borrow_mut();
         state
             .clipboard
             .store(
@@ -1106,6 +1108,7 @@ impl LinuxClient for X11Client {
                 item.text().as_bytes(),
             )
             .ok();
+        state.clipboard_item.replace(item);
     }
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
@@ -1127,6 +1130,20 @@ impl LinuxClient for X11Client {
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
         let state = self.0.borrow_mut();
+        // if the last copy was from this app, return our cached item
+        // which has metadata attached.
+        if state
+            .clipboard
+            .setter
+            .connection
+            .get_selection_owner(state.clipboard.setter.atoms.clipboard)
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .map(|reply| reply.owner == state.clipboard.setter.window)
+            .unwrap_or(false)
+        {
+            return state.clipboard_item.clone();
+        }
         state
             .clipboard
             .load(
