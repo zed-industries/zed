@@ -27,7 +27,7 @@ use git::{
 };
 use gpui::{
     AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter, Model, ModelContext,
-    Position, Task,
+    Task,
 };
 use ignore::IgnoreStack;
 use parking_lot::Mutex;
@@ -3826,8 +3826,8 @@ impl BackgroundScanner {
             .await;
 
         // Ensure that .git and .gitignore are processed first.
-        swap_to_front(&mut child_paths, &*GITIGNORE);
-        swap_to_front(&mut child_paths, &*DOT_GIT);
+        swap_to_front(&mut child_paths, *GITIGNORE);
+        swap_to_front(&mut child_paths, *DOT_GIT);
 
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
