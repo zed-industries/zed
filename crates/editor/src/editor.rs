@@ -8226,6 +8226,58 @@ impl Editor {
         });
     }
 
+    pub fn select_enclosing_symbol(
+        &mut self,
+        _: &SelectEnclosingSymbol,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_selections = self.selections.all::<usize>(cx).into_boxed_slice();
+
+        fn update_selection(
+            selection: &Selection<usize>,
+            buffer_snap: &MultiBufferSnapshot,
+        ) -> Option<Selection<usize>> {
+            let cursor = selection.head();
+            let (_buffer_id, symbols) = buffer_snap.symbols_containing(cursor, None)?;
+            for symbol in symbols.iter().rev() {
+                let start = symbol.range.start.to_offset(&buffer_snap);
+                let end = symbol.range.end.to_offset(&buffer_snap);
+                let new_range = start..end;
+                if start < selection.start || end > selection.end {
+                    return Some(Selection {
+                        id: selection.id,
+                        start: new_range.start,
+                        end: new_range.end,
+                        goal: SelectionGoal::None,
+                        reversed: selection.reversed,
+                    });
+                }
+            }
+            None
+        }
+
+        let mut selected_larger_symbol = false;
+        let new_selections = old_selections
+            .iter()
+            .map(|selection| match update_selection(selection, &buffer) {
+                Some(new_selection) => {
+                    if new_selection.range() != selection.range() {
+                        selected_larger_symbol = true;
+                    }
+                    new_selection
+                }
+                None => selection.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        if selected_larger_symbol {
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(new_selections);
+            });
+        }
+    }
+
     pub fn select_larger_syntax_node(
         &mut self,
         _: &SelectLargerSyntaxNode,
