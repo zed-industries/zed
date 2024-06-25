@@ -6,11 +6,12 @@ use editor::{
     Anchor, AnchorRangeExt, Editor,
 };
 use futures::{future::Shared, StreamExt};
-use gpui::{actions, Task};
+use gpui::Task;
 use gpui::{prelude::*, AppContext};
 use gpui::{Entity, View};
 use language::Point;
 use outputs::{ExecutionStatus, ExecutionView, LineHeight as _};
+use runtime_panel::Run;
 use runtime_settings::JupyterSettings;
 use settings::Settings as _;
 use std::ops::Range;
@@ -28,8 +29,6 @@ mod stdio;
 pub use runtime_manager::RuntimeManager;
 pub use runtime_panel::RuntimePanel;
 use runtimes::RunningKernel;
-
-actions!(repl, [Run, ToggleFocus]);
 
 #[derive(Debug)]
 pub enum Kernel {
@@ -108,7 +107,7 @@ pub fn selection(editor: View<Editor>, cx: &mut ViewContext<Workspace>) -> Range
     anchor_range
 }
 
-pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
+pub fn old_run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
     dbg!();
     let (editor, runtime_manager) = if let (Some(editor), Some(runtime_manager)) =
         (get_active_editor(workspace, cx), RuntimeManager::global(cx))
