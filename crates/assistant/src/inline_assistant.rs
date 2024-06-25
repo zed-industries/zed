@@ -1564,8 +1564,10 @@ impl PromptEditor {
                 }
 
                 self.edited_since_done = true;
-                self.count_tokens(cx);
                 cx.notify();
+            }
+            EditorEvent::BufferEdited => {
+                self.count_tokens(cx);
             }
             _ => {}
         }
