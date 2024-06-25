@@ -277,7 +277,12 @@ impl LspAdapter for NodeVersionAdapter {
             "windows" => "pc-windows-msvc",
             other => bail!("Running on unsupported os: {other}"),
         };
-        let asset_name = format!("package-version-server-{}-{os}.tar.gz", consts::ARCH);
+        let suffix = if consts::OS == "windows" {
+            ".zip"
+        } else {
+            ".tar.gz"
+        }
+        let asset_name = format!("package-version-server-{}-{os}{suffix}", consts::ARCH);
         let asset = release
             .assets
             .iter()
@@ -306,9 +311,15 @@ impl LspAdapter for NodeVersionAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(&destination_container_path).await?;
+            if version.url.ends_with(".zip") {
+                let mut zip_archive = zip::ZipArchive::new(BufReader::new(response.body_mut()))?;
+                zip_archive.extract(&destination_container_path)?;
+            } else if version.url.ends_with(".tar.gz") {
+                let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                let archive = Archive::new(decompressed_bytes);
+                archive.unpack(&destination_container_path).await?;
+            }
+
             fs::copy(
                 destination_container_path.join("package-version-server"),
                 &destination_path,
