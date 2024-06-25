@@ -124,6 +124,6 @@ fn notification_window_options(
         display_id: Some(screen.id()),
         window_background: WindowBackgroundAppearance::default(),
         app_id: Some(app_id.to_owned()),
-        window_min_size: Size::default(),
+        window_min_size: None,
     }
 }
