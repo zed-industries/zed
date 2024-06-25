@@ -505,6 +505,7 @@ impl MacWindow {
             focus,
             show,
             display_id,
+            window_min_size,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
@@ -645,6 +646,11 @@ impl MacWindow {
             }
 
             native_window.setMovable_(is_movable as BOOL);
+
+            native_window.setContentMinSize_(NSSize {
+                width: window_min_size.width.to_f64(),
+                height: window_min_size.height.to_f64(),
+            });
 
             if titlebar.map_or(true, |titlebar| titlebar.appears_transparent) {
                 native_window.setTitlebarAppearsTransparent_(YES);
