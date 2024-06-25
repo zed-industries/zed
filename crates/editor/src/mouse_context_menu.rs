@@ -3,8 +3,8 @@ use crate::{
     GoToDefinition, GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager,
     SelectMode, ToggleCodeActions,
 };
-use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use gpui::prelude::FluentBuilder;
+use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
 
 pub struct MouseContextMenu {
