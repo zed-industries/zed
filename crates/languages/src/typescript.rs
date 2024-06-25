@@ -201,7 +201,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         Ok(Some(json!({
             "provideFormatter": true,
             "tsserver": {
-                "path": "node_modules/typescript/lib",
+                "path": "/Users/hiro/Projects/repros/yarn-test/.yarn/sdks/typescript/lib",
             },
             "preferences": {
                 "includeInlayParameterNameHints": "all",
