@@ -344,6 +344,7 @@ struct MacWindowState {
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    ime_composing: bool,
 }
 
 impl MacWindowState {
@@ -504,6 +505,7 @@ impl MacWindow {
             focus,
             show,
             display_id,
+            window_min_size,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
@@ -623,6 +625,7 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
+                ime_composing: false,
             })));
 
             (*native_window).set_ivar(
@@ -643,6 +646,11 @@ impl MacWindow {
             }
 
             native_window.setMovable_(is_movable as BOOL);
+
+            native_window.setContentMinSize_(NSSize {
+                width: window_min_size.width.to_f64(),
+                height: window_min_size.height.to_f64(),
+            });
 
             if titlebar.map_or(true, |titlebar| titlebar.appears_transparent) {
                 native_window.setTitlebarAppearsTransparent_(YES);
@@ -1234,6 +1242,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         let mut lock = window_state.lock();
         let previous_keydown_inserted_text = lock.previous_keydown_inserted_text.take();
         let mut last_inserts = lock.last_ime_inputs.take().unwrap();
+        let ime_composing = std::mem::take(&mut lock.ime_composing);
 
         let mut callback = lock.event_callback.take();
         drop(lock);
@@ -1248,7 +1257,8 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         let is_composing =
             with_input_handler(this, |input_handler| input_handler.marked_text_range())
                 .flatten()
-                .is_some();
+                .is_some()
+                || ime_composing;
 
         if let Some((text, range)) = last_insert {
             if !is_composing {
@@ -1922,6 +1932,7 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
                     input_handler.replace_text_in_range(range, &text)
                 }
                 ImeInput::SetMarkedText(text, range, marked_range) => {
+                    lock.ime_composing = true;
                     drop(lock);
                     input_handler.replace_and_mark_text_in_range(range, &text, marked_range)
                 }

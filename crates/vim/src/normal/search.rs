@@ -127,14 +127,16 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
                         search_bar.set_replacement(None, cx);
                         search_bar.set_search_options(SearchOptions::REGEX, cx);
                     }
-                    vim.workspace_state.search = SearchState {
-                        direction,
-                        count,
-                        initial_query: query.clone(),
-                        prior_selections,
-                        prior_operator: vim.active_operator(),
-                        prior_mode: vim.state().mode,
-                    };
+                    vim.update_state(|state| {
+                        state.search = SearchState {
+                            direction,
+                            count,
+                            initial_query: query.clone(),
+                            prior_selections,
+                            prior_operator: state.operator_stack.last().cloned(),
+                            prior_mode: state.mode,
+                        }
+                    });
                 });
             }
         })
@@ -143,7 +145,9 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
 
 // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
 fn search_deploy(_: &mut Workspace, _: &buffer_search::Deploy, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, _| vim.workspace_state.search = Default::default());
+    Vim::update(cx, |vim, _| {
+        vim.update_state(|state| state.search = Default::default())
+    });
     cx.propagate();
 }
 
@@ -154,27 +158,32 @@ fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewConte
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
-                    let state = &mut vim.workspace_state.search;
-                    let mut count = state.count;
-                    let direction = state.direction;
+                    let (mut prior_selections, prior_mode, prior_operator) =
+                        vim.update_state(|state| {
+                            let mut count = state.search.count;
+                            let direction = state.search.direction;
+                            // in the case that the query has changed, the search bar
+                            // will have selected the next match already.
+                            if (search_bar.query(cx) != state.search.initial_query)
+                                && state.search.direction == Direction::Next
+                            {
+                                count = count.saturating_sub(1)
+                            }
+                            state.search.count = 1;
+                            search_bar.select_match(direction, count, cx);
+                            search_bar.focus_editor(&Default::default(), cx);
 
-                    // in the case that the query has changed, the search bar
-                    // will have selected the next match already.
-                    if (search_bar.query(cx) != state.initial_query)
-                        && state.direction == Direction::Next
-                    {
-                        count = count.saturating_sub(1)
-                    }
+                            let prior_selections: Vec<_> =
+                                state.search.prior_selections.drain(..).collect();
+                            let prior_mode = state.search.prior_mode;
+                            let prior_operator = state.search.prior_operator.take();
+                            (prior_selections, prior_mode, prior_operator)
+                        });
+
                     vim.workspace_state
                         .registers
                         .insert('/', search_bar.query(cx).into());
-                    state.count = 1;
-                    search_bar.select_match(direction, count, cx);
-                    search_bar.focus_editor(&Default::default(), cx);
 
-                    let mut prior_selections: Vec<_> = state.prior_selections.drain(..).collect();
-                    let prior_mode = state.prior_mode;
-                    let prior_operator = state.prior_operator.take();
                     let new_selections = vim.editor_selections(cx);
 
                     // If the active editor has changed during a search, don't panic.

@@ -671,12 +671,12 @@ impl LinuxClient for WaylandClient {
             return;
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-            let serial = state.serial_tracker.get(SerialKind::KeyEnter);
+            state.clipboard.set_primary(item.text);
+            let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = primary_selection_manager.create_source(&state.globals.qh, ());
             data_source.offer(state.clipboard.self_mime());
             data_source.offer(TEXT_MIME_TYPE.to_string());
             primary_selection.set_selection(Some(&data_source), serial);
-            state.clipboard.set_primary(item.text);
         }
     }
 
@@ -689,12 +689,12 @@ impl LinuxClient for WaylandClient {
             return;
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-            let serial = state.serial_tracker.get(SerialKind::KeyEnter);
+            state.clipboard.set(item.text);
+            let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
             data_source.offer(state.clipboard.self_mime());
             data_source.offer(TEXT_MIME_TYPE.to_string());
             data_device.set_selection(Some(&data_source), serial);
-            state.clipboard.set(item.text);
         }
     }
 

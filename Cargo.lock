@@ -2223,6 +2223,7 @@ dependencies = [
  "fork",
  "ipc-channel",
  "once_cell",
+ "parking_lot",
  "paths",
  "plist",
  "release_channel",
@@ -7370,7 +7371,7 @@ dependencies = [
 [[package]]
 name = "pathfinder_simd"
 version = "0.5.3"
-source = "git+https://github.com/servo/pathfinder.git?rev=30419d07660dc11a21e42ef4a7fa329600cff152#30419d07660dc11a21e42ef4a7fa329600cff152"
+source = "git+https://github.com/servo/pathfinder.git?rev=4968e819c0d9b015437ffc694511e175801a17c7#4968e819c0d9b015437ffc694511e175801a17c7"
 dependencies = [
  "rustc_version",
 ]
@@ -13599,7 +13600,7 @@ dependencies = [
 
 [[package]]
 name = "zed_snippets"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "serde_json",
  "zed_extension_api 0.0.6",

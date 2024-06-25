@@ -1421,7 +1421,7 @@ impl Pane {
             if save_intent == SaveIntent::Close {
                 let will_autosave = cx.update(|cx| {
                     matches!(
-                        WorkspaceSettings::get_global(cx).autosave,
+                        item.workspace_settings(cx).autosave,
                         AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
                     ) && Self::can_autosave_item(item, cx)
                 })?;
@@ -1490,13 +1490,12 @@ impl Pane {
         project: Model<Project>,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
-        let format = if let AutosaveSetting::AfterDelay { .. } =
-            WorkspaceSettings::get_global(cx).autosave
-        {
-            false
-        } else {
-            true
-        };
+        let format =
+            if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
+                false
+            } else {
+                true
+            };
         if Self::can_autosave_item(item, cx) {
             item.save(format, project, cx)
         } else {
