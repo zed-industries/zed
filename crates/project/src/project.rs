@@ -21,8 +21,12 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
-use dap::client::{DebugAdapterClient, DebugAdapterClientId, TransportType};
+use dap::{
+    client::{DebugAdapterClient, DebugAdapterClientId, TransportType},
+    config_templates::DebuggerConfigTemplate,
+};
 use debounced_delay::DebouncedDelay;
+use debugger_inventory::{DebuggerConfigSourceKind, DebuggerInventory};
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver},
@@ -231,6 +235,7 @@ pub struct Project {
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
+    debugger_configs: Model<DebuggerInventory>,
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
@@ -738,6 +743,7 @@ impl Project {
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             let tasks = Inventory::new(cx);
+            let debugger_configs = DebuggerInventory::new(cx);
 
             Self {
                 worktrees: Vec::new(),
@@ -795,6 +801,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
+                debugger_configs,
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
@@ -862,6 +869,7 @@ impl Project {
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
+            let debugger_configs = DebuggerInventory::new(cx);
             // BIG CAUTION NOTE: The order in which we initialize fields here matters and it should match what's done in Self::local.
             // Otherwise, you might run into issues where worktree id on remote is different than what's on local host.
             // That's because Worktree's identifier is entity id, which should probably be changed.
@@ -956,6 +964,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
+                debugger_configs,
                 hosted_project_id: None,
                 dev_server_project_id: response
                     .payload
@@ -1493,6 +1502,10 @@ impl Project {
 
     pub fn task_inventory(&self) -> &Model<Inventory> {
         &self.tasks
+    }
+
+    pub fn debugger_configs(&self) -> &Model<DebuggerInventory> {
+        &self.debugger_configs
     }
 
     pub fn search_history(&self) -> &SearchHistory {
@@ -8403,19 +8416,38 @@ impl Project {
                                 abs_path,
                                 id_base: "local_vscode_tasks_for_worktree".into(),
                             },
-                            |tx, cx| {
-                                StaticSource::new(TrackedFile::new_convertible::<
-                                    task::VsCodeTaskFile,
-                                >(
-                                    tasks_file_rx, tx, cx
-                                ))
-                            },
+                            |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                             cx,
                         );
                     }
                 })
             } else if abs_path.ends_with(local_launch_file_relative_path()) {
-                // TODO: handle local launch file (.zed/launch.json)
+                // TODO: handle local launch file (.zed/debug.json)
+                self.debugger_configs().update(cx, |debugger_configs, cx| {
+                    if removed {
+                        debugger_configs.remove_source(&abs_path);
+                    } else {
+                        let fs = self.fs.clone();
+                        let debugger_configs_file_rx =
+                            watch_config_file(&cx.background_executor(), fs, abs_path.clone());
+
+                        debugger_configs.add_source(
+                            DebuggerConfigSourceKind::Worktree {
+                                id: remote_worktree_id.to_usize(),
+                                abs_path,
+                                id_base: "local_debug_File_for_worktree".into(),
+                            },
+                            |tx, cx| {
+                                debugger_inventory::StaticSource::new(TrackedFile::new(
+                                    debugger_configs_file_rx,
+                                    tx,
+                                    cx,
+                                ))
+                            },
+                            cx,
+                        );
+                    }
+                });
             } else if abs_path.ends_with(local_vscode_launch_file_relative_path()) {
                 // TODO: handle vscode launch file (.vscode/launch.json)
             }

@@ -83,8 +83,11 @@ impl DebugPanel {
 
     pub fn load(
         workspace: WeakView<Workspace>,
-        cx: AsyncWindowContext,
+        mut cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
+        // workspace.project().update(cx, |project, cx| {
+        //     project.start_debug_adapter_client(DebugAdapterClientId(1), cx);
+        // });
         cx.spawn(|mut cx| async move { cx.update(|cx| DebugPanel::new(workspace, cx)) })
     }
 
