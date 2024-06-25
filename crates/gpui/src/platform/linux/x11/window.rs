@@ -270,6 +270,11 @@ impl X11WindowState {
             );
 
         let mut bounds = params.bounds.to_device_pixels(scale_factor);
+        if bounds.size.width.0 == 0 || bounds.size.height.0 == 0 {
+            log::warn!("Window bounds contain a zero value. height={}, width={}. Falling back to defaults.", bounds.size.height.0, bounds.size.width.0);
+            bounds.size.width = 800.into();
+            bounds.size.height = 600.into();
+        }
 
         xcb_connection
             .create_window(
@@ -286,7 +291,10 @@ impl X11WindowState {
                 &win_aux,
             )
             .unwrap()
-            .check()?;
+            .check().with_context(|| {
+                format!("CreateWindow request to X server failed. depth: {}, x_window: {}, visual_set.root: {}, bounds.origin.x.0: {}, bounds.origin.y.0: {}, bounds.size.width.0: {}, bounds.size.height.0: {}",
+                    visual.depth, x_window, visual_set.root, bounds.origin.x.0 + 2, bounds.origin.y.0, bounds.size.width.0, bounds.size.height.0)
+            })?;
 
         let reply = xcb_connection
             .get_geometry(x_window)

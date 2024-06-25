@@ -10,14 +10,14 @@ mod search;
 mod slash_command;
 mod streaming_diff;
 
-pub use assistant_panel::AssistantPanel;
-
+pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::{AnthropicModel, AssistantSettings, CloudModel, OllamaModel, OpenAiModel};
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
 pub(crate) use context_store::*;
+use fs::Fs;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 pub(crate) use inline_assistant::*;
 pub(crate) use model_selector::*;
@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
     active_command, default_command, diagnostics_command, fetch_command, file_command, now_command,
-    project_command, prompt_command, rustdoc_command, search_command, tabs_command,
+    project_command, prompt_command, rustdoc_command, search_command, tabs_command, term_command,
 };
 use std::{
     fmt::{self, Display},
@@ -186,7 +186,10 @@ impl LanguageModelRequest {
             LanguageModel::Anthropic(_) => {}
             LanguageModel::Ollama(_) => {}
             LanguageModel::Cloud(model) => match model {
-                CloudModel::Claude3Opus | CloudModel::Claude3Sonnet | CloudModel::Claude3Haiku => {
+                CloudModel::Claude3Opus
+                | CloudModel::Claude3Sonnet
+                | CloudModel::Claude3Haiku
+                | CloudModel::Claude3_5Sonnet => {
                     preprocess_anthropic_request(self);
                 }
                 _ => {}
@@ -261,7 +264,7 @@ impl Assistant {
     }
 }
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
 
@@ -285,7 +288,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     assistant_slash_command::init(cx);
     register_slash_commands(cx);
     assistant_panel::init(cx);
-    inline_assistant::init(client.telemetry().clone(), cx);
+    inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
     RustdocStore::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
@@ -314,10 +317,29 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(search_command::SearchSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
+    slash_command_registry.register_command(term_command::TermSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, true);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsCommand, true);
     slash_command_registry.register_command(rustdoc_command::RustdocSlashCommand, false);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
+}
+
+pub fn humanize_token_count(count: usize) -> String {
+    match count {
+        0..=999 => count.to_string(),
+        1000..=9999 => {
+            let thousands = count / 1000;
+            let hundreds = (count % 1000 + 50) / 100;
+            if hundreds == 0 {
+                format!("{}k", thousands)
+            } else if hundreds == 10 {
+                format!("{}k", thousands + 1)
+            } else {
+                format!("{}.{}k", thousands, hundreds)
+            }
+        }
+        _ => format!("{}k", (count + 500) / 1000),
+    }
 }
 
 #[cfg(test)]

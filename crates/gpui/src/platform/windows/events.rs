@@ -267,14 +267,8 @@ fn handle_syskeydown_msg(
 ) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
-        return None;
-    };
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return None;
-    };
-    drop(lock);
+    let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
     let event = KeyDownEvent {
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
@@ -292,14 +286,8 @@ fn handle_syskeydown_msg(
 fn handle_syskeyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
-        return None;
-    };
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return None;
-    };
-    drop(lock);
+    let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
     let event = KeyUpEvent { keystroke };
     let result = if func(PlatformInput::KeyUp(event)).default_prevented {
         Some(0)
@@ -614,35 +602,25 @@ fn handle_ime_composition(
 ) -> Option<isize> {
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
-        let Some((string, string_len)) = parse_ime_compostion_string(handle) else {
-            return None;
-        };
-        let mut lock = state_ptr.state.borrow_mut();
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return None;
-        };
-        drop(lock);
-        input_handler.replace_and_mark_text_in_range(None, string.as_str(), Some(0..string_len));
+        let (comp_string, string_len) = parse_ime_compostion_string(handle)?;
+        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
+        input_handler.replace_and_mark_text_in_range(
+            None,
+            &comp_string,
+            Some(string_len..string_len),
+        );
         state_ptr.state.borrow_mut().input_handler = Some(input_handler);
-        ime_input = Some(string);
+        ime_input = Some(comp_string);
     }
     if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
-        let Some(ref comp_string) = ime_input else {
-            return None;
-        };
+        let comp_string = &ime_input?;
         let caret_pos = retrieve_composition_cursor_position(handle);
-        let mut lock = state_ptr.state.borrow_mut();
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return None;
-        };
-        drop(lock);
-        input_handler.replace_and_mark_text_in_range(None, comp_string, Some(0..caret_pos));
+        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
+        input_handler.replace_and_mark_text_in_range(None, comp_string, Some(caret_pos..caret_pos));
         state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     }
     if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
-        let Some(comp_result) = parse_ime_compostion_result(handle) else {
-            return None;
-        };
+        let comp_result = parse_ime_compostion_result(handle)?;
         let mut lock = state_ptr.state.borrow_mut();
         let Some(mut input_handler) = lock.input_handler.take() else {
             return Some(1);
@@ -663,11 +641,7 @@ fn handle_calc_client_size(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar || state_ptr.state.borrow().is_fullscreen() {
-        return None;
-    }
-
-    if wparam.0 == 0 {
+    if !state_ptr.hide_title_bar || state_ptr.state.borrow().is_fullscreen() || wparam.0 == 0 {
         return None;
     }
 
@@ -1082,37 +1056,31 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     }
 
     let vk_code = wparam.loword();
-    let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-    if basic_key.is_some() {
-        return basic_key;
-    }
 
     let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => Some("backspace"),
-        VK_RETURN => Some("enter"),
-        VK_TAB => Some("tab"),
-        VK_UP => Some("up"),
-        VK_DOWN => Some("down"),
-        VK_RIGHT => Some("right"),
-        VK_LEFT => Some("left"),
-        VK_HOME => Some("home"),
-        VK_END => Some("end"),
-        VK_PRIOR => Some("pageup"),
-        VK_NEXT => Some("pagedown"),
-        VK_ESCAPE => Some("escape"),
-        VK_INSERT => Some("insert"),
-        _ => None,
-    };
-
-    if let Some(key) = key {
-        Some(Keystroke {
-            modifiers,
-            key: key.to_string(),
-            ime_key: None,
-        })
-    } else {
-        None
+        VK_BACK => "backspace",
+        VK_RETURN => "enter",
+        VK_TAB => "tab",
+        VK_UP => "up",
+        VK_DOWN => "down",
+        VK_RIGHT => "right",
+        VK_LEFT => "left",
+        VK_HOME => "home",
+        VK_END => "end",
+        VK_PRIOR => "pageup",
+        VK_NEXT => "pagedown",
+        VK_ESCAPE => "escape",
+        VK_INSERT => "insert",
+        VK_DELETE => "delete",
+        _ => return basic_vkcode_to_string(vk_code, modifiers),
     }
+    .to_owned();
+
+    Some(Keystroke {
+        modifiers,
+        key,
+        ime_key: None,
+    })
 }
 
 enum KeystrokeOrModifier {
@@ -1125,67 +1093,62 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
 
     let modifiers = current_modifiers();
 
-    if is_modifier(VIRTUAL_KEY(vk_code)) {
-        return Some(KeystrokeOrModifier::Modifier(modifiers));
-    }
+    let key = match VIRTUAL_KEY(vk_code) {
+        VK_BACK => "backspace",
+        VK_RETURN => "enter",
+        VK_TAB => "tab",
+        VK_UP => "up",
+        VK_DOWN => "down",
+        VK_RIGHT => "right",
+        VK_LEFT => "left",
+        VK_HOME => "home",
+        VK_END => "end",
+        VK_PRIOR => "pageup",
+        VK_NEXT => "pagedown",
+        VK_ESCAPE => "escape",
+        VK_INSERT => "insert",
+        VK_DELETE => "delete",
+        _ => {
+            if is_modifier(VIRTUAL_KEY(vk_code)) {
+                return Some(KeystrokeOrModifier::Modifier(modifiers));
+            }
 
-    if modifiers.control || modifiers.alt {
-        let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-        if let Some(basic_key) = basic_key {
-            return Some(KeystrokeOrModifier::Keystroke(basic_key));
+            if modifiers.control || modifiers.alt {
+                let basic_key = basic_vkcode_to_string(vk_code, modifiers);
+                if let Some(basic_key) = basic_key {
+                    return Some(KeystrokeOrModifier::Keystroke(basic_key));
+                }
+            }
+
+            if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
+                let offset = vk_code - VK_F1.0;
+                return Some(KeystrokeOrModifier::Keystroke(Keystroke {
+                    modifiers,
+                    key: format!("f{}", offset + 1),
+                    ime_key: None,
+                }));
+            };
+            return None;
         }
     }
+    .to_owned();
 
-    if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
-        let offset = vk_code - VK_F1.0;
-        return Some(KeystrokeOrModifier::Keystroke(Keystroke {
-            modifiers,
-            key: format!("f{}", offset + 1),
-            ime_key: None,
-        }));
-    }
-
-    let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => Some("backspace"),
-        VK_RETURN => Some("enter"),
-        VK_TAB => Some("tab"),
-        VK_UP => Some("up"),
-        VK_DOWN => Some("down"),
-        VK_RIGHT => Some("right"),
-        VK_LEFT => Some("left"),
-        VK_HOME => Some("home"),
-        VK_END => Some("end"),
-        VK_PRIOR => Some("pageup"),
-        VK_NEXT => Some("pagedown"),
-        VK_ESCAPE => Some("escape"),
-        VK_INSERT => Some("insert"),
-        VK_DELETE => Some("delete"),
-        _ => None,
-    };
-
-    if let Some(key) = key {
-        Some(KeystrokeOrModifier::Keystroke(Keystroke {
-            modifiers,
-            key: key.to_string(),
-            ime_key: None,
-        }))
-    } else {
-        None
-    }
+    Some(KeystrokeOrModifier::Keystroke(Keystroke {
+        modifiers,
+        key,
+        ime_key: None,
+    }))
 }
 
 fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
-    let src = [wparam.0 as u16];
-    let Ok(first_char) = char::decode_utf16(src).collect::<Vec<_>>()[0] else {
-        return None;
-    };
+    let first_char = char::from_u32((wparam.0 as u16).into())?;
     if first_char.is_control() {
         None
     } else {
         let mut modifiers = current_modifiers();
         // for characters that use 'shift' to type it is expected that the
         // shift is not reported if the uppercase/lowercase are the same and instead only the key is reported
-        if first_char.to_lowercase().to_string() == first_char.to_uppercase().to_string() {
+        if first_char.to_ascii_uppercase() == first_char.to_ascii_lowercase() {
             modifiers.shift = false;
         }
         let key = match first_char {
@@ -1262,56 +1225,25 @@ fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
 }
 
 fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> {
-    match code {
-        // VK_0 - VK_9
-        48..=57 => Some(Keystroke {
-            modifiers,
-            key: format!("{}", code - VK_0.0),
-            ime_key: None,
-        }),
-        // VK_A - VK_Z
-        65..=90 => Some(Keystroke {
-            modifiers,
-            key: format!("{}", (b'a' + code as u8 - VK_A.0 as u8) as char),
-            ime_key: None,
-        }),
-        // VK_F1 - VK_F24
-        112..=135 => Some(Keystroke {
-            modifiers,
-            key: format!("f{}", code - VK_F1.0 + 1),
-            ime_key: None,
-        }),
-        // OEM3: `/~, OEM_MINUS: -/_, OEM_PLUS: =/+, ...
-        _ => {
-            if let Some(key) = oemkey_vkcode_to_string(code) {
-                Some(Keystroke {
-                    modifiers,
-                    key,
-                    ime_key: None,
-                })
-            } else {
-                None
-            }
-        }
-    }
-}
+    let mapped_code = unsafe { MapVirtualKeyW(code as u32, MAPVK_VK_TO_CHAR) };
 
-fn oemkey_vkcode_to_string(code: u16) -> Option<String> {
-    match code {
-        186 => Some(";".to_string()), // VK_OEM_1
-        187 => Some("=".to_string()), // VK_OEM_PLUS
-        188 => Some(",".to_string()), // VK_OEM_COMMA
-        189 => Some("-".to_string()), // VK_OEM_MINUS
-        190 => Some(".".to_string()), // VK_OEM_PERIOD
-        // https://kbdlayout.info/features/virtualkeys/VK_ABNT_C1
-        191 | 193 => Some("/".to_string()), // VK_OEM_2 VK_ABNT_C1
-        192 => Some("`".to_string()),       // VK_OEM_3
-        219 => Some("[".to_string()),       // VK_OEM_4
-        220 => Some("\\".to_string()),      // VK_OEM_5
-        221 => Some("]".to_string()),       // VK_OEM_6
-        222 => Some("'".to_string()),       // VK_OEM_7
-        _ => None,
-    }
+    let key = match mapped_code {
+        0 => None,
+        raw_code => char::from_u32(raw_code),
+    }?
+    .to_ascii_lowercase();
+
+    let key = if matches!(code as u32, 112..=135) {
+        format!("f{key}")
+    } else {
+        key.to_string()
+    };
+
+    Some(Keystroke {
+        modifiers,
+        key,
+        ime_key: None,
+    })
 }
 
 #[inline]

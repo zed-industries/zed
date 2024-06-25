@@ -188,7 +188,8 @@
           "focus": false
         }
       ],
-      "cmd->": "assistant::QuoteSelection"
+      "cmd->": "assistant::QuoteSelection",
+      "cmd-alt-e": "editor::SelectEnclosingSymbol"
     }
   },
   {

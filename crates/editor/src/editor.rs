@@ -335,7 +335,7 @@ pub enum SelectMode {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
-    SingleLine,
+    SingleLine { auto_width: bool },
     AutoHeight { max_lines: usize },
     Full,
 }
@@ -457,6 +457,9 @@ pub struct Editor {
     pub display_map: Model<DisplayMap>,
     pub selections: SelectionsCollection,
     pub scroll_manager: ScrollManager,
+    /// When inline assist editors are linked, they all render cursors because
+    /// typing enters text into each of them, even the ones that aren't focused.
+    pub(crate) show_cursor_when_unfocused: bool,
     columnar_selection_tail: Option<Anchor>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
@@ -481,6 +484,7 @@ pub struct Editor {
     show_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
+    show_runnables: Option<bool>,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
@@ -532,6 +536,7 @@ pub struct Editor {
     next_editor_action_id: EditorActionId,
     editor_actions: Rc<RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&mut ViewContext<Self>)>>>>,
     use_autoclose: bool,
+    use_auto_surround: bool,
     auto_replace_emoji_shortcode: bool,
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
@@ -562,6 +567,7 @@ pub struct EditorSnapshot {
     show_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
+    show_runnables: Option<bool>,
     render_git_blame_gutter: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
@@ -1574,13 +1580,31 @@ impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::SingleLine, buffer, None, false, cx)
+        Self::new(
+            EditorMode::SingleLine { auto_width: false },
+            buffer,
+            None,
+            false,
+            cx,
+        )
     }
 
     pub fn multi_line(cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, None, false, cx)
+    }
+
+    pub fn auto_width(cx: &mut ViewContext<Self>) -> Self {
+        let buffer = cx.new_model(|cx| Buffer::local("", cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        Self::new(
+            EditorMode::SingleLine { auto_width: true },
+            buffer,
+            None,
+            false,
+            cx,
+        )
     }
 
     pub fn auto_height(max_lines: usize, cx: &mut ViewContext<Self>) -> Self {
@@ -1634,7 +1658,7 @@ impl Editor {
         clone
     }
 
-    fn new(
+    pub fn new(
         mode: EditorMode,
         buffer: Model<MultiBuffer>,
         project: Option<Model<Project>>,
@@ -1695,8 +1719,8 @@ impl Editor {
 
         let blink_manager = cx.new_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
-        let soft_wrap_mode_override =
-            (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::PreferLine);
+        let soft_wrap_mode_override = matches!(mode, EditorMode::SingleLine { .. })
+            .then(|| language_settings::SoftWrap::PreferLine);
 
         let mut project_subscriptions = Vec::new();
         if mode == EditorMode::Full {
@@ -1743,7 +1767,7 @@ impl Editor {
             .detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
-        let show_indent_guides = if mode == EditorMode::SingleLine {
+        let show_indent_guides = if matches!(mode, EditorMode::SingleLine { .. }) {
             Some(false)
         } else {
             None
@@ -1751,6 +1775,7 @@ impl Editor {
 
         let mut this = Self {
             focus_handle,
+            show_cursor_when_unfocused: false,
             last_focused_descendant: None,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
@@ -1778,6 +1803,7 @@ impl Editor {
             show_line_numbers: None,
             show_git_diff_gutter: None,
             show_code_actions: None,
+            show_runnables: None,
             show_wrap_guides: None,
             show_indent_guides,
             placeholder_text: None,
@@ -1811,6 +1837,7 @@ impl Editor {
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
             use_autoclose: true,
+            use_auto_surround: true,
             auto_replace_emoji_shortcode: false,
             leader_peer_id: None,
             remote_id: None,
@@ -1896,7 +1923,7 @@ impl Editor {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
-            EditorMode::SingleLine => "single_line",
+            EditorMode::SingleLine { .. } => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
             EditorMode::Full => "full",
         };
@@ -2026,6 +2053,7 @@ impl Editor {
             show_line_numbers: self.show_line_numbers,
             show_git_diff_gutter: self.show_git_diff_gutter,
             show_code_actions: self.show_code_actions,
+            show_runnables: self.show_runnables,
             render_git_blame_gutter: self.render_git_blame_gutter(cx),
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
@@ -2188,6 +2216,10 @@ impl Editor {
         self.use_autoclose = autoclose;
     }
 
+    pub fn set_use_auto_surround(&mut self, auto_surround: bool) {
+        self.use_auto_surround = auto_surround;
+    }
+
     pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
@@ -2214,7 +2246,7 @@ impl Editor {
         // Copy selections to primary selection buffer
         #[cfg(target_os = "linux")]
         if local {
-            let selections = &self.selections.disjoint;
+            let selections = self.selections.all::<usize>(cx);
             let buffer_handle = self.buffer.read(cx).read(cx);
 
             let mut text = String::new();
@@ -2550,14 +2582,47 @@ impl Editor {
             }
         }
 
-        self.change_selections(auto_scroll.then(|| Autoscroll::newest()), cx, |s| {
-            if !add {
-                s.clear_disjoint();
-            } else if click_count > 1 {
-                s.delete(newest_selection.id)
-            }
+        let point_to_delete: Option<usize> = {
+            let selected_points: Vec<Selection<Point>> =
+                self.selections.disjoint_in_range(start..end, cx);
 
-            s.set_pending_anchor_range(start..end, mode);
+            if !add || click_count > 1 {
+                None
+            } else if selected_points.len() > 0 {
+                Some(selected_points[0].id)
+            } else {
+                let clicked_point_already_selected =
+                    self.selections.disjoint.iter().find(|selection| {
+                        selection.start.to_point(buffer) == start.to_point(buffer)
+                            || selection.end.to_point(buffer) == end.to_point(buffer)
+                    });
+
+                if let Some(selection) = clicked_point_already_selected {
+                    Some(selection.id)
+                } else {
+                    None
+                }
+            }
+        };
+
+        let selections_count = self.selections.count();
+
+        self.change_selections(auto_scroll.then(|| Autoscroll::newest()), cx, |s| {
+            if let Some(point_to_delete) = point_to_delete {
+                s.delete(point_to_delete);
+
+                if selections_count == 1 {
+                    s.set_pending_anchor_range(start..end, mode);
+                }
+            } else {
+                if !add {
+                    s.clear_disjoint();
+                } else if click_count > 1 {
+                    s.delete(newest_selection.id)
+                }
+
+                s.set_pending_anchor_range(start..end, mode);
+            }
         });
     }
 
@@ -2887,7 +2952,7 @@ impl Editor {
                     // `text` can be empty when a user is using IME (e.g. Chinese Wubi Simplified)
                     //  and they are removing the character that triggered IME popup.
                     for (pair, enabled) in scope.brackets() {
-                        if !pair.close {
+                        if !pair.close && !pair.surround {
                             continue;
                         }
 
@@ -2905,9 +2970,10 @@ impl Editor {
                 }
 
                 if let Some(bracket_pair) = bracket_pair {
-                    let autoclose = self.use_autoclose
-                        && snapshot.settings_at(selection.start, cx).use_autoclose;
-
+                    let snapshot_settings = snapshot.settings_at(selection.start, cx);
+                    let autoclose = self.use_autoclose && snapshot_settings.use_autoclose;
+                    let auto_surround =
+                        self.use_auto_surround && snapshot_settings.use_auto_surround;
                     if selection.is_empty() {
                         if is_bracket_pair_start {
                             let prefix_len = bracket_pair.start.len() - text.len();
@@ -2929,6 +2995,7 @@ impl Editor {
                                         &bracket_pair.start[..prefix_len],
                                     ));
                             if autoclose
+                                && bracket_pair.close
                                 && following_text_allows_autoclose
                                 && preceding_text_matches_prefix
                             {
@@ -2980,7 +3047,8 @@ impl Editor {
                     }
                     // If an opening bracket is 1 character long and is typed while
                     // text is selected, then surround that text with the bracket pair.
-                    else if autoclose
+                    else if auto_surround
+                        && bracket_pair.surround
                         && is_bracket_pair_start
                         && bracket_pair.start.chars().count() == 1
                     {
@@ -6610,7 +6678,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -6647,7 +6715,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -6678,7 +6746,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -6741,7 +6809,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -6789,7 +6857,7 @@ impl Editor {
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
         self.take_rename(true, cx);
 
-        if self.mode == EditorMode::SingleLine {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -6850,7 +6918,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7198,7 +7266,7 @@ impl Editor {
         _: &MoveToStartOfParagraph,
         cx: &mut ViewContext<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7218,7 +7286,7 @@ impl Editor {
         _: &MoveToEndOfParagraph,
         cx: &mut ViewContext<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7238,7 +7306,7 @@ impl Editor {
         _: &SelectToStartOfParagraph,
         cx: &mut ViewContext<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7258,7 +7326,7 @@ impl Editor {
         _: &SelectToEndOfParagraph,
         cx: &mut ViewContext<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7274,7 +7342,7 @@ impl Editor {
     }
 
     pub fn move_to_beginning(&mut self, _: &MoveToBeginning, cx: &mut ViewContext<Self>) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7294,7 +7362,7 @@ impl Editor {
     }
 
     pub fn move_to_end(&mut self, _: &MoveToEnd, cx: &mut ViewContext<Self>) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -8153,7 +8221,7 @@ impl Editor {
             let advance_downwards = action.advance_downwards
                 && selections_on_single_row
                 && !selections_selecting
-                && this.mode != EditorMode::SingleLine;
+                && !matches!(this.mode, EditorMode::SingleLine { .. });
 
             if advance_downwards {
                 let snapshot = this.buffer.read(cx).snapshot(cx);
@@ -8174,6 +8242,58 @@ impl Editor {
                 });
             }
         });
+    }
+
+    pub fn select_enclosing_symbol(
+        &mut self,
+        _: &SelectEnclosingSymbol,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_selections = self.selections.all::<usize>(cx).into_boxed_slice();
+
+        fn update_selection(
+            selection: &Selection<usize>,
+            buffer_snap: &MultiBufferSnapshot,
+        ) -> Option<Selection<usize>> {
+            let cursor = selection.head();
+            let (_buffer_id, symbols) = buffer_snap.symbols_containing(cursor, None)?;
+            for symbol in symbols.iter().rev() {
+                let start = symbol.range.start.to_offset(&buffer_snap);
+                let end = symbol.range.end.to_offset(&buffer_snap);
+                let new_range = start..end;
+                if start < selection.start || end > selection.end {
+                    return Some(Selection {
+                        id: selection.id,
+                        start: new_range.start,
+                        end: new_range.end,
+                        goal: SelectionGoal::None,
+                        reversed: selection.reversed,
+                    });
+                }
+            }
+            None
+        }
+
+        let mut selected_larger_symbol = false;
+        let new_selections = old_selections
+            .iter()
+            .map(|selection| match update_selection(selection, &buffer) {
+                Some(new_selection) => {
+                    if new_selection.range() != selection.range() {
+                        selected_larger_symbol = true;
+                    }
+                    new_selection
+                }
+                None => selection.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        if selected_larger_symbol {
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(new_selections);
+            });
+        }
     }
 
     pub fn select_larger_syntax_node(
@@ -8238,6 +8358,10 @@ impl Editor {
     }
 
     fn refresh_runnables(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+        if !EditorSettings::get_global(cx).gutter.runnables {
+            self.clear_tasks();
+            return Task::ready(());
+        }
         let project = self.project.clone();
         cx.spawn(|this, mut cx| async move {
             let Ok(display_snapshot) = this.update(&mut cx, |this, cx| {
@@ -9160,6 +9284,12 @@ impl Editor {
             Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), true, cx)
         });
         editor.update(cx, |editor, cx| {
+            if let Some(first_range) = ranges_to_highlight.first() {
+                editor.change_selections(None, cx, |selections| {
+                    selections.clear_disjoint();
+                    selections.select_anchor_ranges(std::iter::once(first_range.clone()));
+                });
+            }
             editor.highlight_background::<Self>(
                 &ranges_to_highlight,
                 |theme| theme.editor_highlighted_line_background,
@@ -9951,6 +10081,15 @@ impl Editor {
         }
     }
 
+    pub fn row_for_block(
+        &self,
+        block_id: BlockId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<DisplayRow> {
+        self.display_map
+            .update(cx, |map, cx| map.row_for_block(block_id, cx))
+    }
+
     pub fn insert_creases(
         &mut self,
         creases: impl IntoIterator<Item = Crease>,
@@ -10146,6 +10285,11 @@ impl Editor {
 
     pub fn set_show_code_actions(&mut self, show_code_actions: bool, cx: &mut ViewContext<Self>) {
         self.show_code_actions = Some(show_code_actions);
+        cx.notify();
+    }
+
+    pub fn set_show_runnables(&mut self, show_runnables: bool, cx: &mut ViewContext<Self>) {
+        self.show_runnables = Some(show_runnables);
         cx.notify();
     }
 
@@ -10889,6 +11033,11 @@ impl Editor {
             && self.focus_handle.is_focused(cx)
     }
 
+    pub fn set_show_cursor_when_unfocused(&mut self, is_enabled: bool, cx: &mut ViewContext<Self>) {
+        self.show_cursor_when_unfocused = is_enabled;
+        cx.notify();
+    }
+
     fn on_buffer_changed(&mut self, _: Model<MultiBuffer>, cx: &mut ViewContext<Self>) {
         cx.notify();
     }
@@ -11008,6 +11157,7 @@ impl Editor {
     }
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.tasks_update_task = Some(self.refresh_runnables(cx));
         self.refresh_inline_completion(true, cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
@@ -11708,7 +11858,7 @@ impl EditorSnapshot {
             .map(|(_, collaborator)| (collaborator.replica_id, collaborator))
             .collect::<HashMap<_, _>>();
         self.buffer_snapshot
-            .remote_selections_in_range(range)
+            .selections_in_range(range, false)
             .filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
                 let collaborator = collaborators_by_replica_id.get(&replica_id)?;
                 let participant_index = participant_indices.get(&collaborator.user_id).copied();
@@ -11763,7 +11913,7 @@ impl EditorSnapshot {
         let gutter_settings = EditorSettings::get_global(cx).gutter;
         let show_line_numbers = self
             .show_line_numbers
-            .unwrap_or_else(|| gutter_settings.line_numbers);
+            .unwrap_or(gutter_settings.line_numbers);
         let line_gutter_width = if show_line_numbers {
             // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
             let min_width_for_number_on_gutter = em_width * 4.0;
@@ -11774,14 +11924,16 @@ impl EditorSnapshot {
 
         let show_code_actions = self
             .show_code_actions
-            .unwrap_or_else(|| gutter_settings.code_actions);
+            .unwrap_or(gutter_settings.code_actions);
+
+        let show_runnables = self.show_runnables.unwrap_or(gutter_settings.runnables);
 
         let git_blame_entries_width = self
             .render_git_blame_gutter
             .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
-        left_padding += if show_code_actions {
+        left_padding += if show_code_actions || show_runnables {
             em_width * 3.0
         } else if show_git_gutter && show_line_numbers {
             em_width * 2.0
@@ -11945,7 +12097,7 @@ impl Render for Editor {
         let settings = ThemeSettings::get_global(cx);
 
         let text_style = match self.mode {
-            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {
+            EditorMode::SingleLine { .. } | EditorMode::AutoHeight { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.ui_font.family.clone(),
                 font_features: settings.ui_font.features.clone(),
@@ -11974,7 +12126,7 @@ impl Render for Editor {
         };
 
         let background = match self.mode {
-            EditorMode::SingleLine => cx.theme().system().transparent,
+            EditorMode::SingleLine { .. } => cx.theme().system().transparent,
             EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
             EditorMode::Full => cx.theme().colors().editor_background,
         };
@@ -12188,9 +12340,12 @@ impl ViewInputHandler for Editor {
 
             // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
             let use_autoclose = this.use_autoclose;
+            let use_auto_surround = this.use_auto_surround;
             this.set_use_autoclose(false);
+            this.set_use_auto_surround(false);
             this.handle_input(text, cx);
             this.set_use_autoclose(use_autoclose);
+            this.set_use_auto_surround(use_auto_surround);
 
             if let Some(new_selected_range) = new_selected_range_utf16 {
                 let snapshot = this.buffer.read(cx).read(cx);

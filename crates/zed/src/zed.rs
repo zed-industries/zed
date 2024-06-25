@@ -105,6 +105,10 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
+        window_min_size: gpui::Size {
+            width: px(360.0),
+            height: px(240.0),
+        },
     }
 }
 
@@ -3177,7 +3181,7 @@ mod tests {
             project_panel::init((), cx);
             outline_panel::init((), cx);
             terminal_view::init(cx);
-            assistant::init(app_state.client.clone(), cx);
+            assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             app_state

@@ -224,6 +224,12 @@ pub fn default_prettier_dir() -> &'static PathBuf {
     DEFAULT_PRETTIER_DIR.get_or_init(|| support_dir().join("prettier"))
 }
 
+/// Returns the relative path to a `.zed` folder within a project.
+pub fn local_settings_folder_relative_path() -> &'static Path {
+    static LOCAL_SETTINGS_FOLDER_RELATIVE_PATH: OnceLock<&Path> = OnceLock::new();
+    LOCAL_SETTINGS_FOLDER_RELATIVE_PATH.get_or_init(|| Path::new(".zed"))
+}
+
 /// Returns the relative path to a `settings.json` file within a project.
 pub fn local_settings_file_relative_path() -> &'static Path {
     static LOCAL_SETTINGS_FILE_RELATIVE_PATH: OnceLock<&Path> = OnceLock::new();

@@ -337,7 +337,7 @@ impl PickerDelegate for NewPathDelegate {
                 gpui::PromptLevel::Critical,
                 &format!("{} already exists. Do you want to replace it?", m.relative_path()),
                 Some(
-                    "A file or folder with the same name already eixsts. Replacing it will overwrite its current contents.",
+                    "A file or folder with the same name already exists. Replacing it will overwrite its current contents.",
                 ),
                 &["Replace", "Cancel"],
             );

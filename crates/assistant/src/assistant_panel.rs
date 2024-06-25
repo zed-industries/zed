@@ -1,5 +1,6 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
+    humanize_token_count,
     prompt_library::open_prompt_library,
     search::*,
     slash_command::{
@@ -17,7 +18,9 @@ use client::telemetry::Telemetry;
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
-    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, ToDisplayPoint},
+    display_map::{
+        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, RenderBlock, ToDisplayPoint,
+    },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorEvent, RowExt, ToOffset as _, ToPoint,
 };
@@ -85,6 +88,10 @@ pub fn init(cx: &mut AppContext) {
         },
     )
     .detach();
+}
+
+pub enum AssistantPanelEvent {
+    ContextEdited,
 }
 
 pub struct AssistantPanel {
@@ -358,11 +365,11 @@ impl AssistantPanel {
             return;
         }
 
-        let Some(assistant) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
 
-        let context_editor = assistant
+        let context_editor = assistant_panel
             .read(cx)
             .active_context_editor()
             .and_then(|editor| {
@@ -389,25 +396,37 @@ impl AssistantPanel {
             return;
         };
 
-        if assistant.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
+        if assistant_panel.update(cx, |panel, cx| panel.is_authenticated(cx)) {
             InlineAssistant::update_global(cx, |assistant, cx| {
                 assistant.assist(
                     &active_editor,
                     Some(cx.view().downgrade()),
-                    include_context,
+                    include_context.then_some(&assistant_panel),
                     cx,
                 )
             })
         } else {
-            let assistant = assistant.downgrade();
+            let assistant_panel = assistant_panel.downgrade();
             cx.spawn(|workspace, mut cx| async move {
-                assistant
+                assistant_panel
                     .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
                     .await?;
-                if assistant.update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))? {
+                if assistant_panel
+                    .update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))?
+                {
                     cx.update(|cx| {
+                        let assistant_panel = if include_context {
+                            assistant_panel.upgrade()
+                        } else {
+                            None
+                        };
                         InlineAssistant::update_global(cx, |assistant, cx| {
-                            assistant.assist(&active_editor, Some(workspace), include_context, cx)
+                            assistant.assist(
+                                &active_editor,
+                                Some(workspace),
+                                assistant_panel.as_ref(),
+                                cx,
+                            )
                         })
                     })?
                 } else {
@@ -458,7 +477,7 @@ impl AssistantPanel {
             _subscriptions: subscriptions,
         });
         self.show_saved_contexts = false;
-
+        cx.emit(AssistantPanelEvent::ContextEdited);
         cx.notify();
     }
 
@@ -470,6 +489,7 @@ impl AssistantPanel {
     ) {
         match event {
             ContextEditorEvent::TabContentChanged => cx.notify(),
+            ContextEditorEvent::Edited => cx.emit(AssistantPanelEvent::ContextEdited),
         }
     }
 
@@ -861,18 +881,33 @@ impl AssistantPanel {
         context: &Model<Context>,
         cx: &mut ViewContext<Self>,
     ) -> Option<impl IntoElement> {
-        let remaining_tokens = context.read(cx).remaining_tokens(cx)?;
-        let remaining_tokens_color = if remaining_tokens <= 0 {
+        let model = CompletionProvider::global(cx).model();
+        let token_count = context.read(cx).token_count()?;
+        let max_token_count = model.max_token_count();
+
+        let remaining_tokens = max_token_count as isize - token_count as isize;
+        let token_count_color = if remaining_tokens <= 0 {
             Color::Error
-        } else if remaining_tokens <= 500 {
+        } else if token_count as f32 / max_token_count as f32 >= 0.8 {
             Color::Warning
         } else {
             Color::Muted
         };
+
         Some(
-            Label::new(remaining_tokens.to_string())
-                .size(LabelSize::Small)
-                .color(remaining_tokens_color),
+            h_flex()
+                .gap_0p5()
+                .child(
+                    Label::new(humanize_token_count(token_count))
+                        .size(LabelSize::Small)
+                        .color(token_count_color),
+                )
+                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                .child(
+                    Label::new(humanize_token_count(max_token_count))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
         )
     }
 }
@@ -976,6 +1011,7 @@ impl Panel for AssistantPanel {
 }
 
 impl EventEmitter<PanelEvent> for AssistantPanel {}
+impl EventEmitter<AssistantPanelEvent> for AssistantPanel {}
 
 impl FocusableView for AssistantPanel {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
@@ -1534,11 +1570,6 @@ impl Context {
                 updated: vec![pending_command.clone()],
             });
         }
-    }
-
-    fn remaining_tokens(&self, cx: &AppContext) -> Option<isize> {
-        let model = CompletionProvider::global(cx).model();
-        Some(model.max_token_count() as isize - self.token_count? as isize)
     }
 
     fn completion_provider_changed(&mut self, cx: &mut ModelContext<Self>) {
@@ -2181,6 +2212,7 @@ struct PendingCompletion {
 }
 
 enum ContextEditorEvent {
+    Edited,
     TabContentChanged,
 }
 
@@ -2200,6 +2232,7 @@ pub struct ContextEditor {
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
+    pending_slash_command_blocks: HashMap<Range<language::Anchor>, BlockId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2250,6 +2283,7 @@ impl ContextEditor {
             editor.set_show_line_numbers(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_code_actions(false, cx);
+            editor.set_show_runnables(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Box::new(completion_provider));
@@ -2273,6 +2307,7 @@ impl ContextEditor {
             fs,
             workspace: workspace.downgrade(),
             pending_slash_command_creases: HashMap::default(),
+            pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -2534,12 +2569,23 @@ impl ContextEditor {
             ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let excerpt_id = *buffer.as_singleton().unwrap().0;
+                    let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
+                    let excerpt_id = *excerpt_id;
 
                     editor.remove_creases(
                         removed
                             .iter()
                             .filter_map(|range| self.pending_slash_command_creases.remove(range)),
+                        cx,
+                    );
+
+                    editor.remove_blocks(
+                        HashSet::from_iter(
+                            removed.iter().filter_map(|range| {
+                                self.pending_slash_command_blocks.remove(range)
+                            }),
+                        ),
+                        None,
                         cx,
                     );
 
@@ -2575,7 +2621,7 @@ impl ContextEditor {
                                 move |row, _, _, _cx: &mut WindowContext| {
                                     render_pending_slash_command_gutter_decoration(
                                         row,
-                                        command.status.clone(),
+                                        &command.status,
                                         confirm_command.clone(),
                                     )
                                 }
@@ -2609,11 +2655,42 @@ impl ContextEditor {
                         cx,
                     );
 
+                    let block_ids = editor.insert_blocks(
+                        updated
+                            .iter()
+                            .filter_map(|command| match &command.status {
+                                PendingSlashCommandStatus::Error(error) => {
+                                    Some((command, error.clone()))
+                                }
+                                _ => None,
+                            })
+                            .map(|(command, error_message)| BlockProperties {
+                                style: BlockStyle::Fixed,
+                                position: Anchor {
+                                    buffer_id: Some(buffer_id),
+                                    excerpt_id,
+                                    text_anchor: command.source_range.start,
+                                },
+                                height: 1,
+                                disposition: BlockDisposition::Below,
+                                render: slash_command_error_block_renderer(error_message),
+                            }),
+                        None,
+                        cx,
+                    );
+
                     self.pending_slash_command_creases.extend(
                         updated
                             .iter()
                             .map(|command| command.source_range.clone())
                             .zip(crease_ids),
+                    );
+
+                    self.pending_slash_command_blocks.extend(
+                        updated
+                            .iter()
+                            .map(|command| command.source_range.clone())
+                            .zip(block_ids),
                     );
                 })
             }
@@ -2728,6 +2805,7 @@ impl ContextEditor {
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
             }
+            EditorEvent::BufferEdited => cx.emit(ContextEditorEvent::Edited),
             _ => {}
         }
     }
@@ -3204,7 +3282,7 @@ fn render_slash_command_output_toggle(
 
 fn render_pending_slash_command_gutter_decoration(
     row: MultiBufferRow,
-    status: PendingSlashCommandStatus,
+    status: &PendingSlashCommandStatus,
     confirm_command: Arc<dyn Fn(&mut WindowContext)>,
 ) -> AnyElement {
     let mut icon = IconButton::new(
@@ -3222,11 +3300,7 @@ fn render_pending_slash_command_gutter_decoration(
         PendingSlashCommandStatus::Running { .. } => {
             icon = icon.selected(true);
         }
-        PendingSlashCommandStatus::Error(error) => {
-            icon = icon
-                .icon_color(Color::Error)
-                .tooltip(move |cx| Tooltip::text(format!("error: {error}"), cx));
-        }
+        PendingSlashCommandStatus::Error(_) => icon = icon.icon_color(Color::Error),
     }
 
     icon.into_any_element()
@@ -3274,6 +3348,19 @@ fn make_lsp_adapter_delegate(
             .next()
             .ok_or_else(|| anyhow!("no worktrees when constructing ProjectLspAdapterDelegate"))?;
         Ok(ProjectLspAdapterDelegate::new(project, &worktree, cx) as Arc<dyn LspAdapterDelegate>)
+    })
+}
+
+fn slash_command_error_block_renderer(message: String) -> RenderBlock {
+    Box::new(move |_| {
+        div()
+            .pl_6()
+            .child(
+                Label::new(format!("error: {}", message))
+                    .single_line()
+                    .color(Color::Error),
+            )
+            .into_any()
     })
 }
 

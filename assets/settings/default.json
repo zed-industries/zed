@@ -146,6 +146,10 @@
   // opening parenthesis, bracket, brace, single or double quote characters.
   // For example, when you type (, Zed will add a closing ) at the correct position.
   "use_autoclose": true,
+  // Whether to automatically surround selected text when typing opening parenthesis,
+  // bracket, brace, single or double quote characters.
+  // For example, when you select text and type (, Zed will surround the text with ().
+  "use_auto_surround": true,
   // Controls how the editor handles the autoclosed characters.
   // When set to `false`(default), skipping over and auto-removing of the closing characters
   // happen only for auto-inserted characters.
@@ -227,6 +231,8 @@
     "line_numbers": true,
     // Whether to show code action buttons in the gutter.
     "code_actions": true,
+    // Whether to show runnables buttons in the gutter.
+    "runnables": true,
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
@@ -235,6 +241,8 @@
     "enabled": true,
     /// The width of the indent guides in pixels, between 1 and 10.
     "line_width": 1,
+    /// The width of the active indent guide in pixels, between 1 and 10.
+    "active_line_width": 1,
     /// Determines how indent guides are colored.
     /// This setting can take the following three values:
     ///
@@ -249,6 +257,8 @@
     /// 2. "indent_aware"
     "background_coloring": "disabled"
   },
+  // Whether the editor will scroll beyond the last line.
+  "scroll_beyond_last_line": "one_page",
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
   // Scroll sensitivity multiplier. This multiplier is applied
@@ -302,7 +312,14 @@
     "auto_reveal_entries": true,
     /// Whether to fold directories automatically
     /// when a directory has only one directory inside.
-    "auto_fold_dirs": false
+    "auto_fold_dirs": false,
+    /// Scrollbar-related settings
+    "scrollbar": {
+      /// When to show the scrollbar in the project panel.
+      ///
+      /// Default: always
+      "show": "always"
+    }
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -460,16 +477,16 @@
   //    or falling back to formatting via language server:
   //     "formatter": "auto"
   "formatter": "auto",
-  // How to soft-wrap long lines of text. This setting can take
-  // three values:
+  // How to soft-wrap long lines of text.
+  // Possible values:
   //
   // 1. Do not soft wrap.
   //      "soft_wrap": "none",
   // 2. Prefer a single line generally, unless an overly long line is encountered.
   //      "soft_wrap": "prefer_line",
-  // 3. Soft wrap lines that overflow the editor:
+  // 3. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
-  // 4. Soft wrap lines at the preferred line length
+  // 4. Soft wrap lines at the preferred line length.
   //      "soft_wrap": "preferred_line_length",
   "soft_wrap": "prefer_line",
   // The column at which to soft-wrap lines, for buffers where soft-wrap

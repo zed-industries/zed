@@ -11,6 +11,25 @@ impl WindowsWindowControls {
     pub fn new(button_height: Pixels) -> Self {
         Self { button_height }
     }
+
+    #[cfg(not(target_os = "windows"))]
+    fn get_font() -> &'static str {
+        "Segoe Fluent Icons"
+    }
+
+    #[cfg(target_os = "windows")]
+    fn get_font() -> &'static str {
+        use windows::Wdk::System::SystemServices::RtlGetVersion;
+
+        let mut version = unsafe { std::mem::zeroed() };
+        let status = unsafe { RtlGetVersion(&mut version) };
+
+        if status.is_ok() && version.dwBuildNumber >= 22000 {
+            "Segoe Fluent Icons"
+        } else {
+            "Segoe MDL2 Assets"
+        }
+    }
 }
 
 impl RenderOnce for WindowsWindowControls {
@@ -39,6 +58,7 @@ impl RenderOnce for WindowsWindowControls {
 
         div()
             .id("windows-window-controls")
+            .font_family(Self::get_font())
             .flex()
             .flex_row()
             .justify_center()
@@ -110,7 +130,6 @@ impl RenderOnce for WindowsCaptionButton {
             .content_center()
             .w(width)
             .h_full()
-            .font_family("Segoe Fluent Icons")
             .text_size(px(10.0))
             .hover(|style| style.bg(self.hover_background_color))
             .active(|style| {

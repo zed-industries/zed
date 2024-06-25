@@ -15,6 +15,7 @@ pub struct EditorSettings {
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
+    pub scroll_beyond_last_line: ScrollBeyondLastLine,
     pub vertical_scroll_margin: f32,
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
@@ -84,6 +85,7 @@ pub struct Scrollbar {
 pub struct Gutter {
     pub line_numbers: bool,
     pub code_actions: bool,
+    pub runnables: bool,
     pub folds: bool,
 }
 
@@ -113,6 +115,22 @@ pub enum MultiCursorModifier {
     Alt,
     #[serde(alias = "cmd", alias = "ctrl")]
     CmdOrCtrl,
+}
+
+/// Whether the editor will scroll beyond the last line.
+///
+/// Default: one_page
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollBeyondLastLine {
+    /// The editor will not scroll beyond the last line.
+    Off,
+
+    /// The editor will scroll beyond the last line by one page.
+    OnePage,
+
+    /// The editor will scroll beyond the last line by the same number of lines as vertical_scroll_margin.
+    VerticalScrollMargin,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -157,6 +175,10 @@ pub struct EditorSettingsContent {
     pub scrollbar: Option<ScrollbarContent>,
     /// Gutter related settings
     pub gutter: Option<GutterContent>,
+    /// Whether the editor will scroll beyond the last line.
+    ///
+    /// Default: one_page
+    pub scroll_beyond_last_line: Option<ScrollBeyondLastLine>,
     /// The number of lines to keep above/below the cursor when auto-scrolling.
     ///
     /// Default: 3.
@@ -255,6 +277,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub code_actions: Option<bool>,
+    /// Whether to show runnable buttons in the gutter.
+    ///
+    /// Default: true
+    pub runnables: Option<bool>,
     /// Whether to show fold buttons in the gutter.
     ///
     /// Default: true

@@ -42,7 +42,7 @@ futures.workspace = true
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5a5c4d4" }
 gpui_macros.workspace = true
 http.workspace = true
-image = "0.23"
+image = "0.25.1"
 itertools.workspace = true
 lazy_static.workspace = true
 linkme = "0.3"
@@ -80,6 +80,9 @@ backtrace = "0.3"
 collections = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 http = { workspace = true, features = ["test-support"] }
+
+[build-dependencies]
+embed-resource = "2.4"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.65.1"
@@ -135,15 +138,13 @@ xim = { git = "https://github.com/npmania/xim-rs", rev = "27132caffc5b9bc9c432ca
     "x11rb-xcb",
     "x11rb-client",
 ] }
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5a5c4d4", features = ["source-fontconfig-dlopen"] }
 x11-clipboard = "0.9.2"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 windows-core = "0.57"
 clipboard-win = "3.1.1"
-
-[target.'cfg(windows)'.build-dependencies]
-embed-resource = "2.4"
 
 [[example]]
 name = "hello_world"

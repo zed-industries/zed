@@ -113,14 +113,14 @@ pub fn init_panic_hook(
         if !is_pty {
             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
                 let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-                let panic_file_path = paths::logs_dir().join(format!("zed-{}.panic", timestamp));
+                let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
                 let panic_file = std::fs::OpenOptions::new()
                     .append(true)
                     .create(true)
                     .open(&panic_file_path)
                     .log_err();
                 if let Some(mut panic_file) = panic_file {
-                    writeln!(&mut panic_file, "{}", panic_data_json).log_err();
+                    writeln!(&mut panic_file, "{panic_data_json}").log_err();
                     panic_file.flush().log_err();
                 }
             }
@@ -494,7 +494,7 @@ async fn upload_previous_crashes(
 
             if let Some((panicked_on, payload)) = most_recent_panic.as_ref() {
                 request = request
-                    .header("x-zed-panicked-on", format!("{}", panicked_on))
+                    .header("x-zed-panicked-on", format!("{panicked_on}"))
                     .header("x-zed-panic", payload)
             }
             if let Some(installation_id) = installation_id.as_ref() {
