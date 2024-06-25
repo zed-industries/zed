@@ -204,7 +204,7 @@ mod linux {
                     .and_then(Path::parent)
                     .ok_or_else(|| anyhow!("no parent path for cli"))?;
 
-                let libexec_fallbacks = ["lib/zed", "lib/zed-editor"];
+                let libexec_fallbacks = ["lib/zed"];
 
                 match dir.join("libexec").join("zed-editor").canonicalize() {
                     Ok(path) => Ok(path),
