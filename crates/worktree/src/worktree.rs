@@ -4626,7 +4626,8 @@ fn swap_to_front(child_paths: &mut Vec<PathBuf>, file: &OsStr) {
         .iter()
         .position(|path| path.file_name().unwrap() == file);
     if let Some(position) = position {
-        child_paths.swap(0, position)
+        let temp = child_paths.remove(position);
+        child_paths.insert(0, temp);
     }
 }
 
