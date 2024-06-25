@@ -323,3 +323,11 @@ pub struct Module {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address_range: Option<String>,
 }
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SteppingGranularity {
+    Statement,
+    Line,
+    Instruction,
+}

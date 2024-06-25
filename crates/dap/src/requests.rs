@@ -1,6 +1,7 @@
 use crate::types::{
     Breakpoint, DebuggerCapabilities, Scope, Source, SourceBreakpoint, StackFrame,
-    StackFrameFormat, Thread, ThreadId, ValueFormat, Variable, VariablePresentationHint,
+    StackFrameFormat, SteppingGranularity, Thread, ThreadId, ValueFormat, Variable,
+    VariablePresentationHint,
 };
 use ::serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
@@ -267,7 +268,7 @@ pub struct StepInArguments {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_id: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub granularity: Option<String>,
+    pub granularity: Option<SteppingGranularity>,
 }
 
 #[derive(Debug)]
@@ -284,7 +285,7 @@ impl Request for StepIn {
 pub struct StepOutArguments {
     pub thread_id: ThreadId,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub granularity: Option<String>,
+    pub granularity: Option<SteppingGranularity>,
 }
 
 #[derive(Debug)]
@@ -301,7 +302,7 @@ impl Request for StepOut {
 pub struct NextArguments {
     pub thread_id: ThreadId,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub granularity: Option<String>,
+    pub granularity: Option<SteppingGranularity>,
 }
 
 #[derive(Debug)]
