@@ -11,6 +11,7 @@ use editor::EditorMode;
 use editor::EditorStyle;
 use editor::MultiBuffer;
 use fs::Fs;
+use futures::StreamExt;
 use gpui::Context;
 use gpui::ModelContext;
 use gpui::{
@@ -23,6 +24,7 @@ use settings::Settings;
 use std::cmp;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -91,7 +93,7 @@ impl TerminalInlineAssistant {
         let assist_id = self.next_assist_id.post_inc();
         let prompt_buffer = cx.new_model(|cx| Buffer::local("", cx));
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
-        let codegen = cx.new_model(|cx| Codegen::new(self.telemetry.clone()));
+        let codegen = cx.new_model(|_| Codegen::new(terminal.clone(), self.telemetry.clone()));
 
         let prompt_editor = cx.new_view(|cx| {
             PromptEditor::new(
@@ -141,13 +143,13 @@ impl TerminalInlineAssistant {
         let assist_id = prompt_editor.read(cx).id;
         match event {
             PromptEditorEvent::StartRequested => {
-                // self.start_assist(assist_id, cx);
+                self.start_assist(assist_id, cx);
             }
             PromptEditorEvent::StopRequested => {
-                // self.stop_assist(assist_id, cx);
+                self.stop_assist(assist_id, cx);
             }
             PromptEditorEvent::ConfirmRequested => {
-                // self.finish_assist(assist_id, false, cx);
+                self.finish_assist(assist_id, false, cx);
             }
             PromptEditorEvent::CancelRequested => {
                 self.finish_assist(assist_id, true, cx);
@@ -159,6 +161,40 @@ impl TerminalInlineAssistant {
                 self.insert_prompt_editor_into_terminal(assist_id, *height_in_lines, cx);
             }
         }
+    }
+
+    fn start_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut WindowContext) {
+        let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
+            assist
+        } else {
+            return;
+        };
+
+        let user_prompt = assist.prompt_editor.read(cx).prompt(cx);
+
+        self.prompt_history.retain(|prompt| *prompt != user_prompt);
+        self.prompt_history.push_back(user_prompt.clone());
+        if self.prompt_history.len() > PROMPT_HISTORY_MAX_LEN {
+            self.prompt_history.pop_front();
+        }
+
+        assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
+        let codegen = assist.codegen.clone();
+        let Some(request) = self.request_for_inline_assist(assist_id, cx).log_err() else {
+            return;
+        };
+
+        codegen.update(cx, |codegen, cx| codegen.start(request, cx));
+    }
+
+    fn stop_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut WindowContext) {
+        let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
+            assist
+        } else {
+            return;
+        };
+
+        assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
     }
 
     fn request_for_inline_assist(
@@ -246,6 +282,7 @@ impl TerminalInlineAssistant {
 struct TerminalInlineAssist {
     terminal: WeakView<TerminalView>,
     prompt_editor: View<PromptEditor>,
+    codegen: Model<Codegen>,
     workspace: Option<WeakView<Workspace>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -261,6 +298,7 @@ impl TerminalInlineAssist {
         Self {
             terminal: terminal.downgrade(),
             prompt_editor: prompt_editor.clone(),
+            codegen: prompt_editor.read(cx).codegen.clone(),
             workspace: workspace.clone(),
             _subscriptions: vec![cx.subscribe(&prompt_editor, |prompt_editor, event, cx| {
                 TerminalInlineAssistant::update_global(cx, |this, cx| {
@@ -318,7 +356,7 @@ impl Render for PromptEditor {
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
                         .icon_size(IconSize::XSmall)
-                        .tooltip(|cx| Tooltip::for_action("Transform", &menu::Confirm, cx))
+                        .tooltip(|cx| Tooltip::for_action("Generate", &menu::Confirm, cx))
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::StartRequested)),
                         ),
@@ -339,7 +377,7 @@ impl Render for PromptEditor {
                         .icon_size(IconSize::XSmall)
                         .tooltip(|cx| {
                             Tooltip::with_meta(
-                                "Interrupt Transformation",
+                                "Interrupt Generation",
                                 Some(&menu::Cancel),
                                 "Changes won't be discarded",
                                 cx,
@@ -366,7 +404,7 @@ impl Render for PromptEditor {
                             .size(ButtonSize::None)
                             .tooltip(|cx| {
                                 Tooltip::with_meta(
-                                    "Restart Transformation",
+                                    "Restart Generation",
                                     Some(&menu::Confirm),
                                     "Changes will be discarded",
                                     cx,
@@ -379,7 +417,9 @@ impl Render for PromptEditor {
                         IconButton::new("confirm", IconName::Check)
                             .icon_color(Color::Info)
                             .size(ButtonSize::None)
-                            .tooltip(|cx| Tooltip::for_action("Confirm Assist", &menu::Confirm, cx))
+                            .tooltip(|cx| {
+                                Tooltip::for_action("Execute generated command", &menu::Confirm, cx)
+                            })
                             .on_click(cx.listener(|_, _, cx| {
                                 cx.emit(PromptEditorEvent::ConfirmRequested);
                             }))
@@ -557,32 +597,6 @@ impl PromptEditor {
             .push(cx.subscribe(&self.editor, Self::handle_prompt_editor_events));
     }
 
-    fn set_show_cursor_when_unfocused(
-        &mut self,
-        show_cursor_when_unfocused: bool,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.set_show_cursor_when_unfocused(show_cursor_when_unfocused, cx)
-        });
-    }
-
-    fn unlink(&mut self, cx: &mut ViewContext<Self>) {
-        let prompt = self.prompt(cx);
-        let focus = self.editor.focus_handle(cx).contains_focused(cx);
-        self.editor = cx.new_view(|cx| {
-            let mut editor = Editor::auto_height(Self::MAX_LINES as usize, cx);
-            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
-            editor.set_text(prompt, cx);
-            if focus {
-                editor.focus(cx);
-            }
-            editor
-        });
-        self.subscribe_to_editor(cx);
-    }
-
     fn prompt(&self, cx: &AppContext) -> String {
         self.editor.read(cx).text(cx)
     }
@@ -600,17 +614,6 @@ impl PromptEditor {
         if height_in_lines != self.height_in_lines {
             self.height_in_lines = height_in_lines;
             cx.emit(PromptEditorEvent::Resized { height_in_lines });
-        }
-    }
-
-    fn handle_parent_editor_event(
-        &mut self,
-        _: View<Editor>,
-        event: &EditorEvent,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let EditorEvent::BufferEdited { .. } = event {
-            self.count_tokens(cx);
         }
     }
 
@@ -860,17 +863,83 @@ impl EventEmitter<CodegenEvent> for Codegen {}
 pub struct Codegen {
     status: CodegenStatus,
     telemetry: Option<Arc<Telemetry>>,
+    terminal: View<TerminalView>,
+    generation: Task<()>,
 }
 
 impl Codegen {
-    pub fn new(telemetry: Option<Arc<Telemetry>>) -> Self {
+    pub fn new(terminal: View<TerminalView>, telemetry: Option<Arc<Telemetry>>) -> Self {
         Self {
+            terminal,
             telemetry,
             status: CodegenStatus::Idle,
+            generation: Task::ready(()),
         }
     }
 
-    pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {}
+    pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
+        self.status = CodegenStatus::Pending;
+
+        let telemetry = self.telemetry.clone();
+        let model_telemetry_id = prompt.model.telemetry_id();
+        let response = CompletionProvider::global(cx).complete(prompt);
+
+        self.generation = cx.spawn(|this, mut cx| async move {
+            let mut response_latency = None;
+            let request_start = Instant::now();
+            let task = cx.background_executor().spawn(async move {
+                let mut response = response.await?;
+                while let Some(value) = response.next().await {
+                    if response_latency.is_none() {
+                        response_latency = Some(request_start.elapsed());
+                    }
+                    println!("{value:?}");
+                }
+
+                anyhow::Ok(())
+            });
+
+            let result = task.await;
+
+            let error_message = result.as_ref().err().map(|error| error.to_string());
+            if let Some(telemetry) = telemetry {
+                telemetry.report_assistant_event(
+                    None,
+                    telemetry_events::AssistantKind::Inline,
+                    model_telemetry_id,
+                    response_latency,
+                    error_message,
+                );
+            }
+
+            this.update(&mut cx, |this, cx| {
+                if let Err(error) = result {
+                    this.status = CodegenStatus::Error(error);
+                } else {
+                    this.status = CodegenStatus::Done;
+                }
+                cx.emit(CodegenEvent::Finished);
+                cx.notify();
+            })
+            .ok();
+        });
+        cx.notify();
+    }
+
+    pub fn stop(&mut self, cx: &mut ModelContext<Self>) {
+        self.status = CodegenStatus::Done;
+        self.generation = Task::ready(());
+        cx.emit(CodegenEvent::Finished);
+        cx.notify();
+    }
+
+    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
+        //TODO
+        // if let Some(transaction_id) = self.transaction_id.take() {
+        //     self.buffer
+        //         .update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
+        // }
+    }
 }
 
 enum CodegenStatus {
