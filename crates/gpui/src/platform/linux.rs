@@ -1,3 +1,4 @@
+mod dbus;
 mod dispatcher;
 mod headless;
 mod platform;
