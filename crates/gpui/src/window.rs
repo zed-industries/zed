@@ -3200,6 +3200,7 @@ impl<'a> WindowContext<'a> {
                 self.window.pending_modifiers = Some(event.modifiers);
             }
             if keystroke.is_none() {
+                self.finish_dispatch_key_event(event, dispatch_path);
                 return;
             }
         }
@@ -3275,6 +3276,14 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        self.finish_dispatch_key_event(event, dispatch_path)
+    }
+
+    fn finish_dispatch_key_event(
+        &mut self,
+        event: &dyn Any,
+        dispatch_path: SmallVec<[DispatchNodeId; 32]>,
+    ) {
         self.dispatch_key_down_up_event(event, &dispatch_path);
         if !self.propagate_event {
             return;
