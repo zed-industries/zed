@@ -3502,11 +3502,11 @@ impl Workspace {
                     if let Some(item) = pane.active_item() {
                         item.workspace_deactivated(cx);
                     }
-                    if matches!(
-                        WorkspaceSettings::get_global(cx).autosave,
-                        AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
-                    ) {
-                        for item in pane.items() {
+                    for item in pane.items() {
+                        if matches!(
+                            item.workspace_settings(cx).autosave,
+                            AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
+                        ) {
                             Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
                                 .detach_and_log_err(cx);
                         }
@@ -4350,7 +4350,6 @@ impl WorkspaceStore {
     pub async fn handle_follow(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::Follow>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::FollowResponse> {
         this.update(&mut cx, |this, cx| {
@@ -4396,7 +4395,6 @@ impl WorkspaceStore {
     async fn handle_update_followers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::UpdateFollowers>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let leader_id = envelope.original_sender_id()?;

@@ -1110,13 +1110,14 @@ These values take in the same options as the root-level settings with the same n
 
 - Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
 - Setting: `soft_wrap`
-- Default: `none`
+- Default: `prefer_line`
 
 **Options**
 
-1. `editor_width`
-2. `preferred_line_length`
-3. `none`
+1. `none` to stop the soft-wrapping
+2. `prefer_line` to avoid wrapping generally, unless the line is too long
+3. `editor_width` to wrap lines that overflow the editor width
+4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
 
 ## Wrap Guides (Vertical Rulers)
 

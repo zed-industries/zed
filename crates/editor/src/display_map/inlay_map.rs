@@ -462,11 +462,8 @@ impl InlayMap {
 
         if buffer_edits.is_empty() {
             if snapshot.buffer.edit_count() != buffer_snapshot.edit_count()
-                || snapshot.buffer.parse_count() != buffer_snapshot.parse_count()
-                || snapshot.buffer.diagnostics_update_count()
-                    != buffer_snapshot.diagnostics_update_count()
-                || snapshot.buffer.git_diff_update_count()
-                    != buffer_snapshot.git_diff_update_count()
+                || snapshot.buffer.non_text_state_update_count()
+                    != buffer_snapshot.non_text_state_update_count()
                 || snapshot.buffer.trailing_excerpt_update_count()
                     != buffer_snapshot.trailing_excerpt_update_count()
             {

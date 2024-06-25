@@ -567,6 +567,9 @@ pub struct WindowOptions {
 
     /// Application identifier of the window. Can by used by desktop environments to group applications together.
     pub app_id: Option<String>,
+
+    /// Window minimum size
+    pub window_min_size: Size<Pixels>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -594,6 +597,9 @@ pub(crate) struct WindowParams {
     pub display_id: Option<DisplayId>,
 
     pub window_background: WindowBackgroundAppearance,
+
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    pub window_min_size: Size<Pixels>,
 }
 
 /// Represents the status of how a window should be opened.
@@ -642,6 +648,7 @@ impl Default for WindowOptions {
             display_id: None,
             window_background: WindowBackgroundAppearance::default(),
             app_id: None,
+            window_min_size: Size::default(),
         }
     }
 }

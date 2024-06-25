@@ -312,7 +312,14 @@
     "auto_reveal_entries": true,
     /// Whether to fold directories automatically
     /// when a directory has only one directory inside.
-    "auto_fold_dirs": false
+    "auto_fold_dirs": false,
+    /// Scrollbar-related settings
+    "scrollbar": {
+      /// When to show the scrollbar in the project panel.
+      ///
+      /// Default: always
+      "show": "always"
+    }
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -470,16 +477,16 @@
   //    or falling back to formatting via language server:
   //     "formatter": "auto"
   "formatter": "auto",
-  // How to soft-wrap long lines of text. This setting can take
-  // three values:
+  // How to soft-wrap long lines of text.
+  // Possible values:
   //
   // 1. Do not soft wrap.
   //      "soft_wrap": "none",
   // 2. Prefer a single line generally, unless an overly long line is encountered.
   //      "soft_wrap": "prefer_line",
-  // 3. Soft wrap lines that overflow the editor:
+  // 3. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
-  // 4. Soft wrap lines at the preferred line length
+  // 4. Soft wrap lines at the preferred line length.
   //      "soft_wrap": "preferred_line_length",
   "soft_wrap": "prefer_line",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
