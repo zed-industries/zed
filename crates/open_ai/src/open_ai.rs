@@ -43,10 +43,6 @@ impl From<Role> for String {
     }
 }
 
-fn custom_default_max_tokens() -> usize {
-    128000
-}
-
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
@@ -60,11 +56,7 @@ pub enum Model {
     #[default]
     FourOmni,
     #[serde(rename = "custom")]
-    Custom {
-        name: String,
-        #[serde(default = "custom_default_max_tokens")]
-        max_tokens: usize,
-    },
+    Custom { name: String, max_tokens: usize },
 }
 
 impl Model {

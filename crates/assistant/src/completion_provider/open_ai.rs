@@ -59,18 +59,16 @@ impl OpenAiCompletionProvider {
 
     pub fn available_models(&self, cx: &AppContext) -> impl Iterator<Item = OpenAiModel> {
         if let AssistantProvider::OpenAi {
-            available_models: Some(ref available_models),
-            ..
-        } = AssistantSettings::get_global(cx).provider
+            available_models, ..
+        } = &AssistantSettings::get_global(cx).provider
         {
             if !available_models.is_empty() {
                 // available_models is set, just return it
                 return available_models.clone().into_iter();
             }
         }
-
         let available_models = if matches!(self.model, OpenAiModel::Custom { .. }) {
-            // didn't set available_models, but set default model to custom, only use the custom model
+            // available_models is not set but the default model is set to custom, only show custom
             vec![self.model.clone()]
         } else {
             // default case, use all models except custom

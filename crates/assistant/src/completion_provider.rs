@@ -24,19 +24,18 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Choose which model to use for openai provider based on the available models and the default model.
+/// Choose which model to use for openai provider.
+/// If the model is not available, try to use the first available model, or fallback to the original model.
 fn choose_openai_model(
     model: &::open_ai::Model,
-    available_models: &Option<Vec<::open_ai::Model>>,
+    available_models: &[::open_ai::Model],
 ) -> ::open_ai::Model {
-    let available_models = available_models.as_ref();
-
-    // available_models is set but default model isn't in the list, use the first available model instead
-    if available_models.is_some_and(|models| !models.is_empty() && !models.contains(model)) {
-        available_models.unwrap()[0].clone()
-    } else {
-        model.clone()
-    }
+    available_models
+        .iter()
+        .find(|&m| m == model)
+        .or_else(|| available_models.first())
+        .unwrap_or_else(|| model)
+        .clone()
 }
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
