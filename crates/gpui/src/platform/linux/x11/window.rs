@@ -52,6 +52,7 @@ x11rb::atom_manager! {
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
         _GTK_SHOW_WINDOW_MENU,
+        _MOTIF_WM_HINTS,
     }
 }
 
@@ -336,6 +337,22 @@ impl X11WindowState {
                     atoms._NET_WM_WINDOW_TYPE,
                     xproto::AtomEnum::ATOM,
                     &[atoms._NET_WM_WINDOW_TYPE_NOTIFICATION],
+                )
+                .unwrap();
+        } else {
+            // 1<<1 to "set the window decorations"
+            // 0 to "set them to nothing"
+            // https://github.com/rust-windowing/winit/blob/master/src/platform_impl/linux/x11/util/hint.rs#L53-L87
+            let hints_data: [u32; 5] = [1 << 1, 0, 0, 0, 0];
+            xcb_connection
+                .change_property(
+                    xproto::PropMode::REPLACE,
+                    x_window,
+                    atoms._MOTIF_WM_HINTS,
+                    atoms._MOTIF_WM_HINTS,
+                    std::mem::size_of::<u32>() as u8 * 8,
+                    5,
+                    bytemuck::cast_slice::<u32, u8>(&hints_data),
                 )
                 .unwrap();
         }
