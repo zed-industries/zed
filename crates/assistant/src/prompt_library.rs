@@ -841,6 +841,42 @@ impl PromptLibrary {
                                             h_flex()
                                                 .h_full()
                                                 .gap(Spacing::XXLarge.rems(cx))
+                                                .children(prompt_editor.token_count.map(
+                                                    |token_count| {
+                                                        let token_count: SharedString =
+                                                            token_count.to_string().into();
+                                                        let label_token_count: SharedString =
+                                                            token_count.to_string().into();
+
+                                                        h_flex()
+                                                            .id("token_count")
+                                                            .tooltip(move |cx| {
+                                                                let token_count =
+                                                                    token_count.clone();
+
+                                                                Tooltip::with_meta(
+                                                                    format!(
+                                                                        "{} tokens",
+                                                                        token_count.clone()
+                                                                    ),
+                                                                    None,
+                                                                    format!(
+                                                                        "Model: {}",
+                                                                        current_model
+                                                                            .display_name()
+                                                                    ),
+                                                                    cx,
+                                                                )
+                                                            })
+                                                            .child(
+                                                                Label::new(format!(
+                                                                    "{} tokens",
+                                                                    label_token_count.clone()
+                                                                ))
+                                                                .color(Color::Muted),
+                                                            )
+                                                    },
+                                                ))
                                                 .child(
                                                     IconButton::new(
                                                         "delete-prompt",
@@ -920,38 +956,7 @@ impl PromptLibrary {
                                 .on_action(cx.listener(Self::move_up_from_body))
                                 .flex_grow()
                                 .h_full()
-                                .child(prompt_editor.body_editor.clone())
-                                .children(prompt_editor.token_count.map(|token_count| {
-                                    let token_count: SharedString = token_count.to_string().into();
-                                    let label_token_count: SharedString =
-                                        token_count.to_string().into();
-
-                                    h_flex()
-                                        .id("token_count")
-                                        .absolute()
-                                        .bottom_1()
-                                        .right_4()
-                                        .flex_initial()
-                                        .px_2()
-                                        .py_1()
-                                        .tooltip(move |cx| {
-                                            let token_count = token_count.clone();
-
-                                            Tooltip::with_meta(
-                                                format!("{} tokens", token_count.clone()),
-                                                None,
-                                                format!("Model: {}", current_model.display_name()),
-                                                cx,
-                                            )
-                                        })
-                                        .child(
-                                            Label::new(format!(
-                                                "{} tokens",
-                                                label_token_count.clone()
-                                            ))
-                                            .color(Color::Muted),
-                                        )
-                                })),
+                                .child(prompt_editor.body_editor.clone()),
                         ),
                 )
             }))
