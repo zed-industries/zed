@@ -1,25 +1,20 @@
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
-use editor::actions::MoveDown;
-use editor::actions::MoveUp;
-use editor::actions::SelectAll;
-use editor::Editor;
-use editor::EditorElement;
-use editor::EditorEvent;
-use editor::EditorMode;
-use editor::EditorStyle;
-use editor::MultiBuffer;
+use editor::{
+    actions::{MoveDown, MoveUp, SelectAll},
+    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
+};
 use fs::Fs;
 use futures::channel::mpsc;
 use futures::SinkExt;
 use futures::StreamExt;
-use gpui::Context;
-use gpui::ModelContext;
 use gpui::{
     AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global, Model,
     Subscription, Task, TextStyle, UpdateGlobal, View, WeakView, WhiteSpace,
 };
+use gpui::{Context, Keystroke};
+use gpui::{ModelContext, Modifiers};
 use language::Buffer;
 use settings::update_settings_file;
 use settings::Settings;
@@ -241,6 +236,16 @@ impl TerminalInlineAssistant {
                 .update(cx, |this, cx| {
                     this.clear_prompt(cx);
                     this.focus_handle(cx).focus(cx);
+                    this.model().update(cx, |model, cx| {
+                        model.try_keystroke(
+                            &Keystroke {
+                                modifiers: Modifiers::none(),
+                                key: "enter".into(),
+                                ime_key: None,
+                            },
+                            false,
+                        );
+                    });
                 })
                 .log_err();
 
