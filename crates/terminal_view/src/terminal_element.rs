@@ -1,12 +1,11 @@
-use collections::HashMap;
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, ElementId,
-    FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle, Hitbox, Hsla,
-    InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId, Model, ModelContext,
-    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
-    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle,
-    WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    deferred, div, fill, point, px, relative, size, AnyElement, AvailableSpace, Bounds,
+    DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId,
+    HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
+    Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
+    UnderlineStyle, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -25,7 +24,7 @@ use terminal::{
     HoveredWord, IndexedCell, Terminal, TerminalContent, TerminalSize,
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
-use ui::Tooltip;
+use ui::{ParentElement, Tooltip};
 use workspace::Workspace;
 
 use std::{fmt::Debug, ops::RangeInclusive};
@@ -47,6 +46,7 @@ pub struct LayoutState {
     hyperlink_tooltip: Option<AnyElement>,
     gutter: Pixels,
     last_hovered_word: Option<HoveredWord>,
+    prompt_element: Option<AnyElement>,
 }
 
 /// Helper struct for converting data between Alacritty's cursor points, and displayed cursor points.
@@ -171,7 +171,7 @@ pub struct TerminalElement {
     cursor_visible: bool,
     can_navigate_to_selected_word: bool,
     interactivity: Interactivity,
-    blocks: HashMap<usize, Arc<BlockProperties>>,
+    prompt_below_cursor: Option<Arc<BlockProperties>>,
 }
 
 impl InteractiveElement for TerminalElement {
@@ -190,7 +190,7 @@ impl TerminalElement {
         focused: bool,
         cursor_visible: bool,
         can_navigate_to_selected_word: bool,
-        blocks: HashMap<usize, Arc<BlockProperties>>,
+        prompt_below_cursor: Option<Arc<BlockProperties>>,
     ) -> TerminalElement {
         TerminalElement {
             terminal,
@@ -199,7 +199,7 @@ impl TerminalElement {
             focus: focus.clone(),
             cursor_visible,
             can_navigate_to_selected_word,
-            blocks,
+            prompt_below_cursor,
             interactivity: Default::default(),
         }
         .track_focus(&focus)
@@ -211,12 +211,10 @@ impl TerminalElement {
     fn layout_grid(
         grid: &Vec<IndexedCell>,
         text_style: &TextStyle,
-        first_visible_line: usize,
-        blocks: &HashMap<usize, Arc<BlockProperties>>,
         // terminal_theme: &TerminalStyle,
         text_system: &WindowTextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
-        cx: &WindowContext<'_>,
+        cx: &WindowContext,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
         let theme = cx.theme();
         let mut cells = vec![];
@@ -225,13 +223,8 @@ impl TerminalElement {
         let mut cur_rect: Option<LayoutRect> = None;
         let mut cur_alac_color = None;
 
-        let mut inserted_block_height = 0;
         let linegroups = grid.into_iter().group_by(|i| i.point.line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
-            let current_line = first_visible_line + line_index;
-            let block = blocks.get(&current_line);
-            let line_index = (line_index + inserted_block_height) as i32;
-
             for cell in line {
                 let mut fg = cell.fg;
                 let mut bg = cell.bg;
@@ -320,14 +313,6 @@ impl TerminalElement {
 
             if cur_rect.is_some() {
                 rects.push(cur_rect.take().unwrap());
-            }
-
-            if let Some(block) = block {
-                cells.push(LayoutCell {
-                    point: AlacPoint::new((line_index) as i32, 0),
-                    content: CellContent::Block(block.clone()),
-                });
-                inserted_block_height += 1;
             }
         }
         (cells, rects)
@@ -729,9 +714,11 @@ impl Element for TerminalElement {
                     display_offset,
                     cursor_char,
                     selection,
-                    mut cursor,
+                    cursor,
                     ..
                 } = &self.terminal.read(cx).last_content;
+                let mode = *mode;
+                let display_offset = *display_offset;
 
                 // searches, highlights to a single range representations
                 let mut relative_highlighted_ranges = Vec::new();
@@ -745,12 +732,9 @@ impl Element for TerminalElement {
 
                 // then have that representation be converted to the appropriate highlight data structure
 
-                let first_visible_line = self.terminal.read(cx).visible_line_range().start;
                 let (cells, rects) = TerminalElement::layout_grid(
                     cells,
                     &text_style,
-                    first_visible_line,
-                    &self.blocks,
                     &cx.text_system(),
                     last_hovered_word
                         .as_ref()
@@ -758,21 +742,12 @@ impl Element for TerminalElement {
                     cx,
                 );
 
-                // Move the cursor to the correct line, when blocks are inserted
-                let mut cursor_offset = 0;
-                for line in self.blocks.keys() {
-                    if *line >= first_visible_line && *line <= cursor.point.line.0 as usize {
-                        cursor_offset += 1;
-                    }
-                }
-                cursor.point.line.0 += cursor_offset;
-
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
                 let cursor = if let AlacCursorShape::Hidden = cursor.shape {
                     None
                 } else {
-                    let cursor_point = DisplayCursor::from(cursor.point, *display_offset);
+                    let cursor_point = DisplayCursor::from(cursor.point, display_offset);
                     let cursor_text = {
                         let str_trxt = cursor_char.to_string();
                         let len = str_trxt.len();
@@ -817,6 +792,27 @@ impl Element for TerminalElement {
                     )
                 };
 
+                let prompt_element = if let Some(prompt) = &self.prompt_below_cursor {
+                    let target_line = self.terminal.read(cx).last_content.cursor.point.line.0 + 1;
+                    let render = &prompt.render;
+                    let mut block_cx = BlockContext {
+                        context: cx,
+                        dimensions,
+                    };
+                    let element = render(&mut block_cx);
+                    let mut element = div().child(deferred(element)).into_any_element();
+                    let available_space = size(
+                        AvailableSpace::Definite(dimensions.width() + gutter),
+                        AvailableSpace::Definite(prompt.height as f32 * dimensions.line_height()),
+                    );
+                    let origin = bounds.origin
+                        + Point::new(px(0.), target_line as f32 * dimensions.line_height());
+                    element.prepaint_as_root(origin, available_space, cx);
+                    Some(element)
+                } else {
+                    None
+                };
+
                 LayoutState {
                     hitbox,
                     cells,
@@ -825,11 +821,12 @@ impl Element for TerminalElement {
                     dimensions,
                     rects,
                     relative_highlighted_ranges,
-                    mode: *mode,
-                    display_offset: *display_offset,
+                    mode,
+                    display_offset,
                     hyperlink_tooltip,
                     gutter,
                     last_hovered_word,
+                    prompt_element,
                 }
             })
     }
@@ -863,6 +860,7 @@ impl Element for TerminalElement {
 
         let cursor = layout.cursor.take();
         let hyperlink_tooltip = layout.hyperlink_tooltip.take();
+        let prompt_element = layout.prompt_element.take();
         self.interactivity
             .paint(global_id, bounds, Some(&layout.hitbox), cx, |_, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
@@ -912,6 +910,10 @@ impl Element for TerminalElement {
                     if let Some(mut cursor) = cursor {
                         cursor.paint(origin, cx);
                     }
+                }
+
+                if let Some(mut element) = prompt_element {
+                    element.paint(cx);
                 }
 
                 if let Some(mut element) = hyperlink_tooltip {
