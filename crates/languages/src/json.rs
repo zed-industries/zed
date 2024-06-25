@@ -312,8 +312,11 @@ impl LspAdapter for NodeVersionAdapter {
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
             if version.url.ends_with(".zip") {
-                let mut zip_archive = zip::ZipArchive::new(BufReader::new(response.body_mut()))?;
-                zip_archive.extract(&destination_container_path)?;
+                node_runtime::extract_zip(
+                    &destination_container_path,
+                    BufReader::new(response.body_mut()),
+                )
+                .await?;
             } else if version.url.ends_with(".tar.gz") {
                 let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                 let archive = Archive::new(decompressed_bytes);
