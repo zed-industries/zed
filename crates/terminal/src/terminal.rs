@@ -405,7 +405,7 @@ impl TerminalBuilder {
         let _io_thread = event_loop.spawn(); // DANGER
 
         let url_regex = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
-        let word_regex = RegexSearch::new(r#"[\$\+\w.\[\]:/@\-~]+"#).unwrap();
+        let word_regex = RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+"#).unwrap();
 
         let terminal = Terminal {
             task,
@@ -1081,6 +1081,31 @@ impl Terminal {
             size: last_content.size,
             last_hovered_word: last_content.last_hovered_word.clone(),
         }
+    }
+
+    pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
+        let term = self.term.clone();
+        let terminal = term.lock_unfair();
+
+        let mut lines = Vec::new();
+        let mut current_line = terminal.bottommost_line();
+        while lines.len() < n {
+            let mut line_buffer = String::new();
+            for cell in &terminal.grid()[current_line] {
+                line_buffer.push(cell.c);
+            }
+            let line = line_buffer.trim_end();
+            if !line.is_empty() {
+                lines.push(line.to_string());
+            }
+
+            if current_line == terminal.topmost_line() {
+                break;
+            }
+            current_line = Line(current_line.0 - 1);
+        }
+        lines.reverse();
+        lines
     }
 
     pub fn focus_in(&self) {

@@ -192,10 +192,13 @@ impl UserStore {
 
                                 cx.update(|cx| {
                                     if let Some(info) = info {
-                                        cx.update_flags(info.staff, info.flags);
+                                        let disable_staff = std::env::var("ZED_DISABLE_STAFF")
+                                            .map_or(false, |v| v != "" && v != "0");
+                                        let staff = info.staff && !disable_staff;
+                                        cx.update_flags(staff, info.flags);
                                         client.telemetry.set_authenticated_user_info(
                                             Some(info.metrics_id.clone()),
-                                            info.staff,
+                                            staff,
                                         )
                                     }
                                 })?;
@@ -239,7 +242,6 @@ impl UserStore {
     async fn handle_update_invite_info(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateInviteInfo>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -255,7 +257,6 @@ impl UserStore {
     async fn handle_show_contacts(
         this: Model<Self>,
         _: TypedEnvelope<proto::ShowContacts>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts))?;
@@ -269,7 +270,6 @@ impl UserStore {
     async fn handle_update_contacts(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateContacts>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {

@@ -1,6 +1,6 @@
 use gpui::{AnyView, DefiniteLength};
 
-use crate::{prelude::*, SelectableButton, Spacing};
+use crate::{prelude::*, ElevationIndex, SelectableButton, Spacing};
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize};
 
 use super::button_icon::ButtonIcon;
@@ -119,6 +119,11 @@ impl ButtonCommon for IconButton {
         self.base = self.base.tooltip(tooltip);
         self
     }
+
+    fn layer(mut self, elevation: ElevationIndex) -> Self {
+        self.base = self.base.layer(elevation);
+        self
+    }
 }
 
 impl VisibleOnHover for IconButton {
@@ -140,7 +145,7 @@ impl RenderOnce for IconButton {
                     let icon_size = self.icon_size.rems() * cx.rem_size();
                     let padding = match self.icon_size {
                         IconSize::Indicator => Spacing::None.px(cx),
-                        IconSize::XSmall => Spacing::None.px(cx),
+                        IconSize::XSmall => Spacing::XSmall.px(cx),
                         IconSize::Small => Spacing::XSmall.px(cx),
                         IconSize::Medium => Spacing::XSmall.px(cx),
                     };

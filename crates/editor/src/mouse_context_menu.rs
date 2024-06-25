@@ -1,7 +1,7 @@
 use crate::{
-    Copy, Cut, DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition,
-    GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFinder, SelectMode,
-    ToggleCodeActions,
+    Copy, CopyPermalinkToLine, Cut, DisplayPoint, Editor, EditorMode, FindAllReferences,
+    GoToDefinition, GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFinder,
+    SelectMode, ToggleCodeActions,
 };
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
@@ -91,7 +91,8 @@ pub fn deploy_context_menu(
                 .action("Paste", Box::new(Paste))
                 .separator()
                 .action("Reveal in Finder", Box::new(RevealInFinder))
-                .action("Open in Terminal", Box::new(OpenInTerminal));
+                .action("Open in Terminal", Box::new(OpenInTerminal))
+                .action("Copy Permalink", Box::new(CopyPermalinkToLine));
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,

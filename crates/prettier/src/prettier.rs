@@ -1,17 +1,18 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncAppContext, Model};
 use language::{language_settings::language_settings, Buffer, Diff};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
+use paths::default_prettier_dir;
 use serde::{Deserialize, Serialize};
 use std::{
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::paths::{PathMatcher, DEFAULT_PRETTIER_DIR};
+use util::paths::PathMatcher;
 
 #[derive(Clone)]
 pub enum Prettier {
@@ -112,7 +113,7 @@ impl Prettier {
                                                 None
                                             }
                                         }).any(|workspace_definition| {
-                                            if let Some(path_matcher) = PathMatcher::new(&workspace_definition).ok() {
+                                            if let Some(path_matcher) = PathMatcher::new(&[workspace_definition.clone()]).ok() {
                                                 path_matcher.is_match(subproject_path)
                                             } else {
                                                 workspace_definition == subproject_path.to_string_lossy()
@@ -158,7 +159,7 @@ impl Prettier {
         _: AsyncAppContext,
     ) -> anyhow::Result<Self> {
         Ok(Self::Test(TestPrettier {
-            default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
+            default: prettier_dir == default_prettier_dir().as_path(),
             prettier_dir,
         }))
     }
@@ -177,7 +178,7 @@ impl Prettier {
             prettier_dir.is_dir(),
             "Prettier dir {prettier_dir:?} is not a directory"
         );
-        let prettier_server = DEFAULT_PRETTIER_DIR.join(PRETTIER_SERVER_FILE);
+        let prettier_server = default_prettier_dir().join(PRETTIER_SERVER_FILE);
         anyhow::ensure!(
             prettier_server.is_file(),
             "no prettier server package found at {prettier_server:?}"
@@ -205,7 +206,7 @@ impl Prettier {
             .context("prettier server initialization")?;
         Ok(Self::Real(RealPrettier {
             server,
-            default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
+            default: prettier_dir == default_prettier_dir().as_path(),
             prettier_dir,
         }))
     }
@@ -315,6 +316,14 @@ impl Prettier {
                                 }
                             })
                             .collect();
+
+                        let prettier_parser = prettier_settings.parser.as_deref().or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
+
+                        if prettier_parser.is_none() && buffer_path.is_none() {
+                            log::error!("Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}");
+                            return Err(anyhow!("Cannot determine prettier parser for unsaved file"));
+                        }
+
                         log::debug!(
                             "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}",
                             buffer.file().map(|f| f.full_path(cx)),
@@ -325,7 +334,7 @@ impl Prettier {
                         anyhow::Ok(FormatParams {
                             text: buffer.text(),
                             options: FormatOptions {
-                                parser: prettier_settings.parser.clone(),
+                                parser: prettier_parser.map(ToOwned::to_owned),
                                 plugins,
                                 path: buffer_path,
                                 prettier_options,
@@ -333,6 +342,7 @@ impl Prettier {
                         })
                     })?
                     .context("prettier params calculation")?;
+
                 let response = local
                     .server
                     .request::<Format>(params)

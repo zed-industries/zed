@@ -5,19 +5,20 @@ use client::{proto::PeerId, Client, User, UserStore};
 use gpui::{
     actions, canvas, div, point, px, Action, AnyElement, AppContext, Element, Hsla,
     InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
-    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
 use rpc::proto::{self, DevServerStatus};
+use settings::Settings;
 use std::sync::Arc;
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
-    ButtonStyle, ContextMenu, Icon, IconButton, IconName, Indicator, TintColor, TitleBar, Tooltip,
+    h_flex, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike, ButtonStyle,
+    ContextMenu, Icon, IconButton, IconName, Indicator, PopoverMenu, TintColor, TitleBar, Tooltip,
 };
 use util::ResultExt;
-use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
+use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
@@ -58,6 +59,8 @@ impl Render for CollabTitlebarItem {
         let project_id = self.project.read(cx).remote_id();
         let workspace = self.workspace.upgrade();
 
+        let platform_supported = cfg!(target_os = "macos");
+
         TitleBar::new("collab-titlebar", Box::new(workspace::CloseWindow))
             // note: on windows titlebar behaviour is handled by the platform implementation
             .when(cfg!(not(windows)), |this| {
@@ -71,6 +74,7 @@ impl Render for CollabTitlebarItem {
             .child(
                 h_flex()
                     .gap_1()
+                    .children(self.render_application_menu(cx))
                     .children(self.render_project_host(cx))
                     .child(self.render_project_name(cx))
                     .children(self.render_project_branch(cx))
@@ -243,7 +247,9 @@ impl Render for CollabTitlebarItem {
                                 )
                                 .tooltip(move |cx| {
                                     Tooltip::text(
-                                        if is_muted {
+                                        if !platform_supported {
+                                            "Cannot share microphone"
+                                        } else if is_muted {
                                             "Unmute microphone"
                                         } else {
                                             "Mute microphone"
@@ -253,7 +259,8 @@ impl Render for CollabTitlebarItem {
                                 })
                                 .style(ButtonStyle::Subtle)
                                 .icon_size(IconSize::Small)
-                                .selected(is_muted)
+                                .selected(platform_supported && is_muted)
+                                .disabled(!platform_supported)
                                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                                 .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                             )
@@ -271,8 +278,11 @@ impl Render for CollabTitlebarItem {
                             .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                             .icon_size(IconSize::Small)
                             .selected(is_deafened)
+                            .disabled(!platform_supported)
                             .tooltip(move |cx| {
-                                if can_use_microphone {
+                                if !platform_supported {
+                                    Tooltip::text("Cannot share microphone", cx)
+                                } else if can_use_microphone {
                                     Tooltip::with_meta(
                                         "Deafen Audio",
                                         None,
@@ -291,10 +301,13 @@ impl Render for CollabTitlebarItem {
                                     .style(ButtonStyle::Subtle)
                                     .icon_size(IconSize::Small)
                                     .selected(is_screen_sharing)
+                                    .disabled(!platform_supported)
                                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                                     .tooltip(move |cx| {
                                         Tooltip::text(
-                                            if is_screen_sharing {
+                                            if !platform_supported {
+                                                "Cannot share screen"
+                                            } else if is_screen_sharing {
                                                 "Stop Sharing Screen"
                                             } else {
                                                 "Share Screen"
@@ -375,8 +388,173 @@ impl CollabTitlebarItem {
         }
     }
 
-    // resolve if you are in a room -> render_project_owner
-    // render_project_owner -> resolve if you are in a room -> Option<foo>
+    pub fn render_application_menu(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        cfg!(not(target_os = "macos")).then(|| {
+            let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+            let font = cx.text_style().font();
+            let font_id = cx.text_system().resolve_font(&font);
+            let width = cx
+                .text_system()
+                .typographic_bounds(font_id, ui_font_size, 'm')
+                .unwrap()
+                .size
+                .width
+                * 3.0;
+
+            PopoverMenu::new("application-menu")
+                .menu(move |cx| {
+                    let width = width;
+                    ContextMenu::build(cx, move |menu, _cx| {
+                        let width = width;
+                        menu.header("Workspace")
+                            .action("Open Command Palette", Box::new(command_palette::Toggle))
+                            .custom_row(move |cx| {
+                                div()
+                                    .w_full()
+                                    .flex()
+                                    .flex_row()
+                                    .justify_between()
+                                    .cursor(gpui::CursorStyle::Arrow)
+                                    .child(Label::new("Buffer Font Size"))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .child(div().w(px(16.0)))
+                                            .child(
+                                                IconButton::new(
+                                                    "reset-buffer-zoom",
+                                                    IconName::RotateCcw,
+                                                )
+                                                .on_click(|_, cx| {
+                                                    cx.dispatch_action(Box::new(
+                                                        zed_actions::ResetBufferFontSize,
+                                                    ))
+                                                }),
+                                            )
+                                            .child(
+                                                IconButton::new("--buffer-zoom", IconName::Dash)
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(Box::new(
+                                                            zed_actions::DecreaseBufferFontSize,
+                                                        ))
+                                                    }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(width)
+                                                    .flex()
+                                                    .flex_row()
+                                                    .justify_around()
+                                                    .child(Label::new(
+                                                        theme::get_buffer_font_size(cx).to_string(),
+                                                    )),
+                                            )
+                                            .child(
+                                                IconButton::new("+-buffer-zoom", IconName::Plus)
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(Box::new(
+                                                            zed_actions::IncreaseBufferFontSize,
+                                                        ))
+                                                    }),
+                                            ),
+                                    )
+                                    .into_any_element()
+                            })
+                            .custom_row(move |cx| {
+                                div()
+                                    .w_full()
+                                    .flex()
+                                    .flex_row()
+                                    .justify_between()
+                                    .cursor(gpui::CursorStyle::Arrow)
+                                    .child(Label::new("UI Font Size"))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .child(
+                                                IconButton::new(
+                                                    "reset-ui-zoom",
+                                                    IconName::RotateCcw,
+                                                )
+                                                .on_click(|_, cx| {
+                                                    cx.dispatch_action(Box::new(
+                                                        zed_actions::ResetUiFontSize,
+                                                    ))
+                                                }),
+                                            )
+                                            .child(
+                                                IconButton::new("--ui-zoom", IconName::Dash)
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(Box::new(
+                                                            zed_actions::DecreaseUiFontSize,
+                                                        ))
+                                                    }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(width)
+                                                    .flex()
+                                                    .flex_row()
+                                                    .justify_around()
+                                                    .child(Label::new(
+                                                        theme::get_ui_font_size(cx).to_string(),
+                                                    )),
+                                            )
+                                            .child(
+                                                IconButton::new("+-ui-zoom", IconName::Plus)
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(Box::new(
+                                                            zed_actions::IncreaseUiFontSize,
+                                                        ))
+                                                    }),
+                                            ),
+                                    )
+                                    .into_any_element()
+                            })
+                            .header("Project")
+                            .action(
+                                "Add Folder to Project...",
+                                Box::new(workspace::AddFolderToProject),
+                            )
+                            .action("Open a new Project...", Box::new(workspace::Open))
+                            .action(
+                                "Open Recent Projects...",
+                                Box::new(recent_projects::OpenRecent {
+                                    create_new_window: false,
+                                }),
+                            )
+                            .header("Help")
+                            .action("About Zed", Box::new(zed_actions::About))
+                            .action("Welcome", Box::new(workspace::Welcome))
+                            .link(
+                                "Documentation",
+                                Box::new(zed_actions::OpenBrowser {
+                                    url: "https://zed.dev/docs".into(),
+                                }),
+                            )
+                            .action("Give Feedback", Box::new(feedback::GiveFeedback))
+                            .action("Check for Updates", Box::new(auto_update::Check))
+                            .action("View Telemetry", Box::new(zed_actions::OpenTelemetryLog))
+                            .action(
+                                "View Dependency Licenses",
+                                Box::new(zed_actions::OpenLicenses),
+                            )
+                            .separator()
+                            .action("Quit", Box::new(zed_actions::Quit))
+                    })
+                    .into()
+                })
+                .trigger(
+                    IconButton::new("application-menu", ui::IconName::Menu)
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(|cx| Tooltip::text("Open Application Menu", cx))
+                        .icon_size(IconSize::Small),
+                )
+                .into_any_element()
+        })
+    }
 
     pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         if let Some(dev_server) =
@@ -409,6 +587,17 @@ impl CollabTitlebarItem {
                             recent_projects::DevServerProjects::open(workspace, cx)
                         }
                     }))
+                    .into_any_element(),
+            );
+        }
+
+        if self.project.read(cx).is_disconnected() {
+            return Some(
+                Button::new("disconnected", "Disconnected")
+                    .disabled(true)
+                    .color(Color::Disabled)
+                    .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::Small)
                     .into_any_element(),
             );
         }
@@ -487,7 +676,7 @@ impl CollabTitlebarItem {
             }))
     }
 
-    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
+    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {
@@ -503,22 +692,23 @@ impl CollabTitlebarItem {
             .and_then(RepositoryEntry::branch)
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(
-            popover_menu("project_branch_trigger")
-                .trigger(
-                    Button::new("project_branch_trigger", branch_name)
-                        .color(Color::Muted)
-                        .style(ButtonStyle::Subtle)
-                        .label_size(LabelSize::Small)
-                        .tooltip(move |cx| {
-                            Tooltip::with_meta(
-                                "Recent Branches",
-                                Some(&ToggleVcsMenu),
-                                "Local branches only",
-                                cx,
-                            )
-                        }),
-                )
-                .menu(move |cx| Self::render_vcs_popover(workspace.clone(), cx)),
+            Button::new("project_branch_trigger", branch_name)
+                .color(Color::Muted)
+                .style(ButtonStyle::Subtle)
+                .label_size(LabelSize::Small)
+                .tooltip(move |cx| {
+                    Tooltip::with_meta(
+                        "Recent Branches",
+                        Some(&ToggleVcsMenu),
+                        "Local branches only",
+                        cx,
+                    )
+                })
+                .on_click(move |_, cx| {
+                    let _ = workspace.update(cx, |this, cx| {
+                        BranchList::open(this, &Default::default(), cx)
+                    });
+                }),
         )
     }
 
@@ -650,16 +840,6 @@ impl CollabTitlebarItem {
             .log_err();
     }
 
-    pub fn render_vcs_popover(
-        workspace: View<Workspace>,
-        cx: &mut WindowContext<'_>,
-    ) -> Option<View<BranchList>> {
-        let view = build_branch_list(workspace, cx).log_err()?;
-        let focus_handle = view.focus_handle(cx);
-        cx.focus(&focus_handle);
-        Some(view)
-    }
-
     fn render_connection_status(
         &self,
         status: &client::Status,
@@ -695,7 +875,7 @@ impl CollabTitlebarItem {
                         .on_click(|_, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
                                 if auto_updater.read(cx).status().is_updated() {
-                                    workspace::restart(&Default::default(), cx);
+                                    workspace::reload(&Default::default(), cx);
                                     return;
                                 }
                             }
@@ -726,12 +906,13 @@ impl CollabTitlebarItem {
 
     pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if let Some(user) = self.user_store.read(cx).current_user() {
-            popover_menu("user-menu")
+            PopoverMenu::new("user-menu")
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
+                            .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .action("Themes...", theme_selector::Toggle::default().boxed_clone())
                             .separator()
                             .action("Sign Out", client::SignOut.boxed_clone())
                     })
@@ -743,28 +924,35 @@ impl CollabTitlebarItem {
                             h_flex()
                                 .gap_0p5()
                                 .child(Avatar::new(user.avatar_uri.clone()))
-                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
+                                .child(
+                                    Icon::new(IconName::ChevronDown)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                ),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
                 )
                 .anchor(gpui::AnchorCorner::TopRight)
         } else {
-            popover_menu("user-menu")
+            PopoverMenu::new("user-menu")
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
+                            .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
-                            .action("Themes...", theme_selector::Toggle::default().boxed_clone())
                     })
                     .into()
                 })
                 .trigger(
                     ButtonLike::new("user-menu")
                         .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
+                            h_flex().gap_0p5().child(
+                                Icon::new(IconName::ChevronDown)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            ),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),

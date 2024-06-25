@@ -82,13 +82,14 @@ impl RenderOnce for KeyBinding {
                         .join(" ")
                 )
             })
+            .gap(Spacing::Small.rems(cx))
             .flex_none()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
                 let key_icon = self.icon_for_key(keystroke);
 
                 h_flex()
                     .flex_none()
-                    .p_0p5()
+                    .py_0p5()
                     .rounded_sm()
                     .text_color(cx.theme().colors().text_muted)
                     .when(keystroke.modifiers.function, |el| {

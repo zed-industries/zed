@@ -160,7 +160,7 @@ pub struct HangReport {
     pub backtrace: Vec<BacktraceFrame>,
     pub app_version: Option<SemanticVersion>,
     pub os_name: String,
-    pub os_version: Option<SemanticVersion>,
+    pub os_version: Option<String>,
     pub architecture: String,
     pub installation_id: Option<String>,
 }

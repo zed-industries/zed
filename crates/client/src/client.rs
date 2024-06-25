@@ -84,7 +84,8 @@ lazy_static! {
         std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty());
 }
 
-pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
+pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
+pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 actions!(client, [SignIn, SignOut, Reconnect]);
@@ -287,7 +288,6 @@ struct ClientState {
     status: (watch::Sender<Status>, watch::Receiver<Status>),
     entity_id_extractors: HashMap<TypeId, fn(&dyn AnyTypedEnvelope) -> u64>,
     _reconnect_task: Option<Task<()>>,
-    reconnect_interval: Duration,
     entities_by_type_and_remote_id: HashMap<(TypeId, u64), WeakSubscriber>,
     models_by_message_type: HashMap<TypeId, AnyWeakModel>,
     entity_types_by_message_type: HashMap<TypeId, TypeId>,
@@ -363,7 +363,6 @@ impl Default for ClientState {
             status: watch::channel_with(Status::SignedOut),
             entity_id_extractors: Default::default(),
             _reconnect_task: None,
-            reconnect_interval: Duration::from_secs(5),
             models_by_message_type: Default::default(),
             entities_by_type_and_remote_id: Default::default(),
             entity_types_by_message_type: Default::default(),
@@ -510,7 +509,7 @@ impl Client {
         let credentials_provider: Arc<dyn CredentialsProvider + Send + Sync + 'static> =
             if use_zed_development_auth {
                 Arc::new(DevelopmentCredentialsProvider {
-                    path: util::paths::CONFIG_DIR.join("development_auth"),
+                    path: paths::config_dir().join("development_auth"),
                 })
             } else {
                 Arc::new(KeychainCredentialsProvider)
@@ -623,7 +622,6 @@ impl Client {
             }
             Status::ConnectionLost => {
                 let this = self.clone();
-                let reconnect_interval = state.reconnect_interval;
                 state._reconnect_task = Some(cx.spawn(move |cx| async move {
                     #[cfg(any(test, feature = "test-support"))]
                     let mut rng = StdRng::seed_from_u64(0);
@@ -642,8 +640,9 @@ impl Client {
                             );
                             cx.background_executor().timer(delay).await;
                             delay = delay
-                                .mul_f32(rng.gen_range(1.0..=2.0))
-                                .min(reconnect_interval);
+                                .mul_f32(rng.gen_range(0.5..=2.5))
+                                .max(INITIAL_RECONNECTION_DELAY)
+                                .min(MAX_RECONNECTION_DELAY);
                         } else {
                             break;
                         }
@@ -686,6 +685,22 @@ impl Client {
 
     #[track_caller]
     pub fn add_message_handler<M, E, H, F>(
+        self: &Arc<Self>,
+        entity: WeakModel<E>,
+        handler: H,
+    ) -> Subscription
+    where
+        M: EnvelopedMessage,
+        E: 'static,
+        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
+        F: 'static + Future<Output = Result<()>>,
+    {
+        self.add_message_handler_impl(entity, move |model, message, _, cx| {
+            handler(model, message, cx)
+        })
+    }
+
+    fn add_message_handler_impl<M, E, H, F>(
         self: &Arc<Self>,
         entity: WeakModel<E>,
         handler: H,
@@ -738,19 +753,11 @@ impl Client {
     where
         M: RequestMessage,
         E: 'static,
-        H: 'static
-            + Sync
-            + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F
-            + Send
-            + Sync,
+        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
-        self.add_message_handler(model, move |handle, envelope, this, cx| {
-            Self::respond_to_request(
-                envelope.receipt(),
-                handler(handle, envelope, this.clone(), cx),
-                this,
-            )
+        self.add_message_handler_impl(model, move |handle, envelope, this, cx| {
+            Self::respond_to_request(envelope.receipt(), handler(handle, envelope, cx), this)
         })
     }
 
@@ -758,11 +765,11 @@ impl Client {
     where
         M: EntityMessage,
         E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<()>>,
     {
-        self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, client, cx| {
-            handler(subscriber.downcast::<E>().unwrap(), message, client, cx)
+        self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, _, cx| {
+            handler(subscriber.downcast::<E>().unwrap(), message, cx)
         })
     }
 
@@ -809,13 +816,13 @@ impl Client {
     where
         M: EntityMessage + RequestMessage,
         E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
-        self.add_model_message_handler(move |entity, envelope, client, cx| {
+        self.add_entity_message_handler::<M, E, _, _>(move |entity, envelope, client, cx| {
             Self::respond_to_request::<M, _>(
                 envelope.receipt(),
-                handler(entity, envelope, client.clone(), cx),
+                handler(entity.downcast::<E>().unwrap(), envelope, cx),
                 client,
             )
         })
@@ -1430,6 +1437,31 @@ impl Client {
         }
     }
 
+    pub fn request_dynamic(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> impl Future<Output = Result<proto::Envelope>> {
+        let client_id = self.id();
+        log::debug!(
+            "rpc request start. client_id:{}. name:{}",
+            client_id,
+            request_type
+        );
+        let response = self
+            .connection_id()
+            .map(|conn_id| self.peer.request_dynamic(conn_id, envelope, request_type));
+        async move {
+            let response = response?.await;
+            log::debug!(
+                "rpc request finish. client_id:{}. name:{}",
+                client_id,
+                request_type
+            );
+            Ok(response?.0)
+        }
+    }
+
     fn respond<T: RequestMessage>(&self, receipt: Receipt<T>, response: T::Response) -> Result<()> {
         log::debug!("rpc respond. client_id:{}. name:{}", self.id(), T::NAME);
         self.peer.respond(receipt, response)
@@ -1705,6 +1737,7 @@ mod tests {
     use gpui::{BackgroundExecutor, Context, TestAppContext};
     use http::FakeHttpClient;
     use parking_lot::Mutex;
+    use proto::TypedEnvelope;
     use settings::SettingsStore;
     use std::future;
 
@@ -1887,7 +1920,7 @@ mod tests {
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         client.add_model_message_handler(
-            move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, _, mut cx| {
+            move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
                 match model.update(&mut cx, |model, _| model.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
@@ -1949,7 +1982,7 @@ mod tests {
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         let subscription1 = client.add_message_handler(
             model.downgrade(),
-            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+            move |_, _: TypedEnvelope<proto::Ping>, _| {
                 done_tx1.try_send(()).unwrap();
                 async { Ok(()) }
             },
@@ -1957,7 +1990,7 @@ mod tests {
         drop(subscription1);
         let _subscription2 = client.add_message_handler(
             model.downgrade(),
-            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+            move |_, _: TypedEnvelope<proto::Ping>, _| {
                 done_tx2.try_send(()).unwrap();
                 async { Ok(()) }
             },
@@ -1983,7 +2016,7 @@ mod tests {
         let (done_tx, mut done_rx) = smol::channel::unbounded();
         let subscription = client.add_message_handler(
             model.clone().downgrade(),
-            move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, _, mut cx| {
+            move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, mut cx| {
                 model
                     .update(&mut cx, |model, _| model.subscription.take())
                     .unwrap();

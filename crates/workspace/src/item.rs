@@ -20,7 +20,7 @@ use gpui::{
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsLocation, SettingsSources};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -172,7 +172,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         _: &mut ViewContext<Self>,
     ) -> Option<View<Self>>
     where
@@ -287,7 +287,7 @@ pub trait ItemHandle: 'static + Send {
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn clone_on_split(
         &self,
-        workspace_id: WorkspaceId,
+        workspace_id: Option<WorkspaceId>,
         cx: &mut WindowContext,
     ) -> Option<Box<dyn ItemHandle>>;
     fn added_to_pane(
@@ -331,6 +331,7 @@ pub trait ItemHandle: 'static + Send {
     fn show_toolbar(&self, cx: &AppContext) -> bool;
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
+    fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -401,6 +402,20 @@ impl<T: Item> ItemHandle for View<T> {
         result
     }
 
+    fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings {
+        if let Some(project_path) = self.project_path(cx) {
+            WorkspaceSettings::get(
+                Some(SettingsLocation {
+                    worktree_id: project_path.worktree_id.into(),
+                    path: &project_path.path,
+                }),
+                cx,
+            )
+        } else {
+            WorkspaceSettings::get_global(cx)
+        }
+    }
+
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
         let mut result = SmallVec::new();
         self.read(cx).for_each_project_item(cx, &mut |_, item| {
@@ -437,7 +452,7 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn clone_on_split(
         &self,
-        workspace_id: WorkspaceId,
+        workspace_id: Option<WorkspaceId>,
         cx: &mut WindowContext,
     ) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| item.clone_on_split(workspace_id, cx))
@@ -528,7 +543,6 @@ impl<T: Item> ItemHandle for View<T> {
                     {
                         pane
                     } else {
-                        log::error!("unexpected item event after pane was dropped");
                         return;
                     };
 
@@ -568,7 +582,8 @@ impl<T: Item> ItemHandle for View<T> {
                         }
 
                         ItemEvent::Edit => {
-                            let autosave = WorkspaceSettings::get_global(cx).autosave;
+                            let autosave = item.workspace_settings(cx).autosave;
+
                             if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
                                 let delay = Duration::from_millis(milliseconds);
                                 let item = item.clone();
@@ -585,8 +600,8 @@ impl<T: Item> ItemHandle for View<T> {
             ));
 
             cx.on_blur(&self.focus_handle(cx), move |workspace, cx| {
-                if WorkspaceSettings::get_global(cx).autosave == AutosaveSetting::OnFocusChange {
-                    if let Some(item) = weak_item.upgrade() {
+                if let Some(item) = weak_item.upgrade() {
+                    if item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange {
                         Pane::autosave_item(&item, workspace.project.clone(), cx)
                             .detach_and_log_err(cx);
                     }
@@ -883,7 +898,7 @@ pub mod test {
     }
 
     pub struct TestItem {
-        pub workspace_id: WorkspaceId,
+        pub workspace_id: Option<WorkspaceId>,
         pub state: String,
         pub label: String,
         pub save_count: usize,
@@ -964,7 +979,7 @@ pub mod test {
 
         pub fn new_deserialized(id: WorkspaceId, cx: &mut ViewContext<Self>) -> Self {
             let mut this = Self::new(cx);
-            this.workspace_id = id;
+            this.workspace_id = Some(id);
             this
         }
 
@@ -1081,7 +1096,7 @@ pub mod test {
 
         fn clone_on_split(
             &self,
-            _workspace_id: WorkspaceId,
+            _workspace_id: Option<WorkspaceId>,
             cx: &mut ViewContext<Self>,
         ) -> Option<View<Self>>
         where

@@ -21,7 +21,7 @@ actions!(branches, [OpenRecent]);
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, action, cx| {
-            BranchList::toggle_modal(workspace, action, cx).log_err();
+            BranchList::open(workspace, action, cx).log_err();
         });
     })
     .detach();
@@ -43,7 +43,7 @@ impl BranchList {
             _subscription,
         }
     }
-    fn toggle_modal(
+    pub fn open(
         workspace: &mut Workspace,
         _: &OpenRecent,
         cx: &mut ViewContext<Workspace>,
@@ -77,16 +77,6 @@ impl Render for BranchList {
     }
 }
 
-pub fn build_branch_list(
-    workspace: View<Workspace>,
-    cx: &mut WindowContext<'_>,
-) -> Result<View<BranchList>> {
-    let delegate = workspace.update(cx, |workspace, cx| {
-        BranchListDelegate::new(workspace, cx.view().clone(), 29, cx)
-    })?;
-    Ok(cx.new_view(move |cx| BranchList::new(delegate, 20., cx)))
-}
-
 pub struct BranchListDelegate {
     matches: Vec<StringMatch>,
     all_branches: Vec<Branch>,
@@ -109,7 +99,7 @@ impl BranchListDelegate {
             .get_first_worktree_root_repo(cx)
             .context("failed to get root repository for first worktree")?;
 
-        let all_branches = repo.lock().branches()?;
+        let all_branches = repo.branches()?;
         Ok(Self {
             matches: vec![],
             workspace: handle,
@@ -237,7 +227,6 @@ impl PickerDelegate for BranchListDelegate {
                         .get_first_worktree_root_repo(cx)
                         .context("failed to get root repository for first worktree")?;
                     let status = repo
-                        .lock()
                         .change_branch(&current_pick);
                     if status.is_err() {
                         this.delegate.display_error_toast(format!("Failed to checkout branch '{current_pick}', check for conflicts or unstashed files"), cx);
@@ -293,7 +282,6 @@ impl PickerDelegate for BranchListDelegate {
             });
             h_flex()
                 .px_3()
-                .h_full()
                 .justify_between()
                 .child(Label::new("Branches").size(LabelSize::Small))
                 .children(match_label)
@@ -316,8 +304,6 @@ impl PickerDelegate for BranchListDelegate {
                                             let repo = project
                                                 .get_first_worktree_root_repo(cx)
                                                 .context("failed to get root repository for first worktree")?;
-                                            let repo = repo
-                                                .lock();
                                             let status = repo
                                                 .create_branch(&current_pick);
                                             if status.is_err() {

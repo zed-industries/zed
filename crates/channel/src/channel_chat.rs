@@ -528,7 +528,6 @@ impl ChannelChat {
     async fn handle_message_sent(
         this: Model<Self>,
         message: TypedEnvelope<proto::ChannelMessageSent>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
@@ -553,7 +552,6 @@ impl ChannelChat {
     async fn handle_message_removed(
         this: Model<Self>,
         message: TypedEnvelope<proto::RemoveChannelMessage>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -565,7 +563,6 @@ impl ChannelChat {
     async fn handle_message_updated(
         this: Model<Self>,
         message: TypedEnvelope<proto::ChannelMessageUpdate>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;

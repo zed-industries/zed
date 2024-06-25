@@ -24,6 +24,7 @@ menu.workspace = true
 picker.workspace = true
 project.workspace = true
 settings.workspace = true
+serde.workspace = true
 text.workspace = true
 theme.workspace = true
 ui.workspace = true
@@ -36,6 +37,7 @@ editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+picker = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

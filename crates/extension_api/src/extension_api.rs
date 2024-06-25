@@ -16,13 +16,15 @@ pub use serde_json;
 pub use wit::{
     download_file, make_file_executable,
     zed::extension::github::{
-        latest_github_release, GithubRelease, GithubReleaseAsset, GithubReleaseOptions,
+        github_release_by_tag_name, latest_github_release, GithubRelease, GithubReleaseAsset,
+        GithubReleaseOptions,
     },
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
         npm_package_latest_version,
     },
     zed::extension::platform::{current_platform, Architecture, Os},
+    zed::extension::slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection},
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
     LanguageServerInstallationStatus, Range, Worktree,
 };
@@ -64,9 +66,11 @@ pub trait Extension: Send + Sync {
     /// language.
     fn language_server_command(
         &mut self,
-        language_server_id: &LanguageServerId,
-        worktree: &Worktree,
-    ) -> Result<Command>;
+        _language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Result<Command> {
+        Err("`language_server_command` not implemented".to_string())
+    }
 
     /// Returns the initialization options to pass to the specified language server.
     fn language_server_initialization_options(
@@ -103,6 +107,25 @@ pub trait Extension: Send + Sync {
     ) -> Option<CodeLabel> {
         None
     }
+
+    /// Returns the completions that should be shown when completing the provided slash command with the given query.
+    fn complete_slash_command_argument(
+        &self,
+        _command: SlashCommand,
+        _query: String,
+    ) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Returns the output from running the provided slash command.
+    fn run_slash_command(
+        &self,
+        _command: SlashCommand,
+        _argument: Option<String>,
+        _worktree: &Worktree,
+    ) -> Result<SlashCommandOutput, String> {
+        Err("`run_slash_command` not implemented".to_string())
+    }
 }
 
 /// Registers the provided type as a Zed extension.
@@ -138,9 +161,11 @@ static mut EXTENSION: Option<Box<dyn Extension>> = None;
 pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
 
 mod wit {
+    #![allow(clippy::too_many_arguments)]
+
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.0.6",
+        path: "./wit/since_v0.0.7",
     });
 }
 
@@ -207,6 +232,21 @@ impl wit::Guest for Component {
             }
         }
         Ok(labels)
+    }
+
+    fn complete_slash_command_argument(
+        command: SlashCommand,
+        query: String,
+    ) -> Result<Vec<String>, String> {
+        extension().complete_slash_command_argument(command, query)
+    }
+
+    fn run_slash_command(
+        command: SlashCommand,
+        argument: Option<String>,
+        worktree: &Worktree,
+    ) -> Result<SlashCommandOutput, String> {
+        extension().run_slash_command(command, argument, worktree)
     }
 }
 

@@ -186,9 +186,15 @@ async function handleMessage(message, prettier) {
     }
 
     let resolvedConfig = {};
-    if (params.options.filepath !== undefined) {
+    if (params.options.filepath) {
       resolvedConfig =
         (await prettier.prettier.resolveConfig(params.options.filepath)) || {};
+    }
+
+    // Marking the params.options.filepath as undefined makes
+    // prettier.format() work even if no filepath is set.
+    if (params.options.filepath === null) {
+      params.options.filepath = undefined;
     }
 
     const plugins =

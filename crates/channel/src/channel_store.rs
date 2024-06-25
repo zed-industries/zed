@@ -62,6 +62,7 @@ pub struct ChannelStore {
     opened_buffers: HashMap<ChannelId, OpenedModelHandle<ChannelBuffer>>,
     opened_chats: HashMap<ChannelId, OpenedModelHandle<ChannelChat>>,
     client: Arc<Client>,
+    did_subscribe: bool,
     user_store: Model<UserStore>,
     _rpc_subscriptions: [Subscription; 2],
     _watch_connection_status: Task<Option<()>>,
@@ -243,6 +244,20 @@ impl ChannelStore {
                 .log_err();
             }),
             channel_states: Default::default(),
+            did_subscribe: false,
+        }
+    }
+
+    pub fn initialize(&mut self) {
+        if !self.did_subscribe {
+            if self
+                .client
+                .send(proto::SubscribeToChannels {})
+                .log_err()
+                .is_some()
+            {
+                self.did_subscribe = true;
+            }
         }
     }
 
@@ -873,7 +888,6 @@ impl ChannelStore {
     async fn handle_update_channels(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateChannels>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
@@ -887,7 +901,6 @@ impl ChannelStore {
     async fn handle_update_user_channels(
         this: Model<Self>,
         message: TypedEnvelope<proto::UpdateUserChannels>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -1035,7 +1048,7 @@ impl ChannelStore {
 
     fn handle_disconnect(&mut self, wait_for_reconnect: bool, cx: &mut ModelContext<Self>) {
         cx.notify();
-
+        self.did_subscribe = false;
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {
             cx.spawn(move |this, mut cx| async move {
                 if wait_for_reconnect {

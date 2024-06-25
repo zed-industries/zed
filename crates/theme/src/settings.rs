@@ -4,7 +4,7 @@ use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Global, Pixels, Subscription,
-    ViewContext,
+    ViewContext, WindowContext,
 };
 use refineable::Refineable;
 use schemars::{
@@ -167,6 +167,11 @@ pub(crate) struct AdjustedBufferFontSize(Pixels);
 
 impl Global for AdjustedBufferFontSize {}
 
+#[derive(Default)]
+pub(crate) struct AdjustedUiFontSize(Pixels);
+
+impl Global for AdjustedUiFontSize {}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ThemeSelection {
@@ -227,12 +232,18 @@ pub struct ThemeSettingsContent {
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
     pub ui_font_features: Option<FontFeatures>,
+    /// The weight of the UI font in CSS units from 100 to 900.
+    #[serde(default)]
+    pub ui_font_weight: Option<f32>,
     /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_family: Option<String>,
     /// The default font size for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
+    /// The weight of the editor font in CSS units from 100 to 900.
+    #[serde(default)]
+    pub buffer_font_weight: Option<f32>,
     /// The buffer's line height.
     #[serde(default)]
     pub buffer_line_height: Option<BufferLineHeight>,
@@ -325,6 +336,7 @@ impl ThemeSettings {
                 .status
                 .refine(&theme_overrides.status_colors_refinement());
             base_theme.styles.player.merge(&theme_overrides.players);
+            base_theme.styles.accents.merge(&theme_overrides.accents);
             base_theme.styles.syntax =
                 SyntaxTheme::merge(base_theme.styles.syntax, theme_overrides.syntax_overrides());
 
@@ -351,7 +363,13 @@ pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
     .max(MIN_FONT_SIZE)
 }
 
-pub fn adjust_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
+pub fn get_buffer_font_size(cx: &AppContext) -> Pixels {
+    let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+    cx.try_global::<AdjustedBufferFontSize>()
+        .map_or(buffer_font_size, |adjusted_size| adjusted_size.0)
+}
+
+pub fn adjust_buffer_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
     let mut adjusted_size = cx
         .try_global::<AdjustedBufferFontSize>()
@@ -363,9 +381,45 @@ pub fn adjust_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     cx.refresh();
 }
 
-pub fn reset_font_size(cx: &mut AppContext) {
+pub fn reset_buffer_font_size(cx: &mut AppContext) {
     if cx.has_global::<AdjustedBufferFontSize>() {
         cx.remove_global::<AdjustedBufferFontSize>();
+        cx.refresh();
+    }
+}
+
+pub fn setup_ui_font(cx: &mut WindowContext) -> gpui::Font {
+    let (ui_font, ui_font_size) = {
+        let theme_settings = ThemeSettings::get_global(cx);
+        let font = theme_settings.ui_font.clone();
+        (font, get_ui_font_size(cx))
+    };
+
+    cx.set_rem_size(ui_font_size);
+    ui_font
+}
+
+pub fn get_ui_font_size(cx: &WindowContext) -> Pixels {
+    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+    cx.try_global::<AdjustedUiFontSize>()
+        .map_or(ui_font_size, |adjusted_size| adjusted_size.0)
+}
+
+pub fn adjust_ui_font_size(cx: &mut WindowContext, f: fn(&mut Pixels)) {
+    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+    let mut adjusted_size = cx
+        .try_global::<AdjustedUiFontSize>()
+        .map_or(ui_font_size, |adjusted_size| adjusted_size.0);
+
+    f(&mut adjusted_size);
+    adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
+    cx.set_global(AdjustedUiFontSize(adjusted_size));
+    cx.refresh();
+}
+
+pub fn reset_ui_font_size(cx: &mut WindowContext) {
+    if cx.has_global::<AdjustedUiFontSize>() {
+        cx.remove_global::<AdjustedUiFontSize>();
         cx.refresh();
     }
 }
@@ -385,13 +439,13 @@ impl settings::Settings for ThemeSettings {
             ui_font: Font {
                 family: defaults.ui_font_family.clone().unwrap().into(),
                 features: defaults.ui_font_features.clone().unwrap(),
-                weight: Default::default(),
+                weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
             },
             buffer_font: Font {
                 family: defaults.buffer_font_family.clone().unwrap().into(),
                 features: defaults.buffer_font_features.clone().unwrap(),
-                weight: FontWeight::default(),
+                weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
@@ -417,11 +471,18 @@ impl settings::Settings for ThemeSettings {
                 this.buffer_font.features = value;
             }
 
+            if let Some(value) = value.buffer_font_weight {
+                this.buffer_font.weight = FontWeight(value);
+            }
+
             if let Some(value) = value.ui_font_family.clone() {
                 this.ui_font.family = value.into();
             }
             if let Some(value) = value.ui_font_features.clone() {
                 this.ui_font.features = value;
+            }
+            if let Some(value) = value.ui_font_weight {
+                this.ui_font.weight = FontWeight(value);
             }
 
             if let Some(value) = &value.theme {

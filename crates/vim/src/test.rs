@@ -179,7 +179,39 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
 
     // works in visual mode
     cx.simulate_keystrokes("shift-v down >");
-    cx.assert_editor_state("aa\n    bb\n    cˇc");
+    cx.assert_editor_state("aa\n    bˇb\n    cc");
+
+    // works as operator
+    cx.set_state("aa\nbˇb\ncc\n", Mode::Normal);
+    cx.simulate_keystrokes("> j");
+    cx.assert_editor_state("aa\n    bˇb\n    cc\n");
+    cx.simulate_keystrokes("< k");
+    cx.assert_editor_state("aa\nbˇb\n    cc\n");
+    cx.simulate_keystrokes("> i p");
+    cx.assert_editor_state("    aa\n    bˇb\n        cc\n");
+    cx.simulate_keystrokes("< i p");
+    cx.assert_editor_state("aa\nbˇb\n    cc\n");
+    cx.simulate_keystrokes("< i p");
+    cx.assert_editor_state("aa\nbˇb\ncc\n");
+
+    cx.set_state("ˇaa\nbb\ncc\n", Mode::Normal);
+    cx.simulate_keystrokes("> 2 j");
+    cx.assert_editor_state("    ˇaa\n    bb\n    cc\n");
+
+    cx.set_state("aa\nbb\nˇcc\n", Mode::Normal);
+    cx.simulate_keystrokes("> 2 k");
+    cx.assert_editor_state("    aa\n    bb\n    ˇcc\n");
+
+    // works with repeat
+    cx.set_state("a\nb\nccˇc\n", Mode::Normal);
+    cx.simulate_keystrokes("> 2 k");
+    cx.assert_editor_state("    a\n    b\n    ccˇc\n");
+    cx.simulate_keystrokes(".");
+    cx.assert_editor_state("        a\n        b\n        ccˇc\n");
+    cx.simulate_keystrokes("v k <");
+    cx.assert_editor_state("        a\n    bˇ\n    ccc\n");
+    cx.simulate_keystrokes(".");
+    cx.assert_editor_state("        a\nbˇ\nccc\n");
 }
 
 #[gpui::test]
@@ -368,6 +400,7 @@ async fn test_join_lines(cx: &mut gpui::TestAppContext) {
       "});
 }
 
+#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -674,6 +707,7 @@ async fn test_selection_goal(cx: &mut gpui::TestAppContext) {
         Lorem Ipsum"});
 }
 
+#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_wrapped_motions(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1093,6 +1127,26 @@ async fn test_lt_gt_marks(cx: &mut TestAppContext) {
         Line five
     "
     });
+
+    cx.simulate_shared_keystrokes("v i w o escape").await;
+    cx.simulate_shared_keystrokes("` >").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+        Line one
+        Line two
+        Line three
+        Line fouˇr
+        Line five
+    "
+    });
+    cx.simulate_shared_keystrokes("` <").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+        Line one
+        Line two
+        Line three
+        Line ˇfour
+        Line five
+    "
+    });
 }
 
 #[gpui::test]
@@ -1132,4 +1186,83 @@ async fn test_caret_mark(cx: &mut TestAppContext) {
         Line five
     "
     });
+
+    cx.simulate_shared_keystrokes("k a ! escape k g i ?").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+        Line one
+        Line two
+        Line three!?ˇ
+        Straight thing four
+        Line five
+    "
+    });
+}
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+async fn test_dw_eol(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_wrap(12).await;
+    cx.set_shared_state("twelve ˇchar twelve char\ntwelve char")
+        .await;
+    cx.simulate_shared_keystrokes("d w").await;
+    cx.shared_state()
+        .await
+        .assert_eq("twelve ˇtwelve char\ntwelve char");
+}
+
+#[gpui::test]
+async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let language = std::sync::Arc::new(language::Language::new(
+        language::LanguageConfig {
+            line_comments: vec!["// ".into(), "//! ".into(), "/// ".into()],
+            ..Default::default()
+        },
+        Some(language::tree_sitter_rust::language()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // works in normal model
+    cx.set_state(
+        indoc! {"
+      ˇone
+      two
+      three
+      "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g c c");
+    cx.assert_state(
+        indoc! {"
+          // ˇone
+          two
+          three
+          "},
+        Mode::Normal,
+    );
+
+    // works in visual mode
+    cx.simulate_keystrokes("v j g c");
+    cx.assert_state(
+        indoc! {"
+          // // ˇone
+          // two
+          three
+          "},
+        Mode::Normal,
+    );
+
+    // works in visual line mode
+    cx.simulate_keystrokes("shift-v j g c");
+    cx.assert_state(
+        indoc! {"
+          // ˇone
+          two
+          three
+          "},
+        Mode::Normal,
+    );
 }

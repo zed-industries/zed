@@ -90,8 +90,7 @@ fn main() {
                 ..Default::default()
             },
             move |cx| {
-                let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
-                cx.set_rem_size(ui_font_size);
+                theme::setup_ui_font(cx);
 
                 cx.new_view(|cx| StoryWrapper::new(selector.story(cx)))
             },
@@ -128,7 +127,10 @@ fn load_embedded_fonts(cx: &AppContext) -> gpui::Result<()> {
     let mut embedded_fonts = Vec::new();
     for font_path in font_paths {
         if font_path.ends_with(".ttf") {
-            let font_bytes = cx.asset_source().load(&font_path)?;
+            let font_bytes = cx
+                .asset_source()
+                .load(&font_path)?
+                .expect("Should never be None in the storybook");
             embedded_fonts.push(font_bytes);
         }
     }

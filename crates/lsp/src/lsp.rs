@@ -1,4 +1,5 @@
-use log::warn;
+mod input_handler;
+
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
@@ -12,7 +13,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Value};
 use smol::{
     channel,
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{self, Child},
 };
 
@@ -25,7 +26,6 @@ use std::{
     io::Write,
     path::PathBuf,
     pin::Pin,
-    str::{self, FromStr as _},
     sync::{
         atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
@@ -36,13 +36,13 @@ use std::{
 use std::{path::Path, process::Stdio};
 use util::{ResultExt, TryFutureExt};
 
-const HEADER_DELIMITER: &'static [u8; 4] = b"\r\n\r\n";
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
+
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, &str, AsyncAppContext)>;
+type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, AsyncAppContext)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -79,6 +79,7 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
+    working_dir: PathBuf,
     server: Arc<Mutex<Option<Child>>>,
 }
 
@@ -163,13 +164,12 @@ struct Notification<'a, T> {
 
 /// Language server RPC notification message before it is deserialized into a concrete type.
 #[derive(Debug, Clone, Deserialize)]
-struct AnyNotification<'a> {
+struct AnyNotification {
     #[serde(default)]
     id: Option<RequestId>,
-    #[serde(borrow)]
-    method: &'a str,
-    #[serde(borrow, default)]
-    params: Option<&'a RawValue>,
+    method: String,
+    #[serde(default)]
+    params: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -288,6 +288,7 @@ impl LanguageServer {
             stderr_capture,
             Some(server),
             root_path,
+            working_dir,
             code_action_kinds,
             cx,
             move |notification| {
@@ -295,13 +296,7 @@ impl LanguageServer {
                     "Language server with id {} sent unhandled notification {}:\n{}",
                     server_id,
                     notification.method,
-                    serde_json::to_string_pretty(
-                        &notification
-                            .params
-                            .and_then(|params| Value::from_str(params.get()).ok())
-                            .unwrap_or(Value::Null)
-                    )
-                    .unwrap(),
+                    serde_json::to_string_pretty(&notification.params).unwrap(),
                 );
             },
         );
@@ -322,6 +317,7 @@ impl LanguageServer {
         stderr_capture: Arc<Mutex<Option<String>>>,
         server: Option<Child>,
         root_path: &Path,
+        working_dir: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
         on_unhandled_notification: F,
@@ -393,6 +389,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
+            working_dir: working_dir.to_path_buf(),
             server: Arc::new(Mutex::new(server)),
         }
     }
@@ -414,76 +411,36 @@ impl LanguageServer {
         Stdout: AsyncRead + Unpin + Send + 'static,
         F: FnMut(AnyNotification) + 'static + Send,
     {
-        let mut stdout = BufReader::new(stdout);
+        use smol::stream::StreamExt;
+        let stdout = BufReader::new(stdout);
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
             move || {
                 response_handlers.lock().take();
             }
         });
-        let mut buffer = Vec::new();
-        loop {
-            buffer.clear();
+        let mut input_handler = input_handler::LspStdoutHandler::new(
+            stdout,
+            response_handlers,
+            io_handlers,
+            cx.background_executor().clone(),
+        );
 
-            read_headers(&mut stdout, &mut buffer).await?;
-
-            let headers = std::str::from_utf8(&buffer)?;
-
-            let message_len = headers
-                .split('\n')
-                .find(|line| line.starts_with(CONTENT_LEN_HEADER))
-                .and_then(|line| line.strip_prefix(CONTENT_LEN_HEADER))
-                .ok_or_else(|| anyhow!("invalid LSP message header {headers:?}"))?
-                .trim_end()
-                .parse()?;
-
-            buffer.resize(message_len, 0);
-            stdout.read_exact(&mut buffer).await?;
-
-            if let Ok(message) = str::from_utf8(&buffer) {
-                log::trace!("incoming message: {message}");
-                for handler in io_handlers.lock().values_mut() {
-                    handler(IoKind::StdOut, message);
-                }
-            }
-
-            if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
-                if let Some(handler) = notification_handlers.lock().get_mut(msg.method) {
-                    handler(
-                        msg.id,
-                        msg.params.map(|params| params.get()).unwrap_or("null"),
-                        cx.clone(),
-                    );
+        while let Some(msg) = input_handler.notifications_channel.next().await {
+            {
+                let mut notification_handlers = notification_handlers.lock();
+                if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
+                    handler(msg.id, msg.params.unwrap_or(Value::Null), cx.clone());
                 } else {
+                    drop(notification_handlers);
                     on_unhandled_notification(msg);
                 }
-            } else if let Ok(AnyResponse {
-                id, error, result, ..
-            }) = serde_json::from_slice(&buffer)
-            {
-                if let Some(handler) = response_handlers
-                    .lock()
-                    .as_mut()
-                    .and_then(|handlers| handlers.remove(&id))
-                {
-                    if let Some(error) = error {
-                        handler(Err(error));
-                    } else if let Some(result) = result {
-                        handler(Ok(result.get().into()));
-                    } else {
-                        handler(Ok("null".into()));
-                    }
-                }
-            } else {
-                warn!(
-                    "failed to deserialize LSP message:\n{}",
-                    std::str::from_utf8(&buffer)?
-                );
             }
 
-            // Don't starve the main thread when receiving lots of messages at once.
+            // Don't starve the main thread when receiving lots of notifications at once.
             smol::future::yield_now().await;
         }
+        input_handler.loop_handle.await
     }
 
     async fn handle_stderr<Stderr>(
@@ -505,7 +462,7 @@ impl LanguageServer {
                 return Ok(());
             }
 
-            if let Ok(message) = str::from_utf8(&buffer) {
+            if let Ok(message) = std::str::from_utf8(&buffer) {
                 log::trace!("incoming stderr message:{message}");
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdErr, message);
@@ -566,7 +523,7 @@ impl LanguageServer {
         options: Option<Value>,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
-        let root_uri = Url::from_file_path(&self.root_path).unwrap();
+        let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: None,
@@ -601,6 +558,7 @@ impl LanguageServer {
                             ResourceOperationKind::Delete,
                         ]),
                         document_changes: Some(true),
+                        snippet_edit_support: Some(true),
                         ..WorkspaceEditClientCapabilities::default()
                     }),
                     ..Default::default()
@@ -643,6 +601,7 @@ impl LanguageServer {
                                 ],
                             }),
                             insert_replace_support: Some(true),
+                            label_details_support: Some(true),
                             ..Default::default()
                         }),
                         completion_list: Some(CompletionListCapability {
@@ -653,6 +612,7 @@ impl LanguageServer {
                                 "data".to_owned(),
                             ]),
                         }),
+                        context_support: Some(true),
                         ..Default::default()
                     }),
                     rename: Some(RenameClientCapabilities {
@@ -685,10 +645,6 @@ impl LanguageServer {
                     on_type_formatting: Some(DynamicRegistrationClientCapabilities {
                         dynamic_registration: None,
                     }),
-                    diagnostic: Some(DiagnosticClientCapabilities {
-                        related_document_support: Some(true),
-                        dynamic_registration: None,
-                    }),
                     ..Default::default()
                 }),
                 experimental: Some(json!({
@@ -712,6 +668,7 @@ impl LanguageServer {
                 }
             }),
             locale: None,
+            ..Default::default()
         };
 
         cx.spawn(|_| async move {
@@ -841,7 +798,7 @@ impl LanguageServer {
         let prev_handler = self.notification_handlers.lock().insert(
             method,
             Box::new(move |_, params, cx| {
-                if let Some(params) = serde_json::from_str(params).log_err() {
+                if let Some(params) = serde_json::from_value(params).log_err() {
                     f(params, cx);
                 }
             }),
@@ -869,7 +826,7 @@ impl LanguageServer {
             method,
             Box::new(move |id, params, cx| {
                 if let Some(id) = id {
-                    match serde_json::from_str(params) {
+                    match serde_json::from_value(params) {
                         Ok(params) => {
                             let response = f(params, cx.clone());
                             cx.foreground_executor()
@@ -901,12 +858,7 @@ impl LanguageServer {
                         }
 
                         Err(error) => {
-                            log::error!(
-                                "error deserializing {} request: {:?}, message: {:?}",
-                                method,
-                                error,
-                                params
-                            );
+                            log::error!("error deserializing {} request: {:?}", method, error);
                             let response = AnyResponse {
                                 jsonrpc: JSON_RPC_VERSION,
                                 id,
@@ -1169,6 +1121,7 @@ impl FakeLanguageServer {
             Arc::new(Mutex::new(None)),
             None,
             Path::new("/"),
+            Path::new("/"),
             None,
             cx.clone(),
             |_| {},
@@ -1185,16 +1138,14 @@ impl FakeLanguageServer {
                     Arc::new(Mutex::new(None)),
                     None,
                     Path::new("/"),
+                    Path::new("/"),
                     None,
                     cx,
                     move |msg| {
                         notifications_tx
                             .try_send((
                                 msg.method.to_string(),
-                                msg.params
-                                    .map(|raw_value| raw_value.get())
-                                    .unwrap_or("null")
-                                    .to_string(),
+                                msg.params.unwrap_or(Value::Null).to_string(),
                             ))
                             .ok();
                     },
@@ -1340,6 +1291,14 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has started work and notifies about its progress with the specified token.
     pub async fn start_progress(&self, token: impl Into<String>) {
+        self.start_progress_with(token, Default::default()).await
+    }
+
+    pub async fn start_progress_with(
+        &self,
+        token: impl Into<String>,
+        progress: WorkDoneProgressBegin,
+    ) {
         let token = token.into();
         self.request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
             token: NumberOrString::String(token.clone()),
@@ -1348,7 +1307,7 @@ impl FakeLanguageServer {
         .unwrap();
         self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token),
-            value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(Default::default())),
+            value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
         });
     }
 
@@ -1361,30 +1320,11 @@ impl FakeLanguageServer {
     }
 }
 
-pub(self) async fn read_headers<Stdout>(
-    reader: &mut BufReader<Stdout>,
-    buffer: &mut Vec<u8>,
-) -> Result<()>
-where
-    Stdout: AsyncRead + Unpin + Send + 'static,
-{
-    loop {
-        if buffer.len() >= HEADER_DELIMITER.len()
-            && buffer[(buffer.len() - HEADER_DELIMITER.len())..] == HEADER_DELIMITER[..]
-        {
-            return Ok(());
-        }
-
-        if reader.read_until(b'\n', buffer).await? == 0 {
-            return Err(anyhow!("cannot read LSP message headers"));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{SemanticVersion, TestAppContext};
+    use std::str::FromStr;
 
     #[ctor::ctor]
     fn init_logger() {
@@ -1396,7 +1336,7 @@ mod tests {
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            release_channel::init("0.0.0", cx);
+            release_channel::init(SemanticVersion::default(), cx);
         });
         let (server, mut fake) = FakeLanguageServer::new(
             LanguageServerId(0),
@@ -1462,30 +1402,6 @@ mod tests {
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;
-    }
-
-    #[gpui::test]
-    async fn test_read_headers() {
-        let mut buf = Vec::new();
-        let mut reader = smol::io::BufReader::new(b"Content-Length: 123\r\n\r\n" as &[u8]);
-        read_headers(&mut reader, &mut buf).await.unwrap();
-        assert_eq!(buf, b"Content-Length: 123\r\n\r\n");
-
-        let mut buf = Vec::new();
-        let mut reader = smol::io::BufReader::new(b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n{\"somecontent\":123}" as &[u8]);
-        read_headers(&mut reader, &mut buf).await.unwrap();
-        assert_eq!(
-            buf,
-            b"Content-Type: application/vscode-jsonrpc\r\nContent-Length: 1235\r\n\r\n"
-        );
-
-        let mut buf = Vec::new();
-        let mut reader = smol::io::BufReader::new(b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n{\"somecontent\":true}" as &[u8]);
-        read_headers(&mut reader, &mut buf).await.unwrap();
-        assert_eq!(
-            buf,
-            b"Content-Length: 1235\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n"
-        );
     }
 
     #[gpui::test]

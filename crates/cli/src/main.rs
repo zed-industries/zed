@@ -3,10 +3,12 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
+use parking_lot::Mutex;
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
     process::ExitStatus,
+    sync::Arc,
     thread::{self, JoinHandle},
 };
 use util::paths::PathLikeWithPosition;
@@ -54,12 +56,19 @@ struct Args {
 fn parse_path_with_position(
     argument_str: &str,
 ) -> Result<PathLikeWithPosition<PathBuf>, std::convert::Infallible> {
-    PathLikeWithPosition::parse_str(argument_str, |path_str| {
+    PathLikeWithPosition::parse_str(argument_str, |_, path_str| {
         Ok(Path::new(path_str).to_path_buf())
     })
 }
 
 fn main() -> Result<()> {
+    // Exit flatpak sandbox if needed
+    #[cfg(target_os = "linux")]
+    {
+        flatpak::try_restart_to_host();
+        flatpak::ld_extra_libs();
+    }
+
     // Intercept version designators
     #[cfg(target_os = "macos")]
     if let Some(channel) = std::env::args().nth(1).filter(|arg| arg.starts_with("--")) {
@@ -71,6 +80,9 @@ fn main() -> Result<()> {
         }
     }
     let args = Args::parse();
+
+    #[cfg(target_os = "linux")]
+    let args = flatpak::set_bin_if_no_escape(args);
 
     let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
 
@@ -113,26 +125,34 @@ fn main() -> Result<()> {
         None
     };
 
-    let sender: JoinHandle<anyhow::Result<()>> = thread::spawn(move || {
-        let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
-        let (tx, rx) = (handshake.requests, handshake.responses);
-        tx.send(CliRequest::Open {
-            paths,
-            wait: args.wait,
-            open_new_workspace,
-            dev_server_token: args.dev_server_token,
-        })?;
+    let exit_status = Arc::new(Mutex::new(None));
 
-        while let Ok(response) = rx.recv() {
-            match response {
-                CliResponse::Ping => {}
-                CliResponse::Stdout { message } => println!("{message}"),
-                CliResponse::Stderr { message } => eprintln!("{message}"),
-                CliResponse::Exit { status } => std::process::exit(status),
+    let sender: JoinHandle<anyhow::Result<()>> = thread::spawn({
+        let exit_status = exit_status.clone();
+        move || {
+            let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+            let (tx, rx) = (handshake.requests, handshake.responses);
+            tx.send(CliRequest::Open {
+                paths,
+                wait: args.wait,
+                open_new_workspace,
+                dev_server_token: args.dev_server_token,
+            })?;
+
+            while let Ok(response) = rx.recv() {
+                match response {
+                    CliResponse::Ping => {}
+                    CliResponse::Stdout { message } => println!("{message}"),
+                    CliResponse::Stderr { message } => eprintln!("{message}"),
+                    CliResponse::Exit { status } => {
+                        exit_status.lock().replace(status);
+                        return Ok(());
+                    }
+                }
             }
-        }
 
-        Ok(())
+            Ok(())
+        }
     });
 
     if args.foreground {
@@ -142,6 +162,9 @@ fn main() -> Result<()> {
         sender.join().unwrap()?;
     }
 
+    if let Some(exit_status) = exit_status.lock().take() {
+        std::process::exit(exit_status);
+    }
     Ok(())
 }
 
@@ -151,10 +174,7 @@ mod linux {
         env,
         ffi::OsString,
         io,
-        os::{
-            linux::net::SocketAddrExt,
-            unix::net::{SocketAddr, UnixDatagram},
-        },
+        os::unix::net::{SocketAddr, UnixDatagram},
         path::{Path, PathBuf},
         process::{self, ExitStatus},
         thread,
@@ -181,14 +201,15 @@ mod linux {
                 let cli = env::current_exe()?;
                 let dir = cli
                     .parent()
+                    .and_then(Path::parent)
                     .ok_or_else(|| anyhow!("no parent path for cli"))?;
 
-                match dir.join("zed").canonicalize() {
+                match dir.join("libexec").join("zed-editor").canonicalize() {
                     Ok(path) => Ok(path),
-                    // development builds have Zed capitalized
-                    Err(e) => match dir.join("Zed").canonicalize() {
-                        Ok(path) => Ok(path),
-                        Err(_) => Err(e),
+                    // In development cli and zed are in the ./target/ directory together
+                    Err(e) => match cli.parent().unwrap().join("zed").canonicalize() {
+                        Ok(path) if path != cli => Ok(path),
+                        _ => Err(e),
                     },
                 }
             }?;
@@ -212,12 +233,9 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let uid: u32 = unsafe { libc::getuid() };
-            let sock_addr =
-                SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL, uid))?;
-
+            let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL));
             let sock = UnixDatagram::unbound()?;
-            if sock.connect_addr(&sock_addr).is_err() {
+            if sock.connect(&sock_path).is_err() {
                 self.boot_background(ipc_url)?;
             } else {
                 sock.send(ipc_url.as_bytes())?;
@@ -244,10 +262,8 @@ mod linux {
                         eprintln!("failed to setsid: {}", std::io::Error::last_os_error());
                         process::exit(1);
                     }
-                    if std::env::var("ZED_KEEP_FD").is_err() {
-                        if let Err(_) = fork::close_fd() {
-                            eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
-                        }
+                    if let Err(_) = fork::close_fd() {
+                        eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                     }
                     let error =
                         exec::execvp(path.clone(), &[path.as_os_str(), &OsString::from(ipc_url)]);
@@ -272,6 +288,114 @@ mod linux {
             }
             sock.connect_addr(&sock_addr)
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod flatpak {
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::{env, process};
+
+    const EXTRA_LIB_ENV_NAME: &'static str = "ZED_FLATPAK_LIB_PATH";
+    const NO_ESCAPE_ENV_NAME: &'static str = "ZED_FLATPAK_NO_ESCAPE";
+
+    /// Adds bundled libraries to LD_LIBRARY_PATH if running under flatpak
+    pub fn ld_extra_libs() {
+        let mut paths = if let Ok(paths) = env::var("LD_LIBRARY_PATH") {
+            env::split_paths(&paths).collect()
+        } else {
+            Vec::new()
+        };
+
+        if let Ok(extra_path) = env::var(EXTRA_LIB_ENV_NAME) {
+            paths.push(extra_path.into());
+        }
+
+        env::set_var("LD_LIBRARY_PATH", env::join_paths(paths).unwrap());
+    }
+
+    /// Restarts outside of the sandbox if currently running within it
+    pub fn try_restart_to_host() {
+        if let Some(flatpak_dir) = get_flatpak_dir() {
+            let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
+            args.append(&mut get_xdg_env_args());
+            args.push("--env=ZED_UPDATE_EXPLANATION=Please use flatpak to update zed".into());
+            args.push(
+                format!(
+                    "--env={EXTRA_LIB_ENV_NAME}={}",
+                    flatpak_dir.join("lib").to_str().unwrap()
+                )
+                .into(),
+            );
+            args.push(flatpak_dir.join("bin").join("zed").into());
+
+            let mut is_app_location_set = false;
+            for arg in &env::args_os().collect::<Vec<_>>()[1..] {
+                args.push(arg.clone());
+                is_app_location_set |= arg == "--zed";
+            }
+
+            if !is_app_location_set {
+                args.push("--zed".into());
+                args.push(flatpak_dir.join("libexec").join("zed-editor").into());
+            }
+
+            let error = exec::execvp("/usr/bin/flatpak-spawn", args);
+            eprintln!("failed restart cli on host: {:?}", error);
+            process::exit(1);
+        }
+    }
+
+    pub fn set_bin_if_no_escape(mut args: super::Args) -> super::Args {
+        if env::var(NO_ESCAPE_ENV_NAME).is_ok()
+            && env::var("FLATPAK_ID").map_or(false, |id| id.starts_with("dev.zed.Zed"))
+        {
+            if args.zed.is_none() {
+                args.zed = Some("/app/libexec/zed-editor".into());
+                env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed");
+            }
+        }
+        args
+    }
+
+    fn get_flatpak_dir() -> Option<PathBuf> {
+        if env::var(NO_ESCAPE_ENV_NAME).is_ok() {
+            return None;
+        }
+
+        if let Ok(flatpak_id) = env::var("FLATPAK_ID") {
+            if !flatpak_id.starts_with("dev.zed.Zed") {
+                return None;
+            }
+
+            let install_dir = Command::new("/usr/bin/flatpak-spawn")
+                .arg("--host")
+                .arg("flatpak")
+                .arg("info")
+                .arg("--show-location")
+                .arg(flatpak_id)
+                .output()
+                .unwrap();
+            let install_dir = PathBuf::from(String::from_utf8(install_dir.stdout).unwrap().trim());
+            Some(install_dir.join("files"))
+        } else {
+            None
+        }
+    }
+
+    fn get_xdg_env_args() -> Vec<OsString> {
+        let xdg_keys = [
+            "XDG_DATA_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_STATE_HOME",
+        ];
+        env::vars()
+            .filter(|(key, _)| xdg_keys.contains(&key.as_str()))
+            .map(|(key, val)| format!("--env=FLATPAK_{}={}", key, val).into())
+            .collect()
     }
 }
 

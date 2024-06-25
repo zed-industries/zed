@@ -447,6 +447,12 @@ impl Server {
             .add_message_handler(update_diagnostic_summary)
             .add_message_handler(update_worktree_settings)
             .add_request_handler(user_handler(
+                forward_project_request_for_owner::<proto::TaskContextForLocation>,
+            ))
+            .add_request_handler(user_handler(
+                forward_project_request_for_owner::<proto::TaskTemplates>,
+            ))
+            .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetHover>,
             ))
             .add_request_handler(user_handler(
@@ -539,6 +545,12 @@ impl Server {
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::MultiLspQuery>,
             ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::RestartLanguageServers>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::LinkedEditingRange>,
+            ))
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
@@ -551,6 +563,7 @@ impl Server {
             .add_request_handler(user_handler(request_contact))
             .add_request_handler(user_handler(remove_contact))
             .add_request_handler(user_handler(respond_to_contact_request))
+            .add_message_handler(subscribe_to_channels)
             .add_request_handler(user_handler(create_channel))
             .add_request_handler(user_handler(delete_channel))
             .add_request_handler(user_handler(invite_channel_member))
@@ -1099,34 +1112,25 @@ impl Server {
                         .await?;
                 }
 
-                let (contacts, channels_for_user, channel_invites, dev_server_projects) =
-                    future::try_join4(
-                        self.app_state.db.get_contacts(user.id),
-                        self.app_state.db.get_channels_for_user(user.id),
-                        self.app_state.db.get_channel_invites_for_user(user.id),
-                        self.app_state.db.dev_server_projects_update(user.id),
-                    )
-                    .await?;
+                let (contacts, dev_server_projects) = future::try_join(
+                    self.app_state.db.get_contacts(user.id),
+                    self.app_state.db.dev_server_projects_update(user.id),
+                )
+                .await?;
 
                 {
                     let mut pool = self.connection_pool.lock();
                     pool.add_connection(connection_id, user.id, user.admin, zed_version);
-                    for membership in &channels_for_user.channel_memberships {
-                        pool.subscribe_to_channel(user.id, membership.channel_id, membership.role)
-                    }
                     self.peer.send(
                         connection_id,
                         build_initial_contacts_update(contacts, &pool),
                     )?;
-                    self.peer.send(
-                        connection_id,
-                        build_update_user_channels(&channels_for_user),
-                    )?;
-                    self.peer.send(
-                        connection_id,
-                        build_channels_update(channels_for_user, channel_invites),
-                    )?;
                 }
+
+                if should_auto_subscribe_to_channels(zed_version) {
+                    subscribe_user_to_channels(user.id, session).await?;
+                }
+
                 send_dev_server_projects_update(user.id, dev_server_projects, session).await;
 
                 if let Some(incoming_call) =
@@ -1140,8 +1144,17 @@ impl Server {
             Principal::DevServer(dev_server) => {
                 {
                     let mut pool = self.connection_pool.lock();
-                    if pool.dev_server_connection_id(dev_server.id).is_some() {
-                        return Err(anyhow!(ErrorCode::DevServerAlreadyOnline))?;
+                    if let Some(stale_connection_id) = pool.dev_server_connection_id(dev_server.id)
+                    {
+                        self.peer.send(
+                            stale_connection_id,
+                            proto::ShutdownDevServer {
+                                reason: Some(
+                                    "another dev server connected with the same token".to_string(),
+                                ),
+                            },
+                        )?;
+                        pool.remove_connection(stale_connection_id)?;
                     };
                     pool.add_dev_server(connection_id, dev_server.id, zed_version);
                 }
@@ -2398,9 +2411,12 @@ async fn regenerate_dev_server_token(
         .dev_server_connection_id(dev_server_id);
     if let Some(connection_id) = connection_id {
         shutdown_dev_server_internal(dev_server_id, connection_id, &session).await?;
-        session
-            .peer
-            .send(connection_id, proto::ShutdownDevServer {})?;
+        session.peer.send(
+            connection_id,
+            proto::ShutdownDevServer {
+                reason: Some("dev server token was regenerated".to_string()),
+            },
+        )?;
         let _ = remove_dev_server_connection(dev_server_id, &session).await;
     }
 
@@ -2439,7 +2455,12 @@ async fn rename_dev_server(
     let status = session
         .db()
         .await
-        .rename_dev_server(dev_server_id, &request.name, session.user_id())
+        .rename_dev_server(
+            dev_server_id,
+            &request.name,
+            request.ssh_connection_string.as_deref(),
+            session.user_id(),
+        )
         .await?;
 
     send_dev_server_projects_update(session.user_id(), status, &session).await;
@@ -2465,9 +2486,12 @@ async fn delete_dev_server(
         .dev_server_connection_id(dev_server_id);
     if let Some(connection_id) = connection_id {
         shutdown_dev_server_internal(dev_server_id, connection_id, &session).await?;
-        session
-            .peer
-            .send(connection_id, proto::ShutdownDevServer {})?;
+        session.peer.send(
+            connection_id,
+            proto::ShutdownDevServer {
+                reason: Some("dev server was deleted".to_string()),
+            },
+        )?;
         let _ = remove_dev_server_connection(dev_server_id, &session).await;
     }
 
@@ -2559,14 +2583,13 @@ async fn rejoin_dev_server_projects(
         )
         .await?
     };
-    notify_rejoined_projects(&mut rejoined_projects, &session)?;
-
     response.send(proto::RejoinRemoteProjectsResponse {
         rejoined_projects: rejoined_projects
-            .into_iter()
+            .iter()
             .map(|project| project.to_proto())
             .collect(),
-    })
+    })?;
+    notify_rejoined_projects(&mut rejoined_projects, &session)
 }
 
 async fn reconnect_dev_server(
@@ -2860,6 +2883,31 @@ where
         .db()
         .await
         .host_for_read_only_project_request(project_id, session.connection_id, session.user_id())
+        .await?;
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, host_connection_id, request)
+        .await?;
+    response.send(payload)?;
+    Ok(())
+}
+
+/// forward a project request to the dev server. Only allowed
+/// if it's your dev server.
+async fn forward_project_request_for_owner<T>(
+    request: T,
+    response: Response<T>,
+    session: UserSession,
+) -> Result<()>
+where
+    T: EntityMessage + RequestMessage,
+{
+    let project_id = ProjectId::from_proto(request.remote_entity_id());
+
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_owner_project_request(project_id, session.connection_id, session.user_id())
         .await?;
     let payload = session
         .peer
@@ -3345,6 +3393,36 @@ async fn remove_contact(
     }
 
     response.send(proto::Ack {})?;
+    Ok(())
+}
+
+fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
+    version.0.minor() < 139
+}
+
+async fn subscribe_to_channels(_: proto::SubscribeToChannels, session: Session) -> Result<()> {
+    subscribe_user_to_channels(
+        session.user_id().ok_or_else(|| anyhow!("must be a user"))?,
+        &session,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn subscribe_user_to_channels(user_id: UserId, session: &Session) -> Result<(), Error> {
+    let channels_for_user = session.db().await.get_channels_for_user(user_id).await?;
+    let mut pool = session.connection_pool().await;
+    for membership in &channels_for_user.channel_memberships {
+        pool.subscribe_to_channel(user_id, membership.channel_id, membership.role)
+    }
+    session.peer.send(
+        session.connection_id,
+        build_update_user_channels(&channels_for_user),
+    )?;
+    session.peer.send(
+        session.connection_id,
+        build_channels_update(channels_for_user),
+    )?;
     Ok(())
 }
 
@@ -4424,6 +4502,7 @@ async fn complete_with_google_ai(
         session.http_client.clone(),
         google_ai::API_URL,
         api_key.as_ref(),
+        &request.model.clone(),
         crate::ai::language_model_request_to_google_ai(request)?,
     )
     .await
@@ -4983,7 +5062,7 @@ fn notify_membership_updated(
         ..Default::default()
     };
 
-    let mut update = build_channels_update(result.new_channels, vec![]);
+    let mut update = build_channels_update(result.new_channels);
     update.delete_channels = result
         .removed_channels
         .into_iter()
@@ -5013,10 +5092,7 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
     }
 }
 
-fn build_channels_update(
-    channels: ChannelsForUser,
-    channel_invites: Vec<db::Channel>,
-) -> proto::UpdateChannels {
+fn build_channels_update(channels: ChannelsForUser) -> proto::UpdateChannels {
     let mut update = proto::UpdateChannels::default();
 
     for channel in channels.channels {
@@ -5035,7 +5111,7 @@ fn build_channels_update(
             });
     }
 
-    for channel in channel_invites {
+    for channel in channels.invited_channels {
         update.channel_invitations.push(channel.to_proto());
     }
 

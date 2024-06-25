@@ -7,6 +7,8 @@ pub use font_features::*;
 pub use line::*;
 pub use line_layout::*;
 pub use line_wrapper::*;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
@@ -67,6 +69,7 @@ impl TextSystem {
                 font("Cantarell"), // Gnome
                 font("Ubuntu"),    // Gnome (Ubuntu)
                 font("Noto Sans"), // KDE
+                font("DejaVu Sans")
             ],
         }
     }
@@ -554,7 +557,7 @@ impl DerefMut for LineWrapperHandle {
 
 /// The degree of blackness or stroke thickness of a font. This value ranges from 100.0 to 900.0,
 /// with 400.0 as normal.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Deserialize, Serialize, JsonSchema)]
 pub struct FontWeight(pub f32);
 
 impl Default for FontWeight {

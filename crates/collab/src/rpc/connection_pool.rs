@@ -73,6 +73,7 @@ impl ConnectionPool {
     pub fn reset(&mut self) {
         self.connections.clear();
         self.connected_users.clear();
+        self.connected_dev_servers.clear();
         self.channels.clear();
     }
 

@@ -1,31 +1,41 @@
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    hash::{Hash, Hasher},
+};
 
 use uuid::Uuid;
+use wayland_backend::client::ObjectId;
 
-use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay, Size};
+use crate::{Bounds, DisplayId, Pixels, PlatformDisplay};
 
-#[derive(Debug)]
-pub(crate) struct WaylandDisplay {}
+#[derive(Debug, Clone)]
+pub(crate) struct WaylandDisplay {
+    /// The ID of the wl_output object
+    pub id: ObjectId,
+    pub name: Option<String>,
+    pub bounds: Bounds<Pixels>,
+}
+
+impl Hash for WaylandDisplay {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
 
 impl PlatformDisplay for WaylandDisplay {
-    // todo(linux)
     fn id(&self) -> DisplayId {
-        DisplayId(123) // return some fake data so it doesn't panic
+        DisplayId(self.id.protocol_id())
     }
 
-    // todo(linux)
     fn uuid(&self) -> anyhow::Result<Uuid> {
-        Ok(Uuid::from_bytes([0; 16])) // return some fake data so it doesn't panic
+        if let Some(name) = &self.name {
+            Ok(Uuid::new_v5(&Uuid::NAMESPACE_DNS, name.as_bytes()))
+        } else {
+            Err(anyhow::anyhow!("Wayland display does not have a name"))
+        }
     }
 
-    // todo(linux)
-    fn bounds(&self) -> Bounds<DevicePixels> {
-        Bounds {
-            origin: Default::default(),
-            size: Size {
-                width: DevicePixels(1000),
-                height: DevicePixels(500),
-            },
-        } // return some fake data so it doesn't panic
+    fn bounds(&self) -> Bounds<Pixels> {
+        self.bounds
     }
 }

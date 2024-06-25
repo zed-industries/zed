@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+    <id>$APP_ID</id>
+    <metadata_license>MIT</metadata_license>
+    <project_license>AGPL-3.0-or-later and Apache-2.0 and GPL-3.0-or-later</project_license>
+
+    <name>$APP_NAME</name>
+    <summary>High-performance, multiplayer code editor</summary>
+    <developer id="dev.zed">
+        <name translate="no">Zed Industries, Inc.</name>
+    </developer>
+    <description>
+        <p>
+            Productive coding starts with a tool that stays out of your way. Zed blends the power of an IDE with the speed of a lightweight editor for productivity you can feel under your fingertips.
+        </p>
+        <p>Features:</p>
+        <ul>
+            <li>Performance: Efficiently uses every CPU core and your GPU for instant startup, quick file loading, and responsive keystrokes.</li>
+            <li>Language-aware: Maintains a syntax tree for precise highlighting, and auto-indent, with LSP support for autocompletion and refactoring.</li>
+            <li>Collaboration: Real-time editing and navigation for multiple developers in a shared workspace.</li>
+            <li>AI Integration: Integrates GitHub Copilot and GPT-4 for natural language code generation.</li>
+        </ul>
+    </description>
+
+    <launchable type="desktop-id">$APP_ID.desktop</launchable>
+
+    <branding>
+        <color type="primary" scheme_preference="light">$BRANDING_LIGHT</color>
+        <color type="primary" scheme_preference="dark">$BRANDING_DARK</color>
+    </branding>
+
+    <content_rating type="oars-1.1">
+        <content_attribute id="social-chat">intense</content_attribute>
+        <content_attribute id="social-audio">intense</content_attribute>
+    </content_rating>
+
+    <url type="homepage">https://zed.dev</url>
+    <url type="bugtracker">https://github.com/zed-industries/zed/issues</url>
+    <url type="faq">https://zed.dev/faq</url>
+    <url type="help">https://zed.dev/docs/getting-started</url>
+    <url type="contact">https://zed.dev/docs/feedback-and-support</url>
+    <url type="vcs-browser">https://github.com/zed-industries/zed</url>
+    <url type="contribute">https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md</url>
+
+    <supports>
+        <internet>offline-only</internet>
+    </supports>
+    <recommends>
+        <control>pointing</control>
+        <control>keyboard</control>
+        <display_length compare="ge">768</display_length>
+    </recommends>
+
+    <screenshots>
+        <screenshot type="default">
+            <caption>Zed with a large project open, showing language server and gitblame support</caption>
+            <image type="source" width="1122" height="859" xml:lang="en">https://zed.dev/img/flatpak/flatpak-1.png</image>
+        </screenshot>
+        <screenshot>
+            <caption>Zed with a file open and a channel message thread in the right sidebar</caption>
+            <image type="source" width="1122" height="859" xml:lang="en">https://zed.dev/img/flatpak/flatpak-2.png</image>
+        </screenshot>
+        <screenshot>
+            <caption>Example of a channel's shared document</caption>
+            <image type="source" width="1122" height="859" xml:lang="en">https://zed.dev/img/flatpak/flatpak-3.png</image>
+        </screenshot>
+        <screenshot>
+            <caption>Zed's extension list</caption>
+            <image type="source" width="1122" height="859" xml:lang="en">https://zed.dev/img/flatpak/flatpak-4.png</image>
+        </screenshot>
+        <screenshot>
+            <caption>Theme switcher UI and example theme</caption>
+            <image type="source" width="1122" height="859" xml:lang="en">https://zed.dev/img/flatpak/flatpak-5.png</image>
+        </screenshot>
+    </screenshots>
+
+    <releases>
+        @release_info@
+    </releases>
+</component>

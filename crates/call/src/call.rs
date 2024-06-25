@@ -114,7 +114,6 @@ impl ActiveCall {
     async fn handle_incoming_call(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::IncomingCall>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
@@ -142,7 +141,6 @@ impl ActiveCall {
     async fn handle_call_canceled(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::CallCanceled>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {

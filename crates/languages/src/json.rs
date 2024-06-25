@@ -7,6 +7,7 @@ use gpui::{AppContext, AsyncAppContext};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
@@ -14,11 +15,37 @@ use std::{
     any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, OnceLock},
 };
-use util::{maybe, paths, ResultExt};
+use task::{TaskTemplate, TaskTemplates, VariableName};
+use util::{maybe, ResultExt};
 
-const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
+const SERVER_PATH: &str =
+    "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
+
+// Origin: https://github.com/SchemaStore/schemastore
+const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
+const PACKAGE_JSON_SCHEMA: &str = include_str!("json/schemas/package.json");
+
+pub(super) fn json_task_context() -> ContextProviderWithTasks {
+    ContextProviderWithTasks::new(TaskTemplates(vec![
+        TaskTemplate {
+            label: "package script $ZED_CUSTOM_script".to_owned(),
+            command: "npm --prefix $ZED_DIRNAME run".to_owned(),
+            args: vec![VariableName::Custom("script".into()).template_value()],
+            tags: vec!["package-script".into()],
+            ..TaskTemplate::default()
+        },
+        TaskTemplate {
+            label: "composer script $ZED_CUSTOM_script".to_owned(),
+            command: "composer -d $ZED_DIRNAME".to_owned(),
+            args: vec![VariableName::Custom("script".into()).template_value()],
+            tags: vec!["composer-script".into()],
+            ..TaskTemplate::default()
+        },
+    ]))
+}
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -53,6 +80,9 @@ impl JsonLspAdapter {
             cx,
         );
         let tasks_schema = task::TaskTemplates::generate_json_schema();
+        let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
+        let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
+
         serde_json::json!({
             "json": {
                 "format": {
@@ -60,23 +90,32 @@ impl JsonLspAdapter {
                 },
                 "schemas": [
                     {
+                        "fileMatch": ["tsconfig.json"],
+                        "schema":tsconfig_schema
+                    },
+                    {
+                        "fileMatch": ["package.json"],
+                        "schema":package_json_schema
+                    },
+                    {
                         "fileMatch": [
-                            schema_file_match(&paths::SETTINGS),
-                            &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
+                            schema_file_match(paths::settings_file()),
+                            paths::local_settings_file_relative_path()
                         ],
                         "schema": settings_schema,
                     },
                     {
-                        "fileMatch": [schema_file_match(&paths::KEYMAP)],
+                        "fileMatch": [schema_file_match(paths::keymap_file())],
                         "schema": KeymapFile::generate_json_schema(&action_names),
                     },
                     {
                         "fileMatch": [
-                            schema_file_match(&paths::TASKS),
-                            &*paths::LOCAL_TASKS_RELATIVE_PATH,
+                            schema_file_match(paths::tasks_file()),
+                            paths::local_tasks_file_relative_path()
                         ],
                         "schema": tasks_schema,
                     }
+
                 ]
             }
         })
@@ -95,7 +134,7 @@ impl LspAdapter for JsonLspAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(
             self.node
-                .npm_package_latest_version("vscode-json-languageserver")
+                .npm_package_latest_version("vscode-langservers-extracted")
                 .await?,
         ) as Box<_>)
     }
@@ -108,7 +147,7 @@ impl LspAdapter for JsonLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
-        let package_name = "vscode-json-languageserver";
+        let package_name = "vscode-langservers-extracted";
 
         let should_install_language_server = self
             .node
@@ -116,9 +155,11 @@ impl LspAdapter for JsonLspAdapter {
             .await;
 
         if should_install_language_server {
+            // TODO: the postinstall fails on Windows
             self.node
                 .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
-                .await?;
+                .await
+                .log_err();
         }
 
         Ok(LanguageServerBinary {
@@ -202,7 +243,11 @@ async fn get_cached_server_binary(
     .log_err()
 }
 
-fn schema_file_match(path: &Path) -> &Path {
+#[inline]
+fn schema_file_match(path: &Path) -> String {
     path.strip_prefix(path.parent().unwrap().parent().unwrap())
         .unwrap()
+        .display()
+        .to_string()
+        .replace('\\', "/")
 }

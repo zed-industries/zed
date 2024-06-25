@@ -2,8 +2,9 @@ use anyhow::Result;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent,
-    DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListState, MouseButton,
-    MouseUpEvent, Render, Task, UniformListScrollHandle, View, ViewContext, WindowContext,
+    DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListSizingBehavior, ListState,
+    MouseButton, MouseUpEvent, Render, Task, UniformListScrollHandle, View, ViewContext,
+    WindowContext,
 };
 use head::Head;
 use serde::Deserialize;
@@ -59,7 +60,14 @@ pub trait PickerDelegate: Sized + 'static {
         Vec::new()
     }
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
-
+    // Allows binding some optional effect to when the selection changes.
+    fn selected_index_changed(
+        &self,
+        _ix: usize,
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Box<dyn Fn(&mut WindowContext) + 'static>> {
+        None
+    }
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
     fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
         "No matches".into()
@@ -93,6 +101,19 @@ pub trait PickerDelegate: Sized + 'static {
     }
     fn selected_as_query(&self) -> Option<String> {
         None
+    }
+
+    fn render_editor(&self, editor: &View<Editor>, _cx: &mut ViewContext<Picker<Self>>) -> Div {
+        v_flex()
+            .child(
+                h_flex()
+                    .overflow_hidden()
+                    .flex_none()
+                    .h_9()
+                    .px_4()
+                    .child(editor.clone()),
+            )
+            .child(Divider::horizontal())
     }
 
     fn render_match(
@@ -167,7 +188,7 @@ impl<D: PickerDelegate> Picker<D> {
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
-            max_height: None,
+            max_height: Some(rems(18.).into()),
             is_modal: true,
         };
         this.update_matches("".to_string(), cx);
@@ -210,8 +231,8 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    pub fn max_height(mut self, max_height: impl Into<gpui::Length>) -> Self {
-        self.max_height = Some(max_height.into());
+    pub fn max_height(mut self, max_height: Option<gpui::Length>) -> Self {
+        self.max_height = max_height;
         self
     }
 
@@ -224,13 +245,36 @@ impl<D: PickerDelegate> Picker<D> {
         self.focus_handle(cx).focus(cx);
     }
 
+    /// Handles the selecting an index, and passing the change to the delegate.
+    /// If `scroll_to_index` is true, the new selected index will be scrolled into view.
+    ///
+    /// If some effect is bound to `selected_index_changed`, it will be executed.
+    pub fn set_selected_index(
+        &mut self,
+        ix: usize,
+        scroll_to_index: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let previous_index = self.delegate.selected_index();
+        self.delegate.set_selected_index(ix, cx);
+        let current_index = self.delegate.selected_index();
+
+        if previous_index != current_index {
+            if let Some(action) = self.delegate.selected_index_changed(ix, cx) {
+                action(cx);
+            }
+            if scroll_to_index {
+                self.scroll_to_item_index(ix);
+            }
+        }
+    }
+
     pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == count - 1 { 0 } else { index + 1 };
-            self.delegate.set_selected_index(ix, cx);
-            self.scroll_to_item_index(ix);
+            self.set_selected_index(ix, true, cx);
             cx.notify();
         }
     }
@@ -240,8 +284,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == 0 { count - 1 } else { index - 1 };
-            self.delegate.set_selected_index(ix, cx);
-            self.scroll_to_item_index(ix);
+            self.set_selected_index(ix, true, cx);
             cx.notify();
         }
     }
@@ -249,8 +292,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.delegate.set_selected_index(0, cx);
-            self.scroll_to_item_index(0);
+            self.set_selected_index(0, true, cx);
             cx.notify();
         }
     }
@@ -258,8 +300,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.delegate.set_selected_index(count - 1, cx);
-            self.scroll_to_item_index(count - 1);
+            self.set_selected_index(count - 1, true, cx);
             cx.notify();
         }
     }
@@ -268,8 +309,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
-        self.delegate.set_selected_index(new_index, cx);
-        self.scroll_to_item_index(new_index);
+        self.set_selected_index(new_index, true, cx);
         cx.notify();
     }
 
@@ -319,7 +359,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn handle_click(&mut self, ix: usize, secondary: bool, cx: &mut ViewContext<Self>) {
         cx.stop_propagation();
         cx.prevent_default();
-        self.delegate.set_selected_index(ix, cx);
+        self.set_selected_index(ix, false, cx);
         self.do_confirm(secondary, cx)
     }
 
@@ -469,6 +509,11 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn render_element_container(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let sizing_behavior = if self.max_height.is_some() {
+            ListSizingBehavior::Infer
+        } else {
+            ListSizingBehavior::Auto
+        };
         match &self.element_container {
             ElementContainer::UniformList(scroll_handle) => uniform_list(
                 cx.view().clone(),
@@ -480,13 +525,26 @@ impl<D: PickerDelegate> Picker<D> {
                         .collect()
                 },
             )
+            .with_sizing_behavior(sizing_behavior)
+            .flex_grow()
             .py_2()
             .track_scroll(scroll_handle.clone())
             .into_any_element(),
             ElementContainer::List(state) => list(state.clone())
-                .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
+                .with_sizing_behavior(sizing_behavior)
+                .flex_grow()
                 .py_2()
                 .into_any_element(),
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn logical_scroll_top_index(&self) -> usize {
+        match &self.element_container {
+            ElementContainer::List(state) => state.logical_scroll_top().item_ix,
+            ElementContainer::UniformList(scroll_handle) => {
+                scroll_handle.logical_scroll_top_index()
+            }
         }
     }
 }
@@ -496,7 +554,7 @@ impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
+        v_flex()
             .key_context("Picker")
             .size_full()
             .when_some(self.width, |el, width| el.w(width))
@@ -516,23 +574,14 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::use_selected_query))
             .on_action(cx.listener(Self::confirm_input))
             .child(match &self.head {
-                Head::Editor(editor) => v_flex()
-                    .child(
-                        h_flex()
-                            .overflow_hidden()
-                            .flex_none()
-                            .h_9()
-                            .px_4()
-                            .child(editor.clone()),
-                    )
-                    .child(Divider::horizontal()),
+                Head::Editor(editor) => self.delegate.render_editor(&editor.clone(), cx),
                 Head::Empty(empty_head) => div().child(empty_head.clone()),
             })
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(
                     v_flex()
                         .flex_grow()
-                        .max_h(self.max_height.unwrap_or(rems(18.).into()))
+                        .when_some(self.max_height, |div, max_h| div.max_h(max_h))
                         .overflow_hidden()
                         .children(self.delegate.render_header(cx))
                         .child(self.render_element_container(cx)),

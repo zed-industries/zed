@@ -1,8 +1,8 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
-    DispatchEventResult, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowParams,
+    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    Size, TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -13,7 +13,7 @@ use std::{
 };
 
 pub(crate) struct TestWindowState {
-    pub(crate) bounds: Bounds<DevicePixels>,
+    pub(crate) bounds: Bounds<Pixels>,
     pub(crate) handle: AnyWindowHandle,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) title: Option<String>,
@@ -79,7 +79,7 @@ impl TestWindow {
         let Some(mut callback) = lock.resize_callback.take() else {
             return;
         };
-        lock.bounds.size = size.map(|pixels| (pixels.0 as i32).into());
+        lock.bounds.size = size;
         drop(lock);
         callback(size, scale_factor);
         self.0.lock().resize_callback = Some(callback);
@@ -108,7 +108,7 @@ impl TestWindow {
 }
 
 impl PlatformWindow for TestWindow {
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.0.lock().bounds
     }
 
@@ -121,7 +121,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.bounds().size.into()
+        self.bounds().size
     }
 
     fn scale_factor(&self) -> f32 {
@@ -132,8 +132,8 @@ impl PlatformWindow for TestWindow {
         WindowAppearance::Light
     }
 
-    fn display(&self) -> std::rc::Rc<dyn crate::PlatformDisplay> {
-        self.0.lock().display.clone()
+    fn display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
+        Some(self.0.lock().display.clone())
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -291,24 +291,25 @@ impl PlatformAtlas for TestAtlas {
     fn get_or_insert_with<'a>(
         &self,
         key: &crate::AtlasKey,
-        build: &mut dyn FnMut() -> anyhow::Result<(
-            Size<crate::DevicePixels>,
-            std::borrow::Cow<'a, [u8]>,
-        )>,
-    ) -> anyhow::Result<crate::AtlasTile> {
+        build: &mut dyn FnMut() -> anyhow::Result<
+            Option<(Size<crate::DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
+        >,
+    ) -> anyhow::Result<Option<crate::AtlasTile>> {
         let mut state = self.0.lock();
         if let Some(tile) = state.tiles.get(key) {
-            return Ok(tile.clone());
+            return Ok(Some(tile.clone()));
         }
+        drop(state);
 
+        let Some((size, _)) = build()? else {
+            return Ok(None);
+        };
+
+        let mut state = self.0.lock();
         state.next_id += 1;
         let texture_id = state.next_id;
         state.next_id += 1;
         let tile_id = state.next_id;
-
-        drop(state);
-        let (size, _) = build()?;
-        let mut state = self.0.lock();
 
         state.tiles.insert(
             key.clone(),
@@ -326,6 +327,6 @@ impl PlatformAtlas for TestAtlas {
             },
         );
 
-        Ok(state.tiles[key].clone())
+        Ok(Some(state.tiles[key].clone()))
     }
 }

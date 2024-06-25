@@ -1,5 +1,3 @@
-// todo(linux): remove
-#![cfg_attr(target_os = "linux", allow(dead_code))]
 // todo(windows): remove
 #![cfg_attr(windows, allow(dead_code))]
 
@@ -40,7 +38,7 @@ use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{
     fmt::{self, Debug},
     ops::Range,
@@ -72,6 +70,19 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 }
 #[cfg(target_os = "linux")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
+    match guess_compositor() {
+        "Wayland" => Rc::new(WaylandClient::new()),
+        "X11" => Rc::new(X11Client::new()),
+        "Headless" => Rc::new(HeadlessClient::new()),
+        _ => unreachable!(),
+    }
+}
+
+/// Return which compositor we're guessing we'll use.
+/// Does not attempt to connect to the given compositor
+#[cfg(target_os = "linux")]
+#[inline]
+pub fn guess_compositor() -> &'static str {
     let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
     let x11_display = std::env::var_os("DISPLAY");
 
@@ -79,13 +90,14 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
     let use_x11 = x11_display.is_some_and(|display| !display.is_empty());
 
     if use_wayland {
-        Rc::new(WaylandClient::new())
+        "Wayland"
     } else if use_x11 {
-        Rc::new(X11Client::new())
+        "X11"
     } else {
-        Rc::new(HeadlessClient::new())
+        "Headless"
     }
 }
+
 // todo("windows")
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
@@ -108,14 +120,12 @@ pub(crate) trait Platform: 'static {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
-    fn can_open_windows(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Box<dyn PlatformWindow>;
+    ) -> anyhow::Result<Box<dyn PlatformWindow>>;
 
     /// Returns the appearance of the application's windows.
     fn window_appearance(&self) -> WindowAppearance;
@@ -135,14 +145,19 @@ pub(crate) trait Platform: 'static {
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
+    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
+        None
+    }
+
+    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
     fn add_recent_document(&self, _path: &Path) {}
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
 
-    fn os_name(&self) -> &'static str;
-    fn os_version(&self) -> Result<SemanticVersion>;
-    fn app_version(&self) -> Result<SemanticVersion>;
+    fn compositor_name(&self) -> &'static str {
+        ""
+    }
     fn app_path(&self) -> Result<PathBuf>;
     fn local_timezone(&self) -> UtcOffset;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
@@ -172,12 +187,12 @@ pub trait PlatformDisplay: Send + Sync + Debug {
     fn uuid(&self) -> Result<Uuid>;
 
     /// Get the bounds for this display
-    fn bounds(&self) -> Bounds<DevicePixels>;
+    fn bounds(&self) -> Bounds<Pixels>;
 
     /// Get the default bounds for this display to place a window
-    fn default_bounds(&self) -> Bounds<DevicePixels> {
+    fn default_bounds(&self) -> Bounds<Pixels> {
         let center = self.bounds().center();
-        let offset = DEFAULT_WINDOW_SIZE / 2;
+        let offset = DEFAULT_WINDOW_SIZE / 2.0;
         let origin = point(center.x - offset.width, center.y - offset.height);
         Bounds::new(origin, DEFAULT_WINDOW_SIZE)
     }
@@ -196,13 +211,13 @@ impl Debug for DisplayId {
 unsafe impl Send for DisplayId {}
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
-    fn bounds(&self) -> Bounds<DevicePixels>;
+    fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
-    fn display(&self) -> Rc<dyn PlatformDisplay>;
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn mouse_position(&self) -> Point<Pixels>;
     fn modifiers(&self) -> Modifiers;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
@@ -260,6 +275,9 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch_after(&self, duration: Duration, runnable: Runnable);
     fn park(&self, timeout: Option<Duration>) -> bool;
     fn unparker(&self) -> Unparker;
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&self) -> Option<&TestDispatcher> {
@@ -283,19 +301,6 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
-}
-
-/// Basic metadata about the current application and operating system.
-#[derive(Clone, Debug)]
-pub struct AppMetadata {
-    /// The name of the current operating system
-    pub os_name: &'static str,
-
-    /// The operating system's version
-    pub os_version: Option<SemanticVersion>,
-
-    /// The current version of the application
-    pub app_version: Option<SemanticVersion>,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]
@@ -343,8 +348,8 @@ pub(crate) trait PlatformAtlas: Send + Sync {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
-        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
-    ) -> Result<AtlasTile>;
+        build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> Result<Option<AtlasTile>>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -412,6 +417,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String> {
         self.cx
             .update(|cx| self.handler.text_for_range(range_utf16, cx))
@@ -566,19 +572,23 @@ pub struct WindowOptions {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub(crate) struct WindowParams {
-    pub bounds: Bounds<DevicePixels>,
+    pub bounds: Bounds<Pixels>,
 
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
 
     /// The kind of window to create
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub kind: WindowKind,
 
     /// Whether the window should be movable by the user
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub is_movable: bool,
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub focus: bool,
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub show: bool,
 
     pub display_id: Option<DisplayId>,
@@ -590,13 +600,13 @@ pub(crate) struct WindowParams {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum WindowBounds {
     /// Indicates that the window should open in a windowed state with the given bounds.
-    Windowed(Bounds<DevicePixels>),
+    Windowed(Bounds<Pixels>),
     /// Indicates that the window should open in a maximized state.
     /// The bounds provided here represent the restore size of the window.
-    Maximized(Bounds<DevicePixels>),
+    Maximized(Bounds<Pixels>),
     /// Indicates that the window should open in fullscreen mode.
     /// The bounds provided here represent the restore size of the window.
-    Fullscreen(Bounds<DevicePixels>),
+    Fullscreen(Bounds<Pixels>),
 }
 
 impl Default for WindowBounds {
@@ -607,7 +617,7 @@ impl Default for WindowBounds {
 
 impl WindowBounds {
     /// Retrieve the inner bounds
-    pub fn get_bounds(&self) -> Bounds<DevicePixels> {
+    pub fn get_bounds(&self) -> Bounds<Pixels> {
         match self {
             WindowBounds::Windowed(bounds) => *bounds,
             WindowBounds::Maximized(bounds) => *bounds,
@@ -796,10 +806,6 @@ pub enum CursorStyle {
     /// corresponds to the CSS curosr value `row-resize`
     ResizeRow,
 
-    /// A cursor indicating that something will disappear if moved here
-    /// Does not correspond to a CSS cursor value
-    DisappearingItem,
-
     /// A text input cursor for vertical layout
     /// corresponds to the CSS cursor value `vertical-text`
     IBeamCursorForVerticalLayout,
@@ -864,6 +870,7 @@ impl ClipboardItem {
             .and_then(|m| serde_json::from_str(m).ok())
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub(crate) fn text_hash(text: &str) -> u64 {
         let mut hasher = SeaHasher::new();
         text.hash(&mut hasher);

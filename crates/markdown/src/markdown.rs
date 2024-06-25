@@ -73,6 +73,9 @@ impl Markdown {
     }
 
     pub fn reset(&mut self, source: String, cx: &mut ViewContext<Self>) {
+        if source == self.source() {
+            return;
+        }
         self.source = source;
         self.selection = Selection::default();
         self.autoscroll_request = None;
@@ -544,8 +547,10 @@ impl Element for MarkdownElement {
                             })
                         }
                         MarkdownTag::Link { dest_url, .. } => {
-                            builder.push_link(dest_url.clone(), range.clone());
-                            builder.push_text_style(self.style.link.clone())
+                            if builder.code_block_stack.is_empty() {
+                                builder.push_link(dest_url.clone(), range.clone());
+                                builder.push_text_style(self.style.link.clone())
+                            }
                         }
                         _ => log::error!("unsupported markdown tag {:?}", tag),
                     }
@@ -577,7 +582,11 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Emphasis => builder.pop_text_style(),
                     MarkdownTagEnd::Strong => builder.pop_text_style(),
                     MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
-                    MarkdownTagEnd::Link => builder.pop_text_style(),
+                    MarkdownTagEnd::Link => {
+                        if builder.code_block_stack.is_empty() {
+                            builder.pop_text_style()
+                        }
+                    }
                     _ => log::error!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {

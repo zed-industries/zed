@@ -44,6 +44,11 @@ impl SyntaxTheme {
         self.get(name).color.unwrap_or_default()
     }
 
+    pub fn highlight_id(&self, name: &str) -> Option<u32> {
+        let ix = self.highlights.iter().position(|entry| entry.0 == name)?;
+        Some(ix as u32)
+    }
+
     /// Returns a new [`Arc<SyntaxTheme>`] with the given syntax styles merged in.
     pub fn merge(base: Arc<Self>, user_syntax_styles: Vec<(String, HighlightStyle)>) -> Arc<Self> {
         if user_syntax_styles.is_empty() {

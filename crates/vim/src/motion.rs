@@ -17,7 +17,6 @@ use crate::{
     normal::{mark, normal_motion},
     state::{Mode, Operator},
     surrounds::SurroundsType,
-    utils::coerce_punctuation,
     visual::visual_motion,
     Vim,
 };
@@ -874,18 +873,20 @@ impl Motion {
                 // becomes inclusive. Example: "}" moves to the first line after a paragraph,
                 // but "d}" will not include that line.
                 let mut inclusive = self.inclusive();
+                let start_point = selection.start.to_point(&map);
+                let mut end_point = selection.end.to_point(&map);
+
+                // DisplayPoint
+
                 if !inclusive
                     && self != &Motion::Backspace
-                    && selection.end.row() > selection.start.row()
-                    && selection.end.column() == 0
+                    && end_point.row > start_point.row
+                    && end_point.column == 0
                 {
                     inclusive = true;
-                    *selection.end.row_mut() -= 1;
-                    *selection.end.column_mut() = 0;
-                    selection.end = map.clip_point(
-                        map.next_line_boundary(selection.end.to_point(map)).1,
-                        Bias::Left,
-                    );
+                    end_point.row -= 1;
+                    end_point.column = 0;
+                    selection.end = map.clip_point(map.next_line_boundary(end_point).1, Bias::Left);
                 }
 
                 if inclusive && selection.end.column() < map.line_len(selection.end.row()) {
@@ -1440,6 +1441,14 @@ pub(crate) fn last_non_whitespace(
 ) -> DisplayPoint {
     let mut end_of_line = end_of_line(map, false, from, count).to_offset(map, Bias::Left);
     let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
+
+    // NOTE: depending on clip_at_line_end we may already be one char back from the end.
+    if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next() {
+        if char_kind(&scope, ch) != CharKind::Whitespace {
+            return end_of_line.to_display_point(map);
+        }
+    }
+
     for (ch, offset) in map.reverse_buffer_chars_at(end_of_line) {
         if ch == '\n' {
             break;
@@ -1756,6 +1765,14 @@ fn window_bottom(
     }
 }
 
+pub fn coerce_punctuation(kind: CharKind, treat_punctuation_as_word: bool) -> CharKind {
+    if treat_punctuation_as_word && kind == CharKind::Punctuation {
+        CharKind::Word
+    } else {
+        kind
+    }
+}
+
 #[cfg(test)]
 mod test {
 
@@ -1935,6 +1952,10 @@ mod test {
     #[gpui::test]
     async fn test_end_of_line_downward(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇ one\n two \nthree").await;
+        cx.simulate_shared_keystrokes("g _").await;
+        cx.shared_state().await.assert_eq(" onˇe\n two \nthree");
+
         cx.set_shared_state("ˇ one \n two \nthree").await;
         cx.simulate_shared_keystrokes("g _").await;
         cx.shared_state().await.assert_eq(" onˇe \n two \nthree");

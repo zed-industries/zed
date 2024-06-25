@@ -228,11 +228,11 @@ impl ChannelView {
             &self.editor,
             move |this, _, e: &EditorEvent, cx| {
                 match e {
-                    EditorEvent::Reparsed => {
+                    EditorEvent::Reparsed(_) => {
                         this.focus_position_from_link(position.clone(), false, cx);
                         this._reparse_subscription.take();
                     }
-                    EditorEvent::Edited | EditorEvent::SelectionsChanged { local: true } => {
+                    EditorEvent::Edited { .. } | EditorEvent::SelectionsChanged { local: true } => {
                         this._reparse_subscription.take();
                     }
                     _ => {}
@@ -400,7 +400,11 @@ impl Item for ChannelView {
         None
     }
 
-    fn clone_on_split(&self, _: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<View<Self>> {
+    fn clone_on_split(
+        &self,
+        _: Option<WorkspaceId>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<Self>> {
         Some(cx.new_view(|cx| {
             Self::new(
                 self.project.clone(),

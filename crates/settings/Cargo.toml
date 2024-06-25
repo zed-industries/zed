@@ -22,6 +22,7 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 lazy_static.workspace = true
+paths.workspace = true
 release_channel.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true

@@ -124,7 +124,6 @@ impl Store {
     async fn handle_dev_server_projects_update(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::DevServerProjectsUpdate>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
@@ -185,6 +184,7 @@ impl Store {
         &mut self,
         dev_server_id: DevServerId,
         name: String,
+        ssh_connection_string: Option<String>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
@@ -193,6 +193,7 @@ impl Store {
                 .request(proto::RenameDevServer {
                     dev_server_id: dev_server_id.0,
                     name,
+                    ssh_connection_string,
                 })
                 .await?;
             Ok(())

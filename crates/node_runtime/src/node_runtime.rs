@@ -138,7 +138,7 @@ impl RealNodeRuntime {
         };
 
         let folder_name = format!("node-{VERSION}-{os}-{arch}");
-        let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
+        let node_containing_dir = paths::support_dir().join("node");
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join(NODE_PATH);
         let npm_file = node_dir.join(NPM_PATH);
@@ -226,17 +226,18 @@ impl NodeRuntime for RealNodeRuntime {
 
             let node_binary = installation_path.join(NODE_PATH);
             let npm_file = installation_path.join(NPM_PATH);
-            let mut env_path = node_binary
+            let mut env_path = vec![node_binary
                 .parent()
                 .expect("invalid node binary path")
-                .to_path_buf();
+                .to_path_buf()];
 
             if let Some(existing_path) = std::env::var_os("PATH") {
-                if !existing_path.is_empty() {
-                    env_path.push(":");
-                    env_path.push(&existing_path);
-                }
+                let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
+                env_path.append(&mut paths);
             }
+
+            let env_path =
+                std::env::join_paths(env_path).context("failed to create PATH env variable")?;
 
             if smol::fs::metadata(&node_binary).await.is_err() {
                 return Err(anyhow!("missing node binary file"));

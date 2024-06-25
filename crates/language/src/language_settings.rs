@@ -3,7 +3,7 @@
 use crate::{File, Language, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use globset::GlobMatcher;
+use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
 use schemars::{
@@ -55,7 +55,7 @@ pub struct AllLanguageSettings {
     pub inline_completions: InlineCompletionSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
-    pub(crate) file_types: HashMap<Arc<str>, Vec<String>>,
+    pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
 }
 
 /// The settings for a particular language.
@@ -71,13 +71,15 @@ pub struct LanguageSettings {
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
-    /// Whether to show wrap guides in the editor. Setting this to true will
-    /// show a guide at the 'preferred_line_length' value if softwrap is set to
-    /// 'preferred_line_length', and will show any additional guides as specified
-    /// by the 'wrap_guides' setting.
+    // Whether to show wrap guides (vertical rulers) in the editor.
+    // Setting this to true will show a guide at the 'preferred_line_length' value
+    // if softwrap is set to 'preferred_line_length', and will show any
+    // additional guides as specified by the 'wrap_guides' setting.
     pub show_wrap_guides: bool,
-    /// Character counts at which to show wrap guides in the editor.
+    /// Character counts at which to show wrap guides (vertical rulers) in the editor.
     pub wrap_guides: Vec<usize>,
+    /// Indent guide related settings.
+    pub indent_guides: IndentGuideSettings,
     /// Whether or not to perform a buffer format before saving.
     pub format_on_save: FormatOnSave,
     /// Whether or not to remove any trailing whitespace from lines of a buffer
@@ -110,10 +112,14 @@ pub struct LanguageSettings {
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
     pub use_autoclose: bool,
+    /// Whether to automatically surround text with brackets.
+    pub use_auto_surround: bool,
     // Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
     pub code_actions_on_format: HashMap<String, bool>,
+    /// Whether to perform linked edits
+    pub linked_edits: bool,
 }
 
 impl LanguageSettings {
@@ -190,13 +196,13 @@ pub struct AllLanguageSettingsContent {
     #[serde(default)]
     pub features: Option<FeaturesContent>,
     /// The inline completion settings.
-    #[serde(default, alias = "copilot")]
+    #[serde(default)]
     pub inline_completions: Option<InlineCompletionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
-    #[serde(default, alias = "language_overrides")]
+    #[serde(default)]
     pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
     /// Settings for associating file extensions and filenames
     /// with languages.
@@ -242,6 +248,9 @@ pub struct LanguageSettingsContent {
     /// Default: []
     #[serde(default)]
     pub wrap_guides: Option<Vec<usize>>,
+    /// Indent guide related settings.
+    #[serde(default)]
+    pub indent_guides: Option<IndentGuideSettings>,
     /// Whether or not to perform a buffer format before saving.
     ///
     /// Default: on
@@ -290,7 +299,7 @@ pub struct LanguageSettingsContent {
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     ///
     /// Default: true
-    #[serde(default, alias = "show_copilot_suggestions")]
+    #[serde(default)]
     pub show_inline_completions: Option<bool>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
@@ -308,6 +317,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
+    /// Whether to automatically surround text with characters for you. For example,
+    /// when you select text and type (, Zed will automatically surround text with ().
+    ///
+    /// Default: true
+    pub use_auto_surround: Option<bool>,
     // Controls how the editor handles the autoclosed characters.
     // When set to `false`(default), skipping over and auto-removing of the closing characters
     // happen only for auto-inserted characters.
@@ -321,6 +335,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
     pub code_actions_on_format: Option<HashMap<String, bool>>,
+    /// Whether to perform linked edits of associated ranges, if the language server supports it.
+    /// For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
+    ///
+    /// Default: true
+    pub linked_edits: Option<bool>,
 }
 
 /// The contents of the inline completion settings.
@@ -386,6 +405,13 @@ pub enum ShowWhitespaceSetting {
     None,
     /// Draw all invisible symbols.
     All,
+    /// Draw whitespaces at boundaries only.
+    ///
+    /// For a whitespace to be on a boundary, any of the following conditions need to be met:
+    /// - It is a tab
+    /// - It is adjacent to an edge (start or end)
+    /// - It is adjacent to a whitespace (left or right)
+    Boundary,
 }
 
 /// Controls which formatter should be used when formatting code.
@@ -409,6 +435,68 @@ pub enum Formatter {
     },
     /// Files should be formatted using code actions executed by language servers.
     CodeActions(HashMap<String, bool>),
+}
+
+/// The settings for indent guides.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct IndentGuideSettings {
+    /// Whether to display indent guides in the editor.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// The width of the indent guides in pixels, between 1 and 10.
+    ///
+    /// Default: 1
+    #[serde(default = "line_width")]
+    pub line_width: u32,
+    /// The width of the active indent guide in pixels, between 1 and 10.
+    ///
+    /// Default: 1
+    #[serde(default = "active_line_width")]
+    pub active_line_width: u32,
+    /// Determines how indent guides are colored.
+    ///
+    /// Default: Fixed
+    #[serde(default)]
+    pub coloring: IndentGuideColoring,
+    /// Determines how indent guide backgrounds are colored.
+    ///
+    /// Default: Disabled
+    #[serde(default)]
+    pub background_coloring: IndentGuideBackgroundColoring,
+}
+
+fn line_width() -> u32 {
+    1
+}
+
+fn active_line_width() -> u32 {
+    line_width()
+}
+
+/// Determines how indent guides are colored.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentGuideColoring {
+    /// Do not render any lines for indent guides.
+    Disabled,
+    /// Use the same color for all indentation levels.
+    #[default]
+    Fixed,
+    /// Use a different color for each indentation level.
+    IndentAware,
+}
+
+/// Determines how indent guide backgrounds are colored.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentGuideBackgroundColoring {
+    /// Do not render any background for indent guides.
+    #[default]
+    Disabled,
+    /// Use a different color for each indentation level.
+    IndentAware,
 }
 
 /// The settings for inlay hints.
@@ -573,7 +661,7 @@ impl settings::Settings for AllLanguageSettings {
             .and_then(|c| c.disabled_globs.as_ref())
             .ok_or_else(Self::missing_default)?;
 
-        let mut file_types: HashMap<Arc<str>, Vec<String>> = HashMap::default();
+        let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
         for user_settings in sources.customizations() {
             if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
                 copilot_enabled = Some(copilot);
@@ -611,10 +699,13 @@ impl settings::Settings for AllLanguageSettings {
             }
 
             for (language, suffixes) in &user_settings.file_types {
-                file_types
-                    .entry(language.clone())
-                    .or_default()
-                    .extend_from_slice(suffixes);
+                let mut builder = GlobSetBuilder::new();
+
+                for suffix in suffixes {
+                    builder.add(Glob::new(suffix)?);
+                }
+
+                file_types.insert(language.clone(), builder.build()?);
             }
         }
 
@@ -679,17 +770,10 @@ impl settings::Settings for AllLanguageSettings {
             .as_mut()
             .unwrap()
             .properties
-            .extend([
-                (
-                    "languages".to_owned(),
-                    Schema::new_ref("#/definitions/Languages".into()),
-                ),
-                // For backward compatibility
-                (
-                    "language_overrides".to_owned(),
-                    Schema::new_ref("#/definitions/Languages".into()),
-                ),
-            ]);
+            .extend([(
+                "languages".to_owned(),
+                Schema::new_ref("#/definitions/Languages".into()),
+            )]);
 
         root_schema
     }
@@ -706,16 +790,19 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
+    merge(&mut settings.use_auto_surround, src.use_auto_surround);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,
         src.always_treat_brackets_as_autoclosed,
     );
     merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
     merge(&mut settings.wrap_guides, src.wrap_guides.clone());
+    merge(&mut settings.indent_guides, src.indent_guides);
     merge(
         &mut settings.code_actions_on_format,
         src.code_actions_on_format.clone(),
     );
+    merge(&mut settings.linked_edits, src.linked_edits);
 
     merge(
         &mut settings.preferred_line_length,

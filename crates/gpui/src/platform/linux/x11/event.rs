@@ -37,7 +37,7 @@ pub(crate) fn modifiers_from_xinput_info(modifier_info: xinput::ModifierInfo) ->
     }
 }
 
-pub(crate) fn button_from_mask(button_mask: u32) -> Option<MouseButton> {
+pub(crate) fn pressed_button_from_mask(button_mask: u32) -> Option<MouseButton> {
     Some(if button_mask & 2 == 2 {
         MouseButton::Left
     } else if button_mask & 4 == 4 {

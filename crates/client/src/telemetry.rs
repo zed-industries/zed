@@ -3,8 +3,9 @@ mod event_coalescer;
 use crate::{ChannelId, TelemetrySettings};
 use chrono::{DateTime, Utc};
 use clock::SystemClock;
+use collections::{HashMap, HashSet};
 use futures::Future;
-use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
+use gpui::{AppContext, BackgroundExecutor, Task};
 use http::{self, HttpClient, HttpClientWithUrl, Method};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -23,6 +24,7 @@ use tempfile::NamedTempFile;
 #[cfg(not(debug_assertions))]
 use util::ResultExt;
 use util::TryFutureExt;
+use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
 
@@ -39,7 +41,6 @@ struct TelemetryState {
     installation_id: Option<Arc<str>>, // Per app installation (different for dev, nightly, preview, and stable)
     session_id: Option<String>,        // Per app launch
     release_channel: Option<&'static str>,
-    app_metadata: AppMetadata,
     architecture: &'static str,
     events_queue: Vec<EventWrapper>,
     flush_events_task: Option<Task<()>>,
@@ -48,6 +49,29 @@ struct TelemetryState {
     first_event_date_time: Option<DateTime<Utc>>,
     event_coalescer: EventCoalescer,
     max_queue_size: usize,
+    worktree_id_map: WorktreeIdMap,
+
+    os_name: String,
+    app_version: String,
+    os_version: Option<String>,
+}
+
+#[derive(Debug)]
+struct WorktreeIdMap(HashMap<String, ProjectCache>);
+
+#[derive(Debug)]
+struct ProjectCache {
+    name: String,
+    worktree_ids_reported: HashSet<WorktreeId>,
+}
+
+impl ProjectCache {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            worktree_ids_reported: HashSet::default(),
+        }
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -71,6 +95,87 @@ static ZED_CLIENT_CHECKSUM_SEED: Lazy<Option<Vec<u8>>> = Lazy::new(|| {
         })
 });
 
+pub fn os_name() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        "macOS".to_string()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        format!("Linux {}", gpui::guess_compositor())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        "Windows".to_string()
+    }
+}
+
+/// Note: This might do blocking IO! Only call from background threads
+pub fn os_version() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        use cocoa::base::nil;
+        use cocoa::foundation::NSProcessInfo;
+
+        unsafe {
+            let process_info = cocoa::foundation::NSProcessInfo::processInfo(nil);
+            let version = process_info.operatingSystemVersion();
+            gpui::SemanticVersion::new(
+                version.majorVersion as usize,
+                version.minorVersion as usize,
+                version.patchVersion as usize,
+            )
+            .to_string()
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::path::Path;
+
+        let content = if let Ok(file) = std::fs::read_to_string(&Path::new("/etc/os-release")) {
+            file
+        } else if let Ok(file) = std::fs::read_to_string(&Path::new("/usr/lib/os-release")) {
+            file
+        } else {
+            log::error!("Failed to load /etc/os-release, /usr/lib/os-release");
+            "".to_string()
+        };
+        let mut name = "unknown".to_string();
+        let mut version = "unknown".to_string();
+
+        for line in content.lines() {
+            if line.starts_with("ID=") {
+                name = line.trim_start_matches("ID=").trim_matches('"').to_string();
+            }
+            if line.starts_with("VERSION_ID=") {
+                version = line
+                    .trim_start_matches("VERSION_ID=")
+                    .trim_matches('"')
+                    .to_string();
+            }
+        }
+
+        format!("{} {}", name, version)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut info = unsafe { std::mem::zeroed() };
+        let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut info) };
+        if status.is_ok() {
+            gpui::SemanticVersion::new(
+                info.dwMajorVersion as _,
+                info.dwMinorVersion as _,
+                info.dwBuildNumber as _,
+            )
+            .to_string()
+        } else {
+            "unknown".to_string()
+        }
+    }
+}
+
 impl Telemetry {
     pub fn new(
         clock: Arc<dyn SystemClock>,
@@ -84,7 +189,6 @@ impl Telemetry {
 
         let state = Arc::new(Mutex::new(TelemetryState {
             settings: *TelemetrySettings::get_global(cx),
-            app_metadata: cx.app_metadata(),
             architecture: env::consts::ARCH,
             release_channel,
             installation_id: None,
@@ -97,6 +201,20 @@ impl Telemetry {
             first_event_date_time: None,
             event_coalescer: EventCoalescer::new(clock.clone()),
             max_queue_size: MAX_QUEUE_LEN,
+            worktree_id_map: WorktreeIdMap(HashMap::from_iter([
+                (
+                    "yarn.lock".to_string(),
+                    ProjectCache::new("yarn".to_string()),
+                ),
+                (
+                    "package.json".to_string(),
+                    ProjectCache::new("node".to_string()),
+                ),
+            ])),
+
+            os_version: None,
+            os_name: os_name(),
+            app_version: release_channel::AppVersion::global(cx).to_string(),
         }));
 
         #[cfg(not(debug_assertions))]
@@ -105,7 +223,7 @@ impl Telemetry {
                 let state = state.clone();
                 async move {
                     if let Some(tempfile) =
-                        NamedTempFile::new_in(util::paths::CONFIG_DIR.as_path()).log_err()
+                        NamedTempFile::new_in(paths::config_dir().as_path()).log_err()
                     {
                         state.lock().log_file = Some(tempfile);
                     }
@@ -168,6 +286,9 @@ impl Telemetry {
         let mut state = self.state.lock();
         state.installation_id = installation_id.map(|id| id.into());
         state.session_id = Some(session_id);
+        state.app_version = release_channel::AppVersion::global(cx).to_string();
+        state.os_name = os_name();
+
         drop(state);
 
         let this = self.clone();
@@ -360,6 +481,52 @@ impl Telemetry {
         self.report_event(event)
     }
 
+    pub fn report_discovered_project_events(
+        self: &Arc<Self>,
+        worktree_id: WorktreeId,
+        updated_entries_set: &UpdatedEntriesSet,
+    ) {
+        let project_names: Vec<String> = {
+            let mut state = self.state.lock();
+            state
+                .worktree_id_map
+                .0
+                .iter_mut()
+                .filter_map(|(project_file_name, project_type_telemetry)| {
+                    if project_type_telemetry
+                        .worktree_ids_reported
+                        .contains(&worktree_id)
+                    {
+                        return None;
+                    }
+
+                    let project_file_found = updated_entries_set.iter().any(|(path, _, _)| {
+                        path.as_ref()
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .map(|name_str| name_str == project_file_name)
+                            .unwrap_or(false)
+                    });
+
+                    if !project_file_found {
+                        return None;
+                    }
+
+                    project_type_telemetry
+                        .worktree_ids_reported
+                        .insert(worktree_id);
+
+                    Some(project_type_telemetry.name.clone())
+                })
+                .collect()
+        };
+
+        // Done on purpose to avoid calling `self.state.lock()` multiple times
+        for project_name in project_names {
+            self.report_app_event(format!("open {} project", project_name));
+        }
+    }
+
     fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
@@ -423,10 +590,6 @@ impl Telemetry {
             return;
         }
 
-        if ZED_CLIENT_CHECKSUM_SEED.is_none() {
-            return;
-        };
-
         let this = self.clone();
         self.executor
             .spawn(
@@ -445,20 +608,14 @@ impl Telemetry {
 
                     {
                         let state = this.state.lock();
+
                         let request_body = EventRequestBody {
                             installation_id: state.installation_id.as_deref().map(Into::into),
                             session_id: state.session_id.clone(),
                             is_staff: state.is_staff,
-                            app_version: state
-                                .app_metadata
-                                .app_version
-                                .unwrap_or_default()
-                                .to_string(),
-                            os_name: state.app_metadata.os_name.to_string(),
-                            os_version: state
-                                .app_metadata
-                                .os_version
-                                .map(|version| version.to_string()),
+                            app_version: state.app_version.clone(),
+                            os_name: state.os_name.clone(),
+                            os_version: state.os_version.clone(),
                             architecture: state.architecture.to_string(),
 
                             release_channel: state.release_channel.map(Into::into),
@@ -468,9 +625,7 @@ impl Telemetry {
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
 
-                    let Some(checksum) = calculate_json_checksum(&json_bytes) else {
-                        return Ok(());
-                    };
+                    let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
 
                     let request = http::Request::builder()
                         .method(Method::POST)

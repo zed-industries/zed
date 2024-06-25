@@ -13,8 +13,7 @@ use gpui::{
     VisualContext, WeakView, WindowContext,
 };
 use language::{
-    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
-    Point, SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, Point, SelectionGoal,
 };
 use multi_buffer::AnchorRangeExt;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
@@ -137,7 +136,7 @@ impl FollowableItem for Editor {
 
                     cx.new_view(|cx| {
                         let mut editor =
-                            Editor::for_multibuffer(multibuffer, Some(project.clone()), cx);
+                            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, cx);
                         editor.remote_id = Some(remote_id);
                         editor
                     })
@@ -235,7 +234,7 @@ impl FollowableItem for Editor {
 
     fn to_follow_event(event: &EditorEvent) -> Option<workspace::item::FollowEvent> {
         match event {
-            EditorEvent::Edited => Some(FollowEvent::Unfollow),
+            EditorEvent::Edited { .. } => Some(FollowEvent::Unfollow),
             EditorEvent::SelectionsChanged { local }
             | EditorEvent::ScrollPositionChanged { local, .. } => {
                 if *local {
@@ -657,7 +656,7 @@ impl Item for Editor {
 
     fn clone_on_split(
         &self,
-        _workspace_id: WorkspaceId,
+        _workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Editor>>
     where
@@ -817,22 +816,24 @@ impl Item for Editor {
         let buffer = multibuffer.buffer(buffer_id)?;
 
         let buffer = buffer.read(cx);
-        let filename = buffer
-            .snapshot()
-            .resolve_file_path(
-                cx,
-                self.project
-                    .as_ref()
-                    .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                    .unwrap_or_default(),
-            )
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_else(|| "untitled".to_string());
+        let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
+            buffer
+                .snapshot()
+                .resolve_file_path(
+                    cx,
+                    self.project
+                        .as_ref()
+                        .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                        .unwrap_or_default(),
+                )
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_else(|| "untitled".to_string())
+        });
 
         let settings = ThemeSettings::get_global(cx);
 
         let mut breadcrumbs = vec![BreadcrumbText {
-            text: filename,
+            text,
             highlights: None,
             font: Some(settings.buffer_font.clone()),
         }];
@@ -846,9 +847,12 @@ impl Item for Editor {
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        let workspace_id = workspace.database_id();
-        let item_id = cx.view().item_id().as_u64() as ItemId;
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
+        let Some(workspace_id) = workspace.database_id() else {
+            return;
+        };
+
+        let item_id = cx.view().item_id().as_u64() as ItemId;
 
         fn serialize(
             buffer: Model<Buffer>,
@@ -873,7 +877,7 @@ impl Item for Editor {
             serialize(buffer.clone(), workspace_id, item_id, cx);
 
             cx.subscribe(&buffer, |this, buffer, event, cx| {
-                if let Some((_, workspace_id)) = this.workspace.as_ref() {
+                if let Some((_, Some(workspace_id))) = this.workspace.as_ref() {
                     if let language::Event::FileHandleChanged = event {
                         serialize(
                             buffer,
@@ -901,7 +905,7 @@ impl Item for Editor {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::Reparsed => {
+            EditorEvent::Reparsed(_) => {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
@@ -1005,6 +1009,25 @@ impl SearchableItem for Editor {
         self.has_background_highlights::<SearchWithinRange>()
     }
 
+    fn toggle_filtered_search_ranges(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
+        if self.has_filtered_search_ranges() {
+            self.previous_search_ranges = self
+                .clear_background_highlights::<SearchWithinRange>(cx)
+                .map(|(_, ranges)| ranges)
+        }
+
+        if !enabled {
+            return;
+        }
+
+        let ranges = self.selections.disjoint_anchor_ranges();
+        if ranges.iter().any(|range| range.start != range.end) {
+            self.set_search_within_ranges(&ranges, cx);
+        } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
+            self.set_search_within_ranges(&previous_search_ranges, cx)
+        }
+    }
+
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
         let snapshot = &self.snapshot(cx).buffer_snapshot;
@@ -1013,9 +1036,14 @@ impl SearchableItem for Editor {
         match setting {
             SeedQuerySetting::Never => String::new(),
             SeedQuerySetting::Selection | SeedQuerySetting::Always if !selection.is_empty() => {
-                snapshot
+                let text: String = snapshot
                     .text_for_range(selection.start..selection.end)
-                    .collect()
+                    .collect();
+                if text.contains('\n') {
+                    String::new()
+                } else {
+                    text
+                }
             }
             SeedQuerySetting::Selection => String::new(),
             SeedQuerySetting::Always => {
@@ -1132,55 +1160,66 @@ impl SearchableItem for Editor {
         let search_within_ranges = self
             .background_highlights
             .get(&TypeId::of::<SearchWithinRange>())
-            .map(|(_color, ranges)| {
-                ranges
-                    .iter()
-                    .map(|range| range.to_offset(&buffer))
-                    .collect::<Vec<_>>()
+            .map_or(vec![], |(_color, ranges)| {
+                ranges.iter().map(|range| range.clone()).collect::<Vec<_>>()
             });
+
         cx.background_executor().spawn(async move {
             let mut ranges = Vec::new();
+
             if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
-                if let Some(search_within_ranges) = search_within_ranges {
-                    for range in search_within_ranges {
-                        let offset = range.start;
-                        ranges.extend(
-                            query
-                                .search(excerpt_buffer, Some(range))
-                                .await
-                                .into_iter()
-                                .map(|range| {
-                                    buffer.anchor_after(range.start + offset)
-                                        ..buffer.anchor_before(range.end + offset)
-                                }),
-                        );
-                    }
+                let search_within_ranges = if search_within_ranges.is_empty() {
+                    vec![None]
                 } else {
-                    ranges.extend(query.search(excerpt_buffer, None).await.into_iter().map(
-                        |range| buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
-                    ));
-                }
-            } else {
-                for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
-                    let excerpt_range = excerpt.range.context.to_offset(&excerpt.buffer);
+                    search_within_ranges
+                        .into_iter()
+                        .map(|range| Some(range.to_offset(&buffer)))
+                        .collect::<Vec<_>>()
+                };
+
+                for range in search_within_ranges {
+                    let buffer = &buffer;
                     ranges.extend(
                         query
-                            .search(&excerpt.buffer, Some(excerpt_range.clone()))
+                            .search(excerpt_buffer, range.clone())
                             .await
                             .into_iter()
-                            .map(|range| {
-                                let start = excerpt
-                                    .buffer
-                                    .anchor_after(excerpt_range.start + range.start);
-                                let end = excerpt
-                                    .buffer
-                                    .anchor_before(excerpt_range.start + range.end);
-                                buffer.anchor_in_excerpt(excerpt.id, start).unwrap()
-                                    ..buffer.anchor_in_excerpt(excerpt.id, end).unwrap()
+                            .map(|matched_range| {
+                                let offset = range.clone().map(|r| r.start).unwrap_or(0);
+                                buffer.anchor_after(matched_range.start + offset)
+                                    ..buffer.anchor_before(matched_range.end + offset)
                             }),
                     );
                 }
-            }
+            } else {
+                let search_within_ranges = if search_within_ranges.is_empty() {
+                    vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())]
+                } else {
+                    search_within_ranges
+                };
+
+                for (excerpt_id, search_buffer, search_range) in
+                    buffer.excerpts_in_ranges(search_within_ranges)
+                {
+                    if !search_range.is_empty() {
+                        ranges.extend(
+                            query
+                                .search(&search_buffer, Some(search_range.clone()))
+                                .await
+                                .into_iter()
+                                .map(|match_range| {
+                                    let start = search_buffer
+                                        .anchor_after(search_range.start + match_range.start);
+                                    let end = search_buffer
+                                        .anchor_before(search_range.start + match_range.end);
+                                    buffer.anchor_in_excerpt(excerpt_id, start).unwrap()
+                                        ..buffer.anchor_in_excerpt(excerpt_id, end).unwrap()
+                                }),
+                        );
+                    }
+                }
+            };
+
             ranges
         })
     }

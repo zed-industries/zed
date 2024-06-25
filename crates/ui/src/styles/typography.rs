@@ -4,7 +4,7 @@ use gpui::{
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 
-use crate::rems_from_px;
+use crate::{rems_from_px, Color};
 
 /// Extends [`gpui::Styled`] with typography-related styling methods.
 pub trait StyledTypography: Styled + Sized {
@@ -164,14 +164,15 @@ impl HeadlineSize {
 pub struct Headline {
     size: HeadlineSize,
     text: SharedString,
+    color: Color,
 }
 
 impl RenderOnce for Headline {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
         div()
-            .font_family(ui_font)
+            .font(ui_font)
             .line_height(self.size.line_height())
             .text_size(self.size.size())
             .text_color(cx.theme().colors().text)
@@ -184,11 +185,17 @@ impl Headline {
         Self {
             size: HeadlineSize::default(),
             text: text.into(),
+            color: Color::default(),
         }
     }
 
     pub fn size(mut self, size: HeadlineSize) -> Self {
         self.size = size;
+        self
+    }
+
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = color;
         self
     }
 }

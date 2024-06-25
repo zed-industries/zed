@@ -11,10 +11,11 @@ pub async fn stream_generate_content(
     client: Arc<dyn HttpClient>,
     api_url: &str,
     api_key: &str,
+    model: &str,
     request: GenerateContentRequest,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
     let uri = format!(
-        "{}/v1beta/models/gemini-pro:streamGenerateContent?alt=sse&key={}",
+        "{}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={}",
         api_url, api_key
     );
 
