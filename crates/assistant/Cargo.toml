@@ -56,6 +56,7 @@ smol.workspace = true
 strsim = "0.11"
 strum.workspace = true
 telemetry_events.workspace = true
+terminal.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 tiktoken-rs.workspace = true

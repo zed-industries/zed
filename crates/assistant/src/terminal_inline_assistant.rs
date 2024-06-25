@@ -11,6 +11,8 @@ use editor::EditorMode;
 use editor::EditorStyle;
 use editor::MultiBuffer;
 use fs::Fs;
+use futures::channel::mpsc;
+use futures::SinkExt;
 use futures::StreamExt;
 use gpui::Context;
 use gpui::ModelContext;
@@ -25,6 +27,7 @@ use std::cmp;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -85,15 +88,16 @@ impl TerminalInlineAssistant {
 
     pub fn assist(
         &mut self,
-        terminal: &View<TerminalView>,
+        terminal_view: &View<TerminalView>,
         workspace: Option<WeakView<Workspace>>,
         assistant_panel: Option<&View<AssistantPanel>>,
         cx: &mut WindowContext,
     ) {
+        let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
         let prompt_buffer = cx.new_model(|cx| Buffer::local("", cx));
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
-        let codegen = cx.new_model(|_| Codegen::new(terminal.clone(), self.telemetry.clone()));
+        let codegen = cx.new_model(|_| Codegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new_view(|cx| {
             PromptEditor::new(
@@ -112,12 +116,17 @@ impl TerminalInlineAssistant {
             height: 1,
             render: Box::new(move |_| prompt_editor_render.clone().into_any_element()),
         };
-        terminal.update(cx, |terminal, cx| {
-            terminal.set_prompt(block, cx);
+        terminal_view.update(cx, |terminal_view, cx| {
+            terminal_view.set_prompt(block, cx);
         });
 
-        let terminal_assistant =
-            TerminalInlineAssist::new(assist_id, terminal, prompt_editor, workspace.clone(), cx);
+        let terminal_assistant = TerminalInlineAssist::new(
+            assist_id,
+            terminal_view,
+            prompt_editor,
+            workspace.clone(),
+            cx,
+        );
 
         self.assists.insert(assist_id, terminal_assistant);
 
@@ -414,7 +423,7 @@ impl Render for PromptEditor {
                                 cx.emit(PromptEditorEvent::StartRequested);
                             }))
                     } else {
-                        IconButton::new("confirm", IconName::Check)
+                        IconButton::new("confirm", IconName::Play)
                             .icon_color(Color::Info)
                             .size(ButtonSize::None)
                             .tooltip(|cx| {
@@ -863,12 +872,12 @@ impl EventEmitter<CodegenEvent> for Codegen {}
 pub struct Codegen {
     status: CodegenStatus,
     telemetry: Option<Arc<Telemetry>>,
-    terminal: View<TerminalView>,
+    terminal: Model<Terminal>,
     generation: Task<()>,
 }
 
 impl Codegen {
-    pub fn new(terminal: View<TerminalView>, telemetry: Option<Arc<Telemetry>>) -> Self {
+    pub fn new(terminal: Model<Terminal>, telemetry: Option<Arc<Telemetry>>) -> Self {
         Self {
             terminal,
             telemetry,
@@ -885,32 +894,54 @@ impl Codegen {
         let response = CompletionProvider::global(cx).complete(prompt);
 
         self.generation = cx.spawn(|this, mut cx| async move {
-            let mut response_latency = None;
-            let request_start = Instant::now();
-            let task = cx.background_executor().spawn(async move {
-                let mut response = response.await?;
-                while let Some(value) = response.next().await {
-                    if response_latency.is_none() {
-                        response_latency = Some(request_start.elapsed());
+            let generate = async {
+                let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
+
+                let task = cx.background_executor().spawn(async move {
+                    let mut response_latency = None;
+                    let request_start = Instant::now();
+                    let task = async {
+                        let mut response = response.await?;
+                        while let Some(chunk) = response.next().await {
+                            if response_latency.is_none() {
+                                response_latency = Some(request_start.elapsed());
+                            }
+                            let chunk = chunk?;
+                            hunks_tx.send(chunk).await?;
+                        }
+
+                        anyhow::Ok(())
+                    };
+
+                    let result = task.await;
+
+                    let error_message = result.as_ref().err().map(|error| error.to_string());
+                    if let Some(telemetry) = telemetry {
+                        telemetry.report_assistant_event(
+                            None,
+                            telemetry_events::AssistantKind::Inline,
+                            model_telemetry_id,
+                            response_latency,
+                            error_message,
+                        );
                     }
-                    println!("{value:?}");
+
+                    result?;
+                    anyhow::Ok(())
+                });
+
+                while let Some(hunk) = hunks_rx.next().await {
+                    this.update(&mut cx, |this, cx| {
+                        this.terminal.update(cx, |terminal, _| terminal.input(hunk));
+                        cx.notify();
+                    })?;
                 }
 
+                task.await?;
                 anyhow::Ok(())
-            });
+            };
 
-            let result = task.await;
-
-            let error_message = result.as_ref().err().map(|error| error.to_string());
-            if let Some(telemetry) = telemetry {
-                telemetry.report_assistant_event(
-                    None,
-                    telemetry_events::AssistantKind::Inline,
-                    model_telemetry_id,
-                    response_latency,
-                    error_message,
-                );
-            }
+            let result = generate.await;
 
             this.update(&mut cx, |this, cx| {
                 if let Err(error) = result {
