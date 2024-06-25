@@ -3825,19 +3825,8 @@ impl BackgroundScanner {
             .collect::<Vec<_>>()
             .await;
 
-        // Ensure .git and gitignore files are processed first.
-        let mut ixs_to_move_to_front = Vec::new();
-        for (ix, child_abs_path) in child_paths.iter().enumerate() {
-            let filename = child_abs_path.file_name().unwrap();
-            if filename == *DOT_GIT {
-                ixs_to_move_to_front.insert(0, ix);
-            } else if filename == *GITIGNORE {
-                ixs_to_move_to_front.push(ix);
-            }
-        }
-        for (dest_ix, src_ix) in ixs_to_move_to_front.into_iter().enumerate() {
-            child_paths.swap(dest_ix, src_ix);
-        }
+        // Ensure that .git and .gitignore are processed first.
+        child_paths.sort_unstable();
 
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
@@ -4087,6 +4076,7 @@ impl BackgroundScanner {
 
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
+
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
                     fs_entry.is_private = self.is_path_private(path);
 
@@ -4154,54 +4144,53 @@ impl BackgroundScanner {
     async fn update_ignore_statuses(&self, scan_job_tx: Sender<ScanJob>) {
         use futures::FutureExt as _;
 
-        let mut snapshot = self.state.lock().snapshot.clone();
         let mut ignores_to_update = Vec::new();
-        let mut ignores_to_delete = Vec::new();
-        let abs_path = snapshot.abs_path.clone();
-        for (parent_abs_path, (_, needs_update)) in &mut snapshot.ignores_by_parent_abs_path {
-            if let Ok(parent_path) = parent_abs_path.strip_prefix(&abs_path) {
-                if *needs_update {
-                    *needs_update = false;
-                    if snapshot.snapshot.entry_for_path(parent_path).is_some() {
-                        ignores_to_update.push(parent_abs_path.clone());
-                    }
-                }
-
-                let ignore_path = parent_path.join(&*GITIGNORE);
-                if snapshot.snapshot.entry_for_path(ignore_path).is_none() {
-                    ignores_to_delete.push(parent_abs_path.clone());
-                }
-            }
-        }
-
-        for parent_abs_path in ignores_to_delete {
-            snapshot.ignores_by_parent_abs_path.remove(&parent_abs_path);
-            self.state
-                .lock()
-                .snapshot
-                .ignores_by_parent_abs_path
-                .remove(&parent_abs_path);
-        }
-
         let (ignore_queue_tx, ignore_queue_rx) = channel::unbounded();
-        ignores_to_update.sort_unstable();
-        let mut ignores_to_update = ignores_to_update.into_iter().peekable();
-        while let Some(parent_abs_path) = ignores_to_update.next() {
-            while ignores_to_update
-                .peek()
-                .map_or(false, |p| p.starts_with(&parent_abs_path))
-            {
-                ignores_to_update.next().unwrap();
+        let prev_snapshot;
+        {
+            let snapshot = &mut self.state.lock().snapshot;
+            let abs_path = snapshot.abs_path.clone();
+            snapshot
+                .ignores_by_parent_abs_path
+                .retain(|parent_abs_path, (_, needs_update)| {
+                    if let Ok(parent_path) = parent_abs_path.strip_prefix(&abs_path) {
+                        if *needs_update {
+                            *needs_update = false;
+                            if snapshot.snapshot.entry_for_path(parent_path).is_some() {
+                                ignores_to_update.push(parent_abs_path.clone());
+                            }
+                        }
+
+                        let ignore_path = parent_path.join(&*GITIGNORE);
+                        if snapshot.snapshot.entry_for_path(ignore_path).is_none() {
+                            return false;
+                        }
+                    }
+                    true
+                });
+
+            ignores_to_update.sort_unstable();
+            let mut ignores_to_update = ignores_to_update.into_iter().peekable();
+            while let Some(parent_abs_path) = ignores_to_update.next() {
+                while ignores_to_update
+                    .peek()
+                    .map_or(false, |p| p.starts_with(&parent_abs_path))
+                {
+                    ignores_to_update.next().unwrap();
+                }
+
+                let ignore_stack = snapshot.ignore_stack_for_abs_path(&parent_abs_path, true);
+                ignore_queue_tx
+                    .send_blocking(UpdateIgnoreStatusJob {
+                        abs_path: parent_abs_path,
+                        ignore_stack,
+                        ignore_queue: ignore_queue_tx.clone(),
+                        scan_queue: scan_job_tx.clone(),
+                    })
+                    .unwrap();
             }
 
-            let ignore_stack = snapshot.ignore_stack_for_abs_path(&parent_abs_path, true);
-            smol::block_on(ignore_queue_tx.send(UpdateIgnoreStatusJob {
-                abs_path: parent_abs_path,
-                ignore_stack,
-                ignore_queue: ignore_queue_tx.clone(),
-                scan_queue: scan_job_tx.clone(),
-            }))
-            .unwrap();
+            prev_snapshot = snapshot.clone();
         }
         drop(ignore_queue_tx);
 
@@ -4223,7 +4212,7 @@ impl BackgroundScanner {
                                 // Recursively process directories whose ignores have changed.
                                 job = ignore_queue_rx.recv().fuse() => {
                                     let Ok(job) = job else { break };
-                                    self.update_ignore_status(job, &snapshot).await;
+                                    self.update_ignore_status(job, &prev_snapshot).await;
                                 }
                             }
                         }
@@ -4249,6 +4238,7 @@ impl BackgroundScanner {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
             entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
+
             if entry.is_dir() {
                 let child_ignore_stack = if entry.is_ignored {
                     IgnoreStack::all()

@@ -2223,6 +2223,7 @@ dependencies = [
  "fork",
  "ipc-channel",
  "once_cell",
+ "parking_lot",
  "paths",
  "plist",
  "release_channel",

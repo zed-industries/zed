@@ -93,6 +93,7 @@ pub struct EditorState {
     pub undo_modes: HashMap<TransactionId, Mode>,
 
     pub selected_register: Option<char>,
+    pub search: SearchState,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -152,7 +153,6 @@ impl From<String> for Register {
 
 #[derive(Default, Clone)]
 pub struct WorkspaceState {
-    pub search: SearchState,
     pub last_find: Option<Motion>,
 
     pub recording: bool,

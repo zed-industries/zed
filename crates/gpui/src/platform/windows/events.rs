@@ -267,14 +267,8 @@ fn handle_syskeydown_msg(
 ) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
-        return None;
-    };
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return None;
-    };
-    drop(lock);
+    let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
     let event = KeyDownEvent {
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
@@ -292,14 +286,8 @@ fn handle_syskeydown_msg(
 fn handle_syskeyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
-        return None;
-    };
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return None;
-    };
-    drop(lock);
+    let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
     let event = KeyUpEvent { keystroke };
     let result = if func(PlatformInput::KeyUp(event)).default_prevented {
         Some(0)
@@ -614,35 +602,25 @@ fn handle_ime_composition(
 ) -> Option<isize> {
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
-        let Some((string, string_len)) = parse_ime_compostion_string(handle) else {
-            return None;
-        };
-        let mut lock = state_ptr.state.borrow_mut();
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return None;
-        };
-        drop(lock);
-        input_handler.replace_and_mark_text_in_range(None, string.as_str(), Some(0..string_len));
+        let (comp_string, string_len) = parse_ime_compostion_string(handle)?;
+        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
+        input_handler.replace_and_mark_text_in_range(
+            None,
+            &comp_string,
+            Some(string_len..string_len),
+        );
         state_ptr.state.borrow_mut().input_handler = Some(input_handler);
-        ime_input = Some(string);
+        ime_input = Some(comp_string);
     }
     if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
-        let Some(ref comp_string) = ime_input else {
-            return None;
-        };
+        let comp_string = &ime_input?;
         let caret_pos = retrieve_composition_cursor_position(handle);
-        let mut lock = state_ptr.state.borrow_mut();
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return None;
-        };
-        drop(lock);
-        input_handler.replace_and_mark_text_in_range(None, comp_string, Some(0..caret_pos));
+        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
+        input_handler.replace_and_mark_text_in_range(None, comp_string, Some(caret_pos..caret_pos));
         state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     }
     if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
-        let Some(comp_result) = parse_ime_compostion_result(handle) else {
-            return None;
-        };
+        let comp_result = parse_ime_compostion_result(handle)?;
         let mut lock = state_ptr.state.borrow_mut();
         let Some(mut input_handler) = lock.input_handler.take() else {
             return Some(1);
@@ -663,11 +641,7 @@ fn handle_calc_client_size(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar || state_ptr.state.borrow().is_fullscreen() {
-        return None;
-    }
-
-    if wparam.0 == 0 {
+    if !state_ptr.hide_title_bar || state_ptr.state.borrow().is_fullscreen() || wparam.0 == 0 {
         return None;
     }
 
@@ -1097,13 +1071,14 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_NEXT => "pagedown",
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
+        VK_DELETE => "delete",
         _ => return basic_vkcode_to_string(vk_code, modifiers),
     }
     .to_owned();
 
     Some(Keystroke {
         modifiers,
-        key: key,
+        key,
         ime_key: None,
     })
 }
@@ -1160,7 +1135,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
 
     Some(KeystrokeOrModifier::Keystroke(Keystroke {
         modifiers,
-        key: key,
+        key,
         ime_key: None,
     }))
 }

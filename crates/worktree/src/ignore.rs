@@ -1,6 +1,7 @@
 use ignore::gitignore::Gitignore;
 use std::{ffi::OsStr, path::Path, sync::Arc};
 
+#[derive(Debug)]
 pub enum IgnoreStack {
     None,
     Some {

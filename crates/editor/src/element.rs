@@ -276,6 +276,7 @@ impl EditorElement {
         register_action(view, cx, Editor::toggle_comments);
         register_action(view, cx, Editor::select_larger_syntax_node);
         register_action(view, cx, Editor::select_smaller_syntax_node);
+        register_action(view, cx, Editor::select_enclosing_symbol);
         register_action(view, cx, Editor::move_to_enclosing_bracket);
         register_action(view, cx, Editor::undo_selection);
         register_action(view, cx, Editor::redo_selection);

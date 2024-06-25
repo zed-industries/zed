@@ -219,7 +219,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
 
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
 
-    assistant::init(app_state.client.clone(), cx);
+    assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
 
     repl::init(app_state.fs.clone(), cx);
 
