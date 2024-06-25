@@ -665,11 +665,8 @@ fn handle_calc_client_size(
 ) -> Option<isize> {
     if (state_ptr.title_bar && !state_ptr.transparent_title_bar)
         || state_ptr.state.borrow().is_fullscreen()
+        || wparam.0 == 0
     {
-        return None;
-    }
-
-    if wparam.0 == 0 {
         return None;
     }
 
