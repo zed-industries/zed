@@ -2620,7 +2620,7 @@ impl EditorElement {
             - scroll_pixel_position.x
             + content_origin.x;
         let start_y =
-            (display_point.row().next_row().as_f32() + 1.0) * line_height - scroll_pixel_position.y;
+            display_point.row().next_row().as_f32() * line_height - scroll_pixel_position.y;
 
         let point = point(start_x, start_y);
 
