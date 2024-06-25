@@ -8438,7 +8438,11 @@ impl Project {
                                 id_base: "local_debug_File_for_worktree".into(),
                             },
                             |tx, cx| {
-                                todo!();
+                                debugger_inventory::StaticSource::new(TrackedFile::new(
+                                    debugger_configs_file_rx,
+                                    tx,
+                                    cx,
+                                ))
                             },
                             cx,
                         );

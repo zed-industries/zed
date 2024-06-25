@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct DebuggerConfigTemplate {
+    #[serde(rename = "type")]
     pub _type: String,
     pub request: String,
     #[serde(default)]

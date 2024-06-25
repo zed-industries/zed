@@ -99,7 +99,15 @@ struct SourceInInventory {
 }
 
 pub struct StaticSource {
-    tasks: TrackedFile<DebuggerConfigTemplates>,
+    configs: TrackedFile<DebuggerConfigTemplates>,
+}
+
+impl StaticSource {
+    pub fn new(debugger_configs: TrackedFile<DebuggerConfigTemplates>) -> Self {
+        Self {
+            configs: debugger_configs,
+        }
+    }
 }
 
 /// A group of Tasks defined in a JSON file.
