@@ -1831,10 +1831,10 @@ impl EditorElement {
     }
 
     fn layout_lines(
-        &self,
         rows: Range<DisplayRow>,
         line_number_layouts: &[Option<ShapedLine>],
         snapshot: &EditorSnapshot,
+        style: &EditorStyle,
         cx: &mut WindowContext,
     ) -> Vec<LineWithInvisibles> {
         if rows.start >= rows.end {
@@ -1843,7 +1843,7 @@ impl EditorElement {
 
         // Show the placeholder when the editor is empty
         if snapshot.is_empty() {
-            let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
+            let font_size = style.text.font_size.to_pixels(cx.rem_size());
             let placeholder_color = cx.theme().colors().text_placeholder;
             let placeholder_text = snapshot.placeholder_text();
 
@@ -1858,7 +1858,7 @@ impl EditorElement {
                 .filter_map(move |line| {
                     let run = TextRun {
                         len: line.len(),
-                        font: self.style.text.font(),
+                        font: style.text.font(),
                         color: placeholder_color,
                         background_color: None,
                         underline: Default::default(),
@@ -1877,10 +1877,10 @@ impl EditorElement {
                 })
                 .collect()
         } else {
-            let chunks = snapshot.highlighted_chunks(rows.clone(), true, &self.style);
+            let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
             LineWithInvisibles::from_chunks(
                 chunks,
-                &self.style.text,
+                &style.text,
                 MAX_LINE_LEN,
                 rows.len(),
                 line_number_layouts,
@@ -4475,7 +4475,7 @@ impl EditorElement {
             // We currently use single-line and auto-height editors in UI contexts,
             // so we don't want to scale everything with the buffer font size, as it
             // ends up looking off.
-            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => None,
+            EditorMode::SingleLine { .. } | EditorMode::AutoHeight { .. } => None,
         }
     }
 }
@@ -4499,12 +4499,43 @@ impl Element for EditorElement {
                 editor.set_style(self.style.clone(), cx);
 
                 let layout_id = match editor.mode {
-                    EditorMode::SingleLine => {
+                    EditorMode::SingleLine { auto_width } => {
                         let rem_size = cx.rem_size();
-                        let mut style = Style::default();
-                        style.size.width = relative(1.).into();
-                        style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
-                        cx.request_layout(style, None)
+
+                        let height = self.style.text.line_height_in_pixels(rem_size);
+                        if auto_width {
+                            let editor_handle = cx.view().clone();
+                            let style = self.style.clone();
+                            cx.request_measured_layout(Style::default(), move |_, _, cx| {
+                                let editor_snapshot =
+                                    editor_handle.update(cx, |editor, cx| editor.snapshot(cx));
+                                let line = Self::layout_lines(
+                                    DisplayRow(0)..DisplayRow(1),
+                                    &[],
+                                    &editor_snapshot,
+                                    &style,
+                                    cx,
+                                )
+                                .pop()
+                                .unwrap();
+
+                                let font_id = cx.text_system().resolve_font(&style.text.font());
+                                let font_size = style.text.font_size.to_pixels(cx.rem_size());
+                                let em_width = cx
+                                    .text_system()
+                                    .typographic_bounds(font_id, font_size, 'm')
+                                    .unwrap()
+                                    .size
+                                    .width;
+
+                                size(line.width + em_width, height)
+                            })
+                        } else {
+                            let mut style = Style::default();
+                            style.size.height = height.into();
+                            style.size.width = relative(1.).into();
+                            cx.request_layout(style, None)
+                        }
                     }
                     EditorMode::AutoHeight { max_lines } => {
                         let editor_handle = cx.view().clone();
@@ -4763,8 +4794,13 @@ impl Element for EditorElement {
                     );
 
                     let mut max_visible_line_width = Pixels::ZERO;
-                    let mut line_layouts =
-                        self.layout_lines(start_row..end_row, &line_numbers, &snapshot, cx);
+                    let mut line_layouts = Self::layout_lines(
+                        start_row..end_row,
+                        &line_numbers,
+                        &snapshot,
+                        &self.style,
+                        cx,
+                    );
                     for line_with_invisibles in &line_layouts {
                         if line_with_invisibles.width > max_visible_line_width {
                             max_visible_line_width = line_with_invisibles.width;
@@ -4792,15 +4828,42 @@ impl Element for EditorElement {
                         )
                     });
 
-                    let scroll_pixel_position = point(
-                        scroll_position.x * em_width,
-                        scroll_position.y * line_height,
-                    );
-
                     let start_buffer_row =
                         MultiBufferRow(start_anchor.to_point(&snapshot.buffer_snapshot).row);
                     let end_buffer_row =
                         MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
+
+                    let scroll_max = point(
+                        ((scroll_width - text_hitbox.size.width) / em_width).max(0.0),
+                        max_row.as_f32(),
+                    );
+
+                    self.editor.update(cx, |editor, cx| {
+                        let clamped = editor.scroll_manager.clamp_scroll_left(scroll_max.x);
+
+                        let autoscrolled = if autoscroll_horizontally {
+                            editor.autoscroll_horizontally(
+                                start_row,
+                                text_hitbox.size.width,
+                                scroll_width,
+                                em_width,
+                                &line_layouts,
+                                cx,
+                            )
+                        } else {
+                            false
+                        };
+
+                        if clamped || autoscrolled {
+                            snapshot = editor.snapshot(cx);
+                            scroll_position = snapshot.scroll_position();
+                        }
+                    });
+
+                    let scroll_pixel_position = point(
+                        scroll_position.x * em_width,
+                        scroll_position.y * line_height,
+                    );
 
                     let indent_guides = self.layout_indent_guides(
                         content_origin,
@@ -6065,7 +6128,7 @@ mod tests {
         });
 
         for editor_mode_without_invisibles in [
-            EditorMode::SingleLine,
+            EditorMode::SingleLine { auto_width: false },
             EditorMode::AutoHeight { max_lines: 100 },
         ] {
             let invisibles = collect_invisibles_from_new_editor(

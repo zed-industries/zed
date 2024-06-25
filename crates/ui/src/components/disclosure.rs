@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::ClickEvent;
+use gpui::{ClickEvent, CursorStyle};
 
 use crate::{prelude::*, Color, IconButton, IconButtonShape, IconName, IconSize};
 
@@ -10,6 +10,7 @@ pub struct Disclosure {
     is_open: bool,
     selected: bool,
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    cursor_style: CursorStyle,
 }
 
 impl Disclosure {
@@ -19,6 +20,7 @@ impl Disclosure {
             is_open,
             selected: false,
             on_toggle: None,
+            cursor_style: CursorStyle::PointingHand,
         }
     }
 
@@ -41,6 +43,11 @@ impl Selectable for Disclosure {
 impl Clickable for Disclosure {
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
         self.on_toggle = Some(Arc::new(handler));
+        self
+    }
+
+    fn cursor_style(mut self, cursor_style: gpui::CursorStyle) -> Self {
+        self.cursor_style = cursor_style;
         self
     }
 }
