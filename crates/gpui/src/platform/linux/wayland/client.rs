@@ -671,7 +671,7 @@ impl LinuxClient for WaylandClient {
             return;
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-            state.clipboard.set_primary(item.text);
+            state.clipboard.set_primary(item);
             let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = primary_selection_manager.create_source(&state.globals.qh, ());
             data_source.offer(state.clipboard.self_mime());
@@ -689,7 +689,7 @@ impl LinuxClient for WaylandClient {
             return;
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-            state.clipboard.set(item.text);
+            state.clipboard.set(item);
             let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
             data_source.offer(state.clipboard.self_mime());
@@ -699,25 +699,11 @@ impl LinuxClient for WaylandClient {
     }
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
-        self.0
-            .borrow_mut()
-            .clipboard
-            .read_primary()
-            .map(|s| crate::ClipboardItem {
-                text: s,
-                metadata: None,
-            })
+        self.0.borrow_mut().clipboard.read_primary()
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
-        self.0
-            .borrow_mut()
-            .clipboard
-            .read()
-            .map(|s| crate::ClipboardItem {
-                text: s,
-                metadata: None,
-            })
+        self.0.borrow_mut().clipboard.read()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

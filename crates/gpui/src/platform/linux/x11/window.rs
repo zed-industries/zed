@@ -34,7 +34,6 @@ use std::{
 };
 
 use super::{X11Display, XINPUT_MASTER_DEVICE};
-
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
         UTF8_STRING,
