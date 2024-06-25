@@ -1,4 +1,3 @@
-use crate::actions::ShowSignatureHelp;
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     display_map::{
@@ -4993,13 +4992,6 @@ impl Element for EditorElement {
                         &snapshot,
                         cx,
                     );
-
-                    self.editor.update(cx, |editor, cx| {
-                        let is_signature_help_displayed = editor.signature_help_state.is_some();
-                        if is_signature_help_displayed {
-                            editor.show_signature_help(&ShowSignatureHelp, cx);
-                        }
-                    });
 
                     self.layout_signature_help(
                         &hitbox,

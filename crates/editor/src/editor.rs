@@ -2378,6 +2378,10 @@ impl Editor {
                 self.request_autoscroll(autoscroll, cx);
             }
             self.selections_did_change(true, &old_cursor_position, request_completions, cx);
+
+            if self.signature_help_state.is_some() {
+                self.show_signature_help(&ShowSignatureHelp, cx);
+            }
         }
 
         result
