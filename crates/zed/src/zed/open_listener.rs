@@ -342,9 +342,7 @@ pub async fn handle_cli_connection(
                                     Some(Err(err)) => {
                                         responses
                                             .send(CliResponse::Stderr {
-                                                message: format!(
-                                                    "error opening {path:?}: {err}"
-                                                ),
+                                                message: format!("error opening {path:?}: {err}"),
                                             })
                                             .log_err();
                                         errored = true;
