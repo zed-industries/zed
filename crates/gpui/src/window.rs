@@ -754,6 +754,11 @@ impl Window {
                 handle
                     .update(&mut cx, |_, cx| {
                         cx.window.active.set(active);
+                        // If the window is occluded we may not render it again
+                        // until
+                        if !active {
+                            cx.window.rendered_frame.window_active = false;
+                        }
                         cx.window
                             .activation_observers
                             .clone()
