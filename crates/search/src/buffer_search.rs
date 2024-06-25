@@ -777,6 +777,7 @@ impl BufferSearchBar {
                     .get(&searchable_item.downgrade())
                     .filter(|matches| !matches.is_empty())
                 {
+                    // Read the setting, if 'wrapscan' is enabled and the index and directio at the endpoint, do nothing
                     if matches.len() == index + 1 && direction == Direction::Next {
                         return;
                     }
