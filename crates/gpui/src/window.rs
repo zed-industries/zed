@@ -631,6 +631,7 @@ impl Window {
             display_id,
             window_background,
             app_id,
+            window_min_size,
         } = options;
 
         let bounds = window_bounds
@@ -647,6 +648,7 @@ impl Window {
                 show,
                 display_id,
                 window_background,
+                window_min_size,
             },
         )?;
         let display_id = platform_window.display().map(|display| display.id());

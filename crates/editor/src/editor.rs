@@ -2564,14 +2564,47 @@ impl Editor {
             }
         }
 
-        self.change_selections(auto_scroll.then(|| Autoscroll::newest()), cx, |s| {
-            if !add {
-                s.clear_disjoint();
-            } else if click_count > 1 {
-                s.delete(newest_selection.id)
-            }
+        let point_to_delete: Option<usize> = {
+            let selected_points: Vec<Selection<Point>> =
+                self.selections.disjoint_in_range(start..end, cx);
 
-            s.set_pending_anchor_range(start..end, mode);
+            if !add || click_count > 1 {
+                None
+            } else if selected_points.len() > 0 {
+                Some(selected_points[0].id)
+            } else {
+                let clicked_point_already_selected =
+                    self.selections.disjoint.iter().find(|selection| {
+                        selection.start.to_point(buffer) == start.to_point(buffer)
+                            || selection.end.to_point(buffer) == end.to_point(buffer)
+                    });
+
+                if let Some(selection) = clicked_point_already_selected {
+                    Some(selection.id)
+                } else {
+                    None
+                }
+            }
+        };
+
+        let selections_count = self.selections.count();
+
+        self.change_selections(auto_scroll.then(|| Autoscroll::newest()), cx, |s| {
+            if let Some(point_to_delete) = point_to_delete {
+                s.delete(point_to_delete);
+
+                if selections_count == 1 {
+                    s.set_pending_anchor_range(start..end, mode);
+                }
+            } else {
+                if !add {
+                    s.clear_disjoint();
+                } else if click_count > 1 {
+                    s.delete(newest_selection.id)
+                }
+
+                s.set_pending_anchor_range(start..end, mode);
+            }
         });
     }
 
@@ -8191,6 +8224,58 @@ impl Editor {
                 });
             }
         });
+    }
+
+    pub fn select_enclosing_symbol(
+        &mut self,
+        _: &SelectEnclosingSymbol,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_selections = self.selections.all::<usize>(cx).into_boxed_slice();
+
+        fn update_selection(
+            selection: &Selection<usize>,
+            buffer_snap: &MultiBufferSnapshot,
+        ) -> Option<Selection<usize>> {
+            let cursor = selection.head();
+            let (_buffer_id, symbols) = buffer_snap.symbols_containing(cursor, None)?;
+            for symbol in symbols.iter().rev() {
+                let start = symbol.range.start.to_offset(&buffer_snap);
+                let end = symbol.range.end.to_offset(&buffer_snap);
+                let new_range = start..end;
+                if start < selection.start || end > selection.end {
+                    return Some(Selection {
+                        id: selection.id,
+                        start: new_range.start,
+                        end: new_range.end,
+                        goal: SelectionGoal::None,
+                        reversed: selection.reversed,
+                    });
+                }
+            }
+            None
+        }
+
+        let mut selected_larger_symbol = false;
+        let new_selections = old_selections
+            .iter()
+            .map(|selection| match update_selection(selection, &buffer) {
+                Some(new_selection) => {
+                    if new_selection.range() != selection.range() {
+                        selected_larger_symbol = true;
+                    }
+                    new_selection
+                }
+                None => selection.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        if selected_larger_symbol {
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(new_selections);
+            });
+        }
     }
 
     pub fn select_larger_syntax_node(

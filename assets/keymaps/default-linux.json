@@ -152,7 +152,8 @@
       //     "focus": false
       //   }
       // ],
-      "ctrl->": "assistant::QuoteSelection"
+      "ctrl->": "assistant::QuoteSelection",
+      "ctrl-alt-e": "editor::SelectEnclosingSymbol"
     }
   },
   {
