@@ -326,6 +326,14 @@ impl AssistantSettingsContent {
                             *model = Some(new_model);
                         }
                     }
+                    Some(AssistantProviderContent::Ollama {
+                        default_model: model,
+                        ..
+                    }) => {
+                        if let LanguageModel::Ollama(new_model) = new_model {
+                            *model = Some(new_model);
+                        }
+                    }
                     provider => match new_model {
                         LanguageModel::Cloud(model) => {
                             *provider = Some(AssistantProviderContent::ZedDotDev {
