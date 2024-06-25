@@ -281,7 +281,7 @@ impl LspAdapter for NodeVersionAdapter {
             ".zip"
         } else {
             ".tar.gz"
-        }
+        };
         let asset_name = format!("package-version-server-{}-{os}{suffix}", consts::ARCH);
         let asset = release
             .assets
