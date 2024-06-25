@@ -1098,14 +1098,7 @@ impl Project {
             // initialize
             client.initialize().await.log_err()?;
 
-            // set break point
-            client
-                .set_breakpoints(
-                    "/Users/remcosmits/Documents/code/symfony_demo/src/Kernel.php".into(),
-                    14,
-                )
-                .await
-                .log_err();
+            // TODO: fetch all old breakpoints and send them to the debug adapter
 
             // configuration done
             client.configuration_done().await.log_err()?;
