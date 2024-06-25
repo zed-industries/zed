@@ -4,9 +4,10 @@ use client::telemetry::Telemetry;
 use collections::HashMap;
 use editor::{display_map::BlockId, Anchor, Editor};
 use gpui::{
-    prelude::*, AppContext, AsyncWindowContext, EntityId, EventEmitter, FocusHandle, FocusOutEvent,
-    FocusableView, Model, PlatformDispatcher, Subscription, Task, View, WeakView,
+    actions, prelude::*, AppContext, AsyncWindowContext, EntityId, EventEmitter, FocusHandle,
+    FocusOutEvent, FocusableView, Model, PlatformDispatcher, Subscription, Task, View, WeakView,
 };
+use language::Point;
 use project::Fs;
 use settings::{Settings as _, SettingsStore};
 use std::{ops::Range, sync::Arc, time::Duration};
@@ -16,7 +17,9 @@ use workspace::{
     Workspace,
 };
 
-use crate::{run, ExecutionView, JupyterSettings, Kernel, RuntimeManager, ToggleFocus};
+use crate::{ExecutionView, JupyterSettings, Kernel, RuntimeManager};
+
+actions!(repl, [Run, ToggleFocus]);
 
 #[allow(unused)]
 struct EditorBlock {
@@ -156,6 +159,113 @@ impl RuntimePanel {
 
     fn focus_out(&mut self, _event: FocusOutEvent, cx: &mut ViewContext<Self>) {
         cx.notify();
+    }
+
+    // Gets the active selection in the editor or the current line
+    pub fn selection(&self, editor: View<Editor>, cx: &mut ViewContext<Self>) -> Range<Anchor> {
+        let editor = editor.read(cx);
+        let selection = editor.selections.newest::<usize>(cx);
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+
+        let range = if selection.is_empty() {
+            let cursor = selection.head();
+
+            let line_start = buffer.offset_to_point(cursor).row;
+            let mut start_offset = buffer.point_to_offset(Point::new(line_start, 0));
+
+            // Iterate backwards to find the start of the line
+            while start_offset > 0 {
+                let ch = buffer.chars_at(start_offset - 1).next().unwrap_or('\0');
+                if ch == '\n' {
+                    break;
+                }
+                start_offset -= 1;
+            }
+
+            let mut end_offset = cursor;
+
+            // Iterate forwards to find the end of the line
+            while end_offset < buffer.len() {
+                let ch = buffer.chars_at(end_offset).next().unwrap_or('\0');
+                if ch == '\n' {
+                    break;
+                }
+                end_offset += 1;
+            }
+
+            // Create a range from the start to the end of the line
+            start_offset..end_offset
+        } else {
+            selection.range()
+        };
+
+        let anchor_range = buffer.anchor_before(range.start)..buffer.anchor_after(range.end);
+        anchor_range
+    }
+
+    pub fn snippet(
+        &self,
+        editor: View<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(String, Arc<str>)> {
+        let anchor_range = self.selection(editor.clone(), cx);
+
+        let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+
+        let selected_text = buffer
+            .text_for_range(anchor_range.clone())
+            .collect::<String>();
+
+        let start_language = buffer.language_at(anchor_range.start);
+        let end_language = buffer.language_at(anchor_range.end);
+
+        let language_name = if start_language == end_language {
+            start_language
+                .map(|language| language.code_fence_block_name())
+                .filter(|lang| **lang != *"markdown")
+        } else {
+            // If the selection spans multiple languages, don't run it
+            return None;
+        };
+
+        let language_name = if let Some(language_name) = language_name {
+            language_name
+        } else {
+            return None;
+        };
+
+        return Some((selected_text, language_name));
+    }
+
+    pub fn run(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+        // todo!()
+
+        let (selected_text, language_name) = match self.snippet(editor.clone(), cx) {
+            Some(snippet) => snippet,
+            None => return,
+        };
+
+        eprintln!("Running `{:?}` snippet: {:?}", language_name, selected_text);
+
+        // Find if there's an editor that already has an associated kernel
+        // If not, create a new kernel for the language, and associate it with the editor
+    }
+}
+
+pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
+    let settings = JupyterSettings::get_global(cx);
+    if !settings.enabled {
+        return;
+    }
+
+    let editor = workspace
+        .active_item(cx)
+        .and_then(|item| item.act_as::<Editor>(cx));
+
+    if let (Some(editor), Some(runtime_panel)) = (editor, workspace.panel::<RuntimePanel>(cx)) {
+        runtime_panel.update(cx, |runtime_panel, cx| {
+            runtime_panel.run(editor, cx);
+        });
     }
 }
 
