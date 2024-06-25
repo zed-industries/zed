@@ -569,7 +569,7 @@ impl PromptLibrary {
         let provider = CompletionProvider::global(cx);
         if provider.is_authenticated() {
             InlineAssistant::update_global(cx, |assistant, cx| {
-                assistant.assist(&prompt_editor, None, false, cx)
+                assistant.assist(&prompt_editor, None, None, cx)
             })
         } else {
             for window in cx.windows() {
