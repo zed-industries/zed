@@ -64,7 +64,10 @@ impl DirectXRenderer {
         let context = DirectXContext::new(hwnd).unwrap();
         let render = DirectXRenderContext::new(&context.device).unwrap();
         DirectXRenderer {
-            atlas: Arc::new(DirectXAtlas::new()),
+            atlas: Arc::new(DirectXAtlas::new(
+                context.device.clone(),
+                context.context.clone(),
+            )),
             context,
             render,
         }
