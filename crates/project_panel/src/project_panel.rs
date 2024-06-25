@@ -474,7 +474,12 @@ impl ProjectPanel {
                         menu.action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
-                            .action("Reveal in File Manager", Box::new(RevealInFileManager))
+                            .when(cfg!(target_os = "macos"), |menu| {
+                                menu.action("Reveal in Finder", Box::new(RevealInFileManager))
+                            })
+                            .when(cfg!(not(target_os = "macos")), |menu| {
+                                menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
+                            })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
