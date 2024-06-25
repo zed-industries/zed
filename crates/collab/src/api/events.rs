@@ -664,6 +664,7 @@ where
 #[derive(Serialize, Debug, clickhouse::Row)]
 pub struct EditorEventRow {
     installation_id: String,
+    metrics_id: String,
     operation: String,
     app_version: String,
     file_extension: String,
@@ -713,6 +714,7 @@ impl EditorEventRow {
             os_version: body.os_version.clone().unwrap_or_default(),
             architecture: body.architecture.clone(),
             installation_id: body.installation_id.clone().unwrap_or_default(),
+            metrics_id: body.metrics_id.clone().unwrap_or_default(),
             session_id: body.session_id.clone(),
             is_staff: body.is_staff,
             time: time.timestamp_millis(),
