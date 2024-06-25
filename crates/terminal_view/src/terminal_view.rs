@@ -21,7 +21,8 @@ use terminal::{
         term::{search::RegexSearch, TermMode},
     },
     terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
-    Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, TaskStatus, Terminal,
+    Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
+    ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskStatus, Terminal,
 };
 use terminal_element::TerminalElement;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
@@ -248,6 +249,36 @@ impl TerminalView {
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.clear());
+        cx.notify();
+    }
+
+    fn scroll_line_up(&mut self, _: &ScrollLineUp, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.scroll_line_up());
+        cx.notify();
+    }
+
+    fn scroll_line_down(&mut self, _: &ScrollLineDown, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.scroll_line_down());
+        cx.notify();
+    }
+
+    fn scroll_page_up(&mut self, _: &ScrollPageUp, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.scroll_page_up());
+        cx.notify();
+    }
+
+    fn scroll_page_down(&mut self, _: &ScrollPageDown, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.scroll_page_down());
+        cx.notify();
+    }
+
+    fn scroll_to_top(&mut self, _: &ScrollToTop, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.scroll_to_top());
+        cx.notify();
+    }
+
+    fn scroll_to_bottom(&mut self, _: &ScrollToBottom, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.scroll_to_bottom());
         cx.notify();
     }
 
@@ -743,6 +774,12 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::copy))
             .on_action(cx.listener(TerminalView::paste))
             .on_action(cx.listener(TerminalView::clear))
+            .on_action(cx.listener(TerminalView::scroll_line_up))
+            .on_action(cx.listener(TerminalView::scroll_line_down))
+            .on_action(cx.listener(TerminalView::scroll_page_up))
+            .on_action(cx.listener(TerminalView::scroll_page_down))
+            .on_action(cx.listener(TerminalView::scroll_to_top))
+            .on_action(cx.listener(TerminalView::scroll_to_bottom))
             .on_action(cx.listener(TerminalView::show_character_palette))
             .on_action(cx.listener(TerminalView::select_all))
             .on_key_down(cx.listener(Self::key_down))
