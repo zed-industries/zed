@@ -171,7 +171,6 @@ impl LspAdapter for VtslsLspAdapter {
                     "parameterNames": {
                         "enabled": "all",
                         "suppressWhenArgumentMatchesName": false,
-
                     },
                     "parameterTypes": {
                         "enabled": true
