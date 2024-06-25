@@ -10,8 +10,7 @@ mod search;
 mod slash_command;
 mod streaming_diff;
 
-pub use assistant_panel::AssistantPanel;
-
+pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::{AnthropicModel, AssistantSettings, CloudModel, OllamaModel, OpenAiModel};
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};

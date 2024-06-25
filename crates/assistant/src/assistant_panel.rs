@@ -90,6 +90,10 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+pub enum AssistantPanelEvent {
+    ContextEdited,
+}
+
 pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
@@ -361,11 +365,11 @@ impl AssistantPanel {
             return;
         }
 
-        let Some(assistant) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
 
-        let context_editor = assistant
+        let context_editor = assistant_panel
             .read(cx)
             .active_context_editor()
             .and_then(|editor| {
@@ -392,25 +396,37 @@ impl AssistantPanel {
             return;
         };
 
-        if assistant.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
+        if assistant_panel.update(cx, |panel, cx| panel.is_authenticated(cx)) {
             InlineAssistant::update_global(cx, |assistant, cx| {
                 assistant.assist(
                     &active_editor,
                     Some(cx.view().downgrade()),
-                    include_context,
+                    include_context.then_some(&assistant_panel),
                     cx,
                 )
             })
         } else {
-            let assistant = assistant.downgrade();
+            let assistant_panel = assistant_panel.downgrade();
             cx.spawn(|workspace, mut cx| async move {
-                assistant
+                assistant_panel
                     .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
                     .await?;
-                if assistant.update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))? {
+                if assistant_panel
+                    .update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))?
+                {
                     cx.update(|cx| {
+                        let assistant_panel = if include_context {
+                            assistant_panel.upgrade()
+                        } else {
+                            None
+                        };
                         InlineAssistant::update_global(cx, |assistant, cx| {
-                            assistant.assist(&active_editor, Some(workspace), include_context, cx)
+                            assistant.assist(
+                                &active_editor,
+                                Some(workspace),
+                                assistant_panel.as_ref(),
+                                cx,
+                            )
                         })
                     })?
                 } else {
@@ -461,7 +477,7 @@ impl AssistantPanel {
             _subscriptions: subscriptions,
         });
         self.show_saved_contexts = false;
-
+        cx.emit(AssistantPanelEvent::ContextEdited);
         cx.notify();
     }
 
@@ -473,6 +489,7 @@ impl AssistantPanel {
     ) {
         match event {
             ContextEditorEvent::TabContentChanged => cx.notify(),
+            ContextEditorEvent::Edited => cx.emit(AssistantPanelEvent::ContextEdited),
         }
     }
 
@@ -994,6 +1011,7 @@ impl Panel for AssistantPanel {
 }
 
 impl EventEmitter<PanelEvent> for AssistantPanel {}
+impl EventEmitter<AssistantPanelEvent> for AssistantPanel {}
 
 impl FocusableView for AssistantPanel {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
@@ -2194,6 +2212,7 @@ struct PendingCompletion {
 }
 
 enum ContextEditorEvent {
+    Edited,
     TabContentChanged,
 }
 
@@ -2786,6 +2805,7 @@ impl ContextEditor {
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
             }
+            EditorEvent::BufferEdited => cx.emit(ContextEditorEvent::Edited),
             _ => {}
         }
     }

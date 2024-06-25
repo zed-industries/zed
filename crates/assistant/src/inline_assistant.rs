@@ -1,9 +1,9 @@
 use crate::{
     assistant_settings::AssistantSettings, humanize_token_count, prompts::generate_content_prompt,
-    AssistantPanel, CompletionProvider, Hunk, LanguageModelRequest, LanguageModelRequestMessage,
-    Role, StreamingDiff,
+    AssistantPanel, AssistantPanelEvent, CompletionProvider, Hunk, LanguageModelRequest,
+    LanguageModelRequestMessage, Role, StreamingDiff,
 };
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
@@ -34,7 +34,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{self, Poll},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use theme::ThemeSettings;
 use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
@@ -78,7 +78,7 @@ impl InlineAssistant {
         &mut self,
         editor: &View<Editor>,
         workspace: Option<WeakView<Workspace>>,
-        include_context: bool,
+        assistant_panel: Option<&View<AssistantPanel>>,
         cx: &mut WindowContext,
     ) {
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -155,6 +155,9 @@ impl InlineAssistant {
                     self.prompt_history.clone(),
                     prompt_buffer.clone(),
                     codegen.clone(),
+                    editor,
+                    assistant_panel,
+                    workspace.clone(),
                     self.fs.clone(),
                     cx,
                 )
@@ -212,7 +215,7 @@ impl InlineAssistant {
                 InlineAssist::new(
                     assist_id,
                     assist_group_id,
-                    include_context,
+                    assistant_panel.is_some(),
                     editor,
                     &prompt_editor,
                     block_ids[0],
@@ -710,8 +713,6 @@ impl InlineAssistant {
             return;
         }
 
-        assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
-
         let Some(user_prompt) = assist
             .decorations
             .as_ref()
@@ -720,115 +721,138 @@ impl InlineAssistant {
             return;
         };
 
-        let context = if assist.include_context {
-            assist.workspace.as_ref().and_then(|workspace| {
-                let workspace = workspace.upgrade()?.read(cx);
-                let assistant_panel = workspace.panel::<AssistantPanel>(cx)?;
-                assistant_panel.read(cx).active_context(cx)
-            })
-        } else {
-            None
-        };
-
-        let editor = if let Some(editor) = assist.editor.upgrade() {
-            editor
-        } else {
-            return;
-        };
-
-        let project_name = assist.workspace.as_ref().and_then(|workspace| {
-            let workspace = workspace.upgrade()?;
-            Some(
-                workspace
-                    .read(cx)
-                    .project()
-                    .read(cx)
-                    .worktree_root_names(cx)
-                    .collect::<Vec<&str>>()
-                    .join("/"),
-            )
-        });
-
         self.prompt_history.retain(|prompt| *prompt != user_prompt);
         self.prompt_history.push_back(user_prompt.clone());
         if self.prompt_history.len() > PROMPT_HISTORY_MAX_LEN {
             self.prompt_history.pop_front();
         }
 
+        assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
         let codegen = assist.codegen.clone();
-        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-        let range = codegen.read(cx).range.clone();
-        let start = snapshot.point_to_buffer_offset(range.start);
-        let end = snapshot.point_to_buffer_offset(range.end);
-        let (buffer, range) = if let Some((start, end)) = start.zip(end) {
-            let (start_buffer, start_buffer_offset) = start;
-            let (end_buffer, end_buffer_offset) = end;
-            if start_buffer.remote_id() == end_buffer.remote_id() {
-                (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
-            } else {
-                self.finish_assist(assist_id, false, cx);
-                return;
-            }
-        } else {
-            self.finish_assist(assist_id, false, cx);
-            return;
-        };
-
-        let language = buffer.language_at(range.start);
-        let language_name = if let Some(language) = language.as_ref() {
-            if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
-                None
-            } else {
-                Some(language.name())
-            }
-        } else {
-            None
-        };
-
-        // Higher Temperature increases the randomness of model outputs.
-        // If Markdown or No Language is Known, increase the randomness for more creative output
-        // If Code, decrease temperature to get more deterministic outputs
-        let temperature = if let Some(language) = language_name.clone() {
-            if language.as_ref() == "Markdown" {
-                1.0
-            } else {
-                0.5
-            }
-        } else {
-            1.0
-        };
-
-        let prompt = cx.background_executor().spawn(async move {
-            let language_name = language_name.as_deref();
-            generate_content_prompt(user_prompt, language_name, buffer, range, project_name)
-        });
-
-        let mut messages = Vec::new();
-        if let Some(context) = context {
-            let request = context.read(cx).to_completion_request(cx);
-            messages = request.messages;
-        }
-        let model = CompletionProvider::global(cx).model();
+        let request = self.request_for_inline_assist(assist_id, cx);
 
         cx.spawn(|mut cx| async move {
-            let prompt = prompt.await?;
+            let request = request.await?;
+            codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx))?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn request_for_inline_assist(
+        &self,
+        assist_id: InlineAssistId,
+        cx: &mut WindowContext,
+    ) -> Task<Result<LanguageModelRequest>> {
+        cx.spawn(|mut cx| async move {
+            let (user_prompt, context_request, project_name, buffer, range, model) = cx
+                .read_global(|this: &InlineAssistant, cx: &WindowContext| {
+                    let assist = this.assists.get(&assist_id).context("invalid assist")?;
+                    let decorations = assist.decorations.as_ref().context("invalid assist")?;
+                    let editor = assist.editor.upgrade().context("invalid assist")?;
+                    let user_prompt = decorations.prompt_editor.read(cx).prompt(cx);
+                    let context_request = if assist.include_context {
+                        assist.workspace.as_ref().and_then(|workspace| {
+                            let workspace = workspace.upgrade()?.read(cx);
+                            let assistant_panel = workspace.panel::<AssistantPanel>(cx)?;
+                            Some(
+                                assistant_panel
+                                    .read(cx)
+                                    .active_context(cx)?
+                                    .read(cx)
+                                    .to_completion_request(cx),
+                            )
+                        })
+                    } else {
+                        None
+                    };
+                    let project_name = assist.workspace.as_ref().and_then(|workspace| {
+                        let workspace = workspace.upgrade()?;
+                        Some(
+                            workspace
+                                .read(cx)
+                                .project()
+                                .read(cx)
+                                .worktree_root_names(cx)
+                                .collect::<Vec<&str>>()
+                                .join("/"),
+                        )
+                    });
+                    let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+                    let range = assist.codegen.read(cx).range.clone();
+                    let model = CompletionProvider::global(cx).model();
+                    anyhow::Ok((
+                        user_prompt,
+                        context_request,
+                        project_name,
+                        buffer,
+                        range,
+                        model,
+                    ))
+                })??;
+
+            let language = buffer.language_at(range.start);
+            let language_name = if let Some(language) = language.as_ref() {
+                if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
+                    None
+                } else {
+                    Some(language.name())
+                }
+            } else {
+                None
+            };
+
+            // Higher Temperature increases the randomness of model outputs.
+            // If Markdown or No Language is Known, increase the randomness for more creative output
+            // If Code, decrease temperature to get more deterministic outputs
+            let temperature = if let Some(language) = language_name.clone() {
+                if language.as_ref() == "Markdown" {
+                    1.0
+                } else {
+                    0.5
+                }
+            } else {
+                1.0
+            };
+
+            let prompt = cx
+                .background_executor()
+                .spawn(async move {
+                    let language_name = language_name.as_deref();
+                    let start = buffer.point_to_buffer_offset(range.start);
+                    let end = buffer.point_to_buffer_offset(range.end);
+                    let (buffer, range) = if let Some((start, end)) = start.zip(end) {
+                        let (start_buffer, start_buffer_offset) = start;
+                        let (end_buffer, end_buffer_offset) = end;
+                        if start_buffer.remote_id() == end_buffer.remote_id() {
+                            (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
+                        } else {
+                            return Err(anyhow!("invalid transformation range"));
+                        }
+                    } else {
+                        return Err(anyhow!("invalid transformation range"));
+                    };
+                    generate_content_prompt(user_prompt, language_name, buffer, range, project_name)
+                })
+                .await?;
+
+            let mut messages = Vec::new();
+            if let Some(context_request) = context_request {
+                messages = context_request.messages;
+            }
 
             messages.push(LanguageModelRequestMessage {
                 role: Role::User,
                 content: prompt,
             });
 
-            let request = LanguageModelRequest {
+            Ok(LanguageModelRequest {
                 model,
                 messages,
                 stop: vec!["|END|>".to_string()],
                 temperature,
-            };
-
-            codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx))?;
-            anyhow::Ok(())
+            })
         })
-        .detach_and_log_err(cx);
     }
 
     fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
@@ -1157,6 +1181,10 @@ struct PromptEditor {
     codegen: Model<Codegen>,
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
+    pending_token_count: Task<Result<()>>,
+    token_count: Option<usize>,
+    _token_count_subscriptions: Vec<Subscription>,
+    workspace: Option<WeakView<Workspace>>,
 }
 
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
@@ -1337,8 +1365,13 @@ impl Render for PromptEditor {
                     ),
             )
             .child(div().flex_1().child(self.render_prompt_editor(cx)))
-            .child(self.render_token_count(cx))
-            .child(h_flex().gap_2().pr_4().children(buttons))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .pr_4()
+                    .children(self.render_token_count(cx))
+                    .children(buttons),
+            )
     }
 }
 
@@ -1357,6 +1390,9 @@ impl PromptEditor {
         prompt_history: VecDeque<String>,
         prompt_buffer: Model<MultiBuffer>,
         codegen: Model<Codegen>,
+        parent_editor: &View<Editor>,
+        assistant_panel: Option<&View<AssistantPanel>>,
+        workspace: Option<WeakView<Workspace>>,
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -1378,6 +1414,15 @@ impl PromptEditor {
             editor.set_placeholder_text("Add a prompt…", cx);
             editor
         });
+
+        let mut token_count_subscriptions = Vec::new();
+        token_count_subscriptions
+            .push(cx.subscribe(parent_editor, Self::handle_parent_editor_event));
+        if let Some(assistant_panel) = assistant_panel {
+            token_count_subscriptions
+                .push(cx.subscribe(assistant_panel, Self::handle_assistant_panel_event));
+        }
+
         let mut this = Self {
             id,
             height_in_lines: 1,
@@ -1391,8 +1436,13 @@ impl PromptEditor {
             editor_subscriptions: Vec::new(),
             codegen,
             fs,
+            pending_token_count: Task::ready(Ok(())),
+            token_count: None,
+            _token_count_subscriptions: token_count_subscriptions,
+            workspace,
         };
         this.count_lines(cx);
+        this.count_tokens(cx);
         this.subscribe_to_editor(cx);
         this
     }
@@ -1451,6 +1501,47 @@ impl PromptEditor {
         }
     }
 
+    fn handle_parent_editor_event(
+        &mut self,
+        _: View<Editor>,
+        event: &EditorEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let EditorEvent::BufferEdited { .. } = event {
+            self.count_tokens(cx);
+        }
+    }
+
+    fn handle_assistant_panel_event(
+        &mut self,
+        _: View<AssistantPanel>,
+        event: &AssistantPanelEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let AssistantPanelEvent::ContextEdited { .. } = event;
+        self.count_tokens(cx);
+    }
+
+    fn count_tokens(&mut self, cx: &mut ViewContext<Self>) {
+        let assist_id = self.id;
+        self.pending_token_count = cx.spawn(|this, mut cx| async move {
+            cx.background_executor().timer(Duration::from_secs(1)).await;
+            let request = cx
+                .update_global(|inline_assistant: &mut InlineAssistant, cx| {
+                    inline_assistant.request_for_inline_assist(assist_id, cx)
+                })?
+                .await?;
+
+            let token_count = cx
+                .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
+                .await?;
+            this.update(&mut cx, |this, cx| {
+                this.token_count = Some(token_count);
+                cx.notify();
+            })
+        })
+    }
+
     fn handle_prompt_editor_changed(&mut self, _: View<Editor>, cx: &mut ViewContext<Self>) {
         self.count_lines(cx);
     }
@@ -1473,6 +1564,7 @@ impl PromptEditor {
                 }
 
                 self.edited_since_done = true;
+                self.count_tokens(cx);
                 cx.notify();
             }
             _ => {}
@@ -1566,9 +1658,9 @@ impl PromptEditor {
         }
     }
 
-    fn render_token_count(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let model = CompletionProvider::global(cx).model();
-        let token_count = context.read(cx).token_count()?;
+        let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
         let remaining_tokens = max_token_count as isize - token_count as isize;
@@ -1580,21 +1672,47 @@ impl PromptEditor {
             Color::Muted
         };
 
-        Some(
-            h_flex()
-                .gap_0p5()
-                .child(
-                    Label::new(humanize_token_count(token_count))
-                        .size(LabelSize::Small)
-                        .color(token_count_color),
-                )
-                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
-                .child(
-                    Label::new(humanize_token_count(max_token_count))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
-        )
+        let mut token_count = h_flex()
+            .id("token_count")
+            .gap_0p5()
+            .child(
+                Label::new(humanize_token_count(token_count))
+                    .size(LabelSize::Small)
+                    .color(token_count_color),
+            )
+            .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+            .child(
+                Label::new(humanize_token_count(max_token_count))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            );
+        if let Some(workspace) = self.workspace.clone() {
+            token_count = token_count
+                .tooltip(|cx| {
+                    Tooltip::with_meta(
+                        "Tokens Used by Inline Assistant",
+                        None,
+                        "Click to Open Assistant Panel",
+                        cx,
+                    )
+                })
+                .cursor_pointer()
+                .on_mouse_down(gpui::MouseButton::Left, |_, cx| cx.stop_propagation())
+                .on_click(move |_, cx| {
+                    cx.stop_propagation();
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.focus_panel::<AssistantPanel>(cx)
+                        })
+                        .ok();
+                });
+        } else {
+            token_count = token_count
+                .cursor_default()
+                .tooltip(|cx| Tooltip::text("Tokens Used by Inline Assistant", cx));
+        }
+
+        Some(token_count)
     }
 
     fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
