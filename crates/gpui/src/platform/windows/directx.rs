@@ -75,7 +75,6 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn draw(&mut self, scene: &Scene) {
-        // TODO:
         unsafe {
             self.context.context.ClearRenderTargetView(
                 self.context.back_buffer.as_ref().unwrap(),
@@ -164,6 +163,7 @@ impl DirectXRenderer {
         }
     }
 
+    // TODO:
     fn draw_shadows(&mut self, shadows: &[Shadow]) -> bool {
         if shadows.is_empty() {
             return true;
@@ -171,6 +171,7 @@ impl DirectXRenderer {
         true
     }
 
+    // TODO:
     fn draw_quads(&mut self, quads: &[Quad]) -> bool {
         if quads.is_empty() {
             return true;
@@ -178,6 +179,7 @@ impl DirectXRenderer {
         true
     }
 
+    // TODO:
     fn draw_paths(&mut self, paths: &[Path<ScaledPixels>]) -> bool {
         if paths.is_empty() {
             return true;
@@ -185,6 +187,7 @@ impl DirectXRenderer {
         true
     }
 
+    // TODO:
     fn draw_underlines(&mut self, underlines: &[Underline]) -> bool {
         if underlines.is_empty() {
             return true;
@@ -192,6 +195,7 @@ impl DirectXRenderer {
         true
     }
 
+    // TODO:
     fn draw_monochrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
@@ -203,6 +207,7 @@ impl DirectXRenderer {
         true
     }
 
+    // TODO:
     fn draw_polychrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
@@ -214,6 +219,7 @@ impl DirectXRenderer {
         true
     }
 
+    // TODO:
     fn draw_surfaces(&mut self, surfaces: &[Surface]) -> bool {
         if surfaces.is_empty() {
             return true;
