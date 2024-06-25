@@ -777,6 +777,12 @@ impl BufferSearchBar {
                     .get(&searchable_item.downgrade())
                     .filter(|matches| !matches.is_empty())
                 {
+                    if matches.len() == index + 1 && direction == Direction::Next {
+                        return;
+                    }
+                    if index == 0 && direction == Direction::Prev {
+                        return;
+                    }
                     let new_match_index = searchable_item
                         .match_index_for_direction(matches, index, direction, count, cx);
 
