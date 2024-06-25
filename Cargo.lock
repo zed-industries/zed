@@ -3203,6 +3203,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "smol",
  "util",
 ]

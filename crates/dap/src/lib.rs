@@ -1,5 +1,5 @@
 pub mod client;
-pub mod configh_templates;
+pub mod config_templates;
 pub mod events;
 pub mod requests;
 pub mod responses;
