@@ -1170,7 +1170,6 @@ pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
     if mode.dot_clock == 0 || mode.htotal == 0 || mode.vtotal == 0 {
         return Duration::from_millis(16);
     }
-
     let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
     let micros = 1_000_000_000 / millihertz;
     log::info!("Refreshing at {} micros", micros);
