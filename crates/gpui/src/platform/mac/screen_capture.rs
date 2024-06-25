@@ -214,17 +214,21 @@ extern "C" fn stream_did_output_sample_buffer_of_type(
     this: &Object,
     _: Sel,
     _stream: id,
-    sample_buffer: id,      // CMSampleBuffer
-    buffer_type: NSInteger, // SCStreamOutputType (either .screen or .audio)
+    sample_buffer: id,
+    buffer_type: NSInteger,
 ) {
-    eprintln!("did output sample buffer");
+    if buffer_type != SCStreamOutputTypeScreen {
+        return;
+    }
+
     unsafe {
-        let callback: Box<Box<dyn Fn(ScreenCaptureFrame)>> =
-            Box::from_raw(*this.get_ivar::<*mut c_void>(FRAME_CALLBACK_IVAR) as *mut _);
         let sample_buffer = sample_buffer as CMSampleBufferRef;
         let sample_buffer = CMSampleBuffer::wrap_under_get_rule(sample_buffer);
-        let buffer = sample_buffer.image_buffer();
-        callback(ScreenCaptureFrame(buffer));
-        mem::forget(callback);
+        if let Some(buffer) = sample_buffer.image_buffer() {
+            let callback: Box<Box<dyn Fn(ScreenCaptureFrame)>> =
+                Box::from_raw(*this.get_ivar::<*mut c_void>(FRAME_CALLBACK_IVAR) as *mut _);
+            callback(ScreenCaptureFrame(buffer));
+            mem::forget(callback);
+        }
     }
 }

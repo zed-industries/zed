@@ -1,6 +1,8 @@
 use super::*;
 use webrtc::{audio_source::RtcAudioSource, video_source::RtcVideoSource};
 
+pub use livekit::track::{TrackKind, TrackSource};
+
 #[derive(Clone, Debug)]
 pub enum LocalTrack {
     Audio(LocalAudioTrack),

@@ -6,16 +6,15 @@ use gpui::{
 };
 use live_kit_client::{
     capture_local_audio_track, capture_local_video_track,
-    id::TrackSid,
+    id::{ParticipantIdentity, TrackSid},
     options::TrackPublishOptions,
     participant::{Participant, RemoteParticipant},
     play_remote_audio_track,
     publication::LocalTrackPublication,
-    track::{LocalTrack, RemoteTrack},
+    track::{LocalTrack, RemoteTrack, TrackSource},
     AudioStream, RemoteVideoTrackView, Room, RoomEvent, RoomOptions,
 };
 use live_kit_server::token::{self, VideoGrant};
-use livekit::id::ParticipantIdentity;
 use log::LevelFilter;
 use postage::stream::Stream as _;
 use simplelog::SimpleLogger;
@@ -247,7 +246,13 @@ impl LivekitWindow {
             cx.spawn(|this, mut cx| async move {
                 let (track, stream) = cx.update(|cx| capture_local_audio_track(cx))??;
                 let publication = participant
-                    .publish_track(LocalTrack::Audio(track), TrackPublishOptions::default())
+                    .publish_track(
+                        LocalTrack::Audio(track),
+                        TrackPublishOptions {
+                            source: TrackSource::Microphone,
+                            ..Default::default()
+                        },
+                    )
                     .await
                     .unwrap();
                 this.update(&mut cx, |this, cx| {
@@ -278,8 +283,15 @@ impl LivekitWindow {
                 let source = sources.into_iter().next().unwrap();
                 let (track, stream) = capture_local_video_track(&*source).await?;
                 let publication = participant
-                    .publish_track(LocalTrack::Video(track), TrackPublishOptions::default())
-                    .await?;
+                    .publish_track(
+                        LocalTrack::Video(track),
+                        TrackPublishOptions {
+                            source: TrackSource::Screenshare,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .unwrap();
                 this.update(&mut cx, |this, cx| {
                     this.screen_share_track = Some(publication);
                     this.screen_share_stream = Some(stream);
@@ -295,7 +307,7 @@ impl Render for LivekitWindow {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         fn button() -> gpui::Div {
             div()
-                .w(px(120.0))
+                .w(px(180.0))
                 .h(px(30.0))
                 .px_2()
                 .m_2()
@@ -340,8 +352,9 @@ impl Render for LivekitWindow {
                     .flex_grow()
                     .children(self.remote_participants.iter().map(|(identity, state)| {
                         div()
-                            .w_full()
                             .h(px(300.0))
+                            .flex()
+                            .flex_col()
                             .m_2()
                             .px_2()
                             .bg(rgb(0x8888ff))
@@ -352,7 +365,13 @@ impl Render for LivekitWindow {
                             } else {
                                 identity.0.clone()
                             }))
-                            .children(state.screen_share_output_view.as_ref().map(|e| e.1.clone()))
+                            .children(state.screen_share_output_view.as_ref().map(|e| {
+                                div()
+                                    .flex()
+                                    .flex_grow()
+                                    .bg(rgb(0xff0000))
+                                    .child(e.1.clone())
+                            }))
                     })),
             )
     }

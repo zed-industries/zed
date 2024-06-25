@@ -3,12 +3,15 @@ mod remote_video_track_view;
 pub mod test;
 
 use anyhow::Result;
+use core_foundation::base::TCFType;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait as _},
     StreamConfig,
 };
 use futures::{Stream, StreamExt as _};
 use gpui::{AppContext, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task};
+use livekit::webrtc::video_frame::{I420Buffer, VideoBuffer};
+use media::core_video::{CVImageBuffer, CVImageBufferRef};
 use parking_lot::Mutex;
 use std::{borrow::Cow, sync::Arc};
 use webrtc::{
@@ -51,15 +54,20 @@ pub async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
     let track_source = NativeVideoSource::new(VideoResolution {
-        width: 1,
-        height: 1,
+        width: 1920,
+        height: 1080,
     });
 
     let capture_stream = capture_source
         .stream({
             let track_source = track_source.clone();
             Box::new(move |frame| {
-                let buffer: NativeBuffer = frame.0.into();
+                let buffer = unsafe {
+                    let frame_ptr = frame.0.as_concrete_TypeRef() as *mut std::ffi::c_void;
+                    std::mem::forget(frame.0);
+                    NativeBuffer::from_cv_pixel_buffer(frame_ptr)
+                };
+
                 track_source.capture_frame(&VideoFrame {
                     rotation: VideoRotation::VideoRotation0,
                     timestamp_us: 0,
@@ -230,13 +238,22 @@ pub fn play_remote_audio_track(
 pub fn play_remote_video_track(
     track: &track::RemoteVideoTrack,
 ) -> impl Stream<Item = ScreenCaptureFrame> {
-    NativeVideoStream::new(track.rtc_track()).filter_map(|video_frame| async move {
-        dbg!(
-            video_frame.buffer.width(),
-            video_frame.buffer.height(),
-            video_frame.buffer.buffer_type()
-        );
-        let native_buffer = video_frame.buffer.as_native()?;
-        None
+    NativeVideoStream::new(track.rtc_track()).filter_map(|frame| async move {
+        let buffer = if let Some(buffer) = frame.buffer.as_native() {
+            buffer
+        } else {
+            return None;
+        };
+
+        unsafe {
+            let buffer = buffer.get_cv_pixel_buffer() as *mut _ as CVImageBufferRef;
+            if buffer.is_null() {
+                None
+            } else {
+                Some(ScreenCaptureFrame(CVImageBuffer::wrap_under_get_rule(
+                    buffer,
+                )))
+            }
+        }
     })
 }

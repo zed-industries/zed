@@ -2,8 +2,8 @@ use crate::track::RemoteVideoTrack;
 use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{
-    div, img, EventEmitter, IntoElement, ParentElement, Render, ScreenCaptureFrame, Styled, Task,
-    View, ViewContext, VisualContext as _,
+    img, Empty, EventEmitter, IntoElement, Render, ScreenCaptureFrame, Styled, Task, View,
+    ViewContext, VisualContext as _,
 };
 
 pub struct RemoteVideoTrackView {
@@ -47,8 +47,10 @@ impl EventEmitter<RemoteVideoTrackViewEvent> for RemoteVideoTrackView {}
 
 impl Render for RemoteVideoTrackView {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .children(self.frame.as_ref().map(|frame| img(frame.0.clone())))
+        if let Some(frame) = &self.frame {
+            img(frame.0.clone()).size_full().into_any_element()
+        } else {
+            Empty.into_any_element()
+        }
     }
 }
