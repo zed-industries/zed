@@ -4,8 +4,8 @@ use parking_lot::Mutex;
 use windows::Win32::Graphics::{
     Direct3D11::{
         ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D, D3D11_BIND_RENDER_TARGET,
-        D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_CPU_ACCESS_WRITE, D3D11_TEXTURE2D_DESC,
-        D3D11_USAGE_DYNAMIC,
+        D3D11_BIND_SHADER_RESOURCE, D3D11_CPU_ACCESS_WRITE, D3D11_MAP_WRITE_DISCARD,
+        D3D11_TEXTURE2D_DESC, D3D11_USAGE_DYNAMIC,
     },
     Dxgi::Common::{
         DXGI_FORMAT_A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16_FLOAT, DXGI_SAMPLE_DESC,
@@ -228,24 +228,37 @@ impl DirectXAtlasTexture {
         bounds: Bounds<DevicePixels>,
         bytes: &[u8],
     ) {
-        let dest_box = D3D11_BOX {
-            left: bounds.left().0 as u32,
-            top: bounds.top().0 as u32,
-            front: 0,
-            right: bounds.right().0 as u32,
-            bottom: bounds.bottom().0 as u32,
-            back: 1,
-        };
         unsafe {
-            device_context.UpdateSubresource(
-                &self.texture,
-                0,
-                Some(&dest_box),
-                bytes.as_ptr() as _,
-                bounds.size.width.to_bytes(self.bytes_per_pixel as u8),
-                bounds.size.width.to_bytes(self.bytes_per_pixel as u8)
-                    * bounds.size.height.0 as u32,
-            );
+            let mut raw_data = std::mem::zeroed();
+            // TODO: D3D11_MAP_WRITE ?
+            device_context
+                .Map(
+                    &self.texture,
+                    0,
+                    D3D11_MAP_WRITE_DISCARD,
+                    0,
+                    Some(&mut raw_data),
+                )
+                .unwrap();
+            let count = bounds.size.width.to_bytes(self.bytes_per_pixel as u8) as usize;
+            let row_pitch = raw_data.RowPitch as usize;
+            let offset = bounds.top().0 as usize * row_pitch
+                + bounds.left().to_bytes(self.bytes_per_pixel as u8) as usize;
+            let mut start = (raw_data.pData as *mut u8).add(offset);
+            for _ in 0..bounds.size.height.0 as usize {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), start, count);
+                start = start.add(row_pitch);
+            }
+            device_context.Unmap(&self.texture, 0);
+            // device_context.UpdateSubresource(
+            //     &self.texture,
+            //     0,
+            //     Some(&dest_box),
+            //     bytes.as_ptr() as _,
+            //     bounds.size.width.to_bytes(self.bytes_per_pixel as u8),
+            //     bounds.size.width.to_bytes(self.bytes_per_pixel as u8)
+            //         * bounds.size.height.0 as u32,
+            // );
         }
     }
 }
