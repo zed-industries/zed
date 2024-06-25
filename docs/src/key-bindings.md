@@ -50,12 +50,12 @@ Zed has the ability to match against not just a single keypress, but a sequence 
 Each key press is a sequence of modifiers followed by a key. The modifiers are:
 
 - `ctrl-` The control key
-- `cmd-` On macOS, this is the command key
-- `alt-` On macOS, this is the option key
+* `cmd-`, `win-` or `super-` for the platform modifier (Command on macOS, Windows key on Windows, and the Super key on Linux).
+- `alt-` for alt (option on macOS)
 - `shift-` The shift key
 - `fn-` The function key
 
-The keys can be any single unicode codepoint that your keyboard generates (for example `a`, `0`, `£` or `ç`).
+The keys can be any single unicode codepoint that your keyboard generates (for example `a`, `0`, `£` or `ç`), or any named key (`tab`, `f1`, `shift`, or `cmd`).
 
 A few examples:
 
@@ -64,10 +64,15 @@ A few examples:
    "cmd-k cmd-s": "zed::OpenKeymap", // matches ⌘-k then ⌘-s
    "space e": "editor::Complete", // type space then e
    "ç": "editor::Complete", // matches ⌥-c
+   "shift shift": "file_finder::Toggle", // matches pressing and releasing shift twice
  }
 ```
 
-NOTE: Keys on a keyboard are not always the same as the character they generate. For example `shift-e` actually types `E` (or `alt-c` types `ç`). Zed allows you to match against either the key and its modifiers or the character it generates. This means you can specify `alt-c` or `ç`, but not `alt-ç`. It is usually better to specify the key and its modifiers, as this will work better on different keyboard layouts.
+The `shift-` modifier can only be used in combination with a letter to indicate the uppercase version. For example `shift-g` matches typing `G`. Although on many keyboards shift is used to type punctuation characters like `(`, the keypress is not considered to be modified and so `shift-(` does not match.
+
+The `alt-` modifier can be used on many layouts to generate a different key. For example on macOS US keyboard the combination `alt-c` types `ç`. You can match against either in your keymap file, though by convention Zed spells this combination as `alt-c`.
+
+It is possible to match against typing a modifier key on its own. For example `shift shift` can be used to implement JetBrains search everywhere shortcut. In this case the binding happens on key release instead of key press.
 
 ### Remapping keys
 

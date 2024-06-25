@@ -549,6 +549,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    pending_modifiers: Option<Modifiers>,
     pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
 }
@@ -823,6 +824,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            pending_modifiers: None,
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
         })
@@ -3161,70 +3163,129 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
+        let mut bindings: SmallVec<[KeyBinding; 1]> = SmallVec::new();
+        let mut pending = false;
+        let mut keystroke: Option<Keystroke> = None;
+
+        if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            if let Some(previous) = self.window.pending_modifiers.take() {
+                if event.modifiers.number_of_modifiers() == 0 {
+                    let key = match previous {
+                        modifiers if modifiers.shift => Some("shift"),
+                        modifiers if modifiers.control => Some("control"),
+                        modifiers if modifiers.alt => Some("alt"),
+                        modifiers if modifiers.platform => Some("platform"),
+                        modifiers if modifiers.function => Some("function"),
+                        _ => None,
+                    };
+                    if let Some(key) = key {
+                        let key = Keystroke {
+                            key: key.to_string(),
+                            ime_key: None,
+                            modifiers: Modifiers::default(),
+                        };
+                        let KeymatchResult {
+                            bindings: modifier_bindings,
+                            pending: pending_bindings,
+                        } = self
+                            .window
+                            .rendered_frame
+                            .dispatch_tree
+                            .dispatch_key(&key, &dispatch_path);
+
+                        keystroke = Some(key);
+                        bindings = modifier_bindings;
+                        pending = pending_bindings;
+                    }
+                }
+            } else if event.modifiers.number_of_modifiers() == 1 {
+                self.window.pending_modifiers = Some(event.modifiers);
+            }
+            if keystroke.is_none() {
+                self.finish_dispatch_key_event(event, dispatch_path);
+                return;
+            }
+        }
+
         if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-            let KeymatchResult { bindings, pending } = self
+            self.window.pending_modifiers.take();
+            let KeymatchResult {
+                bindings: key_down_bindings,
+                pending: key_down_pending,
+            } = self
                 .window
                 .rendered_frame
                 .dispatch_tree
                 .dispatch_key(&key_down_event.keystroke, &dispatch_path);
 
-            if pending {
-                let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
-                if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus
-                {
-                    currently_pending = PendingInput::default();
-                }
-                currently_pending.focus = self.window.focus;
-                currently_pending
-                    .keystrokes
-                    .push(key_down_event.keystroke.clone());
-                for binding in bindings {
-                    currently_pending.bindings.push(binding);
-                }
+            keystroke = Some(key_down_event.keystroke.clone());
 
-                currently_pending.timer = Some(self.spawn(|mut cx| async move {
-                    cx.background_executor.timer(Duration::from_secs(1)).await;
-                    cx.update(move |cx| {
-                        cx.clear_pending_keystrokes();
-                        let Some(currently_pending) = cx.window.pending_input.take() else {
-                            return;
-                        };
-                        cx.pending_input_changed();
-                        cx.replay_pending_input(currently_pending);
-                    })
-                    .log_err();
-                }));
+            bindings = key_down_bindings;
+            pending = key_down_pending;
+        }
 
-                self.window.pending_input = Some(currently_pending);
-                self.pending_input_changed();
-
-                self.propagate_event = false;
-
-                return;
-            } else if let Some(currently_pending) = self.window.pending_input.take() {
-                self.pending_input_changed();
-                if bindings
-                    .iter()
-                    .all(|binding| !currently_pending.used_by_binding(binding))
-                {
-                    self.replay_pending_input(currently_pending)
-                }
+        if pending {
+            let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
+            if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus {
+                currently_pending = PendingInput::default();
             }
-
-            if !bindings.is_empty() {
-                self.clear_pending_keystrokes();
+            currently_pending.focus = self.window.focus;
+            if let Some(keystroke) = keystroke {
+                currently_pending.keystrokes.push(keystroke.clone());
             }
-
-            self.propagate_event = true;
             for binding in bindings {
-                self.dispatch_action_on_node(node_id, binding.action.as_ref());
-                if !self.propagate_event {
-                    self.dispatch_keystroke_observers(event, Some(binding.action));
-                    return;
-                }
+                currently_pending.bindings.push(binding);
+            }
+
+            currently_pending.timer = Some(self.spawn(|mut cx| async move {
+                cx.background_executor.timer(Duration::from_secs(1)).await;
+                cx.update(move |cx| {
+                    cx.clear_pending_keystrokes();
+                    let Some(currently_pending) = cx.window.pending_input.take() else {
+                        return;
+                    };
+                    cx.replay_pending_input(currently_pending);
+                    cx.pending_input_changed();
+                })
+                .log_err();
+            }));
+
+            self.window.pending_input = Some(currently_pending);
+            self.pending_input_changed();
+
+            self.propagate_event = false;
+            return;
+        } else if let Some(currently_pending) = self.window.pending_input.take() {
+            self.pending_input_changed();
+            if bindings
+                .iter()
+                .all(|binding| !currently_pending.used_by_binding(binding))
+            {
+                self.replay_pending_input(currently_pending)
             }
         }
 
+        if !bindings.is_empty() {
+            self.clear_pending_keystrokes();
+        }
+
+        self.propagate_event = true;
+        for binding in bindings {
+            self.dispatch_action_on_node(node_id, binding.action.as_ref());
+            if !self.propagate_event {
+                self.dispatch_keystroke_observers(event, Some(binding.action));
+                return;
+            }
+        }
+
+        self.finish_dispatch_key_event(event, dispatch_path)
+    }
+
+    fn finish_dispatch_key_event(
+        &mut self,
+        event: &dyn Any,
+        dispatch_path: SmallVec<[DispatchNodeId; 32]>,
+    ) {
         self.dispatch_key_down_up_event(event, &dispatch_path);
         if !self.propagate_event {
             return;
