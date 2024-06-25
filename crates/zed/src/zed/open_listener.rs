@@ -247,7 +247,7 @@ pub async fn handle_cli_connection(
                         Err(error) => {
                             responses
                                 .send(CliResponse::Stderr {
-                                    message: format!("{}", error),
+                                    message: format!("{error}"),
                                 })
                                 .log_err();
                             responses.send(CliResponse::Exit { status: 1 }).log_err();
@@ -263,7 +263,7 @@ pub async fn handle_cli_connection(
                 {
                     responses
                         .send(CliResponse::Stderr {
-                            message: format!("{}", e),
+                            message: format!("{e}"),
                         })
                         .log_err();
                     responses.send(CliResponse::Exit { status: 1 }).log_err();
@@ -342,10 +342,7 @@ pub async fn handle_cli_connection(
                                     Some(Err(err)) => {
                                         responses
                                             .send(CliResponse::Stderr {
-                                                message: format!(
-                                                    "error opening {:?}: {}",
-                                                    path, err
-                                                ),
+                                                message: format!("error opening {path:?}: {err}"),
                                             })
                                             .log_err();
                                         errored = true;
@@ -392,7 +389,7 @@ pub async fn handle_cli_connection(
                             errored = true;
                             responses
                                 .send(CliResponse::Stderr {
-                                    message: format!("error opening {:?}: {}", paths, error),
+                                    message: format!("error opening {paths:?}: {error}"),
                                 })
                                 .log_err();
                         }
