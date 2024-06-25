@@ -287,7 +287,10 @@ impl EditorState {
                 .unwrap_or_else(|| "none"),
         );
 
-        if self.mode == Mode::Replace {
+        if self.mode == Mode::Replace
+            || (matches!(active_operator, Some(Operator::AddSurrounds { .. }))
+                && self.mode.is_visual())
+        {
             context.add("VimWaiting");
         }
         context

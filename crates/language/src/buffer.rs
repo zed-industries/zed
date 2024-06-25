@@ -103,14 +103,10 @@ pub struct Buffer {
     sync_parse_timeout: Duration,
     syntax_map: Mutex<SyntaxMap>,
     parsing_in_background: bool,
-    parse_count: usize,
+    non_text_state_update_count: usize,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
-    selections_update_count: usize,
-    diagnostics_update_count: usize,
     diagnostics_timestamp: clock::Lamport,
-    file_update_count: usize,
-    git_diff_update_count: usize,
     completion_triggers: Vec<String>,
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
@@ -127,13 +123,9 @@ pub struct BufferSnapshot {
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
-    diagnostics_update_count: usize,
-    file_update_count: usize,
-    git_diff_update_count: usize,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
-    selections_update_count: usize,
     language: Option<Arc<Language>>,
-    parse_count: usize,
+    non_text_state_update_count: usize,
 }
 
 /// The kind and amount of indentation in a particular line. For now,
@@ -711,18 +703,14 @@ impl Buffer {
             capability,
             syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,
-            parse_count: 0,
+            non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
             remote_selections: Default::default(),
-            selections_update_count: 0,
             diagnostics: Default::default(),
-            diagnostics_update_count: 0,
             diagnostics_timestamp: Default::default(),
-            file_update_count: 0,
-            git_diff_update_count: 0,
             completion_triggers: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
@@ -745,12 +733,8 @@ impl Buffer {
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
-            diagnostics_update_count: self.diagnostics_update_count,
-            file_update_count: self.file_update_count,
-            git_diff_update_count: self.git_diff_update_count,
             language: self.language.clone(),
-            parse_count: self.parse_count,
-            selections_update_count: self.selections_update_count,
+            non_text_state_update_count: self.non_text_state_update_count,
         }
     }
 
@@ -782,7 +766,7 @@ impl Buffer {
 
     /// Assign a language to the buffer.
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
-        self.parse_count += 1;
+        self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear();
         self.language = language;
         self.reparse(cx);
@@ -915,7 +899,7 @@ impl Buffer {
 
         self.file = Some(new_file);
         if file_changed {
-            self.file_update_count += 1;
+            self.non_text_state_update_count += 1;
             cx.emit(Event::FileHandleChanged);
             cx.notify();
         }
@@ -969,7 +953,7 @@ impl Buffer {
             let buffer_diff = diff.await;
             this.update(&mut cx, |this, cx| {
                 this.git_diff = buffer_diff;
-                this.git_diff_update_count += 1;
+                this.non_text_state_update_count += 1;
                 cx.emit(Event::DiffUpdated);
             })
             .ok();
@@ -992,29 +976,10 @@ impl Buffer {
             .or_else(|| self.language.clone())
     }
 
-    /// The number of times the buffer was parsed.
-    pub fn parse_count(&self) -> usize {
-        self.parse_count
-    }
-
-    /// The number of times selections were updated.
-    pub fn selections_update_count(&self) -> usize {
-        self.selections_update_count
-    }
-
-    /// The number of times diagnostics were updated.
-    pub fn diagnostics_update_count(&self) -> usize {
-        self.diagnostics_update_count
-    }
-
-    /// The number of times the underlying file was updated.
-    pub fn file_update_count(&self) -> usize {
-        self.file_update_count
-    }
-
-    /// The number of times the git diff status was updated.
-    pub fn git_diff_update_count(&self) -> usize {
-        self.git_diff_update_count
+    /// An integer version number that accounts for all updates besides
+    /// the buffer's text itself (which is versioned via a version vector).
+    pub fn non_text_state_update_count(&self) -> usize {
+        self.non_text_state_update_count
     }
 
     /// Whether the buffer is being parsed in the background.
@@ -1124,7 +1089,7 @@ impl Buffer {
     }
 
     fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut ModelContext<Self>) {
-        self.parse_count += 1;
+        self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
         cx.emit(Event::Reparsed);
@@ -1701,7 +1666,7 @@ impl Buffer {
             },
             cx,
         );
-        self.selections_update_count += 1;
+        self.non_text_state_update_count += 1;
         cx.notify();
     }
 
@@ -1973,7 +1938,7 @@ impl Buffer {
                     },
                 );
                 self.text.lamport_clock.observe(lamport_timestamp);
-                self.selections_update_count += 1;
+                self.non_text_state_update_count += 1;
             }
             Operation::UpdateCompletionTriggers {
                 triggers,
@@ -2005,7 +1970,7 @@ impl Buffer {
                 };
             }
             self.diagnostics_timestamp = lamport_timestamp;
-            self.diagnostics_update_count += 1;
+            self.non_text_state_update_count += 1;
             self.text.lamport_clock.observe(lamport_timestamp);
             cx.notify();
             cx.emit(Event::DiagnosticsUpdated);
@@ -3523,19 +3488,10 @@ impl BufferSnapshot {
             .flat_map(move |(_, set)| set.group(group_id, self))
     }
 
-    /// The number of times diagnostics were updated.
-    pub fn diagnostics_update_count(&self) -> usize {
-        self.diagnostics_update_count
-    }
-
-    /// The number of times the buffer was parsed.
-    pub fn parse_count(&self) -> usize {
-        self.parse_count
-    }
-
-    /// The number of times selections were updated.
-    pub fn selections_update_count(&self) -> usize {
-        self.selections_update_count
+    /// An integer version number that accounts for all updates besides
+    /// the buffer's text itself (which is versioned via a version vector).
+    pub fn non_text_state_update_count(&self) -> usize {
+        self.non_text_state_update_count
     }
 
     /// Returns a snapshot of underlying file.
@@ -3554,16 +3510,6 @@ impl BufferSnapshot {
         } else {
             None
         }
-    }
-
-    /// The number of times the underlying file was updated.
-    pub fn file_update_count(&self) -> usize {
-        self.file_update_count
-    }
-
-    /// The number of times the git diff status was updated.
-    pub fn git_diff_update_count(&self) -> usize {
-        self.git_diff_update_count
     }
 }
 
@@ -3596,12 +3542,8 @@ impl Clone for BufferSnapshot {
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
-            selections_update_count: self.selections_update_count,
-            diagnostics_update_count: self.diagnostics_update_count,
-            file_update_count: self.file_update_count,
-            git_diff_update_count: self.git_diff_update_count,
             language: self.language.clone(),
-            parse_count: self.parse_count,
+            non_text_state_update_count: self.non_text_state_update_count,
         }
     }
 }

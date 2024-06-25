@@ -2564,14 +2564,47 @@ impl Editor {
             }
         }
 
-        self.change_selections(auto_scroll.then(|| Autoscroll::newest()), cx, |s| {
-            if !add {
-                s.clear_disjoint();
-            } else if click_count > 1 {
-                s.delete(newest_selection.id)
-            }
+        let point_to_delete: Option<usize> = {
+            let selected_points: Vec<Selection<Point>> =
+                self.selections.disjoint_in_range(start..end, cx);
 
-            s.set_pending_anchor_range(start..end, mode);
+            if !add || click_count > 1 {
+                None
+            } else if selected_points.len() > 0 {
+                Some(selected_points[0].id)
+            } else {
+                let clicked_point_already_selected =
+                    self.selections.disjoint.iter().find(|selection| {
+                        selection.start.to_point(buffer) == start.to_point(buffer)
+                            || selection.end.to_point(buffer) == end.to_point(buffer)
+                    });
+
+                if let Some(selection) = clicked_point_already_selected {
+                    Some(selection.id)
+                } else {
+                    None
+                }
+            }
+        };
+
+        let selections_count = self.selections.count();
+
+        self.change_selections(auto_scroll.then(|| Autoscroll::newest()), cx, |s| {
+            if let Some(point_to_delete) = point_to_delete {
+                s.delete(point_to_delete);
+
+                if selections_count == 1 {
+                    s.set_pending_anchor_range(start..end, mode);
+                }
+            } else {
+                if !add {
+                    s.clear_disjoint();
+                } else if click_count > 1 {
+                    s.delete(newest_selection.id)
+                }
+
+                s.set_pending_anchor_range(start..end, mode);
+            }
         });
     }
 
