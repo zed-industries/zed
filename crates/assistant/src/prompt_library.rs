@@ -474,11 +474,11 @@ impl PromptLibrary {
                             editor
                         });
                         let _subscriptions = vec![
-                            cx.subscribe(&title_editor, move |this, _editor, event, cx| {
-                                this.handle_prompt_title_editor_event(prompt_id, event, cx)
+                            cx.subscribe(&title_editor, move |this, editor, event, cx| {
+                                this.handle_prompt_title_editor_event(prompt_id, editor, event, cx)
                             }),
-                            cx.subscribe(&body_editor, move |this, _editor, event, cx| {
-                                this.handle_prompt_body_editor_event(prompt_id, event, cx)
+                            cx.subscribe(&body_editor, move |this, editor, event, cx| {
+                                this.handle_prompt_body_editor_event(prompt_id, editor, event, cx)
                             }),
                         ];
                         this.prompt_editors.insert(
@@ -626,23 +626,48 @@ impl PromptLibrary {
     fn handle_prompt_title_editor_event(
         &mut self,
         prompt_id: PromptId,
+        title_editor: View<Editor>,
         event: &EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let EditorEvent::BufferEdited = event {
-            self.save_prompt(prompt_id, cx);
+        match event {
+            EditorEvent::BufferEdited => {
+                self.save_prompt(prompt_id, cx);
+                self.count_tokens(prompt_id, cx);
+            }
+            EditorEvent::Blurred => {
+                title_editor.update(cx, |title_editor, cx| {
+                    title_editor.change_selections(None, cx, |selections| {
+                        let cursor = selections.oldest_anchor().head();
+                        selections.select_anchor_ranges([cursor..cursor]);
+                    });
+                });
+            }
+            _ => {}
         }
     }
 
     fn handle_prompt_body_editor_event(
         &mut self,
         prompt_id: PromptId,
+        body_editor: View<Editor>,
         event: &EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let EditorEvent::BufferEdited = event {
-            self.save_prompt(prompt_id, cx);
-            self.count_tokens(prompt_id, cx);
+        match event {
+            EditorEvent::BufferEdited => {
+                self.save_prompt(prompt_id, cx);
+                self.count_tokens(prompt_id, cx);
+            }
+            EditorEvent::Blurred => {
+                body_editor.update(cx, |body_editor, cx| {
+                    body_editor.change_selections(None, cx, |selections| {
+                        let cursor = selections.oldest_anchor().head();
+                        selections.select_anchor_ranges([cursor..cursor]);
+                    });
+                });
+            }
+            _ => {}
         }
     }
 
