@@ -671,7 +671,7 @@ impl LinuxClient for WaylandClient {
             return;
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-            state.clipboard.set_primary(items);
+            state.clipboard.set_primary(item);
             let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = primary_selection_manager.create_source(&state.globals.qh, ());
             data_source.offer(state.clipboard.self_mime());
