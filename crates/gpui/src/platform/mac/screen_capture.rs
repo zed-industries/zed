@@ -120,7 +120,7 @@ impl Drop for MacScreenCaptureStream {
     fn drop(&mut self) {
         unsafe {
             let mut error: id = nil;
-            let _: () = msg_send![self.sc_stream, removeStreamOutput:self.sc_stream_output error:&mut error as *mut _];
+            let _: () = msg_send![self.sc_stream, removeStreamOutput:self.sc_stream_output type:SCStreamOutputTypeScreen error:&mut error as *mut _];
             if error != nil {
                 let message: id = msg_send![error, localizedDescription];
                 log::error!("failed to add stream  output {message:?}");
