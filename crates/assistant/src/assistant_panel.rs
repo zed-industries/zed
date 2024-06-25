@@ -396,7 +396,12 @@ impl AssistantPanel {
                 }
                 InlineAssistTarget::Terminal(active_terminal) => {
                     TerminalInlineAssistant::update_global(cx, |assistant, cx| {
-                        assistant.assist(&active_terminal, Some(cx.view().downgrade()), cx)
+                        assistant.assist(
+                            &active_terminal,
+                            Some(cx.view().downgrade()),
+                            Some(&assistant_panel),
+                            cx,
+                        )
                     })
                 }
             }
@@ -425,7 +430,12 @@ impl AssistantPanel {
                         }
                         InlineAssistTarget::Terminal(active_terminal) => {
                             TerminalInlineAssistant::update_global(cx, |assistant, cx| {
-                                assistant.assist(&active_terminal, Some(workspace), cx)
+                                assistant.assist(
+                                    &active_terminal,
+                                    Some(workspace),
+                                    assistant_panel.upgrade().as_ref(),
+                                    cx,
+                                )
                             })
                         }
                     })?

@@ -290,7 +290,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     register_slash_commands(cx);
     assistant_panel::init(cx);
     inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
-    terminal_inline_assistant::init(client.telemetry().clone(), cx);
+    terminal_inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
     RustdocStore::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
