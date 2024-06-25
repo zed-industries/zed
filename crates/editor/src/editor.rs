@@ -2804,9 +2804,7 @@ impl Editor {
             return true;
         }
 
-        if self.signature_help_state.is_some() {
-            self.signature_help_state = None;
-            self.signature_help_task = None;
+        if self.hide_signature_help(cx) {
             return true;
         }
 
@@ -3925,6 +3923,17 @@ impl Editor {
         }))
     }
 
+    fn hide_signature_help(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if self.signature_help_state.is_some() {
+            self.signature_help_state = None;
+            self.signature_help_task = None;
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn show_signature_help(&mut self, _: &ShowSignatureHelp, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
@@ -3967,8 +3976,9 @@ impl Editor {
                 } else {
                     None
                 };
-            this.update(&mut cx, |editor, _| {
+            this.update(&mut cx, |editor, cx| {
                 editor.signature_help_state = maybe_signature_help_popover;
+                cx.notify();
             })
             .ok();
         }));
