@@ -55,7 +55,7 @@
       "up": "editor::MoveUp",
       "ctrl-up": "editor::LineUp",
       "ctrl-down": "editor::LineDown",
-      "pageup": "editor::MovePageDown",
+      "pageup": "editor::MovePageUp",
       "alt-pageup": "editor::PageUp",
       "shift-pageup": "editor::SelectPageUp",
       "home": "editor::MoveToBeginningOfLine",
