@@ -10,7 +10,6 @@ use cpal::{
 };
 use futures::{Stream, StreamExt as _};
 use gpui::{AppContext, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task};
-use livekit::webrtc::video_frame::{I420Buffer, VideoBuffer};
 use media::core_video::{CVImageBuffer, CVImageBufferRef};
 use parking_lot::Mutex;
 use std::{borrow::Cow, sync::Arc};

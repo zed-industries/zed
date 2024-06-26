@@ -121,7 +121,7 @@ pub mod video_source {
                 Self { resolution }
             }
 
-            pub fn capture_frame<T: AsRef<dyn VideoBuffer>>(&self, frame: &VideoFrame<T>) {}
+            pub fn capture_frame<T: AsRef<dyn VideoBuffer>>(&self, _frame: &VideoFrame<T>) {}
         }
     }
 

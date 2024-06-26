@@ -17,13 +17,17 @@ use gpui::{
 use language::LanguageRegistry;
 use live_kit_client as livekit;
 use livekit::{
-    capture_local_audio_track, capture_local_video_track, id::ParticipantIdentity,
-    options::TrackPublishOptions, publication::LocalTrackPublication, RoomEvent, RoomOptions,
+    capture_local_audio_track, capture_local_video_track,
+    id::ParticipantIdentity,
+    options::{TrackPublishOptions, VideoCodec},
+    publication::LocalTrackPublication,
+    track::TrackSource,
+    RoomEvent, RoomOptions,
 };
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
-use std::{future::Future, mem, sync::Arc, time::Duration};
+use std::{any::Any, future::Future, mem, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -1045,12 +1049,18 @@ impl Room {
             RoomEvent::LocalTrackUnpublished { publication, .. } => {
                 log::info!("unpublished track {}", publication.sid());
                 if let Some(room) = &mut self.live_kit {
-                    if let LocalTrack::Published { track_publication } = &room.microphone_track {
+                    if let LocalTrack::Published {
+                        track_publication, ..
+                    } = &room.microphone_track
+                    {
                         if track_publication.sid() == publication.sid() {
                             room.microphone_track = LocalTrack::None;
                         }
                     }
-                    if let LocalTrack::Published { track_publication } = &room.screen_track {
+                    if let LocalTrack::Published {
+                        track_publication, ..
+                    } = &room.screen_track
+                    {
                         if track_publication.sid() == publication.sid() {
                             room.screen_track = LocalTrack::None;
                         }
@@ -1328,7 +1338,10 @@ impl Room {
             let publication = participant
                 .publish_track(
                     livekit::track::LocalTrack::Audio(track),
-                    TrackPublishOptions::default(),
+                    TrackPublishOptions {
+                        source: TrackSource::Microphone,
+                        ..Default::default()
+                    },
                 )
                 .await
                 .map_err(|error| anyhow!("failed to publish track: {error}"));
@@ -1361,6 +1374,7 @@ impl Room {
                             }
                             live_kit.microphone_track = LocalTrack::Published {
                                 track_publication: publication,
+                                _stream: Box::new(stream),
                             };
                             cx.notify();
                         }
@@ -1403,12 +1417,16 @@ impl Room {
             let sources = sources.await??;
             let source = sources.first().ok_or_else(|| anyhow!("no display found"))?;
 
-            let (track, _stream) = capture_local_video_track(&**source).await?;
+            let (track, stream) = capture_local_video_track(&**source).await?;
 
             let publication = participant
                 .publish_track(
                     livekit::track::LocalTrack::Video(track),
-                    TrackPublishOptions::default(),
+                    TrackPublishOptions {
+                        source: TrackSource::Screenshare,
+                        video_codec: VideoCodec::H264,
+                        ..Default::default()
+                    },
                 )
                 .await
                 .map_err(|error| anyhow!("error publishing screen track {error:?}"));
@@ -1439,6 +1457,7 @@ impl Room {
                         } else {
                             live_kit.screen_track = LocalTrack::Published {
                                 track_publication: publication,
+                                _stream: Box::new(stream),
                             };
                             cx.notify();
                         }
@@ -1573,7 +1592,9 @@ impl Room {
                 }
             }
             LocalTrack::Pending { .. } => None,
-            LocalTrack::Published { track_publication } => {
+            LocalTrack::Published {
+                track_publication, ..
+            } => {
                 if should_mute {
                     track_publication.mute()
                 } else {
@@ -1634,6 +1655,7 @@ enum LocalTrack {
     },
     Published {
         track_publication: LocalTrackPublication,
+        _stream: Box<dyn Any>,
     },
 }
 

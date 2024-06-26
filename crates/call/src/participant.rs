@@ -1,14 +1,13 @@
 use anyhow::{anyhow, Result};
-use client::ParticipantIndex;
-use client::{proto, User};
+use client::{proto, ParticipantIndex, User};
 use collections::HashMap;
 use gpui::WeakModel;
 use project::Project;
 use std::sync::Arc;
 
 pub use live_kit_client::{
+    id::TrackSid,
     track::{RemoteAudioTrack, RemoteVideoTrack},
-    id::TrackSid
 };
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

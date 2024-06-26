@@ -6167,6 +6167,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.4"
+source = "git+https://github.com/livekit/rust-sdks?rev=b0391a8a9644344731d7ae43289418c9134e2de0#b0391a8a9644344731d7ae43289418c9134e2de0"
 dependencies = [
  "cxx",
  "jni 0.21.1",
@@ -6303,6 +6304,7 @@ dependencies = [
 [[package]]
 name = "livekit"
 version = "0.4.1"
+source = "git+https://github.com/livekit/rust-sdks?rev=b0391a8a9644344731d7ae43289418c9134e2de0#b0391a8a9644344731d7ae43289418c9134e2de0"
 dependencies = [
  "futures-util",
  "lazy_static",
@@ -6322,6 +6324,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.3.4"
+source = "git+https://github.com/livekit/rust-sdks?rev=b0391a8a9644344731d7ae43289418c9134e2de0#b0391a8a9644344731d7ae43289418c9134e2de0"
 dependencies = [
  "async-tungstenite 0.25.1",
  "futures-util",
@@ -6345,6 +6348,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.3.4"
+source = "git+https://github.com/livekit/rust-sdks?rev=b0391a8a9644344731d7ae43289418c9134e2de0#b0391a8a9644344731d7ae43289418c9134e2de0"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -6361,6 +6365,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.3.0"
+source = "git+https://github.com/livekit/rust-sdks?rev=b0391a8a9644344731d7ae43289418c9134e2de0#b0391a8a9644344731d7ae43289418c9134e2de0"
 dependencies = [
  "async-io 2.3.1",
  "async-std",
@@ -12884,6 +12889,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.2"
+source = "git+https://github.com/livekit/rust-sdks?rev=b0391a8a9644344731d7ae43289418c9134e2de0#b0391a8a9644344731d7ae43289418c9134e2de0"
 dependencies = [
  "cc",
  "cxx",
@@ -12896,6 +12902,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.2"
+source = "git+https://github.com/livekit/rust-sdks?rev=b0391a8a9644344731d7ae43289418c9134e2de0#b0391a8a9644344731d7ae43289418c9134e2de0"
 dependencies = [
  "fs2",
  "regex",

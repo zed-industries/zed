@@ -7,7 +7,7 @@ use gpui::{
 use live_kit_client::{
     capture_local_audio_track, capture_local_video_track,
     id::{ParticipantIdentity, TrackSid},
-    options::TrackPublishOptions,
+    options::{TrackPublishOptions, VideoCodec},
     participant::{Participant, RemoteParticipant},
     play_remote_audio_track,
     publication::LocalTrackPublication,
@@ -287,6 +287,7 @@ impl LivekitWindow {
                         LocalTrack::Video(track),
                         TrackPublishOptions {
                             source: TrackSource::Screenshare,
+                            video_codec: VideoCodec::H264,
                             ..Default::default()
                         },
                     )
