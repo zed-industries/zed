@@ -45,12 +45,6 @@ util.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 
-[target.'cfg(all(not(target_os = "macos")))'.dependencies]
-collections = { workspace = true }
-gpui = { workspace = true }
-live_kit_server.workspace = true
-nanoid.workspace = true
-
 [dev-dependencies]
 async-trait.workspace = true
 collections = { workspace = true, features = ["test-support"] }
