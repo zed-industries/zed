@@ -152,18 +152,14 @@ impl TextInput {
         self.content
             .grapheme_indices(true)
             .rev()
-            .skip_while(|(idx, _)| idx >= &offset)
-            .next()
-            .map(|(idx, _)| idx)
+            .find_map(|(idx, _)| (idx < offset).then_some(idx))
             .unwrap_or(0)
     }
 
     fn next_boundary(&self, offset: usize) -> usize {
         self.content
             .grapheme_indices(true)
-            .skip_while(|(idx, _)| idx <= &offset)
-            .next()
-            .map(|(idx, _)| idx)
+            .find_map(|(idx, _)| (idx > offset).then_some(idx))
             .unwrap_or(self.content.len())
     }
 }
