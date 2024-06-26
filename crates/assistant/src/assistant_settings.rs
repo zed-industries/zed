@@ -275,7 +275,7 @@ impl AssistantSettingsContent {
                         default_model: settings.default_open_ai_model.clone(),
                         api_url: Some(open_ai_api_url.clone()),
                         low_speed_timeout_in_seconds: None,
-                        available_models: Some(Default::default()),
+                        available_models: None,
                     })
                 } else {
                     settings.default_open_ai_model.clone().map(|open_ai_model| {
@@ -283,7 +283,7 @@ impl AssistantSettingsContent {
                             default_model: Some(open_ai_model),
                             api_url: None,
                             low_speed_timeout_in_seconds: None,
-                            available_models: Some(Default::default()),
+                            available_models: None,
                         }
                     })
                 },
@@ -350,7 +350,7 @@ impl AssistantSettingsContent {
                                 default_model: Some(model),
                                 api_url: None,
                                 low_speed_timeout_in_seconds: None,
-                                available_models: Some(Default::default()),
+                                available_models: None,
                             })
                         }
                         LanguageModel::Anthropic(model) => {
