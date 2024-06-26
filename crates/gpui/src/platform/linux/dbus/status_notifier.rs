@@ -633,10 +633,11 @@ impl StatusNotifierItem {
         let cx = self.menu_ref.signal_context();
         let mut iface = self.menu_ref.get_mut().await;
         iface.revision += 1;
-        if let Some((parent_id, props)) = iface.menu.remove_submenu(id) {
+        let (parent_id, props) = iface.menu.remove_submenu(id);
+        if !props.is_empty() {
             iface.layout_updated(cx, iface.revision, parent_id).await?;
             iface
-                .items_properties_updated(cx, Vec::default(), vec![props])
+                .items_properties_updated(cx, Vec::default(), props)
                 .await?;
         }
         Ok(())
