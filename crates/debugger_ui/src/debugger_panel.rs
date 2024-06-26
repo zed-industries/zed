@@ -1,9 +1,7 @@
 use anyhow::Result;
-use dap::{
-    client::DebugAdapterClient,
-    requests::{StackTrace, StackTraceArguments},
-    types::{StackFrame, ThreadId},
-};
+use dap::requests::StackTrace;
+use dap::{client::DebugAdapterClient, transport::Events};
+use dap::{StackFrame, StackTraceArguments, ThreadEventReason};
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
     Subscription, Task, View, ViewContext, WeakView,
@@ -29,9 +27,9 @@ pub struct DebugPanel {
     pub focus_handle: FocusHandle,
     pub size: Pixels,
     _subscriptions: Vec<Subscription>,
-    pub thread_id: Option<ThreadId>,
+    pub thread_id: Option<u64>,
     pub workspace: WeakView<Workspace>,
-    thread_state: HashMap<ThreadId, ThreadState>,
+    thread_state: HashMap<u64, ThreadState>,
 }
 
 impl DebugPanel {
@@ -49,8 +47,8 @@ impl DebugPanel {
 
                     if let project::Event::DebugClientEvent { client_id, event } = event {
                         match event {
-                            dap::events::Event::Initialized(_) => return,
-                            dap::events::Event::Stopped(event) => {
+                            Events::Initialized => return,
+                            Events::Stopped(event) => {
                                 if let Some(thread_id) = event.thread_id {
                                     let client = this.debug_adapter(cx);
 
@@ -79,11 +77,11 @@ impl DebugPanel {
                                     .detach();
                                 };
                             }
-                            dap::events::Event::Continued(_) => todo!(),
-                            dap::events::Event::Exited(_) => todo!(),
-                            dap::events::Event::Terminated(_) => todo!(),
-                            dap::events::Event::Thread(event) => {
-                                if event.reason == "started" {
+                            Events::Continued(_) => todo!(),
+                            Events::Exited(_) => todo!(),
+                            Events::Terminated(_) => todo!(),
+                            Events::Thread(event) => {
+                                if event.reason == ThreadEventReason::Started {
                                     this.thread_state.insert(
                                         event.thread_id,
                                         ThreadState { stack_frames: None },
@@ -94,13 +92,17 @@ impl DebugPanel {
                                     this.thread_state.remove(&event.thread_id);
                                 }
                             }
-                            dap::events::Event::Output(_) => todo!(),
-                            dap::events::Event::Breakpoint(_) => todo!(),
-                            dap::events::Event::Module(_) => todo!(),
-                            dap::events::Event::LoadedSource(_) => todo!(),
-                            dap::events::Event::Process(_) => todo!(),
-                            dap::events::Event::Capabilities(_) => todo!(),
-                            dap::events::Event::Memory(_) => todo!(),
+                            Events::Output(_) => todo!(),
+                            Events::Breakpoint(_) => todo!(),
+                            Events::Module(_) => todo!(),
+                            Events::LoadedSource(_) => todo!(),
+                            Events::Capabilities(_) => todo!(),
+                            Events::Memory(_) => todo!(),
+                            Events::Process(_) => todo!(),
+                            Events::ProgressEnd => todo!(),
+                            Events::ProgressStart => todo!(),
+                            Events::ProgressUpdate => todo!(),
+                            Events::Invalidated(_) => todo!(),
                         }
                     }
                 }
@@ -113,7 +115,7 @@ impl DebugPanel {
                 focus_handle: cx.focus_handle(),
                 size: px(300.),
                 _subscriptions,
-                thread_id: Some(ThreadId(1)),
+                thread_id: Some(1),
                 workspace: workspace.clone(),
                 thread_state: Default::default(),
             }
@@ -185,9 +187,7 @@ impl DebugPanel {
             .child(
                 div()
                     .text_ui_xs(cx)
-                    .when_some(source.and_then(|s| s.path), |this, path| {
-                        this.child(String::from(path.to_string_lossy()))
-                    }),
+                    .when_some(source.and_then(|s| s.path), |this, path| this.child(path)),
             )
             .into_any()
     }
