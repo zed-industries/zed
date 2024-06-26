@@ -4933,6 +4933,7 @@ dependencies = [
  "x11rb",
  "xim",
  "xkbcommon",
+ "zbus",
 ]
 
 [[package]]
