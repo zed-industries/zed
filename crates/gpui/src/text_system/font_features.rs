@@ -58,7 +58,7 @@ impl<'de> serde::Deserialize<'de> for FontFeatures {
                 while let Some((key, value)) =
                     access.next_entry::<String, Option<FeatureValue>>()?
                 {
-                    if key.len() != 4 && !key.is_ascii() {
+                    if key.len() != 4 || !key.is_ascii() {
                         log::error!("Incorrect font feature tag: {}", key);
                         continue;
                     }
