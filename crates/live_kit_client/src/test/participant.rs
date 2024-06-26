@@ -69,13 +69,29 @@ impl RemoteParticipant {
                 .unwrap()
                 .into_iter()
                 .filter(|track| track.publisher_id() == self.identity)
-                .map(|track| (track.sid(), RemoteTrackPublication { sid: track.sid() }));
+                .map(|track| {
+                    (
+                        track.sid(),
+                        RemoteTrackPublication {
+                            sid: track.sid(),
+                            room: self.room.clone(),
+                        },
+                    )
+                });
             let video = server
                 .video_tracks(room.token())
                 .unwrap()
                 .into_iter()
                 .filter(|track| track.publisher_id() == self.identity)
-                .map(|track| (track.sid(), RemoteTrackPublication { sid: track.sid() }));
+                .map(|track| {
+                    (
+                        track.sid(),
+                        RemoteTrackPublication {
+                            sid: track.sid(),
+                            room: self.room.clone(),
+                        },
+                    )
+                });
             audio.chain(video).collect()
         } else {
             HashMap::default()

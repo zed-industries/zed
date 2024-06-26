@@ -134,6 +134,7 @@ impl TestServer {
                         }),
                         publication: RemoteTrackPublication {
                             sid: track.sid.clone(),
+                            room: client_room.downgrade(),
                         },
                         participant: RemoteParticipant {
                             room: client_room.downgrade(),
@@ -154,6 +155,7 @@ impl TestServer {
                         }),
                         publication: RemoteTrackPublication {
                             sid: track.sid.clone(),
+                            room: client_room.downgrade(),
                         },
                         participant: RemoteParticipant {
                             room: client_room.downgrade(),
@@ -291,7 +293,10 @@ impl TestServer {
                             server_track: track.clone(),
                             _room: client_room.downgrade(),
                         }),
-                        publication: RemoteTrackPublication { sid: sid.clone() },
+                        publication: RemoteTrackPublication {
+                            sid: sid.clone(),
+                            room: client_room.downgrade(),
+                        },
                         participant: RemoteParticipant {
                             identity: identity.clone(),
                             room: client_room.downgrade(),
@@ -353,7 +358,10 @@ impl TestServer {
                             server_track: track.clone(),
                             room: client_room.downgrade(),
                         }),
-                        publication: RemoteTrackPublication { sid: sid.clone() },
+                        publication: RemoteTrackPublication {
+                            sid: sid.clone(),
+                            room: client_room.downgrade(),
+                        },
                         participant: RemoteParticipant {
                             identity: id.clone(),
                             room: client_room.downgrade(),
@@ -392,6 +400,7 @@ impl TestServer {
                     });
                     let publication = TrackPublication::Remote(RemoteTrackPublication {
                         sid: track_sid.clone(),
+                        room: client_room.downgrade(),
                     });
 
                     let event = if muted {

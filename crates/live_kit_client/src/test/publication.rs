@@ -15,6 +15,7 @@ pub struct LocalTrackPublication {
 #[derive(Clone, Debug)]
 pub struct RemoteTrackPublication {
     pub(crate) sid: TrackSid,
+    pub(crate) room: WeakRoom,
 }
 
 impl TrackPublication {
@@ -26,7 +27,10 @@ impl TrackPublication {
     }
 
     pub fn is_muted(&self) -> bool {
-        todo!()
+        match self {
+            TrackPublication::Local(track) => track.is_muted(),
+            TrackPublication::Remote(track) => track.is_muted(),
+        }
     }
 }
 
@@ -44,11 +48,9 @@ impl LocalTrackPublication {
     }
 
     fn set_mute(&self, mute: bool) {
-        let sid = self.sid.clone();
-        let room = self.room.clone();
-        if let Some(room) = room.upgrade() {
+        if let Some(room) = self.room.upgrade() {
             room.test_server()
-                .set_track_muted(&room.token(), &sid, mute)
+                .set_track_muted(&room.token(), &self.sid, mute)
                 .ok();
         }
     }
@@ -69,11 +71,17 @@ impl RemoteTrackPublication {
         self.sid.clone()
     }
 
-    pub fn publisher_id(&self) -> ParticipantIdentity {
-        todo!()
-    }
-
     pub fn track(&self) -> Option<RemoteTrack> {
         None
+    }
+
+    pub fn is_muted(&self) -> bool {
+        if let Some(room) = self.room.upgrade() {
+            room.test_server()
+                .is_track_muted(&room.token(), &self.sid)
+                .unwrap_or(false)
+        } else {
+            false
+        }
     }
 }
