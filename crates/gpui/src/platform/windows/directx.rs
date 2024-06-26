@@ -171,6 +171,7 @@ impl DirectXRenderer {
         if shadows.is_empty() {
             return true;
         }
+        self.context.context.PSGetShaderResources(startslot, ppshaderresourceviews)
         true
     }
 
