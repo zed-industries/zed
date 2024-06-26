@@ -638,11 +638,8 @@ impl Window {
             display_id,
             window_background,
             app_id,
-<<<<<<< HEAD
             window_min_size,
-=======
             window_decorations,
->>>>>>> aa5c0b654 (Implement window decoration and tilings)
         } = options;
 
         let bounds = window_bounds
@@ -997,7 +994,7 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_maximized()
     }
 
-    /// Get the current window's tiling, if available (Wayland)
+    /// Check if the platform window is current tiled
     pub fn window_tiling(&self) -> crate::Tiling {
         self.window.platform_window.tiling()
     }
@@ -1010,13 +1007,6 @@ impl<'a> WindowContext<'a> {
     /// Start a window resize operation (Wayland)
     pub fn start_window_resize(&self, edge: ResizeEdge) {
         self.window.platform_window.start_window_resize(edge);
-    }
-
-    /// When implementing client side decorations, use this to set the
-    /// area of the window which aren't decorations (e.g. drop shadows)
-    /// Wayland only
-    pub fn set_content_area(&mut self, area: Bounds<Pixels>) {
-        self.window.platform_window.set_content_area(area);
     }
 
     /// Return the `WindowBounds` to indicate that how a window should be opened
@@ -1255,9 +1245,9 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.window_decorations()
     }
 
-    /// Returns what window controls this platform supports (Wayland)
-    pub fn supported_window_controls(&self) -> WindowControls {
-        self.window.platform_window.supported_window_controls()
+    /// Returns which window controls are currently visible (Wayland)
+    pub fn window_controls(&self) -> WindowControls {
+        self.window.platform_window.window_controls()
     }
 
     /// Updates the window's title at the platform level.
