@@ -13,6 +13,7 @@ use gpui::{AppContext, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStr
 use media::core_video::{CVImageBuffer, CVImageBufferRef};
 use parking_lot::Mutex;
 use std::{borrow::Cow, sync::Arc};
+use util::ResultExt as _;
 use webrtc::{
     audio_frame::AudioFrame,
     audio_source::{native::NativeAudioSource, AudioSourceOptions, RtcAudioSource},
@@ -29,23 +30,27 @@ pub use test::*;
 
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 
-pub fn init(dispatcher: Arc<dyn gpui::PlatformDispatcher>) {
-    struct Dispatcher(Arc<dyn gpui::PlatformDispatcher>);
+pub struct AudioStream {
+    _tasks: [Task<()>; 2],
+}
 
-    impl livekit::dispatcher::Dispatcher for Dispatcher {
-        fn dispatch(&self, runnable: livekit::dispatcher::Runnable) {
-            self.0.dispatch(runnable, None);
-        }
+struct Dispatcher(Arc<dyn gpui::PlatformDispatcher>);
 
-        fn dispatch_after(
-            &self,
-            duration: std::time::Duration,
-            runnable: livekit::dispatcher::Runnable,
-        ) {
-            self.0.dispatch_after(duration, runnable);
-        }
+impl livekit::dispatcher::Dispatcher for Dispatcher {
+    fn dispatch(&self, runnable: livekit::dispatcher::Runnable) {
+        self.0.dispatch(runnable, None);
     }
 
+    fn dispatch_after(
+        &self,
+        duration: std::time::Duration,
+        runnable: livekit::dispatcher::Runnable,
+    ) {
+        self.0.dispatch_after(duration, runnable);
+    }
+}
+
+pub fn init(dispatcher: Arc<dyn gpui::PlatformDispatcher>) {
     livekit::dispatcher::set_dispatcher(Dispatcher(dispatcher));
 }
 
@@ -131,7 +136,7 @@ pub fn capture_local_audio_track(
         .expect("Failed to build input stream");
 
     let stream_task = cx.foreground_executor().spawn(async move {
-        stream.play().expect("Failed to play stream");
+        stream.play().log_err();
         futures::future::pending().await
     });
 
@@ -153,10 +158,6 @@ pub fn capture_local_audio_track(
             _tasks: [stream_task, transmit_task],
         },
     ))
-}
-
-pub struct AudioStream {
-    _tasks: [Task<()>; 2],
 }
 
 pub fn play_remote_audio_track(

@@ -11,7 +11,7 @@ use gpui::BackgroundExecutor;
 use live_kit_server::{proto, token};
 use livekit::options::TrackPublishOptions;
 use parking_lot::Mutex;
-use postage::{mpsc, sink::Sink, watch};
+use postage::{mpsc, sink::Sink};
 use std::sync::{
     atomic::{AtomicBool, Ordering::SeqCst},
     Arc, Weak,
@@ -238,7 +238,7 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         for room in server_rooms.values_mut() {
             if let Some(room) = room.client_rooms.remove(&client_identity) {
-                *room.0.lock().connection.0.borrow_mut() = ConnectionState::Disconnected;
+                room.0.lock().connection_state = ConnectionState::Disconnected;
             }
         }
     }
@@ -647,10 +647,7 @@ struct RoomState {
     url: String,
     token: String,
     local_identity: ParticipantIdentity,
-    connection: (
-        watch::Sender<ConnectionState>,
-        watch::Receiver<ConnectionState>,
-    ),
+    connection_state: ConnectionState,
     paused_audio_tracks: HashSet<TrackSid>,
     updates_tx: mpsc::Sender<RoomEvent>,
 }
@@ -668,16 +665,12 @@ impl std::fmt::Debug for RoomState {
 }
 
 impl Room {
-    pub fn status(&self) -> watch::Receiver<ConnectionState> {
-        self.0.lock().connection.1.clone()
-    }
-
     fn downgrade(&self) -> WeakRoom {
         WeakRoom(Arc::downgrade(&self.0))
     }
 
     pub fn connection_state(&self) -> ConnectionState {
-        self.0.lock().connection.1.borrow().clone()
+        self.0.lock().connection_state
     }
 
     pub fn local_participant(&self) -> LocalParticipant {
@@ -699,7 +692,7 @@ impl Room {
             local_identity: ParticipantIdentity(String::new()),
             url: url.to_string(),
             token: token.to_string(),
-            connection: watch::channel_with(ConnectionState::Disconnected),
+            connection_state: ConnectionState::Disconnected,
             paused_audio_tracks: Default::default(),
             updates_tx,
         })));
@@ -711,7 +704,7 @@ impl Room {
         {
             let mut state = this.0.lock();
             state.local_identity = identity;
-            *state.connection.0.borrow_mut() = ConnectionState::Connected;
+            state.connection_state = ConnectionState::Connected;
         }
 
         Ok((this, updates_rx))
@@ -746,15 +739,16 @@ impl Room {
     }
 }
 
-impl Drop for Room {
+impl Drop for RoomState {
     fn drop(&mut self) {
-        let state = self.0.lock();
-        if let Ok(server) = TestServer::get(&state.url) {
-            let executor = server.executor.clone();
-            let token = state.token.clone();
-            executor
-                .spawn(async move { server.leave_room(token).await.unwrap() })
-                .detach();
+        if self.connection_state == ConnectionState::Connected {
+            if let Ok(server) = TestServer::get(&self.url) {
+                let executor = server.executor.clone();
+                let token = self.token.clone();
+                executor
+                    .spawn(async move { server.leave_room(token).await.ok() })
+                    .detach();
+            }
         }
     }
 }
