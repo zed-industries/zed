@@ -87,51 +87,27 @@ impl Global {
     }
 
     pub fn observed_any(&self, other: &Self) -> bool {
-        let mut lhs = self.0.iter();
-        let mut rhs = other.0.iter();
-        loop {
-            if let Some(left) = lhs.next() {
-                if let Some(right) = rhs.next() {
-                    if *right > 0 && left >= right {
-                        return true;
-                    }
-                } else {
-                    return false;
-                }
-            } else {
-                return false;
-            }
-        }
+        self.0
+            .iter()
+            .zip(other.0.iter())
+            .any(|(left, right)| *right > 0 && left >= right)
     }
 
     pub fn observed_all(&self, other: &Self) -> bool {
-        let mut lhs = self.0.iter();
         let mut rhs = other.0.iter();
-        loop {
-            if let Some(left) = lhs.next() {
-                if let Some(right) = rhs.next() {
-                    if left < right {
-                        return false;
-                    }
-                } else {
-                    return true;
-                }
-            } else {
-                return rhs.next().is_none();
-            }
-        }
+        self.0.iter().all(|left| match rhs.next() {
+            Some(right) => left >= right,
+            None => true,
+        }) && rhs.next().is_none()
     }
 
     pub fn changed_since(&self, other: &Self) -> bool {
-        if self.0.len() > other.0.len() {
-            return true;
-        }
-        for (left, right) in self.0.iter().zip(other.0.iter()) {
-            if left > right {
-                return true;
-            }
-        }
-        false
+        self.0.len() > other.0.len()
+            || self
+                .0
+                .iter()
+                .zip(other.0.iter())
+                .any(|(left, right)| left > right)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Lamport> + '_ {
