@@ -153,7 +153,8 @@
       //   }
       // ],
       "ctrl->": "assistant::QuoteSelection",
-      "ctrl-<": "assistant::InsertSelection"
+      "ctrl-<": "assistant::InsertSelection",
+      "ctrl-alt-e": "editor::SelectEnclosingSymbol"
     }
   },
   {
@@ -588,8 +589,9 @@
       "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
       "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
-      "backspace": "project_panel::Trash",
-      "delete": "project_panel::Trash",
+      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
+      "delete": ["project_panel::Trash", { "skip_prompt": false }],
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFinder",

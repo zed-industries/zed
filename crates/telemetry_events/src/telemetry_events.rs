@@ -5,6 +5,7 @@ use std::{fmt::Display, sync::Arc, time::Duration};
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EventRequestBody {
     pub installation_id: Option<String>,
+    pub metrics_id: Option<String>,
     pub session_id: Option<String>,
     pub is_staff: Option<bool>,
     pub app_version: String,
