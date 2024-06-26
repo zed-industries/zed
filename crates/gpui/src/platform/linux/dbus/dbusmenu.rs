@@ -349,6 +349,7 @@ impl DBusMenu {
         result
     }
 
+    /// Returns the parent id of the submenu and a vector of removed properties.
     pub(crate) fn remove_submenu(
         &mut self,
         user_id: impl Into<String>,

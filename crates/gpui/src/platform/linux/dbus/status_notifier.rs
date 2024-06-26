@@ -9,7 +9,8 @@ use zbus::{
 };
 
 use super::dbusmenu::{
-    DBusMenu, DBusMenuInterface, DBusMenuItem, Icon, MenuProperty, Pixmap, DBUS_MENU_PATH,
+    DBusMenu, DBusMenuInterface, DBusMenuItem, DBusMenuRemovedProperties,
+    DBusMenuUpdatedProperties, Icon, MenuProperty, Pixmap, DBUS_MENU_PATH,
 };
 
 pub(crate) struct StatusNotifierWatcher<'a>(zbus::Proxy<'a>);
@@ -617,27 +618,20 @@ impl StatusNotifierItem {
 
     /// Adds a submenu to the menu
     pub async fn add_submenu(&self, submenu: DBusMenuItem) -> zbus::Result<()> {
-        let cx = self.menu_ref.signal_context();
         let mut iface = self.menu_ref.get_mut().await;
         iface.revision += 1;
         let updated = iface.menu.add_submenu(submenu);
-        iface.layout_updated(cx, iface.revision, 0).await?;
-        iface
-            .items_properties_updated(cx, updated, Vec::default())
-            .await?;
+        drop(iface);
+        self.update_layout(0, updated, Vec::default()).await?;
         Ok(())
     }
 
     /// Removes a submenu from the menu tree
     pub async fn remove_submenu(&self, id: impl Into<String>) -> zbus::Result<()> {
-        let cx = self.menu_ref.signal_context();
         let mut iface = self.menu_ref.get_mut().await;
-        iface.revision += 1;
-        let (parent_id, props) = iface.menu.remove_submenu(id);
-        if !props.is_empty() {
-            iface.layout_updated(cx, iface.revision, parent_id).await?;
-            iface
-                .items_properties_updated(cx, Vec::default(), props)
+        if let Some((parent_id, removed)) = iface.menu.remove_submenu(id) {
+            drop(iface);
+            self.update_layout(parent_id, Vec::default(), removed)
                 .await?;
         }
         Ok(())
@@ -650,18 +644,33 @@ impl StatusNotifierItem {
         new_properties: Option<Vec<MenuProperty>>,
         remove_properties: Option<impl IntoIterator<Item = &'a str>>,
     ) -> zbus::Result<()> {
-        let cx = self.menu_ref.signal_context();
         let mut iface = self.menu_ref.get_mut().await;
-        iface.revision += 1;
         let (parent_id, updated, removed) =
             iface
                 .menu
                 .update_submenu_properties(id, new_properties, remove_properties);
-        let update = updated.map_or(Vec::default(), |prop| vec![prop]);
-        let removed = removed.map_or(Vec::default(), |prop| vec![prop]);
-        if !update.is_empty() || !removed.is_empty() {
+        drop(iface);
+        self.update_layout(
+            parent_id,
+            updated.map_or(Vec::default(), |prop| vec![prop]),
+            removed.map_or(Vec::default(), |prop| vec![prop]),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_layout(
+        &self,
+        parent_id: i32,
+        updated: Vec<DBusMenuUpdatedProperties>,
+        removed: Vec<DBusMenuRemovedProperties>,
+    ) -> zbus::Result<()> {
+        let cx = self.menu_ref.signal_context();
+        let mut iface = self.menu_ref.get_mut().await;
+        if !updated.is_empty() || !removed.is_empty() {
+            iface.revision += 1;
             iface.layout_updated(cx, iface.revision, parent_id).await?;
-            iface.items_properties_updated(cx, update, removed).await?;
+            iface.items_properties_updated(cx, updated, removed).await?;
         }
         Ok(())
     }
