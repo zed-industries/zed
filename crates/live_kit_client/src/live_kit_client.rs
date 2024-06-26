@@ -103,6 +103,7 @@ pub fn capture_local_audio_track(
             echo_cancellation: true,
             noise_suppression: true,
             auto_gain_control: false,
+            ..Default::default()
         },
         sample_rate.0,
         channels,
