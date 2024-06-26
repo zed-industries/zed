@@ -352,26 +352,38 @@ impl DBusMenu {
     pub(crate) fn remove_submenu(
         &mut self,
         user_id: impl Into<String>,
-    ) -> Option<(i32, DBusMenuRemovedProperties)> {
-        let mut result = None;
-        let user_id = user_id.into();
-        let Some(id) = self.user_id_to_id_map.get(&user_id) else {
+    ) -> Option<(i32, Vec<DBusMenuRemovedProperties>)> {
+        let Some(id) = self.user_id_to_id_map.get(&user_id.into()) else {
             return None;
         };
         let menu = self.items.remove(id).unwrap();
-        if !menu.properties.is_empty() {
-            result = Some((
-                menu.parent_id,
-                DBusMenuRemovedProperties {
-                    id: menu.id,
-                    property_names: menu.properties.iter().map(|(k, _)| k.to_string()).collect(),
-                },
-            ));
+        let parent_id = menu.parent_id;
+        let mut result = Vec::default();
+        let mut queue = VecDeque::default();
+        queue.push_back(menu);
+        while !queue.is_empty() {
+            let submenu = queue.pop_front().unwrap();
+            let user_id = submenu.user_id;
+            let parent = self.items.get_mut(&submenu.parent_id).unwrap();
+            parent.children.retain(|child| *child != submenu.id);
+            if let Some(user_id) = user_id {
+                self.user_id_to_id_map.remove(&user_id);
+            }
+            for id in submenu.children {
+                queue.push_back(self.items.remove(&id).unwrap());
+            }
+            if !submenu.properties.is_empty() {
+                result.push(DBusMenuRemovedProperties {
+                    id: submenu.id,
+                    property_names: submenu
+                        .properties
+                        .iter()
+                        .map(|(k, _)| k.to_string())
+                        .collect(),
+                });
+            }
         }
-        let parent = self.items.get_mut(&menu.parent_id).unwrap();
-        self.user_id_to_id_map.remove(&user_id);
-        parent.children.retain(|child| *child != menu.id);
-        result
+        Some((parent_id, result))
     }
 
     pub(crate) fn update_submenu_properties<'a>(
