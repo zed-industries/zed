@@ -1,10 +1,18 @@
 use anyhow::{Context as _, Result};
+#[allow(unused)]
 use collections::HashMap;
+#[allow(unused)]
 use futures::lock::Mutex;
+#[allow(unused)]
 use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
-use gpui::{AsyncAppContext, EntityId};
+#[allow(unused)]
+use gpui::{AppContext, AsyncAppContext, AsyncWindowContext, EntityId, WindowContext};
 use project::Fs;
-use runtimelib::{dirs, ConnectionInfo, JupyterKernelspec, JupyterMessage, JupyterMessageContent};
+#[allow(unused)]
+use runtimelib::{
+    dirs, ClientIoPubConnection, ClientShellConnection, ConnectionInfo, JupyterKernelspec,
+    JupyterMessage, JupyterMessageContent,
+};
 use smol::{net::TcpListener, process::Command};
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -75,21 +83,30 @@ async fn peek_ports(ip: IpAddr) -> anyhow::Result<[u16; 5]> {
     Ok(ports)
 }
 
-#[derive(Debug)]
 pub struct RunningKernel {
     #[allow(unused)]
-    runtime: RuntimeSpecification,
+    pub runtime_specification: RuntimeSpecification,
     #[allow(unused)]
-    process: smol::process::Child,
-    pub request_tx: mpsc::UnboundedSender<Request>,
+    pub process: smol::process::Child,
+    // pub request_tx: mpsc::UnboundedSender<Request>,
+    pub shell: ClientShellConnection,
+    pub iopub: ClientIoPubConnection,
+}
+
+impl Debug for RunningKernel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunningKernel")
+            .field("runtime_specification", &self.runtime_specification)
+            .field("process", &self.process)
+            .finish()
+    }
 }
 
 impl RunningKernel {
     pub async fn new(
-        runtime: RuntimeSpecification,
+        runtime_specification: &RuntimeSpecification,
         entity_id: EntityId,
         fs: Arc<dyn Fs>,
-        cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let ports = peek_ports(ip).await?;
@@ -104,7 +121,7 @@ impl RunningKernel {
             iopub_port: ports[4],
             signature_scheme: "hmac-sha256".to_string(),
             key: uuid::Uuid::new_v4().to_string(),
-            kernel_name: Some(format!("zed-{}", runtime.name)),
+            kernel_name: Some(format!("zed-{}", runtime_specification.name)),
         };
 
         let connection_path = dirs::runtime_dir().join(format!("kernel-zed-{}.json", entity_id));
@@ -112,7 +129,7 @@ impl RunningKernel {
         // write out file to disk for kernel
         fs.atomic_write(connection_path.clone(), content).await?;
 
-        let mut cmd = runtime.command(&connection_path)?;
+        let mut cmd = runtime_specification.command(&connection_path)?;
         let process = cmd
             // .stdout(Stdio::null())
             // .stderr(Stdio::null())
@@ -120,78 +137,85 @@ impl RunningKernel {
             .spawn()
             .context("failed to start the kernel process")?;
 
-        let mut iopub = connection_info.create_client_iopub_connection("").await?;
-        let mut shell = connection_info.create_client_shell_connection().await?;
+        let iopub = connection_info.create_client_iopub_connection("").await?;
+        let shell = connection_info.create_client_shell_connection().await?;
+
+        Ok(Self {
+            runtime_specification: runtime_specification.clone(),
+            shell,
+            iopub,
+            process,
+        })
 
         // Spawn a background task to handle incoming messages from the kernel as well
         // as outgoing messages to the kernel
 
-        let child_messages: Arc<
-            Mutex<HashMap<String, mpsc::UnboundedSender<JupyterMessageContent>>>,
-        > = Default::default();
+        // let child_messages: Arc<
+        //     Mutex<HashMap<String, mpsc::UnboundedSender<JupyterMessageContent>>>,
+        // > = Default::default();
 
-        let (request_tx, mut request_rx) = mpsc::unbounded::<Request>();
+        // let (request_tx, mut request_rx) = mpsc::unbounded::<Request>();
 
-        cx.background_executor()
-            .spawn({
-                let child_messages = child_messages.clone();
+        // cx.background_executor()
+        //     .spawn({
+        //         let child_messages = child_messages.clone();
 
-                async move {
-                    let child_messages = child_messages.clone();
-                    while let Ok(message) = iopub.read().await {
-                        if let Some(parent_header) = message.parent_header {
-                            let child_messages = child_messages.lock().await;
+        //         async move {
+        //             let child_messages = child_messages.clone();
+        //             while let Ok(message) = iopub.read().await {
+        //                 if let Some(parent_header) = message.parent_header {
+        //                     let child_messages = child_messages.lock().await;
 
-                            let sender = child_messages.get(&parent_header.msg_id);
+        //                     let sender = child_messages.get(&parent_header.msg_id);
 
-                            match sender {
-                                Some(mut sender) => {
-                                    sender.send(message.content).await?;
-                                }
-                                None => {}
-                            }
-                        }
-                    }
+        //                     match sender {
+        //                         Some(mut sender) => {
+        //                             sender.send(message.content).await?;
+        //                         }
+        //                         None => {}
+        //                     }
+        //                 }
+        //             }
 
-                    anyhow::Ok(())
-                }
-            })
-            .detach();
+        //             anyhow::Ok(())
+        //         }
+        //     })
+        //     .detach();
 
-        cx.background_executor()
-            .spawn({
-                let child_messages = child_messages.clone();
-                async move {
-                    while let Some(request) = request_rx.next().await {
-                        let rx = request.responses_rx.clone();
+        // cx.background_executor()
+        //     .spawn({
+        //         let child_messages = child_messages.clone();
+        //         async move {
+        //             while let Some(request) = request_rx.next().await {
+        //                 let rx = request.responses_rx.clone();
 
-                        let request: JupyterMessage = request.request.into();
-                        let msg_id = request.header.msg_id.clone();
+        //                 let request: JupyterMessage = request.request.into();
+        //                 let msg_id = request.header.msg_id.clone();
 
-                        let mut sender = rx.clone();
+        //                 let mut sender = rx.clone();
 
-                        child_messages
-                            .lock()
-                            .await
-                            .insert(msg_id.clone(), sender.clone());
+        //                 child_messages
+        //                     .lock()
+        //                     .await
+        //                     .insert(msg_id.clone(), sender.clone());
 
-                        shell.send(request).await?;
+        //                 shell.send(request).await?;
 
-                        let response = shell.read().await?;
+        //                 let response = shell.read().await?;
 
-                        sender.send(response.content).await?;
-                    }
+        //                 sender.send(response.content).await?;
+        //             }
 
-                    anyhow::Ok(())
-                }
-            })
-            .detach();
+        //             anyhow::Ok(())
+        //         }
+        //     })
+        //     .detach();
 
-        Ok(Self {
-            runtime,
-            process,
-            request_tx,
-        })
+        // Ok(Self {
+        //     runtime: runtime_specification.clone(),
+        //     process,
+        //     request_tx,
+        // })
     }
 }
 

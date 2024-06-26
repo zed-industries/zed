@@ -2,10 +2,11 @@ use anyhow::Result;
 use async_dispatcher::{set_dispatcher, Dispatcher, Runnable};
 use client::telemetry::Telemetry;
 use collections::HashMap;
-use editor::{display_map::BlockId, Anchor, Editor};
+use editor::{Anchor, Editor};
 use gpui::{
-    actions, prelude::*, AppContext, AsyncWindowContext, EntityId, EventEmitter, FocusHandle,
-    FocusOutEvent, FocusableView, Model, PlatformDispatcher, Subscription, Task, View, WeakView,
+    actions, prelude::*, AppContext, AsyncWindowContext, Entity, EntityId, EventEmitter,
+    FocusHandle, FocusOutEvent, FocusableView, Model, PlatformDispatcher, Subscription, Task, View,
+    WeakView,
 };
 use language::Point;
 use project::Fs;
@@ -17,22 +18,9 @@ use workspace::{
     Workspace,
 };
 
-use crate::{ExecutionView, JupyterSettings, Kernel, RuntimeManager};
+use crate::{ExecutionView, JupyterSettings, Kernel, RuntimeManager, Session};
 
 actions!(repl, [Run, ToggleFocus]);
-
-#[allow(unused)]
-struct EditorBlock {
-    code_range: Range<Anchor>,
-    block_id: BlockId,
-    execution_view: View<ExecutionView>,
-}
-
-#[allow(unused)]
-struct EditorState {
-    blocks: Vec<EditorBlock>,
-    _subscription: Subscription,
-}
 
 pub fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
     struct ZedDispatcher {
@@ -86,9 +74,9 @@ pub struct RuntimePanel {
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     width: Option<Pixels>,
+    sessions: HashMap<EntityId, View<Session>>,
     running_kernels: HashMap<EntityId, Kernel>,
     runtime_manager: Model<RuntimeManager>,
-    editors: HashMap<WeakView<Editor>, EditorState>,
     execution_views: HashMap<String, View<ExecutionView>>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
@@ -128,9 +116,10 @@ impl RuntimePanel {
                         width: None,
                         focus_handle,
                         runtime_manager: runtime_manager.clone(),
+                        sessions: Default::default(),
                         workspace: workspace.weak_handle(),
                         running_kernels: Default::default(),
-                        editors: Default::default(),
+                        // editors: Default::default(),
                         execution_views: Default::default(),
                         telemetry: workspace.client().telemetry().clone(),
                         fs: fs.clone(),
@@ -237,18 +226,37 @@ impl RuntimePanel {
         return Some((selected_text, language_name));
     }
 
-    pub fn run(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-        // todo!()
-
+    pub fn run(
+        &mut self,
+        editor: View<Editor>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ViewContext<Self>,
+    ) -> anyhow::Result<()> {
         let (selected_text, language_name) = match self.snippet(editor.clone(), cx) {
             Some(snippet) => snippet,
-            None => return,
+            None => return anyhow::Ok(()),
         };
 
-        eprintln!("Running `{:?}` snippet: {:?}", language_name, selected_text);
+        let entity_id = editor.entity_id();
 
-        // Find if there's an editor that already has an associated kernel
-        // If not, create a new kernel for the language, and associate it with the editor
+        let runtime_manager = self.runtime_manager.clone();
+        let runtime_manager = runtime_manager.read(cx);
+
+        let runtime_specification = runtime_manager
+            .kernelspec(language_name.clone())
+            .ok_or_else(|| anyhow::anyhow!("No kernel found for language: {}", language_name))?;
+
+        let session = self.sessions.entry(entity_id).or_insert_with(|| {
+            cx.new_view(|cx| Session::new(editor, language_name, fs, runtime_specification, cx))
+        });
+
+        // todo!(): Check if session uses the same language as the snippet
+
+        session.update(cx, |session, cx| {
+            session.run(&selected_text, cx);
+        });
+
+        anyhow::Ok(())
     }
 }
 
@@ -258,13 +266,15 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
         return;
     }
 
+    let fs = workspace.app_state().fs.clone();
+
     let editor = workspace
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx));
 
     if let (Some(editor), Some(runtime_panel)) = (editor, workspace.panel::<RuntimePanel>(cx)) {
         runtime_panel.update(cx, |runtime_panel, cx| {
-            runtime_panel.run(editor, cx);
+            runtime_panel.run(editor, fs, cx);
         });
     }
 }
@@ -335,6 +345,16 @@ impl Render for RuntimePanel {
                     .iter()
                     .map(|spec| div().child(spec.name.clone())),
             )
+            .child(Label::new("Sessions"))
+            .children(self.sessions.iter().map(|(entity_id, session)| {
+                let entity_id = *entity_id;
+
+                let session = session.clone();
+
+                div()
+                    .child(format!("Entity: {}", entity_id))
+                    .child(session.into_any_element())
+            }))
             .into_any_element()
     }
 }
