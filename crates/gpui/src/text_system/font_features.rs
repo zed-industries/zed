@@ -58,7 +58,7 @@ impl<'de> serde::Deserialize<'de> for FontFeatures {
                 while let Some((key, value)) =
                     access.next_entry::<String, Option<FeatureValue>>()?
                 {
-                    if key.len() != 4 || !key.is_ascii() {
+                    if !is_valid_feature_tag(&key) {
                         log::error!("Incorrect font feature tag: {}", key);
                         continue;
                     }
@@ -141,4 +141,20 @@ impl schemars::JsonSchema for FontFeatures {
         }
         schema.into()
     }
+}
+
+fn is_valid_feature_tag(tag: &str) -> bool {
+    let raw_bytes = tag.bytes();
+    if raw_bytes.len() != 4 {
+        return false;
+    }
+    for ch in raw_bytes.into_iter() {
+        match ch {
+            48..=57 => continue,  // 0 ... 9
+            65..=90 => continue,  // A ... Z
+            97..=122 => continue, // a ... z
+            _ => return false,
+        }
+    }
+    true
 }
