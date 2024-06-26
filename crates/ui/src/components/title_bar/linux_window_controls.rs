@@ -19,7 +19,7 @@ impl LinuxWindowControls {
 
 impl RenderOnce for LinuxWindowControls {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let controls = cx.supported_window_controls();
+        let controls = cx.window_controls();
         let close_button_hover_color = Rgba {
             r: 232.0 / 255.0,
             g: 17.0 / 255.0,

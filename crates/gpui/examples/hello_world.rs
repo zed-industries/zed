@@ -16,7 +16,7 @@ Things to do:
 impl Render for HelloWorld {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let decorations = cx.window_decorations();
-        let tiling = dbg!(cx.window_tiling());
+        let tiling = cx.window_tiling();
         let rounding = px(10.0);
         let shadow_size = px(20.0);
         let border_size = px(1.0);

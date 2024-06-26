@@ -969,7 +969,7 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn supported_window_controls(&self) -> WindowControls {
+    fn window_controls(&self) -> WindowControls {
         self.borrow().window_controls
     }
 }

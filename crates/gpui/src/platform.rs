@@ -337,7 +337,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         }
     }
     fn set_content_area(&mut self, _area: Bounds<Pixels>) {}
-    fn supported_window_controls(&self) -> WindowControls {
+    fn window_controls(&self) -> WindowControls {
         WindowControls {
             fullscreen: true,
             maximize: true,
