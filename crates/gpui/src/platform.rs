@@ -211,6 +211,7 @@ impl Debug for DisplayId {
 unsafe impl Send for DisplayId {}
 
 /// Which part of the window to resize
+#[derive(Debug)]
 pub enum ResizeEdge {
     /// The top edge
     Top,
@@ -336,7 +337,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
             bottom: false,
         }
     }
-    fn set_content_area(&mut self, _area: Bounds<Pixels>) {}
     fn window_controls(&self) -> WindowControls {
         WindowControls {
             fullscreen: true,
@@ -896,6 +896,14 @@ pub enum CursorStyle {
     /// A resize cursor directing up and down
     /// corresponds to the CSS cursor value `ns-resize`
     ResizeUpDown,
+
+    /// A resize cursor directing up-left and down-right
+    /// corresponds to the CSS cursor value `nesw-resize`
+    ResizeUpLeftDownRight,
+
+    /// A resize cursor directing up-right and down-left
+    /// corresponds to the CSS cursor value `nwse-resize`
+    ResizeUpRightDownLeft,
 
     /// A cursor indicating that the item/column can be resized horizontally.
     /// corresponds to the CSS curosr value `col-resize`

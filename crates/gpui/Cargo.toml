@@ -160,5 +160,9 @@ name = "set_menus"
 path = "examples/set_menus.rs"
 
 [[example]]
+name = "window_shadow"
+path = "examples/window_shadow.rs"
+
+[[example]]
 name = "input"
 path = "examples/input.rs"
