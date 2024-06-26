@@ -144,15 +144,14 @@ impl schemars::JsonSchema for FontFeatures {
 }
 
 fn is_valid_feature_tag(tag: &str) -> bool {
-    let raw_bytes = tag.bytes();
-    if raw_bytes.len() != 4 {
+    if tag.len() != 4 {
         return false;
     }
-    for ch in raw_bytes.into_iter() {
+    for ch in tag.chars() {
         match ch {
-            48..=57 => continue,  // 0 ... 9
-            65..=90 => continue,  // A ... Z
-            97..=122 => continue, // a ... z
+            '0'..='9' => continue,
+            'A'..='Z' => continue,
+            'a'..='z' => continue,
             _ => return false,
         }
     }
