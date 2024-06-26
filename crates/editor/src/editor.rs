@@ -2914,6 +2914,9 @@ impl Editor {
             let start_offset = TO::to_offset(&range.start, &buffer_snapshot);
             let end_offset = start_offset + end_difference;
             let start_offset = start_offset + start_difference;
+            if start_offset > buffer_snapshot.len() || end_offset > buffer_snapshot.len() {
+                continue;
+            }
             let start = buffer_snapshot.anchor_after(start_offset);
             let end = buffer_snapshot.anchor_after(end_offset);
             linked_edits
