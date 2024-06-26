@@ -2,7 +2,7 @@
 name = "live_kit_client"
 version = "0.1.0"
 edition = "2021"
-description = "Bindings to LiveKit Swift client SDK"
+description = "Logic for using LiveKit with GPUI"
 publish = false
 license = "GPL-3.0-or-later"
 
