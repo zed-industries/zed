@@ -117,10 +117,13 @@ pub fn init(
 
     language!(
         "json",
-        vec![Arc::new(json::JsonLspAdapter::new(
-            node_runtime.clone(),
-            languages.clone(),
-        ))],
+        vec![
+            Arc::new(json::JsonLspAdapter::new(
+                node_runtime.clone(),
+                languages.clone(),
+            )),
+            Arc::new(json::NodeVersionAdapter)
+        ],
         json_task_context()
     );
     language!("markdown");

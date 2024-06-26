@@ -94,6 +94,27 @@ impl Keystroke {
             }
         }
 
+        //Allow for the user to specify a keystroke modifier as the key itself
+        //This sets the `key` to the modifier, and disables the modifier
+        if key.is_none() {
+            if shift {
+                key = Some("shift".to_string());
+                shift = false;
+            } else if control {
+                key = Some("control".to_string());
+                control = false;
+            } else if alt {
+                key = Some("alt".to_string());
+                alt = false;
+            } else if platform {
+                key = Some("platform".to_string());
+                platform = false;
+            } else if function {
+                key = Some("function".to_string());
+                function = false;
+            }
+        }
+
         let key = key.ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?;
 
         Ok(Keystroke {
@@ -186,6 +207,10 @@ impl std::fmt::Display for Keystroke {
             "right" => '→',
             "tab" => '⇥',
             "escape" => '⎋',
+            "shift" => '⇧',
+            "control" => '⌃',
+            "alt" => '⌥',
+            "platform" => '⌘',
             key => {
                 if key.len() == 1 {
                     key.chars().next().unwrap().to_ascii_uppercase()
@@ -239,6 +264,15 @@ impl Modifiers {
         {
             return self.control;
         }
+    }
+
+    /// How many modifier keys are pressed
+    pub fn number_of_modifiers(&self) -> u8 {
+        self.control as u8
+            + self.alt as u8
+            + self.shift as u8
+            + self.platform as u8
+            + self.function as u8
     }
 
     /// helper method for Modifiers with no modifiers
