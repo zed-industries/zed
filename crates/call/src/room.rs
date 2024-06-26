@@ -20,6 +20,7 @@ use livekit::{
     capture_local_audio_track, capture_local_video_track,
     id::ParticipantIdentity,
     options::{TrackPublishOptions, VideoCodec},
+    play_remote_audio_track,
     publication::LocalTrackPublication,
     track::TrackSource,
     RoomEvent, RoomOptions,
@@ -963,7 +964,8 @@ impl Room {
                         cx.emit(Event::RemoteAudioTracksChanged {
                             participant_id: participant.peer_id,
                         });
-                        participant.audio_tracks.insert(track_id, track);
+                        let stream = play_remote_audio_track(&track, cx);
+                        participant.audio_tracks.insert(track_id, (track, stream));
                     }
                     livekit::track::RemoteTrack::Video(track) => {
                         cx.emit(Event::RemoteVideoTracksChanged {
@@ -1034,7 +1036,7 @@ impl Room {
                 let user_id = participant.identity().0.parse()?;
                 let track_id = publication.sid();
                 if let Some(participant) = self.remote_participants.get_mut(&user_id) {
-                    for track in participant.audio_tracks.values() {
+                    for (track, _) in participant.audio_tracks.values() {
                         if track.sid() == track_id {
                             found = true;
                             break;

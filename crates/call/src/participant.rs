@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use client::{proto, ParticipantIndex, User};
 use collections::HashMap;
 use gpui::WeakModel;
+use live_kit_client::AudioStream;
 use project::Project;
 use std::sync::Arc;
 
@@ -41,7 +42,6 @@ pub struct LocalParticipant {
     pub role: proto::ChannelRole,
 }
 
-#[derive(Clone, Debug)]
 pub struct RemoteParticipant {
     pub user: Arc<User>,
     pub peer_id: proto::PeerId,
@@ -52,5 +52,5 @@ pub struct RemoteParticipant {
     pub muted: bool,
     pub speaking: bool,
     pub video_tracks: HashMap<TrackSid, RemoteVideoTrack>,
-    pub audio_tracks: HashMap<TrackSid, RemoteAudioTrack>,
+    pub audio_tracks: HashMap<TrackSid, (RemoteAudioTrack, AudioStream)>,
 }
