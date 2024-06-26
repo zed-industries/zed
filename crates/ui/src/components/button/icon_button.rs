@@ -86,6 +86,11 @@ impl Clickable for IconButton {
         self.base = self.base.on_click(handler);
         self
     }
+
+    fn cursor_style(mut self, cursor_style: gpui::CursorStyle) -> Self {
+        self.base = self.base.cursor_style(cursor_style);
+        self
+    }
 }
 
 impl FixedWidth for IconButton {
