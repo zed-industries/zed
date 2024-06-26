@@ -238,7 +238,7 @@ impl DebugAdapterClient {
         Ok(capabilities)
     }
 
-    pub async fn launch(&mut self) -> Result<()> {
+    pub async fn launch(&self) -> Result<()> {
         self.request::<Launch>(LaunchRequestArguments {
             no_debug: Some(false),
             __restart: None,
