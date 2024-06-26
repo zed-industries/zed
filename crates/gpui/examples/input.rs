@@ -24,58 +24,58 @@ struct TextInput {
     content: SharedString,
     selected_range: Range<usize>,
     selection_reversed: bool,
-    marked_range: Option<Range<usize>>, // New field for marked text range
+    marked_range: Option<Range<usize>>,
     last_layout: Option<ShapedLine>,
 }
 
 impl TextInput {
     fn left(&mut self, _: &Left, cx: &mut ViewContext<Self>) {
         if self.selected_range.is_empty() {
-            self.move_cursor(self.previous_boundary(self.selected_range.end), cx);
+            self.move_to(self.previous_boundary(self.cursor_offset()), cx);
         } else {
-            self.move_cursor(self.selected_range.end, cx)
+            self.move_to(self.selected_range.end, cx)
         }
     }
 
     fn right(&mut self, _: &Right, cx: &mut ViewContext<Self>) {
         if self.selected_range.is_empty() {
-            self.move_cursor(self.next_boundary(self.selected_range.end), cx);
+            self.move_to(self.next_boundary(self.selected_range.end), cx);
         } else {
-            self.move_cursor(self.selected_range.start, cx)
+            self.move_to(self.selected_range.start, cx)
         }
     }
 
     fn select_left(&mut self, _: &SelectLeft, cx: &mut ViewContext<Self>) {
-        self.move_head(self.previous_boundary(self.head()), cx);
+        self.select_to(self.previous_boundary(self.cursor_offset()), cx);
     }
 
     fn select_right(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
-        self.move_head(self.next_boundary(self.head()), cx);
+        self.select_to(self.next_boundary(self.cursor_offset()), cx);
     }
 
     fn select_all(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
-        self.move_cursor(0, cx);
-        self.move_head(self.content.len(), cx)
+        self.move_to(0, cx);
+        self.select_to(self.content.len(), cx)
     }
 
     fn home(&mut self, _: &Home, cx: &mut ViewContext<Self>) {
-        self.move_cursor(0, cx);
+        self.move_to(0, cx);
     }
 
     fn end(&mut self, _: &End, cx: &mut ViewContext<Self>) {
-        self.move_cursor(self.content.len(), cx);
+        self.move_to(self.content.len(), cx);
     }
 
     fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         if self.selected_range.is_empty() {
-            self.move_head(self.previous_boundary(self.selected_range.start), cx)
+            self.select_to(self.previous_boundary(self.cursor_offset()), cx)
         }
         self.replace_text_in_range(None, "", cx)
     }
 
     fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
         if self.selected_range.is_empty() {
-            self.move_head(self.next_boundary(self.selected_range.start), cx)
+            self.select_to(self.next_boundary(self.cursor_offset()), cx)
         }
         self.replace_text_in_range(None, "", cx)
     }
@@ -84,12 +84,12 @@ impl TextInput {
         cx.show_character_palette();
     }
 
-    fn move_cursor(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
+    fn move_to(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
         self.selected_range = offset..offset;
         cx.notify()
     }
 
-    fn head(&self) -> usize {
+    fn cursor_offset(&self) -> usize {
         if self.selection_reversed {
             self.selected_range.start
         } else {
@@ -97,7 +97,7 @@ impl TextInput {
         }
     }
 
-    fn move_head(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
+    fn select_to(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
         if self.selection_reversed {
             self.selected_range.start = offset
         } else {
@@ -171,11 +171,7 @@ impl ViewInputHandler for TextInput {
         _cx: &mut ViewContext<Self>,
     ) -> Option<String> {
         let range = self.range_from_utf16(&range_utf16);
-        if range.start <= range.end && range.end <= self.content.len() {
-            Some(self.content[range].to_string())
-        } else {
-            None
-        }
+        Some(self.content[range].to_string())
     }
 
     fn selected_text_range(&mut self, _cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
@@ -266,8 +262,7 @@ struct TextElement {
 }
 
 struct PrepaintState {
-    line: ShapedLine,
-    focus_handle: FocusHandle,
+    line: Option<ShapedLine>,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
 }
@@ -309,9 +304,8 @@ impl Element for TextElement {
     ) -> Self::PrepaintState {
         let input = self.input.read(cx);
         let content = input.content.clone();
-        let focus_handle = input.focus_handle.clone();
         let selected_range = input.selected_range.clone();
-        let head = input.head();
+        let cursor = input.cursor_offset();
         let style = cx.text_style();
         let run = TextRun {
             len: input.content.len(),
@@ -354,7 +348,7 @@ impl Element for TextElement {
             .shape_line(content, font_size, &runs)
             .unwrap();
 
-        let cursor_pos = line.x_for_index(head);
+        let cursor_pos = line.x_for_index(cursor);
         let (selection, cursor) = if selected_range.is_empty() {
             (
                 None,
@@ -385,8 +379,7 @@ impl Element for TextElement {
             )
         };
         PrepaintState {
-            line,
-            focus_handle,
+            line: Some(line),
             cursor,
             selection,
         }
@@ -400,23 +393,22 @@ impl Element for TextElement {
         prepaint: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
+        let focus_handle = self.input.read(cx).focus_handle.clone();
         cx.handle_input(
-            &prepaint.focus_handle,
+            &focus_handle,
             ElementInputHandler::new(bounds, self.input.clone()),
         );
         if let Some(selection) = prepaint.selection.take() {
             cx.paint_quad(selection)
         }
-        prepaint
-            .line
-            .paint(bounds.origin, cx.line_height(), cx)
-            .unwrap();
+        let line = prepaint.line.take().unwrap();
+        line.paint(bounds.origin, cx.line_height(), cx).unwrap();
 
         if let Some(cursor) = prepaint.cursor.take() {
             cx.paint_quad(cursor);
         }
         self.input.update(cx, |input, _cx| {
-            input.last_layout = Some(prepaint.line.clone());
+            input.last_layout = Some(line);
         });
     }
 }
