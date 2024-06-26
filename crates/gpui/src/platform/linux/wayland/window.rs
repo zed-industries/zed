@@ -947,17 +947,6 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().decoration_state
     }
 
-    fn set_content_area(&mut self, area: Bounds<Pixels>) {
-        let state = self.borrow();
-
-        state.xdg_surface.set_window_geometry(
-            area.origin.x.0 as i32,
-            area.origin.y.0 as i32,
-            area.size.width.0 as i32,
-            area.size.height.0 as i32,
-        )
-    }
-
     fn tiling(&self) -> Tiling {
         self.borrow().tiling
     }
