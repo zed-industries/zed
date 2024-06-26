@@ -348,7 +348,7 @@ impl LspAdapter for NodeVersionAdapter {
         }
 
         Ok(LanguageServerBinary {
-            path: destination_path.join("package-version-server"),
+            path: destination_path,
             env: None,
             arguments: Default::default(),
         })
