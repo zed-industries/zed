@@ -1,5 +1,4 @@
 use std::cell::{RefCell, RefMut};
-use std::ffi::OsString;
 use std::hash::Hash;
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
@@ -65,7 +64,6 @@ use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
-use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::clipboard::{
     Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE,
 };
@@ -74,6 +72,7 @@ use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
 use crate::platform::linux::LinuxClient;
+use crate::platform::linux::{get_xkb_compose_state, is_within_click_distance};
 use crate::platform::PlatformWindow;
 use crate::{
     point, px, size, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor, MouseExitEvent, Size,
@@ -1054,21 +1053,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     .flatten()
                     .expect("Failed to create keymap")
                 };
-                let table = {
-                    let locale = std::env::var_os("LC_CTYPE").unwrap_or(OsString::from("C"));
-                    xkb::compose::Table::new_from_locale(
-                        &xkb_context,
-                        &locale,
-                        xkb::compose::COMPILE_NO_FLAGS,
-                    )
-                    .log_err()
-                    .unwrap()
-                };
                 state.keymap_state = Some(xkb::State::new(&keymap));
-                state.compose_state = Some(xkb::compose::State::new(
-                    &table,
-                    xkb::compose::STATE_NO_FLAGS,
-                ));
+                state.compose_state = get_xkb_compose_state(&xkb_context);
             }
             wl_keyboard::Event::Enter {
                 serial, surface, ..
@@ -1148,6 +1134,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             compose.feed(keysym);
                             match compose.status() {
                                 xkb::Status::Composing => {
+                                    keystroke.ime_key = None;
                                     state.pre_edit_text =
                                         compose.utf8().or(Keystroke::underlying_dead_key(keysym));
                                     let pre_edit =
@@ -1160,7 +1147,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                 xkb::Status::Composed => {
                                     state.pre_edit_text.take();
                                     keystroke.ime_key = compose.utf8();
-                                    keystroke.key = xkb::keysym_get_name(compose.keysym().unwrap());
+                                    if let Some(keysym) = compose.keysym() {
+                                        keystroke.key = xkb::keysym_get_name(keysym);
+                                    }
                                 }
                                 xkb::Status::Cancelled => {
                                     let pre_edit = state.pre_edit_text.take();
