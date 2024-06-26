@@ -148,11 +148,8 @@ fn is_valid_feature_tag(tag: &str) -> bool {
         return false;
     }
     for ch in tag.chars() {
-        match ch {
-            '0'..='9' => continue,
-            'A'..='Z' => continue,
-            'a'..='z' => continue,
-            _ => return false,
+        if !ch.is_ascii_alphanumeric() {
+            return false;
         }
     }
     true
