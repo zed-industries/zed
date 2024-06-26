@@ -447,7 +447,6 @@ impl DBusMenu {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct DBusMenuInterface {
     pub(crate) menu: DBusMenu,
     pub(crate) revision: u32,
