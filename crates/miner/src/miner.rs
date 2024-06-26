@@ -93,6 +93,14 @@ impl GroqClient {
     }
 }
 
+// Below we perform a bottom up traversal over each worktree in the project.
+// We push an entry for each file and directory into a queue.
+// We then read from that queue with N workers in a tokio thread pool.
+// For each file, we perform a summarization with a prompt.
+// For each directory, we combine the summaries of all its files with a prompt.
+// If a file is too big, truncate it at the max tokens of mixtral model, 32k.
+// todo!
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let api_key = std::env::var("GROQ_API_KEY").expect("GROQ_API_KEY must be set");
