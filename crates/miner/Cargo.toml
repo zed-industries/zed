@@ -16,4 +16,6 @@ project.workspace = true
 reqwest = { version = "0.12.5", features = ["json", "stream"] }
 serde.workspace = true
 serde_json.workspace = true
+tokenizers = { version = "0.19.1", features = ["http"] }
 tokio.workspace = true
+walkdir = "2.5.0"
