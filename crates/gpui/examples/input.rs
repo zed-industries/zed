@@ -1,8 +1,20 @@
 use std::ops::Range;
 
 use gpui::*;
+use unicode_segmentation::*;
 
-actions!(text_input, [Backspace, Delete, Left, Right, Home, End]);
+actions!(
+    text_input,
+    [
+        Backspace,
+        Delete,
+        Left,
+        Right,
+        Home,
+        End,
+        ShowCharacterPalette
+    ]
+);
 
 struct TextInput {
     focus_handle: FocusHandle,
@@ -13,93 +25,14 @@ struct TextInput {
 }
 
 impl TextInput {
-    fn offset_utf16to8(&self, offset: usize) -> usize {
-        let mut utf8_offset = 0;
-        let mut utf16_count = 0;
-
-        for ch in self.content.chars() {
-            if utf16_count >= offset {
-                break;
-            }
-            utf16_count += ch.len_utf16();
-            utf8_offset += ch.len_utf8();
-        }
-
-        utf8_offset
-    }
-
-    fn offset_utf8to16(&self, offset: usize) -> usize {
-        let mut utf16_offset = 0;
-        let mut utf8_count = 0;
-
-        for ch in self.content.chars() {
-            if utf8_count >= offset {
-                break;
-            }
-            utf8_count += ch.len_utf8();
-            utf16_offset += ch.len_utf16();
-        }
-
-        utf16_offset
-    }
-    fn offset_utf32to8(&self, offset: usize) -> usize {
-        let mut utf8_offset = 0;
-        let mut utf32_count = 0;
-
-        for ch in self.content.chars() {
-            if utf32_count >= offset {
-                break;
-            }
-            utf32_count += 1;
-            utf8_offset += ch.len_utf8();
-        }
-
-        utf8_offset
-    }
-
-    fn offset_utf8to32(&self, offset: usize) -> usize {
-        let mut utf32_offset = 0;
-        let mut utf8_count = 0;
-
-        for ch in self.content.chars() {
-            if utf8_count >= offset {
-                break;
-            }
-            utf8_count += ch.len_utf8();
-            utf32_offset += 1;
-        }
-
-        utf32_offset
-    }
-
-    fn range_utf8to32(&self, range: &Range<usize>) -> Range<usize> {
-        self.offset_utf8to32(range.start)..self.offset_utf8to32(range.end)
-    }
-
-    fn range_utf32to8(&self, range_utf32: &Range<usize>) -> Range<usize> {
-        self.offset_utf32to8(range_utf32.start)..self.offset_utf32to8(range_utf32.end)
-    }
-    fn range_utf8to16(&self, range: &Range<usize>) -> Range<usize> {
-        self.offset_utf8to16(range.start)..self.offset_utf8to16(range.end)
-    }
-
-    fn range_utf16to8(&self, range_utf16: &Range<usize>) -> Range<usize> {
-        self.offset_utf16to8(range_utf16.start)..self.offset_utf16to8(range_utf16.end)
-    }
-
     fn left(&mut self, _: &Left, cx: &mut ViewContext<Self>) {
-        dbg!("left");
-        let new_pos = self.offset_utf32to8(
-            self.offset_utf8to32(self.selected_range.end)
-                .saturating_sub(1),
-        );
-        dbg!("new_pos");
+        let new_pos = self.previous_grapheme_boundary(self.selected_range.end);
         self.selected_range = new_pos..new_pos;
         cx.notify()
     }
 
     fn right(&mut self, _: &Right, cx: &mut ViewContext<Self>) {
-        let new_pos = self.offset_utf32to8(self.offset_utf8to32(self.selected_range.end) + 1);
+        let new_pos = self.next_grapheme_boundary(self.selected_range.end);
         self.selected_range = new_pos..new_pos;
         cx.notify()
     }
@@ -116,20 +49,77 @@ impl TextInput {
 
     fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         if self.selected_range.start == self.selected_range.end {
-            self.selected_range.start = self.offset_utf32to8(
-                self.offset_utf8to32(self.selected_range.end)
-                    .saturating_sub(1),
-            );
+            self.selected_range.start = self.previous_grapheme_boundary(self.selected_range.start);
         }
         self.replace_text_in_range(None, "", cx)
     }
 
     fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
         if self.selected_range.start == self.selected_range.end {
-            self.selected_range.end =
-                self.offset_utf32to8(self.offset_utf8to32(self.selected_range.end) + 1);
+            self.selected_range.end = self.next_grapheme_boundary(self.selected_range.end);
         }
         self.replace_text_in_range(None, "", cx)
+    }
+
+    fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
+        cx.show_character_palette();
+    }
+
+    fn offset_from_utf16(&self, offset: usize) -> usize {
+        let mut utf8_offset = 0;
+        let mut utf16_count = 0;
+
+        for ch in self.content.chars() {
+            if utf16_count >= offset {
+                break;
+            }
+            utf16_count += ch.len_utf16();
+            utf8_offset += ch.len_utf8();
+        }
+
+        utf8_offset
+    }
+
+    fn offset_to_utf16(&self, offset: usize) -> usize {
+        let mut utf16_offset = 0;
+        let mut utf8_count = 0;
+
+        for ch in self.content.chars() {
+            if utf8_count >= offset {
+                break;
+            }
+            utf8_count += ch.len_utf8();
+            utf16_offset += ch.len_utf16();
+        }
+
+        utf16_offset
+    }
+
+    fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
+        self.offset_to_utf16(range.start)..self.offset_to_utf16(range.end)
+    }
+
+    fn range_from_utf16(&self, range_utf16: &Range<usize>) -> Range<usize> {
+        self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
+    }
+
+    fn previous_grapheme_boundary(&self, offset: usize) -> usize {
+        self.content
+            .grapheme_indices(true)
+            .rev()
+            .skip_while(|(idx, _)| idx >= &offset)
+            .next()
+            .map(|(idx, _)| idx)
+            .unwrap_or(0)
+    }
+
+    fn next_grapheme_boundary(&self, offset: usize) -> usize {
+        self.content
+            .grapheme_indices(true)
+            .skip_while(|(idx, _)| idx <= &offset)
+            .next()
+            .map(|(idx, _)| idx)
+            .unwrap_or(self.content.len())
     }
 }
 
@@ -137,9 +127,9 @@ impl ViewInputHandler for TextInput {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
-        cx: &mut ViewContext<Self>,
+        _cx: &mut ViewContext<Self>,
     ) -> Option<String> {
-        let range = self.range_utf16to8(&range_utf16);
+        let range = self.range_from_utf16(&range_utf16);
         if range.start <= range.end && range.end <= self.content.len() {
             Some(self.content[range].to_string())
         } else {
@@ -147,17 +137,17 @@ impl ViewInputHandler for TextInput {
         }
     }
 
-    fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
-        Some(self.range_utf8to16(&self.selected_range))
+    fn selected_text_range(&mut self, _cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
+        Some(self.range_to_utf16(&self.selected_range))
     }
 
-    fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
+    fn marked_text_range(&self, _cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
         self.marked_range
             .as_ref()
-            .map(|range| self.range_utf8to16(range))
+            .map(|range| self.range_to_utf16(range))
     }
 
-    fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
+    fn unmark_text(&mut self, _cx: &mut ViewContext<Self>) {
         self.marked_range = None;
     }
 
@@ -169,7 +159,7 @@ impl ViewInputHandler for TextInput {
     ) {
         let range = range_utf16
             .as_ref()
-            .map(|range_utf16| self.range_utf16to8(range_utf16))
+            .map(|range_utf16| self.range_from_utf16(range_utf16))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
@@ -190,7 +180,7 @@ impl ViewInputHandler for TextInput {
     ) {
         let range = range_utf16
             .as_ref()
-            .map(|range_utf16| self.range_utf16to8(range_utf16))
+            .map(|range_utf16| self.range_from_utf16(range_utf16))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
@@ -200,7 +190,8 @@ impl ViewInputHandler for TextInput {
         self.marked_range = Some(range.start..range.start + new_text.len());
         self.selected_range = new_selected_range_utf16
             .as_ref()
-            .map(|range_utf16| self.range_utf16to8(range_utf16))
+            .map(|range_utf16| self.range_from_utf16(range_utf16))
+            .map(|new_range| new_range.start + range.start..new_range.end + range.end)
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
 
         cx.notify();
@@ -210,12 +201,12 @@ impl ViewInputHandler for TextInput {
         &mut self,
         range_utf16: Range<usize>,
         bounds: Bounds<Pixels>,
-        cx: &mut ViewContext<Self>,
+        _cx: &mut ViewContext<Self>,
     ) -> Option<Bounds<Pixels>> {
         let Some(last_layout) = self.last_layout.as_ref() else {
             return None;
         };
-        let range = self.range_utf16to8(&range_utf16);
+        let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(
                 bounds.left() + last_layout.x_for_index(range.start),
@@ -234,7 +225,6 @@ struct TextElement {
 }
 
 struct PrepaintState {
-    hitbox: Hitbox,
     line: ShapedLine,
     focus_handle: FocusHandle,
     cursor: PaintQuad,
@@ -264,13 +254,13 @@ impl Element for TextElement {
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        style.size.height = relative(1.).into();
+        style.size.height = cx.line_height().into();
         (cx.request_layout(style, []), ())
     }
 
     fn prepaint(
         &mut self,
-        id: Option<&GlobalElementId>,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -308,13 +298,14 @@ impl Element for TextElement {
                     ..run.clone()
                 },
             ]
+            .into_iter()
+            .filter(|run| run.len > 0)
+            .collect()
         } else {
             vec![run]
         };
 
         let font_size = style.font_size.to_pixels(cx.rem_size());
-        let line_height = cx.line_height();
-        drop(input);
         let line = cx
             .text_system()
             .shape_line(content, font_size, &runs)
@@ -324,12 +315,11 @@ impl Element for TextElement {
         let cursor = fill(
             Bounds::new(
                 point(bounds.left() + cursor_pos, bounds.top()),
-                size(px(2.), bounds.bottom() - px(2.)),
+                size(px(2.), bounds.bottom() - bounds.top()),
             ),
             gpui::blue(),
         );
         PrepaintState {
-            hitbox: cx.insert_hitbox(bounds, true),
             line,
             focus_handle,
             cursor,
@@ -338,7 +328,7 @@ impl Element for TextElement {
 
     fn paint(
         &mut self,
-        id: Option<&GlobalElementId>,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
@@ -353,7 +343,7 @@ impl Element for TextElement {
             .paint(bounds.origin, cx.line_height(), cx)
             .unwrap();
         cx.paint_quad(prepaint.cursor.clone());
-        self.input.update(cx, |input, cx| {
+        self.input.update(cx, |input, _cx| {
             input.last_layout = Some(prepaint.line.clone());
         });
     }
@@ -363,7 +353,6 @@ impl Render for TextInput {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .flex()
-            .id("hi")
             .key_context("TextInput")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::backspace))
@@ -372,14 +361,16 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::right))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
+            .on_action(cx.listener(Self::show_character_palette))
             .bg(rgb(0xeeeeee))
             .size_full()
-            .text_xl()
+            .line_height(px(30.))
+            .text_size(px(24.))
             .child(
                 div()
-                    .h(px(36.))
+                    .h(px(30. + 4. * 2.))
                     .w_full()
-                    .p_1()
+                    .p(px(4.))
                     .bg(white())
                     .child(TextElement {
                         input: cx.view().clone(),
@@ -398,6 +389,7 @@ fn main() {
             KeyBinding::new("right", Right, None),
             KeyBinding::new("home", Home, None),
             KeyBinding::new("end", End, None),
+            KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
         ]);
         let window = cx
             .open_window(
@@ -419,6 +411,7 @@ fn main() {
         window
             .update(cx, |view, cx| {
                 view.focus_handle.focus(cx);
+                cx.activate(true)
             })
             .unwrap();
     });

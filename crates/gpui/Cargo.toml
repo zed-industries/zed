@@ -80,6 +80,7 @@ backtrace = "0.3"
 collections = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 http = { workspace = true, features = ["test-support"] }
+unicode-segmentation.workspace = true
 
 [build-dependencies]
 embed-resource = "2.4"

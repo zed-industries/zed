@@ -1672,9 +1672,13 @@ extern "C" fn first_rect_for_character_range(
     range: NSRange,
     _: id,
 ) -> NSRect {
-    let frame = unsafe {
-        let window = get_window_state(this).lock().native_window;
-        NSView::frame(window)
+    let frame: NSRect = unsafe {
+        let state = get_window_state(this);
+        let lock = state.lock();
+        let mut frame = NSWindow::frame(lock.native_window);
+        let content_layout_rect: CGRect = msg_send![lock.native_window, contentLayoutRect];
+        frame.origin.y -= frame.size.height - content_layout_rect.size.height;
+        frame
     };
     with_input_handler(this, |input_handler| {
         input_handler.bounds_for_range(range.to_range()?)
