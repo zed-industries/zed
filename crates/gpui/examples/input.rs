@@ -10,6 +10,9 @@ actions!(
         Delete,
         Left,
         Right,
+        SelectLeft,
+        SelectRight,
+        SelectAll,
         Home,
         End,
         ShowCharacterPalette
@@ -20,49 +23,91 @@ struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
     selected_range: Range<usize>,
+    selection_reversed: bool,
     marked_range: Option<Range<usize>>, // New field for marked text range
     last_layout: Option<ShapedLine>,
 }
 
 impl TextInput {
     fn left(&mut self, _: &Left, cx: &mut ViewContext<Self>) {
-        let new_pos = self.previous_grapheme_boundary(self.selected_range.end);
-        self.selected_range = new_pos..new_pos;
-        cx.notify()
+        if self.selected_range.is_empty() {
+            self.move_cursor(self.previous_boundary(self.selected_range.end), cx);
+        } else {
+            self.move_cursor(self.selected_range.end, cx)
+        }
     }
 
     fn right(&mut self, _: &Right, cx: &mut ViewContext<Self>) {
-        let new_pos = self.next_grapheme_boundary(self.selected_range.end);
-        self.selected_range = new_pos..new_pos;
-        cx.notify()
+        if self.selected_range.is_empty() {
+            self.move_cursor(self.next_boundary(self.selected_range.end), cx);
+        } else {
+            self.move_cursor(self.selected_range.start, cx)
+        }
+    }
+
+    fn select_left(&mut self, _: &SelectLeft, cx: &mut ViewContext<Self>) {
+        self.move_head(self.previous_boundary(self.head()), cx);
+    }
+
+    fn select_right(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
+        self.move_head(self.next_boundary(self.head()), cx);
+    }
+
+    fn select_all(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
+        self.move_cursor(0, cx);
+        self.move_head(self.content.len(), cx)
     }
 
     fn home(&mut self, _: &Home, cx: &mut ViewContext<Self>) {
-        self.selected_range = 0..0;
-        cx.notify()
+        self.move_cursor(0, cx);
     }
 
     fn end(&mut self, _: &End, cx: &mut ViewContext<Self>) {
-        self.selected_range = self.content.len()..self.content.len();
-        cx.notify()
+        self.move_cursor(self.content.len(), cx);
     }
 
     fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
-        if self.selected_range.start == self.selected_range.end {
-            self.selected_range.start = self.previous_grapheme_boundary(self.selected_range.start);
+        if self.selected_range.is_empty() {
+            self.move_head(self.previous_boundary(self.selected_range.start), cx)
         }
         self.replace_text_in_range(None, "", cx)
     }
 
     fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
-        if self.selected_range.start == self.selected_range.end {
-            self.selected_range.end = self.next_grapheme_boundary(self.selected_range.end);
+        if self.selected_range.is_empty() {
+            self.move_head(self.next_boundary(self.selected_range.start), cx)
         }
         self.replace_text_in_range(None, "", cx)
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
         cx.show_character_palette();
+    }
+
+    fn move_cursor(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
+        self.selected_range = offset..offset;
+        cx.notify()
+    }
+
+    fn head(&self) -> usize {
+        if self.selection_reversed {
+            self.selected_range.start
+        } else {
+            self.selected_range.end
+        }
+    }
+
+    fn move_head(&mut self, offset: usize, cx: &mut ViewContext<Self>) {
+        if self.selection_reversed {
+            self.selected_range.start = offset
+        } else {
+            self.selected_range.end = offset
+        };
+        if self.selected_range.end < self.selected_range.start {
+            self.selection_reversed = !self.selection_reversed;
+            self.selected_range = self.selected_range.end..self.selected_range.start;
+        }
+        cx.notify()
     }
 
     fn offset_from_utf16(&self, offset: usize) -> usize {
@@ -103,7 +148,7 @@ impl TextInput {
         self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
     }
 
-    fn previous_grapheme_boundary(&self, offset: usize) -> usize {
+    fn previous_boundary(&self, offset: usize) -> usize {
         self.content
             .grapheme_indices(true)
             .rev()
@@ -113,7 +158,7 @@ impl TextInput {
             .unwrap_or(0)
     }
 
-    fn next_grapheme_boundary(&self, offset: usize) -> usize {
+    fn next_boundary(&self, offset: usize) -> usize {
         self.content
             .grapheme_indices(true)
             .skip_while(|(idx, _)| idx <= &offset)
@@ -227,7 +272,8 @@ struct TextElement {
 struct PrepaintState {
     line: ShapedLine,
     focus_handle: FocusHandle,
-    cursor: PaintQuad,
+    cursor: Option<PaintQuad>,
+    selection: Option<PaintQuad>,
 }
 
 impl IntoElement for TextElement {
@@ -268,7 +314,8 @@ impl Element for TextElement {
         let input = self.input.read(cx);
         let content = input.content.clone();
         let focus_handle = input.focus_handle.clone();
-        let selection = input.selected_range.clone();
+        let selected_range = input.selected_range.clone();
+        let head = input.head();
         let style = cx.text_style();
         let run = TextRun {
             len: input.content.len(),
@@ -311,18 +358,41 @@ impl Element for TextElement {
             .shape_line(content, font_size, &runs)
             .unwrap();
 
-        let cursor_pos = line.x_for_index(selection.end);
-        let cursor = fill(
-            Bounds::new(
-                point(bounds.left() + cursor_pos, bounds.top()),
-                size(px(2.), bounds.bottom() - bounds.top()),
-            ),
-            gpui::blue(),
-        );
+        let cursor_pos = line.x_for_index(head);
+        let (selection, cursor) = if selected_range.is_empty() {
+            (
+                None,
+                Some(fill(
+                    Bounds::new(
+                        point(bounds.left() + cursor_pos, bounds.top()),
+                        size(px(2.), bounds.bottom() - bounds.top()),
+                    ),
+                    gpui::blue(),
+                )),
+            )
+        } else {
+            (
+                Some(fill(
+                    Bounds::from_corners(
+                        point(
+                            bounds.left() + line.x_for_index(selected_range.start),
+                            bounds.top(),
+                        ),
+                        point(
+                            bounds.left() + line.x_for_index(selected_range.end),
+                            bounds.bottom(),
+                        ),
+                    ),
+                    rgba(0x3311FF30),
+                )),
+                None,
+            )
+        };
         PrepaintState {
             line,
             focus_handle,
             cursor,
+            selection,
         }
     }
 
@@ -338,11 +408,17 @@ impl Element for TextElement {
             &prepaint.focus_handle,
             ElementInputHandler::new(bounds, self.input.clone()),
         );
+        if let Some(selection) = prepaint.selection.take() {
+            cx.paint_quad(selection)
+        }
         prepaint
             .line
             .paint(bounds.origin, cx.line_height(), cx)
             .unwrap();
-        cx.paint_quad(prepaint.cursor.clone());
+
+        if let Some(cursor) = prepaint.cursor.take() {
+            cx.paint_quad(cursor);
+        }
         self.input.update(cx, |input, _cx| {
             input.last_layout = Some(prepaint.line.clone());
         });
@@ -359,6 +435,9 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
+            .on_action(cx.listener(Self::select_left))
+            .on_action(cx.listener(Self::select_right))
+            .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::show_character_palette))
@@ -387,6 +466,9 @@ fn main() {
             KeyBinding::new("delete", Delete, None),
             KeyBinding::new("left", Left, None),
             KeyBinding::new("right", Right, None),
+            KeyBinding::new("shift-left", SelectLeft, None),
+            KeyBinding::new("shift-right", SelectRight, None),
+            KeyBinding::new("cmd-a", SelectAll, None),
             KeyBinding::new("home", Home, None),
             KeyBinding::new("end", End, None),
             KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
@@ -402,6 +484,7 @@ fn main() {
                         focus_handle: cx.focus_handle(),
                         content: "".into(),
                         selected_range: 0..0,
+                        selection_reversed: false,
                         marked_range: None,
                         last_layout: None,
                     })
