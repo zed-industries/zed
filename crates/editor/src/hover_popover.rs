@@ -16,6 +16,9 @@ use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
 use project::{HoverBlock, InlayHintLabelPart};
 use settings::Settings;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, Tooltip};
@@ -30,6 +33,7 @@ pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
+    print!("\nKeyboard Hover\n");
     let head = editor.selections.newest_anchor().head();
     show_hover(editor, head, true, cx);
 }
@@ -41,6 +45,20 @@ pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, cx: &mut ViewContex
         if let Some(anchor) = anchor {
             show_hover(editor, anchor, false, cx);
         } else {
+            let info_popovers = editor.hover_state.info_popovers.clone();
+            for p in info_popovers {
+                let keyboard_grace = p.keyboard_grace.borrow();
+                println!("{}", *keyboard_grace);
+                if *keyboard_grace {
+                    if let Some(anchor) = p.anchor {
+                        println!("old anchor");
+                        show_hover(editor, anchor, false, cx);
+                        return;
+                    } else {
+                        println!("no anchor");
+                    }
+                }
+            }
             hide_hover(editor, cx);
         }
     }
@@ -117,6 +135,8 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
                     scroll_handle: ScrollHandle::new(),
+                    keyboard_grace: Rc::new(RefCell::new(false)),
+                    anchor: None,
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -138,6 +158,13 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
 pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
+    // println!(
+    //     "{}",
+    //     SystemTime::now()
+    //         .duration_since(UNIX_EPOCH)
+    //         .unwrap()
+    //         .as_secs()
+    // );
     let info_popovers = editor.hover_state.info_popovers.drain(..);
     let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
     let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
@@ -317,6 +344,8 @@ fn show_hover(
                         symbol_range: RangeInEditor::Text(range),
                         parsed_content,
                         scroll_handle: ScrollHandle::new(),
+                        keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                        anchor: Some(anchor),
                     },
                 ));
             }
@@ -446,17 +475,10 @@ async fn parse_blocks(
                     },
                     ..Default::default()
                 },
-                inline_code: gpui::StyleRefinement {
-                    text: Some(gpui::TextStyleRefinement {
-                        font_family: Some(buffer_font_family.clone()),
-                        color: Some(cx.theme().colors().editor_active_line_number),
-                        background_color: Some(cx.theme().colors().background.into()),
-
-                        ..Default::default()
-                    }),
-                    background: Some(cx.theme().colors().background.into()),
-                    // background:Some(cx.theme().colors().background),
-                    // background_color: Some(cx.theme().colors().background),
+                inline_code: gpui::TextStyleRefinement {
+                    font_family: Some(buffer_font_family.clone()),
+                    color: Some(cx.theme().colors().terminal_ansi_magenta),
+                    // background_color: Some(cx.theme().colors().background.into()),
                     ..Default::default()
                 },
                 rule_color: Color::Muted.color(cx),
@@ -574,11 +596,14 @@ pub struct InfoPopover {
     pub symbol_range: RangeInEditor,
     pub parsed_content: Option<View<Markdown>>,
     pub scroll_handle: ScrollHandle,
-    // pub markdown_element: View<Markdown>,
+    pub keyboard_grace: Rc<RefCell<bool>>,
+    pub anchor: Option<Anchor>,
 }
 
 impl InfoPopover {
     pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
+        // let self_clone = Rc::clone(&self);
+        let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut d = div()
             .id("info_popover")
             .elevation_2(cx)
@@ -589,7 +614,11 @@ impl InfoPopover {
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Left, move |_, cx| {
+                let mut keyboard_grace = keyboard_grace.borrow_mut();
+                *keyboard_grace = false;
+                cx.stop_propagation();
+            })
             .p_2();
 
         if let Some(markdown) = &self.parsed_content {
