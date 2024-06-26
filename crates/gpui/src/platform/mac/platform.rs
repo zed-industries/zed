@@ -1,4 +1,4 @@
-use super::{events::key_to_native, screen_capture, BoolExt};
+use super::{events::key_to_native, renderer, screen_capture, BoolExt};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions,
@@ -50,8 +50,6 @@ use std::{
     sync::Arc,
 };
 use time::UtcOffset;
-
-use super::renderer;
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;

@@ -229,8 +229,12 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
-    fn screen_capture_sources(&self) -> Vec<PlatformScreenCaptureSource> {
-        vec![]
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (mut tx, rx) = oneshot::channel();
+        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
+        rx
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

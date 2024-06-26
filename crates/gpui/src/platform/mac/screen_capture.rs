@@ -1,4 +1,4 @@
-use crate::platform::{ScreenCaptureSource, ScreenCaptureStream};
+use crate::platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream};
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
 use cocoa::{
@@ -8,10 +8,7 @@ use cocoa::{
 use core_foundation::base::TCFType;
 use ctor::ctor;
 use futures::channel::oneshot;
-use media::{
-    core_media::{CMSampleBuffer, CMSampleBufferRef},
-    core_video::CVImageBuffer,
-};
+use media::core_media::{CMSampleBuffer, CMSampleBufferRef};
 use metal::NSInteger;
 use objc::{
     class,
@@ -31,9 +28,6 @@ pub struct MacScreenCaptureStream {
     sc_stream: id,
     sc_stream_output: id,
 }
-
-/// A frame of video captured from a screen.
-pub struct ScreenCaptureFrame(pub CVImageBuffer);
 
 #[link(name = "ScreenCaptureKit", kind = "framework")]
 extern "C" {}

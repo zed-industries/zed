@@ -68,9 +68,6 @@ pub(crate) use windows::*;
 pub use test::TestScreenCaptureSource;
 
 #[cfg(target_os = "macos")]
-pub use mac::ScreenCaptureFrame;
-
-#[cfg(target_os = "macos")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new())
 }
@@ -221,6 +218,9 @@ pub trait ScreenCaptureSource {
 
 /// A video stream captured from a screen.
 pub trait ScreenCaptureStream {}
+
+/// A frame of video captured from a screen.
+pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]

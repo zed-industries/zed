@@ -10,3 +10,5 @@ pub(crate) use headless::*;
 pub(crate) use platform::*;
 pub(crate) use wayland::*;
 pub(crate) use x11::*;
+
+pub(crate) type PlatformScreenCaptureFrame = ();
