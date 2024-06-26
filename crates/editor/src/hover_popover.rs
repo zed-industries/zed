@@ -18,7 +18,6 @@ use project::{HoverBlock, InlayHintLabelPart};
 use settings::Settings;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, Tooltip};
@@ -33,7 +32,6 @@ pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
-    print!("\nKeyboard Hover\n");
     let head = editor.selections.newest_anchor().head();
     show_hover(editor, head, true, cx);
 }
@@ -42,26 +40,29 @@ pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
 /// depending on whether a point to hover over is provided.
 pub fn hover_at(editor: &mut Editor, anchor: Option<Anchor>, cx: &mut ViewContext<Editor>) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
-        if let Some(anchor) = anchor {
-            show_hover(editor, anchor, false, cx);
-        } else {
-            let info_popovers = editor.hover_state.info_popovers.clone();
-            for p in info_popovers {
-                let keyboard_grace = p.keyboard_grace.borrow();
-                println!("{}", *keyboard_grace);
-                if *keyboard_grace {
-                    if let Some(anchor) = p.anchor {
-                        println!("old anchor");
-                        show_hover(editor, anchor, false, cx);
-                        return;
-                    } else {
-                        println!("no anchor");
-                    }
-                }
+        let old_hover_shown = show_old_hover(editor, cx);
+        if !old_hover_shown {
+            if let Some(anchor) = anchor {
+                show_hover(editor, anchor, false, cx);
+            } else {
+                hide_hover(editor, cx);
             }
-            hide_hover(editor, cx);
         }
     }
+}
+
+pub fn show_old_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
+    let info_popovers = editor.hover_state.info_popovers.clone();
+    for p in info_popovers {
+        let keyboard_grace = p.keyboard_grace.borrow();
+        if *keyboard_grace {
+            if let Some(anchor) = p.anchor {
+                show_hover(editor, anchor, false, cx);
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 pub struct InlayHover {
@@ -421,11 +422,8 @@ fn transform_codeblock(mut input: String, language: &str) -> String {
         result.push(line);
         i += 1;
     }
-    // let r = result.join("\n");
-    // println!("{:?}", r);
-    // r
-    let a = "---\n A function or function pointer.\n Functions are the primary way code is executed within Rust. Function blocks, usually just called functions, can be defined in a variety of different places and be assigned many different attributes and modifiers `where`.\n Standalone functions that just sit within a module not attached to anything else are common, but most functions will end up being inside blocks, either on another type itself, or as a trait impl for that type.\n\n\n Declaring trait bounds in the angle brackets is functionally identical to using a lorem ipsum haha words omg funny fun times this is a test the starbelly sneetches had bellies with stars the plain bellied sneetches had none upon thars clause. It's up to the programmer to decide which works better in each situation, but tends to be better when things get longer than one line.\n Along with being made public via can also have an added for use in FFI.\n For more information on the various types of functions and how they're used, consult the [Rust book](https://doc.rust-lang.org/stable/book/ch03-03-how-functions-work.html) or the [Reference](https://doc.rust-lang.org/stable/reference/items/functions.html).";
-    String::from(a)
+    let r = result.join("\n");
+    r
 }
 
 async fn parse_blocks(
