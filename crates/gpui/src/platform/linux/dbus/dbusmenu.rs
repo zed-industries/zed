@@ -327,6 +327,7 @@ impl DBusMenu {
         self
     }
 
+    /// Add a submenu to the root.
     pub(crate) fn add_submenu(&mut self, submenu: DBusMenuItem) -> Vec<DBusMenuUpdatedProperties> {
         let mut result = Vec::default();
         let new_id = self.add_to_root(submenu, 0);
@@ -347,6 +348,39 @@ impl DBusMenu {
             }
         }
         result
+    }
+
+    /// Add a submenu to the specified id, if the id is not found,
+    /// the submenu is not gonna be added
+    pub(crate) fn add_submenu_to(
+        &mut self,
+        user_id: &str,
+        submenu: DBusMenuItem,
+    ) -> Option<(i32, Vec<DBusMenuUpdatedProperties>)> {
+        let Some(parent) = self.user_id_to_id_map.get(user_id) else {
+            return None;
+        };
+        let parent_id = *parent;
+        drop(parent);
+        let new_id = self.add_to_root(submenu, parent_id);
+        let mut result = Vec::default();
+        let mut queue = VecDeque::default();
+        queue.push_back(self.items.get(&new_id).unwrap());
+        while !queue.is_empty() {
+            let submenu = queue.pop_front().unwrap();
+            result.push(DBusMenuUpdatedProperties {
+                id: submenu.id,
+                properties: submenu
+                    .properties
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.clone().into()))
+                    .collect(),
+            });
+            for id in &submenu.children {
+                queue.push_back(self.items.get(id).unwrap());
+            }
+        }
+        Some((parent_id, result))
     }
 
     /// Returns the parent id of the submenu and a vector of removed properties.
@@ -415,7 +449,7 @@ impl DBusMenu {
 
     fn add_to_root(&mut self, submenu: DBusMenuItem, parent_id: i32) -> i32 {
         let id = self.next_id;
-        let result = DBusMenuItemPrivate {
+        let new_submenu = DBusMenuItemPrivate {
             id,
             parent_id,
             user_id: submenu.user_id,
@@ -431,10 +465,10 @@ impl DBusMenu {
         for child in submenu.children {
             self.add_to_root(child, id);
         }
-        if let Some(user_id) = result.user_id.clone() {
+        if let Some(user_id) = new_submenu.user_id.clone() {
             self.user_id_to_id_map.insert(user_id, id);
         }
-        self.items.insert(id, result);
+        self.items.insert(id, new_submenu);
         if let Some(parent) = self.items.get_mut(&parent_id) {
             parent.children.push(id);
         }

@@ -619,10 +619,20 @@ impl StatusNotifierItem {
     /// Adds a submenu to the menu
     pub async fn add_submenu(&self, submenu: DBusMenuItem) -> zbus::Result<()> {
         let mut iface = self.menu_ref.get_mut().await;
-        iface.revision += 1;
         let updated = iface.menu.add_submenu(submenu);
         drop(iface);
         self.update_layout(0, updated, Vec::default()).await?;
+        Ok(())
+    }
+
+    pub async fn add_submenu_to(&self, user_id: &str, submenu: DBusMenuItem) -> zbus::Result<()> {
+        let mut iface = self.menu_ref.get_mut().await;
+        let updated = iface.menu.add_submenu_to(user_id, submenu);
+        drop(iface);
+        if let Some((parent_id, updated)) = updated {
+            self.update_layout(parent_id, updated, Vec::default())
+                .await?;
+        }
         Ok(())
     }
 
