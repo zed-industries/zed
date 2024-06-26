@@ -12390,6 +12390,7 @@ impl ViewInputHandler for Editor {
         let font_id = cx.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(cx.rem_size());
         let line_height = style.text.line_height_in_pixels(cx.rem_size());
+
         let em_width = cx
             .text_system()
             .typographic_bounds(font_id, font_size, 'm')

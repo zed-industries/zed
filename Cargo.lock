@@ -4919,6 +4919,7 @@ dependencies = [
  "taffy",
  "thiserror",
  "time",
+ "unicode-segmentation",
  "usvg",
  "util",
  "uuid",
