@@ -1,6 +1,6 @@
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
-    Platform, PlatformDisplay, PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource,
+    px, size, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+    Keymap, Platform, PlatformDisplay, PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource,
     ScreenCaptureStream, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams,
 };
 use anyhow::Result;
@@ -39,6 +39,10 @@ pub struct TestScreenCaptureSource {}
 pub struct TestScreenCaptureStream {}
 
 impl ScreenCaptureSource for TestScreenCaptureSource {
+    fn resolution(&self) -> Result<crate::Size<crate::Pixels>> {
+        Ok(size(px(1.), px(1.)))
+    }
+
     fn stream(
         &self,
         _frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,

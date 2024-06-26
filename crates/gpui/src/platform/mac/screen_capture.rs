@@ -1,4 +1,7 @@
-use crate::platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream};
+use crate::{
+    platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
+    px, size, Pixels, Size,
+};
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
 use cocoa::{
@@ -40,6 +43,14 @@ const FRAME_CALLBACK_IVAR: &str = "frame_callback";
 const SCStreamOutputTypeScreen: NSInteger = 0;
 
 impl ScreenCaptureSource for MacScreenCaptureSource {
+    fn resolution(&self) -> Result<Size<Pixels>> {
+        unsafe {
+            let width: i64 = msg_send![self.sc_display, width];
+            let height: i64 = msg_send![self.sc_display, height];
+            Ok(size(px(width as f32), px(height as f32)))
+        }
+    }
+
     fn stream(
         &self,
         frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,

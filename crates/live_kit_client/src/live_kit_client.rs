@@ -3,14 +3,12 @@ mod remote_video_track_view;
 pub mod test;
 
 use anyhow::Result;
-use core_foundation::base::TCFType;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait as _},
     StreamConfig,
 };
 use futures::{Stream, StreamExt as _};
 use gpui::{AppContext, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task};
-use media::core_video::{CVImageBuffer, CVImageBufferRef};
 use parking_lot::Mutex;
 use std::{borrow::Cow, sync::Arc};
 use util::ResultExt as _;
@@ -18,7 +16,7 @@ use webrtc::{
     audio_frame::AudioFrame,
     audio_source::{native::NativeAudioSource, AudioSourceOptions, RtcAudioSource},
     audio_stream::native::NativeAudioStream,
-    video_frame::{native::NativeBuffer, VideoFrame, VideoRotation},
+    video_frame::{VideoBuffer, VideoFrame, VideoRotation},
     video_source::{native::NativeVideoSource, RtcVideoSource, VideoResolution},
     video_stream::native::NativeVideoStream,
 };
@@ -57,26 +55,23 @@ pub fn init(dispatcher: Arc<dyn gpui::PlatformDispatcher>) {
 pub async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
+    let resolution = capture_source.resolution()?;
     let track_source = NativeVideoSource::new(VideoResolution {
-        width: 1920,
-        height: 1080,
+        width: resolution.width.0 as u32,
+        height: resolution.height.0 as u32,
     });
 
     let capture_stream = capture_source
         .stream({
             let track_source = track_source.clone();
             Box::new(move |frame| {
-                let buffer = unsafe {
-                    let frame_ptr = frame.0.as_concrete_TypeRef() as *mut std::ffi::c_void;
-                    std::mem::forget(frame.0);
-                    NativeBuffer::from_cv_pixel_buffer(frame_ptr)
-                };
-
-                track_source.capture_frame(&VideoFrame {
-                    rotation: VideoRotation::VideoRotation0,
-                    timestamp_us: 0,
-                    buffer,
-                });
+                if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
+                    track_source.capture_frame(&VideoFrame {
+                        rotation: VideoRotation::VideoRotation0,
+                        timestamp_us: 0,
+                        buffer,
+                    });
+                }
             })
         })
         .await??;
@@ -239,22 +234,45 @@ pub fn play_remote_audio_track(
 pub fn play_remote_video_track(
     track: &track::RemoteVideoTrack,
 ) -> impl Stream<Item = ScreenCaptureFrame> {
-    NativeVideoStream::new(track.rtc_track()).filter_map(|frame| async move {
-        let buffer = if let Some(buffer) = frame.buffer.as_native() {
-            buffer
-        } else {
-            return None;
-        };
+    NativeVideoStream::new(track.rtc_track())
+        .filter_map(|frame| async move { video_frame_buffer_from_webrtc(frame.buffer) })
+}
 
-        unsafe {
-            let buffer = buffer.get_cv_pixel_buffer() as *mut _ as CVImageBufferRef;
-            if buffer.is_null() {
-                None
-            } else {
-                Some(ScreenCaptureFrame(CVImageBuffer::wrap_under_get_rule(
-                    buffer,
-                )))
-            }
-        }
-    })
+#[cfg(target_os = "macos")]
+fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<ScreenCaptureFrame> {
+    use core_foundation::base::TCFType as _;
+    use media::core_video::CVImageBuffer;
+
+    let buffer = buffer.as_native()?;
+    let pixel_buffer = buffer.get_cv_pixel_buffer();
+    if pixel_buffer.is_null() {
+        return None;
+    }
+
+    unsafe {
+        Some(ScreenCaptureFrame(CVImageBuffer::wrap_under_get_rule(
+            pixel_buffer as _,
+        )))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn video_frame_buffer_from_webrtc(_buffer: Box<dyn VideoBuffer>) -> Option<ScreenCaptureFrame> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
+    use core_foundation::base::TCFType as _;
+
+    let pixel_buffer = frame.0.as_concrete_TypeRef();
+    std::mem::forget(frame.0);
+    unsafe {
+        Some(webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn video_frame_buffer_to_webrtc(_frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
+    None as Option<Box<dyn VideoBuffer>>
 }

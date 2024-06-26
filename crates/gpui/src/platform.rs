@@ -208,6 +208,9 @@ pub trait PlatformDisplay: Send + Sync + Debug {
 
 /// A source of on-screen video content that can be captured.
 pub trait ScreenCaptureSource {
+    /// Returns the video resolution of this source.
+    fn resolution(&self) -> Result<Size<Pixels>>;
+
     /// Start capture video from this source, invoking the given callback
     /// with each frame.
     fn stream(
