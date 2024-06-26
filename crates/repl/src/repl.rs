@@ -1,16 +1,24 @@
+#[allow(unused)]
+use anyhow::Result;
+#[allow(unused)]
 use collections::{HashMap, HashSet};
+#[allow(unused)]
 use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock,
     },
     Anchor, AnchorRangeExt, Editor,
 };
+#[allow(unused)]
 use futures::{future::Shared, StreamExt};
 use gpui::Task;
 use gpui::{prelude::*, AppContext};
+#[allow(unused)]
 use gpui::{Entity, View};
 use language::Point;
+#[allow(unused)]
 use outputs::{ExecutionStatus, ExecutionView, LineHeight as _};
+#[allow(unused)]
 use runtime_panel::Run;
 use runtime_settings::JupyterSettings;
 use settings::Settings as _;
@@ -22,12 +30,14 @@ use workspace::Workspace;
 mod outputs;
 mod runtime_manager;
 mod runtime_panel;
+mod runtime_session;
 mod runtime_settings;
 mod runtimes;
 mod stdio;
 
 pub use runtime_manager::RuntimeManager;
 pub use runtime_panel::RuntimePanel;
+pub use runtime_session::Session;
 use runtimes::RunningKernel;
 
 #[derive(Debug)]
@@ -35,6 +45,7 @@ pub enum Kernel {
     RunningKernel(RunningKernel),
     StartingKernel(Shared<Task<()>>),
     FailedLaunch,
+    ErroredLaunch(String),
 }
 
 #[derive(Debug, Clone)]
@@ -107,138 +118,138 @@ pub fn selection(editor: View<Editor>, cx: &mut ViewContext<Workspace>) -> Range
     anchor_range
 }
 
-pub fn old_run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
-    dbg!();
-    let (editor, runtime_manager) = if let (Some(editor), Some(runtime_manager)) =
-        (get_active_editor(workspace, cx), RuntimeManager::global(cx))
-    {
-        (editor, runtime_manager)
-    } else {
-        dbg!(RuntimeManager::global(cx));
-        log::warn!("No active editor or runtime manager found");
-        return;
-    };
-    dbg!();
+// pub fn old_run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
+//     dbg!();
+//     let (editor, runtime_manager) = if let (Some(editor), Some(runtime_manager)) =
+//         (get_active_editor(workspace, cx), RuntimeManager::global(cx))
+//     {
+//         (editor, runtime_manager)
+//     } else {
+//         dbg!(RuntimeManager::global(cx));
+//         log::warn!("No active editor or runtime manager found");
+//         return;
+//     };
+//     dbg!();
 
-    let anchor_range = selection(editor.clone(), cx);
+//     let anchor_range = selection(editor.clone(), cx);
 
-    let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+//     let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
 
-    let selected_text = buffer
-        .text_for_range(anchor_range.clone())
-        .collect::<String>();
+//     let selected_text = buffer
+//         .text_for_range(anchor_range.clone())
+//         .collect::<String>();
 
-    let start_language = buffer.language_at(anchor_range.start);
-    let end_language = buffer.language_at(anchor_range.end);
+//     let start_language = buffer.language_at(anchor_range.start);
+//     let end_language = buffer.language_at(anchor_range.end);
 
-    let language_name = if start_language == end_language {
-        start_language
-            .map(|language| language.code_fence_block_name())
-            .filter(|lang| **lang != *"markdown")
-    } else {
-        // If the selection spans multiple languages, don't run it
-        return;
-    };
+//     let language_name = if start_language == end_language {
+//         start_language
+//             .map(|language| language.code_fence_block_name())
+//             .filter(|lang| **lang != *"markdown")
+//     } else {
+//         // If the selection spans multiple languages, don't run it
+//         return;
+//     };
 
-    let language_name = if let Some(language_name) = language_name {
-        language_name
-    } else {
-        return;
-    };
+//     let language_name = if let Some(language_name) = language_name {
+//         language_name
+//     } else {
+//         return;
+//     };
 
-    let entity_id = editor.entity_id();
+//     let entity_id = editor.entity_id();
 
-    dbg!();
+//     dbg!();
 
-    let execution_view = cx.new_view(|cx| ExecutionView::new(cx));
+//     let execution_view = cx.new_view(|cx| ExecutionView::new(cx));
 
-    // If any block overlaps with the new block, remove it
-    // TODO: When inserting a new block, put it in order so that search is efficient
-    let blocks_to_remove = runtime_manager.update(cx, |runtime_manager, _cx| {
-        // Get the current `EditorRuntimeState` for this runtime_manager, inserting it if it doesn't exist
-        let editor_runtime_state = runtime_manager
-            .editors
-            .entry(editor.downgrade())
-            .or_insert_with(|| EditorRuntimeState { blocks: Vec::new() });
+//     // If any block overlaps with the new block, remove it
+//     // TODO: When inserting a new block, put it in order so that search is efficient
+//     let blocks_to_remove = runtime_manager.update(cx, |runtime_manager, _cx| {
+//         // Get the current `EditorRuntimeState` for this runtime_manager, inserting it if it doesn't exist
+//         let editor_runtime_state = runtime_manager
+//             .editors
+//             .entry(editor.downgrade())
+//             .or_insert_with(|| EditorRuntimeState { blocks: Vec::new() });
 
-        let mut blocks_to_remove: HashSet<BlockId> = HashSet::default();
+//         let mut blocks_to_remove: HashSet<BlockId> = HashSet::default();
 
-        editor_runtime_state.blocks.retain(|block| {
-            if anchor_range.overlaps(&block.code_range, &buffer) {
-                blocks_to_remove.insert(block.block_id);
-                // Drop this block
-                false
-            } else {
-                true
-            }
-        });
+//         editor_runtime_state.blocks.retain(|block| {
+//             if anchor_range.overlaps(&block.code_range, &buffer) {
+//                 blocks_to_remove.insert(block.block_id);
+//                 // Drop this block
+//                 false
+//             } else {
+//                 true
+//             }
+//         });
 
-        blocks_to_remove
-    });
+//         blocks_to_remove
+//     });
 
-    let blocks_to_remove = blocks_to_remove.clone();
+//     let blocks_to_remove = blocks_to_remove.clone();
 
-    let block_id = editor.update(cx, |editor, cx| {
-        editor.remove_blocks(blocks_to_remove, None, cx);
-        let block = BlockProperties {
-            position: anchor_range.end,
-            height: execution_view.num_lines(cx).saturating_add(1),
-            style: BlockStyle::Sticky,
-            render: create_output_area_render(execution_view.clone()),
-            disposition: BlockDisposition::Below,
-        };
+//     let block_id = editor.update(cx, |editor, cx| {
+//         editor.remove_blocks(blocks_to_remove, None, cx);
+//         let block = BlockProperties {
+//             position: anchor_range.end,
+//             height: execution_view.num_lines(cx).saturating_add(1),
+//             style: BlockStyle::Sticky,
+//             render: create_output_area_render(execution_view.clone()),
+//             disposition: BlockDisposition::Below,
+//         };
 
-        editor.insert_blocks([block], None, cx)[0]
-    });
+//         editor.insert_blocks([block], None, cx)[0]
+//     });
 
-    let receiver = runtime_manager.update(cx, |runtime_manager, cx| {
-        let editor_runtime_state = runtime_manager
-            .editors
-            .entry(editor.downgrade())
-            .or_insert_with(|| EditorRuntimeState { blocks: Vec::new() });
+//     let receiver = runtime_manager.update(cx, |runtime_manager, cx| {
+//         let editor_runtime_state = runtime_manager
+//             .editors
+//             .entry(editor.downgrade())
+//             .or_insert_with(|| EditorRuntimeState { blocks: Vec::new() });
 
-        let editor_runtime_block = EditorRuntimeBlock {
-            code_range: anchor_range.clone(),
-            block_id,
-            _execution_view: execution_view.clone(),
-            _execution_id: Default::default(),
-        };
+//         let editor_runtime_block = EditorRuntimeBlock {
+//             code_range: anchor_range.clone(),
+//             block_id,
+//             _execution_view: execution_view.clone(),
+//             _execution_id: Default::default(),
+//         };
 
-        editor_runtime_state
-            .blocks
-            .push(editor_runtime_block.clone());
+//         editor_runtime_state
+//             .blocks
+//             .push(editor_runtime_block.clone());
 
-        runtime_manager.execute_code(entity_id, language_name, selected_text.clone(), cx)
-    });
+//         runtime_manager.execute_code(entity_id, language_name, selected_text.clone(), cx)
+//     });
 
-    cx.spawn(|_this, mut cx| async move {
-        execution_view.update(&mut cx, |execution_view, cx| {
-            execution_view.set_status(ExecutionStatus::ConnectingToKernel, cx);
-        })?;
-        let mut receiver = receiver.await?;
+//     cx.spawn(|_this, mut cx| async move {
+//         execution_view.update(&mut cx, |execution_view, cx| {
+//             execution_view.set_status(ExecutionStatus::ConnectingToKernel, cx);
+//         })?;
+//         let mut receiver = receiver.await?;
 
-        let execution_view = execution_view.clone();
-        while let Some(content) = receiver.next().await {
-            execution_view.update(&mut cx, |execution_view, cx| {
-                execution_view.push_message(&content, cx)
-            })?;
+//         let execution_view = execution_view.clone();
+//         while let Some(content) = receiver.next().await {
+//             execution_view.update(&mut cx, |execution_view, cx| {
+//                 execution_view.push_message(&content, cx)
+//             })?;
 
-            editor.update(&mut cx, |editor, cx| {
-                let mut replacements = HashMap::default();
-                replacements.insert(
-                    block_id,
-                    (
-                        Some(execution_view.num_lines(cx).saturating_add(1)),
-                        create_output_area_render(execution_view.clone()),
-                    ),
-                );
-                editor.replace_blocks(replacements, None, cx);
-            })?;
-        }
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
-}
+//             editor.update(&mut cx, |editor, cx| {
+//                 let mut replacements = HashMap::default();
+//                 replacements.insert(
+//                     block_id,
+//                     (
+//                         Some(execution_view.num_lines(cx).saturating_add(1)),
+//                         create_output_area_render(execution_view.clone()),
+//                     ),
+//                 );
+//                 editor.replace_blocks(replacements, None, cx);
+//             })?;
+//         }
+//         anyhow::Ok(())
+//     })
+//     .detach_and_log_err(cx);
+// }
 
 fn create_output_area_render(execution_view: View<ExecutionView>) -> RenderBlock {
     let render = move |cx: &mut BlockContext| {
