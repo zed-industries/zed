@@ -160,7 +160,7 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 | Open                      | Workspace    | `⌘ + O`                 |
 | Toggle zoom               | Workspace    | `Shift + Escape`        |
 | Debug elements            | Zed          | `⌘ + Alt + I`           |
-| Decrease buffer font size | Zed          | `⌘ + `                  |
+| Decrease buffer font size | Zed          | `⌘ + -`                  |
 | Hide                      | Zed          | `⌘ + H`                 |
 | Hide others               | Zed          | `Alt + ⌘ + H`           |
 | Increase buffer font size | Zed          | `⌘ + +`                 |
