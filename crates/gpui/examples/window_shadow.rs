@@ -1,9 +1,7 @@
 use gpui::*;
 use prelude::FluentBuilder;
 
-struct HelloWorld {
-    text: SharedString,
-}
+struct WindowShadow {}
 
 /*
 Things to do:
@@ -13,7 +11,7 @@ Things to do:
 3. We need to implement the techniques in here in Zed
 */
 
-impl Render for HelloWorld {
+impl Render for WindowShadow {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let decorations = cx.window_decorations();
         let tiling = cx.window_tiling();
@@ -22,15 +20,13 @@ impl Render for HelloWorld {
         let border_size = px(1.0);
         let grey = rgb(0x808080);
 
-        struct ShadowBounds(Bounds<Pixels>);
-
         div()
             .id("window-backdrop")
             .when(decorations == WindowDecorations::Client, |div| {
                 div.bg(gpui::transparent_black())
                     .child(
                         canvas(
-                            |bounds, cx| {
+                            |_bounds, cx| {
                                 cx.insert_hitbox(
                                     Bounds::new(
                                         point(px(0.0), px(0.0)),
@@ -39,7 +35,7 @@ impl Render for HelloWorld {
                                     false,
                                 )
                             },
-                            move |bounds, hitbox, cx| {
+                            move |_bounds, hitbox, cx| {
                                 let mouse = cx.mouse_position();
                                 let size = cx.window_bounds().get_bounds().size;
                                 let Some(edge) = resize_edge(mouse, shadow_size, size) else {
@@ -75,20 +71,17 @@ impl Render for HelloWorld {
                     .when(!tiling.bottom, |div| div.pb(shadow_size))
                     .when(!tiling.left, |div| div.pl(shadow_size))
                     .when(!tiling.right, |div| div.pr(shadow_size))
-                    .on_mouse_move(|e, cx| cx.refresh())
-                    .on_mouse_down(MouseButton::Left, {
-                        let shadow_size = shadow_size;
-                        move |e, cx| {
-                            let size = cx.window_bounds().get_bounds().size;
-                            let pos = e.position;
+                    .on_mouse_move(|_e, cx| cx.refresh())
+                    .on_mouse_down(MouseButton::Left, move |e, cx| {
+                        let size = cx.window_bounds().get_bounds().size;
+                        let pos = e.position;
 
-                            let edge = match resize_edge(pos, shadow_size, size) {
-                                Some(value) => value,
-                                None => return,
-                            };
+                        let edge = match resize_edge(pos, shadow_size, size) {
+                            Some(value) => value,
+                            None => return,
+                        };
 
-                            cx.start_window_resize(edge);
-                        }
+                        cx.start_window_resize(edge);
                     })
             })
             .size_full()
@@ -201,9 +194,7 @@ fn main() {
                         cx.notify();
                     })
                     .detach();
-                    HelloWorld {
-                        text: "World".into(),
-                    }
+                    WindowShadow {}
                 })
             },
         )
