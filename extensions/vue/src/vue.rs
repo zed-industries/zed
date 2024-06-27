@@ -1,7 +1,6 @@
 use std::{env, fs};
 use zed::lsp::{Completion, CompletionKind};
 use zed::CodeLabelSpan;
-use zed_extension_api::settings::LspSettings;
 use zed_extension_api::{self as zed, serde_json, Result};
 
 struct VueExtension {
@@ -87,22 +86,14 @@ impl zed::Extension for VueExtension {
 
     fn language_server_initialization_options(
         &mut self,
-        language_server_id: &zed::LanguageServerId,
-        worktree: &zed::Worktree,
+        _: &zed::LanguageServerId,
+        _: &zed::Worktree,
     ) -> Result<Option<serde_json::Value>> {
-        let initialization_options =
-            LspSettings::for_worktree(language_server_id.as_ref(), worktree)
-                .ok()
-                .and_then(|lsp_settings| lsp_settings.initialization_options.clone())
-                .unwrap_or_else(|| {
-                    serde_json::json!({
-                        "typescript": {
-                            "tsdk": "node_modules/typescript/lib"
-                        }
-                    })
-                });
-
-        Ok(Some(serde_json::json!(initialization_options)))
+        Ok(Some(serde_json::json!({
+            "typescript": {
+                "tsdk": "node_modules/typescript/lib"
+            }
+        })))
     }
 
     fn label_for_completion(
