@@ -13661,7 +13661,6 @@ dependencies = [
  "terminal_view",
  "theme",
  "theme_selector",
- "title_bar",
  "tree-sitter-markdown",
  "tree-sitter-rust",
  "ui",
