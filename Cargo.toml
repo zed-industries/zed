@@ -20,6 +20,8 @@ members = [
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/copilot",
+    "crates/dap",
+    "crates/debugger_ui",
     "crates/db",
     "crates/diagnostics",
     "crates/editor",
@@ -173,8 +175,10 @@ collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
+dap = { path = "crates/dap" }
 dashmap = "5.5.3"
 db = { path = "crates/db" }
+debugger_ui = { path = "crates/debugger_ui" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }

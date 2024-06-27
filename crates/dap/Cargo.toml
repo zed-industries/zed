@@ -1,0 +1,26 @@
+[package]
+name = "dap"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-std = "1.12.0"
+dap-types = { git = "https://github.com/zed-industries/dap-types" }
+futures.workspace = true
+gpui.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+postage.workspace = true
+release_channel.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_json_lenient.workspace = true
+smol.workspace = true
+util.workspace = true

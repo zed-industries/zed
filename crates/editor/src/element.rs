@@ -395,7 +395,8 @@ impl EditorElement {
         register_action(view, cx, Editor::accept_partial_inline_completion);
         register_action(view, cx, Editor::accept_inline_completion);
         register_action(view, cx, Editor::revert_selected_hunks);
-        register_action(view, cx, Editor::open_active_item_in_terminal)
+        register_action(view, cx, Editor::open_active_item_in_terminal);
+        register_action(view, cx, Editor::toggle_breakpoint);
     }
 
     fn register_key_listeners(&self, cx: &mut WindowContext, layout: &EditorLayout) {
@@ -1548,6 +1549,43 @@ impl EditorElement {
         }
 
         (offset_y, length)
+    }
+
+    fn layout_breakpoints(
+        &self,
+        line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
+        snapshot: &EditorSnapshot,
+        cx: &mut WindowContext,
+    ) -> Vec<AnyElement> {
+        self.editor.update(cx, |editor, cx| {
+            editor
+                .breakpoints
+                .iter()
+                .filter_map(|(_, breakpoint)| {
+                    if snapshot.is_line_folded(breakpoint.row) {
+                        return None;
+                    }
+                    let display_row = Point::new(breakpoint.row.0, 0)
+                        .to_display_point(snapshot)
+                        .row();
+                    let button = editor.render_breakpoint(display_row, cx);
+
+                    let button = prepaint_gutter_button(
+                        button,
+                        display_row,
+                        line_height,
+                        gutter_dimensions,
+                        scroll_pixel_position,
+                        gutter_hitbox,
+                        cx,
+                    );
+                    Some(button)
+                })
+                .collect_vec()
+        })
     }
 
     fn layout_run_indicators(
@@ -3008,6 +3046,10 @@ impl EditorElement {
                     fold_indicator.paint(cx);
                 }
             });
+
+            for breakpoint in layout.breakpoints.iter_mut() {
+                breakpoint.paint(cx);
+            }
 
             for test_indicators in layout.test_indicators.iter_mut() {
                 test_indicators.paint(cx);
@@ -5045,6 +5087,15 @@ impl Element for EditorElement {
                         }
                     }
 
+                    let breakpoints = self.layout_breakpoints(
+                        line_height,
+                        scroll_pixel_position,
+                        &gutter_dimensions,
+                        &gutter_hitbox,
+                        &snapshot,
+                        cx,
+                    );
+
                     let test_indicators = if gutter_settings.runnables {
                         self.layout_run_indicators(
                             line_height,
@@ -5156,6 +5207,7 @@ impl Element for EditorElement {
                         selections,
                         mouse_context_menu,
                         test_indicators,
+                        breakpoints,
                         code_actions_indicator,
                         gutter_fold_toggles,
                         crease_trailers,
@@ -5288,6 +5340,7 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
+    breakpoints: Vec<AnyElement>,
     gutter_fold_toggles: Vec<Option<AnyElement>>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     mouse_context_menu: Option<AnyElement>,

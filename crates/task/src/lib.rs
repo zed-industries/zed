@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::{borrow::Cow, path::Path};
 
-pub use task_template::{RevealStrategy, TaskTemplate, TaskTemplates};
+pub use task_template::{RevealStrategy, TaskTemplate, TaskTemplates, TaskType};
 pub use vscode_format::VsCodeTaskFile;
 
 /// Task identifier, unique within the application.
@@ -104,6 +104,12 @@ impl ResolvedTask {
     /// A task template before the resolution.
     pub fn original_task(&self) -> &TaskTemplate {
         &self.original_task
+    }
+
+    /// Get the task type that determines what this task is used for
+    /// And where is it shown in the UI
+    pub fn task_type(&self) -> TaskType {
+        self.original_task.task_type.clone()
     }
 
     /// Variables that were substituted during the task template resolution.

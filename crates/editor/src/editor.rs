@@ -148,7 +148,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
+use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast, ToggleBreakpoint};
 
 use crate::hover_links::find_url;
 
@@ -440,6 +440,13 @@ struct ResolvedTasks {
     templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
     position: Anchor,
 }
+
+#[derive(Clone, Debug)]
+struct Breakpoint {
+    row: MultiBufferRow,
+    line: BufferRow,
+}
+
 #[derive(Copy, Clone, Debug)]
 struct MultiBufferOffset(usize);
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
@@ -555,6 +562,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    breakpoints: BTreeMap<(BufferId, BufferRow), Breakpoint>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     file_header_size: u8,
     breadcrumb_header: Option<String>,
@@ -1869,6 +1877,7 @@ impl Editor {
             blame_subscription: None,
             file_header_size,
             tasks: Default::default(),
+            breakpoints: Default::default(),
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -5027,6 +5036,17 @@ impl Editor {
         }
     }
 
+    fn render_breakpoint(&self, row: DisplayRow, cx: &mut ViewContext<Self>) -> IconButton {
+        IconButton::new(("breakpoint_indicator", row.0 as usize), ui::IconName::Play)
+            .icon_size(IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .icon_color(Color::Error)
+            .on_click(cx.listener(move |editor, _e, cx| {
+                editor.focus(cx);
+                editor.toggle_breakpoint_at_row(row.0, cx) //TODO handle folded
+            }))
+    }
+
     fn render_run_indicator(
         &self,
         _style: &EditorStyle,
@@ -5841,6 +5861,38 @@ impl Editor {
         }) {
             cx.dispatch_action(OpenTerminal { working_directory }.boxed_clone());
         }
+    }
+
+    pub fn toggle_breakpoint(&mut self, _: &ToggleBreakpoint, cx: &mut ViewContext<Self>) {
+        let cursor_position: Point = self.selections.newest(cx).head();
+        self.toggle_breakpoint_at_row(cursor_position.row, cx);
+    }
+
+    pub fn toggle_breakpoint_at_row(&mut self, row: u32, cx: &mut ViewContext<Self>) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+            return;
+        };
+
+        let buffer_id = buffer.read(cx).remote_id();
+        let key = (buffer_id, row);
+
+        if self.breakpoints.remove(&key).is_none() {
+            self.breakpoints.insert(
+                key,
+                Breakpoint {
+                    row: MultiBufferRow(row),
+                    line: row,
+                },
+            );
+        }
+
+        project.update(cx, |project, cx| {
+            project.update_breakpoint(buffer, row, cx);
+        });
+        cx.notify();
     }
 
     fn gather_revert_changes(

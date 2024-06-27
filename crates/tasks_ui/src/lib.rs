@@ -3,6 +3,7 @@ use editor::{tasks::task_context, Editor};
 use gpui::{AppContext, Task as AsyncTask, ViewContext, WindowContext};
 use modal::TasksModal;
 use project::{Location, WorktreeId};
+use task::TaskType;
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
 
@@ -70,7 +71,7 @@ pub fn init(cx: &mut AppContext) {
                             );
                         }
                     } else {
-                        toggle_modal(workspace, cx).detach();
+                        toggle_modal(workspace, cx, TaskType::Script).detach();
                     };
                 });
         },
@@ -81,11 +82,15 @@ pub fn init(cx: &mut AppContext) {
 fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
     match &action.task_name {
         Some(name) => spawn_task_with_name(name.clone(), cx).detach_and_log_err(cx),
-        None => toggle_modal(workspace, cx).detach(),
+        None => toggle_modal(workspace, cx, task::TaskType::Script).detach(),
     }
 }
 
-fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) -> AsyncTask<()> {
+pub fn toggle_modal(
+    workspace: &mut Workspace,
+    cx: &mut ViewContext<'_, Workspace>,
+    task_type: TaskType,
+) -> AsyncTask<()> {
     let project = workspace.project().clone();
     let workspace_handle = workspace.weak_handle();
     let context_task = task_context(workspace, cx);
@@ -97,7 +102,7 @@ fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) 
                     project.is_local() || project.ssh_connection_string(cx).is_some()
                 }) {
                     workspace.toggle_modal(cx, |cx| {
-                        TasksModal::new(project, task_context, workspace_handle, cx)
+                        TasksModal::new(project, task_context, workspace_handle, cx, task_type)
                     })
                 }
             })

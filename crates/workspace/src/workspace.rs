@@ -130,6 +130,8 @@ actions!(
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
+        StartDebugger,
+        ToggleBreakpoint,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,

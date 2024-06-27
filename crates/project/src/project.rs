@@ -1,5 +1,6 @@
 pub mod connection_manager;
 pub mod debounced_delay;
+mod debugger_inventory;
 pub mod lsp_command;
 pub mod lsp_ext_command;
 mod prettier_support;
@@ -20,7 +21,13 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
+use dap::{
+    client::{DebugAdapterClient, DebugAdapterClientId, TransportType},
+    transport::Events,
+    SourceBreakpoint,
+};
 use debounced_delay::DebouncedDelay;
+use debugger_inventory::{DebuggerConfigSourceKind, DebuggerInventory};
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver},
@@ -50,8 +57,8 @@ use language::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
         serialize_line_ending, serialize_version, split_operations,
     },
-    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
-    ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
+    range_from_lsp, Bias, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability,
+    CodeLabel, ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
     Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
     LspAdapterDelegate, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
     ToOffset, ToPointUtf16, Transaction, Unclipped,
@@ -67,7 +74,8 @@ use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use paths::{
-    local_settings_file_relative_path, local_tasks_file_relative_path,
+    local_debug_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
     local_vscode_tasks_file_relative_path,
 };
 use postage::watch;
@@ -170,6 +178,8 @@ pub struct Project {
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
+    debug_adapters: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
+    breakpoints: HashMap<BufferId, Vec<Breakpoint>>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
@@ -226,6 +236,7 @@ pub struct Project {
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
+    debugger_configs: Model<DebuggerInventory>,
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
@@ -318,6 +329,10 @@ impl PartialEq for LanguageServerPromptRequest {
     }
 }
 
+struct Breakpoint {
+    row: BufferRow,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId),
@@ -326,6 +341,11 @@ pub enum Event {
     Notification(String),
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
+    DebugClientStarted(DebugAdapterClientId),
+    DebugClientEvent {
+        client_id: DebugAdapterClientId,
+        event: Events,
+    },
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
@@ -386,6 +406,11 @@ pub struct LanguageServerProgress {
     pub percentage: Option<usize>,
     #[serde(skip_serializing)]
     pub last_update_at: Instant,
+}
+
+pub enum DebugAdapterClientState {
+    Starting(Task<Option<Arc<DebugAdapterClient>>>),
+    Running(Arc<DebugAdapterClient>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -719,6 +744,7 @@ impl Project {
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             let tasks = Inventory::new(cx);
+            let debugger_configs = DebuggerInventory::new(cx);
 
             Self {
                 worktrees: Vec::new(),
@@ -755,6 +781,8 @@ impl Project {
                 diagnostic_summaries: Default::default(),
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
+                debug_adapters: Default::default(),
+                breakpoints: Default::default(),
                 language_server_ids: HashMap::default(),
                 language_server_statuses: Default::default(),
                 last_formatting_failure: None,
@@ -774,6 +802,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
+                debugger_configs,
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
@@ -841,6 +870,7 @@ impl Project {
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
+            let debugger_configs = DebuggerInventory::new(cx);
             // BIG CAUTION NOTE: The order in which we initialize fields here matters and it should match what's done in Self::local.
             // Otherwise, you might run into issues where worktree id on remote is different than what's on local host.
             // That's because Worktree's identifier is entity id, which should probably be changed.
@@ -914,6 +944,8 @@ impl Project {
                         )
                     })
                     .collect(),
+                debug_adapters: Default::default(),
+                breakpoints: Default::default(),
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
@@ -933,6 +965,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
+                debugger_configs,
                 hosted_project_id: None,
                 dev_server_project_id: response
                     .payload
@@ -1015,6 +1048,157 @@ impl Project {
                 self.disconnected_from_host_internal(cx);
             }
         }
+    }
+
+    pub fn running_debug_adapters(&self) -> impl Iterator<Item = Arc<DebugAdapterClient>> + '_ {
+        self.debug_adapters
+            .values()
+            .filter_map(|state| match state {
+                DebugAdapterClientState::Starting(_) => None,
+                DebugAdapterClientState::Running(client) => Some(client.clone()),
+            })
+    }
+
+    pub fn debug_adapter_by_id(
+        &self,
+        id: DebugAdapterClientId,
+    ) -> Option<&Arc<DebugAdapterClient>> {
+        self.debug_adapters.get(&id).and_then(|state| match state {
+            DebugAdapterClientState::Starting(_) => None,
+            DebugAdapterClientState::Running(client) => Some(client),
+        })
+    }
+
+    pub fn start_debug_adapter_client(
+        &mut self,
+        debug_task: task::ResolvedTask,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let id = DebugAdapterClientId(1);
+        let debug_template = debug_task.original_task();
+        let command = debug_template.command.clone();
+        let cwd = debug_template
+            .cwd
+            .clone()
+            .expect("Debug tasks need to know what directory to open");
+        let mut args = debug_template.args.clone();
+
+        args.push("--server=8131".to_string().clone());
+
+        let task = cx.spawn(|this, mut cx| async move {
+            let this2 = this.clone();
+            let mut client = DebugAdapterClient::new(
+                TransportType::TCP,
+                &command,
+                args.iter().map(|ele| &ele[..]).collect(),
+                8131,
+                cwd.into(),
+                &mut cx,
+                move |event, cx| {
+                    this2
+                        .update(cx, |_, cx| {
+                            cx.emit(Event::DebugClientEvent {
+                                client_id: id,
+                                event,
+                            })
+                        })
+                        .log_err();
+                },
+            )
+            .await
+            .log_err()?;
+
+            // initialize
+            client.initialize().await.log_err()?;
+
+            // TODO: fetch all old breakpoints and send them to the debug adapter
+
+            // configuration done
+            client.configuration_done().await.log_err()?;
+
+            // launch/attach request
+            client.launch().await.log_err()?;
+
+            let client = Arc::new(client);
+
+            this.update(&mut cx, |this, cx| {
+                let handle = this
+                    .debug_adapters
+                    .get_mut(&id)
+                    .with_context(|| "Failed to find debug adapter with given id")?;
+                *handle = DebugAdapterClientState::Running(client.clone());
+
+                cx.emit(Event::DebugClientStarted(id));
+
+                anyhow::Ok(())
+            })
+            .log_err();
+
+            Some(client)
+        });
+
+        self.debug_adapters
+            .insert(id, DebugAdapterClientState::Starting(task));
+    }
+
+    pub fn update_breakpoint(
+        &mut self,
+        buffer: Model<Buffer>,
+        row: BufferRow,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let buffer = buffer.read(cx);
+        let Some(abs_path) = maybe!({
+            let project_path = buffer.project_path(cx)?;
+            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+            worktree.read(cx).absolutize(&project_path.path).ok()
+        }) else {
+            return;
+        };
+
+        let breakpoints_for_buffer = self
+            .breakpoints
+            .entry(buffer.remote_id())
+            .or_insert(Vec::new());
+
+        if let Some(ix) = breakpoints_for_buffer
+            .iter()
+            .position(|breakpoint| breakpoint.row == row)
+        {
+            breakpoints_for_buffer.remove(ix);
+        } else {
+            breakpoints_for_buffer.push(Breakpoint { row: row + 1 });
+        }
+
+        let clients = self
+            .debug_adapters
+            .iter()
+            .filter_map(|(_, state)| match state {
+                DebugAdapterClientState::Starting(_) => None,
+                DebugAdapterClientState::Running(client) => Some(client.clone()),
+            })
+            .collect::<Vec<_>>();
+
+        cx.background_executor()
+            .spawn(async move {
+                for client in clients {
+                    client
+                        .set_breakpoints(
+                            abs_path.clone(),
+                            Some(vec![SourceBreakpoint {
+                                line: row as u64,
+                                condition: None,
+                                hit_condition: None,
+                                log_message: None,
+                                column: None,
+                                mode: None,
+                            }]),
+                        )
+                        .await?;
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx)
     }
 
     fn shutdown_language_servers(
@@ -1334,6 +1518,10 @@ impl Project {
 
     pub fn task_inventory(&self) -> &Model<Inventory> {
         &self.tasks
+    }
+
+    pub fn debugger_configs(&self) -> &Model<DebuggerInventory> {
+        &self.debugger_configs
     }
 
     pub fn search_history(&self) -> &SearchHistory {
@@ -8244,17 +8432,35 @@ impl Project {
                                 abs_path,
                                 id_base: "local_vscode_tasks_for_worktree".into(),
                             },
-                            |tx, cx| {
-                                StaticSource::new(TrackedFile::new_convertible::<
-                                    task::VsCodeTaskFile,
-                                >(
-                                    tasks_file_rx, tx, cx
-                                ))
-                            },
+                            |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                             cx,
                         );
                     }
                 })
+            } else if path.ends_with(local_debug_file_relative_path()) {
+                self.task_inventory().update(cx, |task_inventory, cx| {
+                    if removed {
+                        task_inventory.remove_local_static_source(&abs_path);
+                    } else {
+                        let fs = self.fs.clone();
+                        let debug_task_file_rx =
+                            watch_config_file(&cx.background_executor(), fs, abs_path.clone());
+
+                        task_inventory.add_source(
+                            TaskSourceKind::Worktree {
+                                id: remote_worktree_id,
+                                abs_path,
+                                id_base: "local_debug_file_for_worktree".into(),
+                            },
+                            |tx, cx| {
+                                StaticSource::new(TrackedFile::new(debug_task_file_rx, tx, cx))
+                            },
+                            cx,
+                        );
+                    }
+                });
+            } else if path.ends_with(local_vscode_launch_file_relative_path()) {
+                // TODO: handle vscode launch file (.vscode/launch.json)
             }
         }
 
@@ -10940,6 +11146,7 @@ impl Project {
                         allow_concurrent_runs: proto_template.allow_concurrent_runs,
                         reveal,
                         tags: proto_template.tags,
+                        ..Default::default()
                     };
                     Some((task_source_kind, task_template))
                 })
