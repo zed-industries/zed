@@ -12,12 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[allow(unused)]
-use crate::{
-    outputs::ExecutionView,
-    runtimes::{get_runtime_specifications, Request, RunningKernel, RuntimeSpecification},
-    EditorRuntimeState, Kernel,
-};
+use crate::runtimes::{get_runtime_specifications, Kernel, RuntimeSpecification};
 
 // Per workspace
 pub struct RuntimeManager {
@@ -25,11 +20,11 @@ pub struct RuntimeManager {
     pub runtime_specifications: Vec<RuntimeSpecification>,
 
     instances: HashMap<EntityId, Kernel>,
-    pub editors: HashMap<WeakView<Editor>, EditorRuntimeState>,
+    // pub editors: HashMap<WeakView<Editor>, EditorRuntimeState>,
     // todo!(): Next
     // To reduce the number of open tasks and channels we have, let's feed the response
     // messages by ID over to the paired ExecutionView
-    _execution_views_by_id: HashMap<String, View<ExecutionView>>,
+    // _execution_views_by_id: HashMap<String, View<ExecutionView>>,
 }
 
 #[derive(Clone)]
@@ -43,8 +38,6 @@ impl RuntimeManager {
             fs,
             runtime_specifications: Default::default(),
             instances: Default::default(),
-            editors: Default::default(),
-            _execution_views_by_id: Default::default(),
         }
     }
 

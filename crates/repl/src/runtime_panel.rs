@@ -18,7 +18,10 @@ use workspace::{
     Workspace,
 };
 
-use crate::{ExecutionView, JupyterSettings, Kernel, RuntimeManager, Session};
+use crate::{
+    runtime_session::ExecutionId, runtimes::Kernel, ExecutionView, JupyterSettings, RuntimeManager,
+    Session,
+};
 
 actions!(repl, [Run, ToggleFocus]);
 
@@ -253,7 +256,9 @@ impl RuntimePanel {
         // todo!(): Check if session uses the same language as the snippet
 
         session.update(cx, |session, cx| {
-            session.run(&selected_text, cx).ok();
+            let execution_id = ExecutionId::new();
+
+            session.run(&execution_id, &selected_text, cx).ok();
         });
 
         anyhow::Ok(())

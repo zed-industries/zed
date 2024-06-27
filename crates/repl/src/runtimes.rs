@@ -1,10 +1,14 @@
 use anyhow::{Context as _, Result};
 #[allow(unused)]
 use collections::HashMap;
+use futures::future::Shared;
 #[allow(unused)]
 use futures::lock::Mutex;
+use futures::select_biased;
+use futures::stream::{self, StreamExt};
 #[allow(unused)]
 use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
+use gpui::Task;
 #[allow(unused)]
 use gpui::{AppContext, AsyncAppContext, AsyncWindowContext, EntityId, WindowContext};
 use project::Fs;
@@ -83,13 +87,27 @@ async fn peek_ports(ip: IpAddr) -> anyhow::Result<[u16; 5]> {
     Ok(ports)
 }
 
+#[derive(Debug)]
+pub enum Kernel {
+    RunningKernel(RunningKernel),
+    StartingKernel(Shared<Task<()>>),
+    FailedLaunch,
+    ErroredLaunch(String),
+}
+
 pub struct RunningKernel {
     #[allow(unused)]
     pub process: smol::process::Child,
+    shell_task: Task<anyhow::Result<()>>,
+    iopub_task: Task<anyhow::Result<()>>,
+    pub request_tx: mpsc::Sender<JupyterMessage>,
     // pub request_tx: mpsc::UnboundedSender<Request>,
     // pub shell: ClientShellConnection,
     // pub iopub: ClientIoPubConnection,
 }
+
+type JupyterMessageChannel =
+    stream::Select<mpsc::Receiver<JupyterMessage>, mpsc::Receiver<JupyterMessage>>;
 
 impl Debug for RunningKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -100,122 +118,85 @@ impl Debug for RunningKernel {
 }
 
 impl RunningKernel {
-    pub async fn new(
-        runtime_specification: &RuntimeSpecification,
+    pub fn new(
+        runtime_specification: RuntimeSpecification,
         entity_id: EntityId,
         fs: Arc<dyn Fs>,
-        _cx: AsyncWindowContext,
-    ) -> anyhow::Result<(ClientIoPubConnection, ClientShellConnection, Self)> {
-        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-        let ports = peek_ports(ip).await?;
+        cx: &mut AppContext,
+    ) -> Task<anyhow::Result<(Self, JupyterMessageChannel)>> {
+        cx.spawn(|cx| async move {
+            let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+            let ports = peek_ports(ip).await?;
 
-        let connection_info = ConnectionInfo {
-            transport: "tcp".to_string(),
-            ip: ip.to_string(),
-            stdin_port: ports[0],
-            control_port: ports[1],
-            hb_port: ports[2],
-            shell_port: ports[3],
-            iopub_port: ports[4],
-            signature_scheme: "hmac-sha256".to_string(),
-            key: uuid::Uuid::new_v4().to_string(),
-            kernel_name: Some(format!("zed-{}", runtime_specification.name)),
-        };
+            let connection_info = ConnectionInfo {
+                transport: "tcp".to_string(),
+                ip: ip.to_string(),
+                stdin_port: ports[0],
+                control_port: ports[1],
+                hb_port: ports[2],
+                shell_port: ports[3],
+                iopub_port: ports[4],
+                signature_scheme: "hmac-sha256".to_string(),
+                key: uuid::Uuid::new_v4().to_string(),
+                kernel_name: Some(format!("zed-{}", runtime_specification.name)),
+            };
 
-        let connection_path = dirs::runtime_dir().join(format!("kernel-zed-{}.json", entity_id));
-        let content = serde_json::to_string(&connection_info)?;
-        // write out file to disk for kernel
-        fs.atomic_write(connection_path.clone(), content).await?;
+            let connection_path =
+                dirs::runtime_dir().join(format!("kernel-zed-{}.json", entity_id));
+            let content = serde_json::to_string(&connection_info)?;
+            // write out file to disk for kernel
+            fs.atomic_write(connection_path.clone(), content).await?;
 
-        let mut cmd = runtime_specification.command(&connection_path)?;
-        let process = cmd
-            // .stdout(Stdio::null())
-            // .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .context("failed to start the kernel process")?;
+            let mut cmd = runtime_specification.command(&connection_path)?;
+            let process = cmd
+                // .stdout(Stdio::null())
+                // .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .context("failed to start the kernel process")?;
 
-        let iopub = connection_info.create_client_iopub_connection("").await?;
-        let shell = connection_info.create_client_shell_connection().await?;
+            let mut iopub_socket = connection_info.create_client_iopub_connection("").await?;
+            let mut shell_socket = connection_info.create_client_shell_connection().await?;
 
-        Ok((iopub, shell, Self { process }))
+            let (mut iopub, iosub) = futures::channel::mpsc::channel(100);
+            let (request_tx, mut request_rx) = futures::channel::mpsc::channel(100);
 
-        // Ok(Self {
-        //     // runtime_specification: runtime_specification.clone(),
-        //     shell,
-        //     iopub,
-        //     process,
-        // })
+            let (mut reply_tx, reply_rx) = futures::channel::mpsc::channel(100);
 
-        // Spawn a background task to handle incoming messages from the kernel as well
-        // as outgoing messages to the kernel
+            let messages_rx = stream::select(reply_rx, iosub);
 
-        // let child_messages: Arc<
-        //     Mutex<HashMap<String, mpsc::UnboundedSender<JupyterMessageContent>>>,
-        // > = Default::default();
+            let iopub_task = cx.background_executor().spawn({
+                async move {
+                    while let Ok(message) = iopub_socket.read().await {
+                        iopub.send(message).await?;
+                    }
+                    anyhow::Ok(())
+                }
+            });
 
-        // let (request_tx, mut request_rx) = mpsc::unbounded::<Request>();
+            let shell_task = cx.background_executor().spawn({
+                async move {
+                    while let Some(message) = request_rx.next().await {
+                        // todo!(): Based on the message type, route to the proper socket
+                        shell_socket.send(message).await.ok();
 
-        // cx.background_executor()
-        //     .spawn({
-        //         let child_messages = child_messages.clone();
+                        let reply = shell_socket.read().await?;
+                        reply_tx.send(reply).await?;
+                    }
+                    anyhow::Ok(())
+                }
+            });
 
-        //         async move {
-        //             let child_messages = child_messages.clone();
-        //             while let Ok(message) = iopub.read().await {
-        //                 if let Some(parent_header) = message.parent_header {
-        //                     let child_messages = child_messages.lock().await;
-
-        //                     let sender = child_messages.get(&parent_header.msg_id);
-
-        //                     match sender {
-        //                         Some(mut sender) => {
-        //                             sender.send(message.content).await?;
-        //                         }
-        //                         None => {}
-        //                     }
-        //                 }
-        //             }
-
-        //             anyhow::Ok(())
-        //         }
-        //     })
-        //     .detach();
-
-        // cx.background_executor()
-        //     .spawn({
-        //         let child_messages = child_messages.clone();
-        //         async move {
-        //             while let Some(request) = request_rx.next().await {
-        //                 let rx = request.responses_rx.clone();
-
-        //                 let request: JupyterMessage = request.request.into();
-        //                 let msg_id = request.header.msg_id.clone();
-
-        //                 let mut sender = rx.clone();
-
-        //                 child_messages
-        //                     .lock()
-        //                     .await
-        //                     .insert(msg_id.clone(), sender.clone());
-
-        //                 shell.send(request).await?;
-
-        //                 let response = shell.read().await?;
-
-        //                 sender.send(response.content).await?;
-        //             }
-
-        //             anyhow::Ok(())
-        //         }
-        //     })
-        //     .detach();
-
-        // Ok(Self {
-        //     runtime: runtime_specification.clone(),
-        //     process,
-        //     request_tx,
-        // })
+            anyhow::Ok((
+                Self {
+                    process,
+                    request_tx,
+                    shell_task,
+                    iopub_task,
+                },
+                messages_rx,
+            ))
+        })
     }
 }
 

@@ -11,7 +11,6 @@ use editor::{
 };
 #[allow(unused)]
 use futures::{future::Shared, StreamExt};
-use gpui::Task;
 use gpui::{prelude::*, AppContext};
 #[allow(unused)]
 use gpui::{Entity, View};
@@ -38,39 +37,6 @@ mod stdio;
 pub use runtime_manager::RuntimeManager;
 pub use runtime_panel::RuntimePanel;
 pub use runtime_session::Session;
-use runtimes::RunningKernel;
-
-#[derive(Debug)]
-pub enum Kernel {
-    RunningKernel(RunningKernel),
-    StartingKernel(Shared<Task<()>>),
-    FailedLaunch,
-    ErroredLaunch(String),
-}
-
-#[derive(Debug, Clone)]
-pub struct EditorRuntimeState {
-    pub blocks: Vec<EditorRuntimeBlock>,
-    // todo!(): Store a subscription to the editor so we can drop them when the editor is dropped
-    // subscription: gpui::Subscription,
-}
-
-#[derive(Debug, Clone)]
-pub struct EditorRuntimeBlock {
-    pub code_range: Range<Anchor>,
-    pub _execution_id: String,
-    pub block_id: BlockId,
-    pub _execution_view: View<ExecutionView>,
-}
-
-pub fn get_active_editor(
-    workspace: &mut Workspace,
-    cx: &mut ViewContext<Workspace>,
-) -> Option<View<Editor>> {
-    workspace
-        .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx))
-}
 
 pub fn init(cx: &mut AppContext) {
     runtime_panel::init(cx)
