@@ -1,13 +1,13 @@
 use gpui::{NoAction, Render};
 use story::{StoryContainer, StoryItem, StorySection};
 
-use crate::{prelude::*, PlatformStyle, TitleBar};
+use crate::{prelude::*, PlatformStyle, UiTitleBar};
 
 pub struct TitleBarStory;
 
 impl Render for TitleBarStory {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        fn add_sample_children(titlebar: TitleBar) -> TitleBar {
+        fn add_sample_children(titlebar: UiTitleBar) -> UiTitleBar {
             titlebar
                 .child(div().size_2().bg(gpui::red()))
                 .child(div().size_2().bg(gpui::blue()))
@@ -19,7 +19,7 @@ impl Render for TitleBarStory {
                 StorySection::new().child(
                     StoryItem::new(
                         "Default (macOS)",
-                        TitleBar::new("macos", Box::new(NoAction))
+                        UiTitleBar::new("macos", Box::new(NoAction))
                             .platform_style(PlatformStyle::Mac)
                             .map(add_sample_children),
                     )
@@ -31,7 +31,7 @@ impl Render for TitleBarStory {
                 StorySection::new().child(
                     StoryItem::new(
                         "Default (Linux)",
-                        TitleBar::new("linux", Box::new(NoAction))
+                        UiTitleBar::new("linux", Box::new(NoAction))
                             .platform_style(PlatformStyle::Linux)
                             .map(add_sample_children),
                     )
@@ -43,7 +43,7 @@ impl Render for TitleBarStory {
                 StorySection::new().child(
                     StoryItem::new(
                         "Default (Windows)",
-                        TitleBar::new("windows", Box::new(NoAction))
+                        UiTitleBar::new("windows", Box::new(NoAction))
                             .platform_style(PlatformStyle::Windows)
                             .map(add_sample_children),
                     )

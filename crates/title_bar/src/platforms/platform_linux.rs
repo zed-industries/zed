@@ -1,6 +1,6 @@
 use gpui::{prelude::*, Action, Rgba, WindowAppearance};
 
-use crate::prelude::*;
+use ui::prelude::*;
 
 #[derive(IntoElement)]
 pub struct LinuxWindowControls {
