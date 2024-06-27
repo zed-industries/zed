@@ -159,10 +159,6 @@ pub fn play_remote_audio_track(
     track: &track::RemoteAudioTrack,
     cx: &mut AppContext,
 ) -> AudioStream {
-    let device = cpal::default_host()
-        .default_output_device()
-        .expect("No output device available");
-
     let buffer = Arc::new(Mutex::new(Vec::<i16>::new()));
     let (stream_config_tx, mut stream_config_rx) = futures::channel::mpsc::unbounded();
     let mut stream = NativeAudioStream::new(track.rtc_track());
@@ -200,6 +196,14 @@ pub fn play_remote_audio_track(
     let play_task = cx.foreground_executor().spawn({
         let buffer = buffer.clone();
         async move {
+            if cfg!(any(test, feature = "test-support")) {
+                return;
+            }
+
+            let device = cpal::default_host()
+                .default_output_device()
+                .expect("No output device available");
+
             let mut _output_stream = None;
             while let Some(config) = stream_config_rx.next().await {
                 _output_stream = Some(
