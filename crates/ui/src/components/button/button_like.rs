@@ -1,4 +1,4 @@
-use gpui::{relative, DefiniteLength, MouseButton};
+use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
 
@@ -344,6 +344,7 @@ pub struct ButtonLike {
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
+    cursor_style: CursorStyle,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
@@ -363,6 +364,7 @@ impl ButtonLike {
             rounding: Some(ButtonLikeRounding::All),
             tooltip: None,
             children: SmallVec::new(),
+            cursor_style: CursorStyle::PointingHand,
             on_click: None,
             layer: None,
         }
@@ -403,6 +405,11 @@ impl SelectableButton for ButtonLike {
 impl Clickable for ButtonLike {
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    fn cursor_style(mut self, cursor_style: CursorStyle) -> Self {
+        self.cursor_style = cursor_style;
         self
     }
 }

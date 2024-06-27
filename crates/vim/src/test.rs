@@ -1211,3 +1211,58 @@ async fn test_dw_eol(cx: &mut gpui::TestAppContext) {
         .await
         .assert_eq("twelve ˇtwelve char\ntwelve char");
 }
+
+#[gpui::test]
+async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let language = std::sync::Arc::new(language::Language::new(
+        language::LanguageConfig {
+            line_comments: vec!["// ".into(), "//! ".into(), "/// ".into()],
+            ..Default::default()
+        },
+        Some(language::tree_sitter_rust::language()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // works in normal model
+    cx.set_state(
+        indoc! {"
+      ˇone
+      two
+      three
+      "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g c c");
+    cx.assert_state(
+        indoc! {"
+          // ˇone
+          two
+          three
+          "},
+        Mode::Normal,
+    );
+
+    // works in visual mode
+    cx.simulate_keystrokes("v j g c");
+    cx.assert_state(
+        indoc! {"
+          // // ˇone
+          // two
+          three
+          "},
+        Mode::Normal,
+    );
+
+    // works in visual line mode
+    cx.simulate_keystrokes("shift-v j g c");
+    cx.assert_state(
+        indoc! {"
+          // ˇone
+          two
+          three
+          "},
+        Mode::Normal,
+    );
+}

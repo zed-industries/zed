@@ -200,6 +200,7 @@ impl LspAdapter for TypeScriptLspAdapter {
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
             "provideFormatter": true,
+            "hostInfo": "zed",
             "tsserver": {
                 "path": "node_modules/typescript/lib",
             },

@@ -20,7 +20,7 @@ use gpui::{
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsLocation, SettingsSources};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -331,6 +331,7 @@ pub trait ItemHandle: 'static + Send {
     fn show_toolbar(&self, cx: &AppContext) -> bool;
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
+    fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -399,6 +400,20 @@ impl<T: Item> ItemHandle for View<T> {
             });
         }
         result
+    }
+
+    fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings {
+        if let Some(project_path) = self.project_path(cx) {
+            WorkspaceSettings::get(
+                Some(SettingsLocation {
+                    worktree_id: project_path.worktree_id.into(),
+                    path: &project_path.path,
+                }),
+                cx,
+            )
+        } else {
+            WorkspaceSettings::get_global(cx)
+        }
     }
 
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
@@ -567,7 +582,8 @@ impl<T: Item> ItemHandle for View<T> {
                         }
 
                         ItemEvent::Edit => {
-                            let autosave = WorkspaceSettings::get_global(cx).autosave;
+                            let autosave = item.workspace_settings(cx).autosave;
+
                             if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
                                 let delay = Duration::from_millis(milliseconds);
                                 let item = item.clone();
@@ -584,8 +600,8 @@ impl<T: Item> ItemHandle for View<T> {
             ));
 
             cx.on_blur(&self.focus_handle(cx), move |workspace, cx| {
-                if WorkspaceSettings::get_global(cx).autosave == AutosaveSetting::OnFocusChange {
-                    if let Some(item) = weak_item.upgrade() {
+                if let Some(item) = weak_item.upgrade() {
+                    if item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange {
                         Pane::autosave_item(&item, workspace.project.clone(), cx)
                             .detach_and_log_err(cx);
                     }
