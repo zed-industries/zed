@@ -8438,7 +8438,6 @@ impl Project {
                     }
                 })
             } else if path.ends_with(local_debug_file_relative_path()) {
-                // TODO: handle local launch file (.zed/debug.json)
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
@@ -8451,7 +8450,7 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
-                                id_base: "local_debug_File_for_worktree".into(),
+                                id_base: "local_debug_file_for_worktree".into(),
                             },
                             |tx, cx| {
                                 StaticSource::new(TrackedFile::new(debug_task_file_rx, tx, cx))
