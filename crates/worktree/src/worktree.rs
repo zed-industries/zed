@@ -446,6 +446,18 @@ impl Worktree {
                 ),
                 fs.as_ref(),
             );
+            if let Some((_, nested_path)) = zip_path {
+                let path = char_bag_for_path(snapshot.root_char_bag, &nested_path);
+                let mut entry = Entry::new(
+                    nested_path,
+                    None,
+                    &next_entry_id,
+                    snapshot.root_char_bag,
+                    None,
+                );
+                entry.kind = EntryKind::File(path);
+                snapshot.insert_entry(entry, fs.as_ref());
+            }
 
             let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
             let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
@@ -3547,7 +3559,6 @@ impl BackgroundScanner {
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
             Err(err) => {
-                dbg!(&root_path);
                 log::error!("failed to canonicalize root path: {}", err);
                 return true;
             }
@@ -3591,7 +3602,6 @@ impl BackgroundScanner {
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
             Err(err) => {
-                dbg!(&root_path);
                 log::error!("failed to canonicalize root path: {}", err);
                 return;
             }
@@ -4041,7 +4051,7 @@ impl BackgroundScanner {
             abs_paths
                 .iter()
                 .map(|abs_path| async move {
-                    let metadata = self.fs.metadata(abs_path).await?;
+                    let metadata = self.fs.metadata(abs_path).await.ok().flatten();
                     if let Some(metadata) = metadata {
                         let canonical_path = self.fs.canonicalize(abs_path).await?;
 
