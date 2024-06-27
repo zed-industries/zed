@@ -10,7 +10,7 @@ use ui::prelude::*;
 use ui::{div, WindowContext};
 
 const MARKDOWN_EXAMPLE: &'static str = r#"
-# Markdown Example Document2
+# Markdown Example Document
 
 ## Headings
 Headings are created by adding one or more `#` symbols before your heading text. The number of `#` you use will determine the size of the heading.
@@ -39,6 +39,7 @@ Ordered lists use numbers followed by a period.
 
 ## Links
 Links are created using the format [http://zed.dev](https://zed.dev).
+
 They can also be detected automatically, for example https://zed.dev/blog.
 
 ## Images
@@ -107,14 +108,11 @@ pub fn main() {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
                         font_family: "Zed Mono".into(),
-                        // @nate: Could we add inline-code specific styles to the theme?
-                        // color: cx.theme().colors().text,
                         ..Default::default()
                     },
                     code_block: StyleRefinement {
                         text: Some(gpui::TextStyleRefinement {
                             font_family: Some("Zed Mono".into()),
-                            // color: Some(cx.theme().colors().text),
                             background_color: Some(cx.theme().colors().editor_background),
                             ..Default::default()
                         }),
@@ -128,7 +126,6 @@ pub fn main() {
                     },
                     inline_code: gpui::TextStyleRefinement {
                         font_family: Some("Zed Mono".into()),
-                        // @nate: Could we add inline-code specific styles to the theme?
                         color: Some(cx.theme().colors().editor_foreground),
                         background_color: Some(cx.theme().colors().editor_background),
                         ..Default::default()

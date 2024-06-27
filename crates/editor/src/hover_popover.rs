@@ -159,13 +159,6 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
 pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
-    // println!(
-    //     "{}",
-    //     SystemTime::now()
-    //         .duration_since(UNIX_EPOCH)
-    //         .unwrap()
-    //         .as_secs()
-    // );
     let info_popovers = editor.hover_state.info_popovers.drain(..);
     let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
     let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
@@ -434,8 +427,6 @@ async fn parse_blocks(
 ) -> Option<View<Markdown>> {
     let mut combined_text = String::new();
     for block in blocks {
-        // println!("{:?}", block.clone().text);
-
         let language_name = if let Some(ref l) = language {
             let l = Arc::clone(l);
             l.lsp_id().clone()
@@ -475,7 +466,7 @@ async fn parse_blocks(
                 },
                 inline_code: gpui::TextStyleRefinement {
                     font_family: Some(buffer_font_family.clone()),
-                    background_color: Some(cx.theme().colors().background.into()),
+                    background_color: Some(cx.theme().colors().background),
                     ..Default::default()
                 },
                 rule_color: Color::Muted.color(cx),
@@ -599,7 +590,6 @@ pub struct InfoPopover {
 
 impl InfoPopover {
     pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
-        // let self_clone = Rc::clone(&self);
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut d = div()
             .id("info_popover")

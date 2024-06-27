@@ -43,14 +43,12 @@ pub fn main() {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
                         font_family: "Zed Mono".into(),
-                        // @nate: Could we add inline-code specific styles to the theme?
-                        // color: cx.theme().colors().text,
+                        color: cx.theme().colors().text,
                         ..Default::default()
                     },
                     code_block: StyleRefinement {
                         text: Some(gpui::TextStyleRefinement {
                             font_family: Some("Zed Mono".into()),
-                            // color: Some(cx.theme().colors().text),
                             background_color: Some(cx.theme().colors().editor_background),
                             ..Default::default()
                         }),
@@ -64,8 +62,6 @@ pub fn main() {
                     },
                     inline_code: gpui::TextStyleRefinement {
                         font_family: Some("Zed Mono".into()),
-                        // @nate: Could we add inline-code specific styles to the theme?
-                        color: Some(cx.theme().colors().editor_foreground),
                         background_color: Some(cx.theme().colors().editor_background),
                         ..Default::default()
                     },

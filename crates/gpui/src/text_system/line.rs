@@ -194,7 +194,6 @@ fn paint_line_decorations(
                 let mut finished_background: Option<(Point<Pixels>, Hsla)> = None;
                 let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
                 let mut finished_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
-
                 if glyph.index >= run_end {
                     if let Some(style_run) = decoration_runs.next() {
                         if let Some((_, background_color)) = &mut current_background {
@@ -202,7 +201,6 @@ fn paint_line_decorations(
                                 finished_background = current_background.take();
                             }
                         }
-
                         if let Some(run_background) = style_run.background_color {
                             current_background.get_or_insert((
                                 point(glyph_origin.x, glyph_origin.y),
