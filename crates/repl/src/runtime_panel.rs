@@ -1,6 +1,6 @@
+use crate::{runtime_settings::JupyterSettings, RuntimeManager, Session};
 use anyhow::Result;
 use async_dispatcher::{set_dispatcher, Dispatcher, Runnable};
-use client::telemetry::Telemetry;
 use collections::HashMap;
 use editor::{Anchor, Editor};
 use gpui::{
@@ -16,11 +16,6 @@ use ui::prelude::*;
 use workspace::{
     dock::{Panel, PanelEvent},
     Workspace,
-};
-
-use crate::{
-    runtime_session::ExecutionId, runtimes::Kernel, ExecutionView, JupyterSettings, RuntimeManager,
-    Session,
 };
 
 actions!(repl, [Run, ToggleFocus]);
@@ -64,25 +59,18 @@ pub fn init(cx: &mut AppContext) {
                     workspace.toggle_panel_focus::<RuntimePanel>(cx);
                 })
                 .register_action(run);
-            // .register_action(RuntimePanel::start_kernel)
-            // .register_action(RuntimePanel::stop_kernel)
-            // .register_action(RuntimePanel::execute_code);
         },
     )
     .detach();
 }
 
-#[allow(unused)]
 pub struct RuntimePanel {
+    #[allow(unused)]
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     width: Option<Pixels>,
     sessions: HashMap<EntityId, View<Session>>,
-    running_kernels: HashMap<EntityId, Kernel>,
     runtime_manager: Model<RuntimeManager>,
-    execution_views: HashMap<String, View<ExecutionView>>,
-    telemetry: Arc<Telemetry>,
-    fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -121,11 +109,6 @@ impl RuntimePanel {
                         runtime_manager: runtime_manager.clone(),
                         sessions: Default::default(),
                         workspace: workspace.weak_handle(),
-                        running_kernels: Default::default(),
-                        // editors: Default::default(),
-                        execution_views: Default::default(),
-                        telemetry: workspace.client().telemetry().clone(),
-                        fs: fs.clone(),
                         _subscriptions: subscriptions,
                     }
                 })
@@ -141,7 +124,6 @@ impl RuntimePanel {
     }
 
     pub fn handle_update(&mut self, _model: Model<RuntimeManager>, cx: &mut ViewContext<Self>) {
-        dbg!(_model);
         cx.notify();
     }
 
@@ -199,7 +181,7 @@ impl RuntimePanel {
         &self,
         editor: View<Editor>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<(String, Arc<str>)> {
+    ) -> Option<(String, Arc<str>, Range<Anchor>)> {
         let anchor_range = self.selection(editor.clone(), cx);
 
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -226,7 +208,7 @@ impl RuntimePanel {
             return None;
         };
 
-        return Some((selected_text, language_name));
+        return Some((selected_text, language_name, anchor_range));
     }
 
     pub fn run(
@@ -235,7 +217,7 @@ impl RuntimePanel {
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> anyhow::Result<()> {
-        let (selected_text, language_name) = match self.snippet(editor.clone(), cx) {
+        let (selected_text, language_name, anchor_range) = match self.snippet(editor.clone(), cx) {
             Some(snippet) => snippet,
             None => return anyhow::Ok(()),
         };
@@ -256,9 +238,7 @@ impl RuntimePanel {
         // todo!(): Check if session uses the same language as the snippet
 
         session.update(cx, |session, cx| {
-            let execution_id = ExecutionId::new();
-
-            session.run(&execution_id, &selected_text, cx).ok();
+            session.execute(&selected_text, anchor_range, cx);
         });
 
         anyhow::Ok(())
@@ -279,7 +259,7 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
 
     if let (Some(editor), Some(runtime_panel)) = (editor, workspace.panel::<RuntimePanel>(cx)) {
         runtime_panel.update(cx, |runtime_panel, cx| {
-            runtime_panel.run(editor, fs, cx);
+            runtime_panel.run(editor, fs, cx).ok();
         });
     }
 }
@@ -363,6 +343,3 @@ impl Render for RuntimePanel {
             .into_any_element()
     }
 }
-
-// Goal: move the execution views to be owned by the runtime panel
-//       and to have all messages get collected as one stream

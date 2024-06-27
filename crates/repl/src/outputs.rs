@@ -301,7 +301,7 @@ impl From<&MimeBundle> for OutputType {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub enum ExecutionStatus {
     #[default]
     Unknown,
