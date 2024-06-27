@@ -208,12 +208,13 @@ impl PickerDelegate for TasksModalDelegate {
         query: String,
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Task<()> {
+        let task_type = self.task_type.clone();
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates_task) = picker
                 .update(&mut cx, |picker, cx| {
                     match &mut picker.delegate.candidates {
                         Some(candidates) => {
-                            Task::ready(Ok(string_match_candidates(candidates.iter())))
+                            Task::ready(Ok(string_match_candidates(candidates.iter(), task_type)))
                         }
                         None => {
                             let Ok((worktree, location)) =
@@ -257,6 +258,7 @@ impl PickerDelegate for TasksModalDelegate {
                                             )
                                     }
                                 });
+
                             cx.spawn(|picker, mut cx| async move {
                                 let (used, current) = resolved_task.await;
                                 picker.update(&mut cx, |picker, _| {
@@ -269,7 +271,7 @@ impl PickerDelegate for TasksModalDelegate {
                                     let mut new_candidates = used;
                                     new_candidates.extend(current);
                                     let match_candidates =
-                                        string_match_candidates(new_candidates.iter());
+                                        string_match_candidates(new_candidates.iter(), task_type);
                                     let _ = picker.delegate.candidates.insert(new_candidates);
                                     match_candidates
                                 })
@@ -591,8 +593,10 @@ impl PickerDelegate for TasksModalDelegate {
 
 fn string_match_candidates<'a>(
     candidates: impl Iterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
+    task_type: TaskType,
 ) -> Vec<StringMatchCandidate> {
     candidates
+        .filter(|(_, candidate)| candidate.task_type() == task_type)
         .enumerate()
         .map(|(index, (_, candidate))| StringMatchCandidate {
             id: index,

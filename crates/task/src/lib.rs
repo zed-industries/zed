@@ -106,6 +106,12 @@ impl ResolvedTask {
         &self.original_task
     }
 
+    /// Get the task type that determines what this task is used for
+    /// And where is it shown in the UI
+    pub fn task_type(&self) -> TaskType {
+        self.original_task.task_type.clone()
+    }
+
     /// Variables that were substituted during the task template resolution.
     pub fn substituted_variables(&self) -> &HashSet<VariableName> {
         &self.substituted_variables
