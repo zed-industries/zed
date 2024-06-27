@@ -1624,7 +1624,7 @@ impl ProjectPanel {
                         id: NEW_ENTRY_ID,
                         kind: new_entry_kind,
                         path: entry.path.join("\0").into(),
-                        inode: 0,
+                        inode: None,
                         mtime: entry.mtime,
                         is_ignored: entry.is_ignored,
                         is_external: false,

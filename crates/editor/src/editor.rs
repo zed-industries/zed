@@ -8938,6 +8938,7 @@ impl Editor {
         split: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<bool>> {
+        dbg!("Yoo");
         // If there is one definition, just open it directly
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
