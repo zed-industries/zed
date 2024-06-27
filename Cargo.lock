@@ -4919,6 +4919,7 @@ dependencies = [
  "taffy",
  "thiserror",
  "time",
+ "unicode-segmentation",
  "usvg",
  "util",
  "uuid",
@@ -13549,7 +13550,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.142.0"
+version = "0.143.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13853,7 +13854,7 @@ dependencies = [
 
 [[package]]
 name = "zed_vue"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]

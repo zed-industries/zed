@@ -168,41 +168,39 @@ impl LspAdapter for VtslsLspAdapter {
                 "format": {
                     "enable": true
                 },
-                "inlayHints":{
-                    "parameterNames":
-                    {
+                "inlayHints": {
+                    "parameterNames": {
                         "enabled": "all",
                         "suppressWhenArgumentMatchesName": false,
-
                     },
-
-                    "parameterTypes":
-                    {
+                    "parameterTypes": {
                         "enabled": true
                     },
                     "variableTypes": {
                         "enabled": true,
                         "suppressWhenTypeMatchesName": false,
                     },
-                    "propertyDeclarationTypes":{
+                    "propertyDeclarationTypes": {
                         "enabled": true,
                     },
                     "functionLikeReturnTypes": {
                         "enabled": true,
                     },
-                    "enumMemberValues":{
+                    "enumMemberValues": {
                         "enabled": true,
                     }
                 }
             },
-            "vtsls":
-                        {   "typescript": {"globalTsdk": "/Users/hiro/Projects/repros/yarn-test/.yarn/sdks/typescript/lib"},
+            "vtsls": {
+                "typescript": {
+                    "globalTsdk": "/Users/hiro/Projects/repros/yarn-test/.yarn/sdks/typescript/lib"
+                },
                 "experimental": {
-                "completion": {
-                    "enableServerSideFuzzyMatch": true,
-                    "entriesLimit": 5000,
+                    "completion": {
+                        "enableServerSideFuzzyMatch": true,
+                        "entriesLimit": 5000,
+                    }
                 }
-            }
             }
         })))
     }
@@ -221,41 +219,39 @@ impl LspAdapter for VtslsLspAdapter {
                 "format": {
                     "enable": true
                 },
-                "inlayHints":{
-                    "parameterNames":
-                    {
+                "inlayHints": {
+                    "parameterNames": {
                         "enabled": "all",
                         "suppressWhenArgumentMatchesName": false,
-
                     },
-
-                    "parameterTypes":
-                    {
+                    "parameterTypes": {
                         "enabled": true
                     },
                     "variableTypes": {
                         "enabled": true,
                         "suppressWhenTypeMatchesName": false,
                     },
-                    "propertyDeclarationTypes":{
+                    "propertyDeclarationTypes": {
                         "enabled": true,
                     },
                     "functionLikeReturnTypes": {
                         "enabled": true,
                     },
-                    "enumMemberValues":{
+                    "enumMemberValues": {
                         "enabled": true,
                     }
-            }
-            },
-            "vtsls":
-            {   "typescript": {"globalTsdk": "/Users/hiro/Projects/repros/yarn-test/.yarn/sdks/typescript/lib"},
-                "experimental": {
-                "completion": {
-                    "enableServerSideFuzzyMatch": true,
-                    "entriesLimit": 5000,
                 }
-            }
+            },
+            "vtsls": {
+                "typescript": {
+                    "globalTsdk": "/Users/hiro/Projects/repros/yarn-test/.yarn/sdks/typescript/lib"
+                },
+                "experimental": {
+                    "completion": {
+                        "enableServerSideFuzzyMatch": true,
+                        "entriesLimit": 5000,
+                    }
+                }
             }
         }))
     }

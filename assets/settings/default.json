@@ -688,7 +688,9 @@
   //   "TOML": ["Embargo.lock"]
   // }
   //
-  "file_types": {},
+  "file_types": {
+    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json"]
+  },
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings

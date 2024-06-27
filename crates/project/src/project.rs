@@ -8192,7 +8192,7 @@ impl Project {
                 }
             };
 
-            if abs_path.ends_with(local_settings_file_relative_path()) {
+            if path.ends_with(local_settings_file_relative_path()) {
                 let settings_dir = Arc::from(
                     path.ancestors()
                         .nth(local_settings_file_relative_path().components().count())
@@ -8209,7 +8209,7 @@ impl Project {
                         },
                     )
                 });
-            } else if abs_path.ends_with(local_tasks_file_relative_path()) {
+            } else if path.ends_with(local_tasks_file_relative_path()) {
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
@@ -8229,7 +8229,7 @@ impl Project {
                         );
                     }
                 })
-            } else if abs_path.ends_with(local_vscode_tasks_file_relative_path()) {
+            } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);

@@ -335,7 +335,7 @@ pub enum SelectMode {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
-    SingleLine,
+    SingleLine { auto_width: bool },
     AutoHeight { max_lines: usize },
     Full,
 }
@@ -1580,13 +1580,31 @@ impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::SingleLine, buffer, None, false, cx)
+        Self::new(
+            EditorMode::SingleLine { auto_width: false },
+            buffer,
+            None,
+            false,
+            cx,
+        )
     }
 
     pub fn multi_line(cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, None, false, cx)
+    }
+
+    pub fn auto_width(cx: &mut ViewContext<Self>) -> Self {
+        let buffer = cx.new_model(|cx| Buffer::local("", cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        Self::new(
+            EditorMode::SingleLine { auto_width: true },
+            buffer,
+            None,
+            false,
+            cx,
+        )
     }
 
     pub fn auto_height(max_lines: usize, cx: &mut ViewContext<Self>) -> Self {
@@ -1701,8 +1719,8 @@ impl Editor {
 
         let blink_manager = cx.new_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
-        let soft_wrap_mode_override =
-            (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::PreferLine);
+        let soft_wrap_mode_override = matches!(mode, EditorMode::SingleLine { .. })
+            .then(|| language_settings::SoftWrap::PreferLine);
 
         let mut project_subscriptions = Vec::new();
         if mode == EditorMode::Full {
@@ -1749,7 +1767,7 @@ impl Editor {
             .detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
-        let show_indent_guides = if mode == EditorMode::SingleLine {
+        let show_indent_guides = if matches!(mode, EditorMode::SingleLine { .. }) {
             Some(false)
         } else {
             None
@@ -1905,7 +1923,7 @@ impl Editor {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
-            EditorMode::SingleLine => "single_line",
+            EditorMode::SingleLine { .. } => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
             EditorMode::Full => "full",
         };
@@ -2896,6 +2914,9 @@ impl Editor {
             let start_offset = TO::to_offset(&range.start, &buffer_snapshot);
             let end_offset = start_offset + end_difference;
             let start_offset = start_offset + start_difference;
+            if start_offset > buffer_snapshot.len() || end_offset > buffer_snapshot.len() {
+                continue;
+            }
             let start = buffer_snapshot.anchor_after(start_offset);
             let end = buffer_snapshot.anchor_after(end_offset);
             linked_edits
@@ -6660,7 +6681,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -6697,7 +6718,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -6728,7 +6749,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -6791,7 +6812,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -6839,7 +6860,7 @@ impl Editor {
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
         self.take_rename(true, cx);
 
-        if self.mode == EditorMode::SingleLine {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -6900,7 +6921,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7248,7 +7269,7 @@ impl Editor {
         _: &MoveToStartOfParagraph,
         cx: &mut ViewContext<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7268,7 +7289,7 @@ impl Editor {
         _: &MoveToEndOfParagraph,
         cx: &mut ViewContext<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7288,7 +7309,7 @@ impl Editor {
         _: &SelectToStartOfParagraph,
         cx: &mut ViewContext<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7308,7 +7329,7 @@ impl Editor {
         _: &SelectToEndOfParagraph,
         cx: &mut ViewContext<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7324,7 +7345,7 @@ impl Editor {
     }
 
     pub fn move_to_beginning(&mut self, _: &MoveToBeginning, cx: &mut ViewContext<Self>) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -7344,7 +7365,7 @@ impl Editor {
     }
 
     pub fn move_to_end(&mut self, _: &MoveToEnd, cx: &mut ViewContext<Self>) {
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
         }
@@ -8203,7 +8224,7 @@ impl Editor {
             let advance_downwards = action.advance_downwards
                 && selections_on_single_row
                 && !selections_selecting
-                && this.mode != EditorMode::SingleLine;
+                && !matches!(this.mode, EditorMode::SingleLine { .. });
 
             if advance_downwards {
                 let snapshot = this.buffer.read(cx).snapshot(cx);
@@ -8795,13 +8816,7 @@ impl Editor {
         let display_point = initial_point.to_display_point(snapshot);
         let mut hunks = hunks
             .map(|hunk| diff_hunk_to_display(&hunk, &snapshot))
-            .filter(|hunk| {
-                if is_wrapped {
-                    true
-                } else {
-                    !hunk.contains_display_row(display_point.row())
-                }
-            })
+            .filter(|hunk| is_wrapped || !hunk.contains_display_row(display_point.row()))
             .dedup();
 
         if let Some(hunk) = hunks.next() {
@@ -12080,7 +12095,7 @@ impl Render for Editor {
         let settings = ThemeSettings::get_global(cx);
 
         let text_style = match self.mode {
-            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {
+            EditorMode::SingleLine { .. } | EditorMode::AutoHeight { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.ui_font.family.clone(),
                 font_features: settings.ui_font.features.clone(),
@@ -12109,7 +12124,7 @@ impl Render for Editor {
         };
 
         let background = match self.mode {
-            EditorMode::SingleLine => cx.theme().system().transparent,
+            EditorMode::SingleLine { .. } => cx.theme().system().transparent,
             EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
             EditorMode::Full => cx.theme().colors().editor_background,
         };
@@ -12373,6 +12388,7 @@ impl ViewInputHandler for Editor {
         let font_id = cx.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(cx.rem_size());
         let line_height = style.text.line_height_in_pixels(cx.rem_size());
+
         let em_width = cx
             .text_system()
             .typographic_bounds(font_id, font_size, 'm')
@@ -12500,7 +12516,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
         let group_id: SharedString = cx.block_id.to_string().into();
 
         let mut text_style = cx.text_style().clone();
-        text_style.color = diagnostic_style(diagnostic.severity, true, cx.theme().status());
+        text_style.color = diagnostic_style(diagnostic.severity, cx.theme().status());
         let theme_settings = ThemeSettings::get_global(cx);
         text_style.font_family = theme_settings.buffer_font.family.clone();
         text_style.font_style = theme_settings.buffer_font.style;
@@ -12596,25 +12612,19 @@ pub fn highlight_diagnostic_message(diagnostic: &Diagnostic) -> (SharedString, V
         prev_offset = ix + 1;
         if in_code_block {
             code_ranges.push(prev_len..text_without_backticks.len());
-            in_code_block = false;
-        } else {
-            in_code_block = true;
         }
+        in_code_block = !in_code_block;
     }
 
     (text_without_backticks.into(), code_ranges)
 }
 
-fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, colors: &StatusColors) -> Hsla {
-    match (severity, valid) {
-        (DiagnosticSeverity::ERROR, true) => colors.error,
-        (DiagnosticSeverity::ERROR, false) => colors.error,
-        (DiagnosticSeverity::WARNING, true) => colors.warning,
-        (DiagnosticSeverity::WARNING, false) => colors.warning,
-        (DiagnosticSeverity::INFORMATION, true) => colors.info,
-        (DiagnosticSeverity::INFORMATION, false) => colors.info,
-        (DiagnosticSeverity::HINT, true) => colors.info,
-        (DiagnosticSeverity::HINT, false) => colors.info,
+fn diagnostic_style(severity: DiagnosticSeverity, colors: &StatusColors) -> Hsla {
+    match severity {
+        DiagnosticSeverity::ERROR => colors.error,
+        DiagnosticSeverity::WARNING => colors.warning,
+        DiagnosticSeverity::INFORMATION => colors.info,
+        DiagnosticSeverity::HINT => colors.info,
         _ => colors.ignored,
     }
 }
