@@ -917,25 +917,10 @@ impl MarkdownElementBuilder {
     }
 
     fn flush_text(&mut self) {
-        let mut line = mem::take(&mut self.pending_line);
+        let line = mem::take(&mut self.pending_line);
         if line.text.is_empty() {
             return;
         }
-
-        for r in line.runs.iter_mut() {
-            r.color.a = 1.;
-            r.color.h = 1.;
-            r.color.s = 0.5;
-            r.color.l = 0.5;
-            r.background_color = Some(Hsla {
-                h: (0.5),
-                s: (0.5),
-                l: (0.5),
-                a: (0.8),
-            })
-        }
-
-        // println!("{}\n{:?}\n\n", line.text, line.runs);
 
         let text = StyledText::new(line.text).with_runs(line.runs);
         self.rendered_lines.push(RenderedLine {

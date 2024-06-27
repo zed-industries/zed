@@ -475,8 +475,7 @@ async fn parse_blocks(
                 },
                 inline_code: gpui::TextStyleRefinement {
                     font_family: Some(buffer_font_family.clone()),
-                    color: Some(cx.theme().colors().terminal_ansi_magenta),
-                    // background_color: Some(cx.theme().colors().background.into()),
+                    background_color: Some(cx.theme().colors().background.into()),
                     ..Default::default()
                 },
                 rule_color: Color::Muted.color(cx),
