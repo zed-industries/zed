@@ -4019,8 +4019,9 @@ impl Editor {
             return;
         };
 
-        self.signature_help_task = Some(cx.spawn(move |this, mut cx| async move {
-            let markdown_task_result = this.update(&mut cx, |editor, cx| {
+        self.signature_help_task = Some(cx.spawn(move |editor, mut cx| async move {
+            let markdown_task_result = editor.update(&mut cx, |editor, cx| {
+                let maybe_language = editor.language_at(0, cx);
                 let project = editor.project.clone()?;
                 let (maybe_markdown, language_registry) = project.update(cx, |project, mut cx| {
                     let language_registry = project.languages().clone();
@@ -4031,14 +4032,17 @@ impl Editor {
                         });
                     (maybe_markdown, language_registry)
                 });
-                Some((maybe_markdown, language_registry))
+                Some((maybe_markdown, language_registry, maybe_language))
             });
             let maybe_signature_help_popover =
-                if let Ok(Some((markdown, language_registry))) = markdown_task_result {
+                if let Ok(Some((markdown, language_registry, maybe_language))) =
+                    markdown_task_result
+                {
                     let markdown = markdown.await;
                     if let Some((markdown, markdown_highlights)) = markdown {
                         let mut parsed_markdown =
-                            parse_markdown(markdown.as_str(), &language_registry, None).await;
+                            parse_markdown(markdown.as_str(), &language_registry, maybe_language)
+                                .await;
                         parsed_markdown.highlights = markdown_highlights;
                         Some(SignatureHelpPopover {
                             parsed_content: parsed_markdown,
@@ -4049,7 +4053,7 @@ impl Editor {
                 } else {
                     None
                 };
-            this.update(&mut cx, |editor, cx| {
+            editor.update(&mut cx, |editor, cx| {
                 editor.signature_help_state = maybe_signature_help_popover;
                 cx.notify();
             })
