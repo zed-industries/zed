@@ -192,7 +192,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             let assistant_panel =
                 assistant::AssistantPanel::load(workspace_handle.clone(), cx.clone());
 
-            dbg!("huh");
             // todo!(): enable/disable this based on settings
             let runtime_panel = repl::RuntimePanel::load(workspace_handle.clone(), cx.clone());
 

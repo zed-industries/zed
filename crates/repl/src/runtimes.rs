@@ -1,32 +1,20 @@
 use anyhow::{Context as _, Result};
-#[allow(unused)]
-use collections::HashMap;
-use futures::future::Shared;
-#[allow(unused)]
-use futures::lock::Mutex;
-use futures::select_biased;
-use futures::stream::{self, StreamExt};
-#[allow(unused)]
-use futures::{channel::mpsc, SinkExt as _, StreamExt as _};
-use gpui::Task;
-#[allow(unused)]
-use gpui::{AppContext, AsyncAppContext, AsyncWindowContext, EntityId, WindowContext};
-use project::Fs;
-#[allow(unused)]
-use runtimelib::{
-    dirs, ClientIoPubConnection, ClientShellConnection, ConnectionInfo, JupyterKernelspec,
-    JupyterMessage, JupyterMessageContent,
+use futures::{
+    channel::mpsc,
+    future::Shared,
+    stream::{self, StreamExt},
+    SinkExt as _,
 };
+use gpui::{AppContext, EntityId, Task};
+use project::Fs;
+use runtimelib::{dirs, ConnectionInfo, JupyterKernelspec, JupyterMessage};
 use smol::{net::TcpListener, process::Command};
-use std::fmt::Debug;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::{path::PathBuf, sync::Arc};
-
-#[derive(Debug)]
-pub struct Request {
-    pub request: runtimelib::JupyterMessageContent,
-    pub responses_rx: mpsc::UnboundedSender<JupyterMessageContent>,
-}
+use std::{
+    fmt::Debug,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
+    sync::Arc,
+};
 
 #[derive(Debug, Clone)]
 pub struct RuntimeSpecification {
@@ -91,19 +79,17 @@ async fn peek_ports(ip: IpAddr) -> anyhow::Result<[u16; 5]> {
 pub enum Kernel {
     RunningKernel(RunningKernel),
     StartingKernel(Shared<Task<()>>),
-    FailedLaunch,
     ErroredLaunch(String),
 }
 
 pub struct RunningKernel {
     #[allow(unused)]
     pub process: smol::process::Child,
+    #[allow(unused)]
     shell_task: Task<anyhow::Result<()>>,
+    #[allow(unused)]
     iopub_task: Task<anyhow::Result<()>>,
     pub request_tx: mpsc::Sender<JupyterMessage>,
-    // pub request_tx: mpsc::UnboundedSender<Request>,
-    // pub shell: ClientShellConnection,
-    // pub iopub: ClientIoPubConnection,
 }
 
 type JupyterMessageChannel =
@@ -177,7 +163,7 @@ impl RunningKernel {
             let shell_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = request_rx.next().await {
-                        // todo!(): Based on the message type, route to the proper socket
+                        // todo!(): Based on the message type, route to shell or control
                         shell_socket.send(message).await.ok();
 
                         let reply = shell_socket.read().await?;
