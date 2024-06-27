@@ -9,11 +9,12 @@ use windows::{
         Graphics::{
             Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1},
             Direct3D11::{
-                D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11RenderTargetView,
-                ID3D11Texture2D, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_FLAG,
-                D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext,
+                ID3D11RenderTargetView, ID3D11Texture2D, D3D11_BIND_CONSTANT_BUFFER,
+                D3D11_BIND_FLAG, D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC,
+                D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 D3D11_CREATE_DEVICE_DEBUG, D3D11_SDK_VERSION, D3D11_SUBRESOURCE_DATA,
-                D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT,
+                D3D11_USAGE_DYNAMIC, D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT,
             },
             DirectComposition::{
                 DCompositionCreateDevice, DCompositionCreateDevice2, IDCompositionDesktopDevice,
@@ -57,7 +58,10 @@ struct DirectXContext {
     comp_visual: IDCompositionVisual,
 }
 
-struct DirectXRenderContext {}
+struct DirectXRenderContext {
+    uint_vertices_buffer: ID3D11Buffer,
+    global_params_buffer: ID3D11Buffer,
+}
 
 impl DirectXRenderer {
     pub(crate) fn new(hwnd: HWND) -> Self {
@@ -171,7 +175,7 @@ impl DirectXRenderer {
         if shadows.is_empty() {
             return true;
         }
-        self.context.context.PSGetShaderResources(startslot, ppshaderresourceviews)
+        // self.context.context.PSGetShaderResources(startslot, ppshaderresourceviews)
         true
     }
 
@@ -288,6 +292,7 @@ impl DirectXRenderContext {
         ];
         let uint_vertices_buffer = unsafe {
             let desc = D3D11_BUFFER_DESC {
+                // ByteWidth must be a multiple of 16, per the docs
                 ByteWidth: std::mem::size_of_val(&unit_vertices) as u32,
                 Usage: D3D11_USAGE_IMMUTABLE,
                 BindFlags: D3D11_BIND_VERTEX_BUFFER.0 as u32,
@@ -305,8 +310,40 @@ impl DirectXRenderContext {
             buffer.unwrap()
         };
 
-        Ok(Self {})
+        let global_params = GlobalParams::default();
+        let global_params_buffer = unsafe {
+            let desc = D3D11_BUFFER_DESC {
+                // ByteWidth must be a multiple of 16, per the docs
+                ByteWidth: std::mem::size_of_val(&global_params) as u32,
+                Usage: D3D11_USAGE_DYNAMIC,
+                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                MiscFlags: 0,
+                StructureByteStride: 8,
+            };
+            let data = D3D11_SUBRESOURCE_DATA {
+                pSysMem: &global_params as *const _ as _,
+                SysMemPitch: 0,
+                SysMemSlicePitch: 0,
+            };
+            let mut buffer = None;
+            device.CreateBuffer(&desc, Some(&data), Some(&mut buffer))?;
+            buffer.unwrap()
+        };
+
+        Ok(Self {
+            uint_vertices_buffer,
+            global_params_buffer,
+        })
     }
+}
+
+#[derive(Debug, Default)]
+#[repr(C)]
+struct GlobalParams {
+    viewport_size: [f32; 2],
+    premultiplied_alpha: u32,
+    _pad: u32,
 }
 
 fn get_dxgi_factory() -> Result<IDXGIFactory6> {
@@ -350,8 +387,6 @@ fn get_device(
     let device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG;
     #[cfg(not(debug_assertions))]
     let device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-    // Check to see whether the adapter supports Direct3D 11, but don't
-    // create the actual device yet.
     Ok(unsafe {
         D3D11CreateDevice(
             adapter,

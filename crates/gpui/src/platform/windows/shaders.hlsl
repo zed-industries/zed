@@ -1,7 +1,7 @@
 cbuffer GlobalParams : register(b0) {
     float2 global_viewport_size;
     uint global_premultiplied_alpha;
-    uint global_pad;
+    uint _pad;
 };
 
 struct Bounds {
@@ -51,6 +51,9 @@ struct TransformationMatrix {
     float2x2 rotation_scale;
     float2 translation;
 };
+
+static const float M_PI_F = 3.141592653f;
+static const float3 GRAYSCALE_FACTORS = float3(0.2126f, 0.7152f, 0.0722f);
 
 float4 to_device_position(float2 unit_vertex, Bounds bounds) {
   float2 position = unit_vertex * bounds.size + bounds.origin;
@@ -115,13 +118,40 @@ float4 hsla_to_rgba(Hsla hsla) {
     return rgba;
 }
 
+// This approximates the error function, needed for the gaussian integral
+float2 erf(float2 x) {
+    float2 s = sign(x);
+    float2 a = abs(x);
+    x = 1. + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+    x *= x;
+    return s - s / (x * x);
+}
+
+float blur_along_x(float x, float y, float sigma, float corner, float2 half_size) {
+    float delta = min(half_size.y - corner - abs(y), 0.);
+    float curved = half_size.x - corner + sqrt(max(0., corner * corner - delta * delta));
+    float2 integral = 0.5 + 0.5 * erf((x + float2(-curved, curved)) * (sqrt(0.5) / sigma));
+    return integral.y - integral.x;
+}
+
+// A standard gaussian function, used for weighting samples
+float gaussian(float x, float sigma) {
+    return exp(-(x * x) / (2. * sigma * sigma)) / (sqrt(2. * M_PI_F) * sigma);
+}
+
 // --- shadows --- //
 
 struct ShadowVertexOutput {
     float4 position: SV_POSITION;
     float4 color: COLOR;
     uint shadow_id: FLAT;
-    float4 clip_distance: CLIPDISTANCE;
+    float4 clip_distance: SV_CLIPDISTANCE;
+};
+
+struct ShadowFragmentInput {
+  float4 position: SV_POSITION;
+  float4 color: COLOR;
+  uint shadow_id: FLAT;
 };
 
 struct Shadow {
@@ -156,4 +186,45 @@ ShadowVertexOutput shadow_vertex(uint unit_vertex_id : SV_VertexID, uint shadow_
     output.clip_distance = clip_distance;
     
     return output;
+}
+
+float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
+    Shadow shadow = shadows[input.shadow_id];
+
+    float2 half_size = shadow.bounds.size / 2.;
+    float2 center = shadow.bounds.origin + half_size;
+    float2 point0 = input.position.xy - center;
+    float corner_radius;
+    if (point0.x < 0.) {
+        if (point0.y < 0.) {
+            corner_radius = shadow.corner_radii.top_left;
+        } else {
+            corner_radius = shadow.corner_radii.bottom_left;
+        }
+    } else {
+        if (point0.y < 0.) {
+            corner_radius = shadow.corner_radii.top_right;
+        } else {
+            corner_radius = shadow.corner_radii.bottom_right;
+        }
+    }
+
+    // The signal is only non-zero in a limited range, so don't waste samples
+    float low = point0.y - half_size.y;
+    float high = point0.y + half_size.y;
+    float start = clamp(-3. * shadow.blur_radius, low, high);
+    float end = clamp(3. * shadow.blur_radius, low, high);
+
+    // Accumulate samples (we can get away with surprisingly few samples)
+    float step = (end - start) / 4.;
+    float y = start + step * 0.5;
+    float alpha = 0.;
+    for (int i = 0; i < 4; i++) {
+        alpha += blur_along_x(point0.x, point0.y - y, shadow.blur_radius,
+                            corner_radius, half_size) *
+                gaussian(y, shadow.blur_radius) * step;
+        y += step;
+    }
+
+    return input.color * float4(1., 1., 1., alpha);
 }
