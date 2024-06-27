@@ -34,7 +34,6 @@ story.workspace = true
 strum = { version = "0.25.0", features = ["derive"] }
 theme.workspace = true
 ui = { workspace = true, features = ["stories"] }
-title_bar = { workspace = true, features = ["stories"] }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
