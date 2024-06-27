@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::ops::Range;
 
 use gpui::*;
@@ -93,7 +92,7 @@ impl TextInput {
 
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         if let Some(item) = cx.read_from_clipboard() {
-            self.replace_text_in_range(None, &item.text().replace("\n", ""), cx);
+            self.replace_text_in_range(None, &item.text().replace('\n', ""), cx);
         }
     }
 
@@ -479,7 +478,7 @@ fn main() {
                 .into(),
         ];
 
-        cx.text_system().add_fonts(fonts);
+        cx.text_system().add_fonts(fonts).unwrap();
         cx.bind_keys([
             KeyBinding::new("backspace", Backspace, None),
             KeyBinding::new("delete", Delete, None),
