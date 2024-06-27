@@ -4,6 +4,8 @@ use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
+
 use calloop::generic::{FdWrapper, Generic};
 use calloop::{EventLoop, LoopHandle, RegistrationToken};
 
@@ -13,7 +15,6 @@ use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::cursor;
 use x11rb::errors::ConnectionError;
-use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xinput::ConnectionExt;
 use x11rb::protocol::xkb::ConnectionExt as _;
 use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
@@ -900,6 +901,32 @@ impl X11Client {
         drop(state);
         Some(())
     }
+
+    fn send_window_expose_event(&self, x_window: u32) -> anyhow::Result<()> {
+        let state = self.0.borrow_mut();
+        state
+            .xcb_connection
+            .send_event(
+                false,
+                x_window,
+                xproto::EventMask::EXPOSURE,
+                xproto::ExposeEvent {
+                    response_type: xproto::EXPOSE_EVENT,
+                    sequence: 0,
+                    window: x_window,
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 0,
+                    count: 1,
+                },
+            )
+            .unwrap();
+        state
+            .xcb_connection
+            .flush()
+            .context("failed to flush XCB connection after sending ExposeEvent")
+    }
 }
 
 impl LinuxClient for X11Client {
@@ -972,60 +999,18 @@ impl LinuxClient for X11Client {
             state.common.appearance,
         )?;
 
-        let screen_resources = state
-            .xcb_connection
-            .randr_get_screen_resources(x_window)
-            .unwrap()
-            .reply()
-            .expect("Could not find available screens");
-
-        let mode = screen_resources
-            .crtcs
-            .iter()
-            .find_map(|crtc| {
-                let crtc_info = state
-                    .xcb_connection
-                    .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
-                    .ok()?
-                    .reply()
-                    .ok()?;
-
-                screen_resources
-                    .modes
-                    .iter()
-                    .find(|m| m.id == crtc_info.mode)
-            })
-            .expect("Unable to find screen refresh rate");
-
         let refresh_event_token = state
             .loop_handle
             .insert_source(calloop::timer::Timer::immediate(), {
-                let refresh_duration = mode_refresh_rate(mode);
+                let refresh_rate = window.0.state.borrow().refresh_rate;
+
                 move |mut instant, (), client| {
-                    let state = client.0.borrow_mut();
-                    state
-                        .xcb_connection
-                        .send_event(
-                            false,
-                            x_window,
-                            xproto::EventMask::EXPOSURE,
-                            xproto::ExposeEvent {
-                                response_type: xproto::EXPOSE_EVENT,
-                                sequence: 0,
-                                window: x_window,
-                                x: 0,
-                                y: 0,
-                                width: 0,
-                                height: 0,
-                                count: 1,
-                            },
-                        )
-                        .unwrap();
-                    let _ = state.xcb_connection.flush().unwrap();
+                    client.send_window_expose_event(x_window).unwrap();
+
                     // Take into account that some frames have been skipped
                     let now = Instant::now();
                     while instant < now {
-                        instant += refresh_duration;
+                        instant += refresh_rate;
                     }
                     calloop::timer::TimeoutAction::ToInstant(instant)
                 }
@@ -1176,19 +1161,6 @@ impl LinuxClient for X11Client {
                 .map(|window| window.handle())
         })
     }
-}
-
-// Adatpted from:
-// https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
-pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
-    if mode.dot_clock == 0 || mode.htotal == 0 || mode.vtotal == 0 {
-        return Duration::from_millis(16);
-    }
-
-    let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
-    let micros = 1_000_000_000 / millihertz;
-    log::info!("Refreshing at {} micros", micros);
-    Duration::from_micros(micros)
 }
 
 fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
