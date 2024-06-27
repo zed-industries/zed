@@ -549,9 +549,15 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
-    pending_modifiers: Option<Modifiers>,
+    pending_modifier: ModifierState,
     pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ModifierState {
+    modifiers: Modifiers,
+    saw_keystroke: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -824,7 +830,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
-            pending_modifiers: None,
+            pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
         })
@@ -3168,9 +3174,12 @@ impl<'a> WindowContext<'a> {
         let mut keystroke: Option<Keystroke> = None;
 
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
-            if let Some(previous) = self.window.pending_modifiers.take() {
+            if event.modifiers.number_of_modifiers() == 0
+                && self.window.pending_modifier.modifiers.number_of_modifiers() == 1
+                && !self.window.pending_modifier.saw_keystroke
+            {
                 if event.modifiers.number_of_modifiers() == 0 {
-                    let key = match previous {
+                    let key = match self.window.pending_modifier.modifiers {
                         modifiers if modifiers.shift => Some("shift"),
                         modifiers if modifiers.control => Some("control"),
                         modifiers if modifiers.alt => Some("alt"),
@@ -3198,11 +3207,15 @@ impl<'a> WindowContext<'a> {
                         pending = pending_bindings;
                     }
                 }
-            } else if event.modifiers.number_of_modifiers() == 1 {
-                self.window.pending_modifiers = Some(event.modifiers);
             }
+            if self.window.pending_modifier.modifiers.number_of_modifiers() == 0
+                && event.modifiers.number_of_modifiers() == 1
+            {
+                self.window.pending_modifier.saw_keystroke = false
+            }
+            self.window.pending_modifier.modifiers = event.modifiers
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-            self.window.pending_modifiers.take();
+            self.window.pending_modifier.saw_keystroke = true;
             let KeymatchResult {
                 bindings: key_down_bindings,
                 pending: key_down_pending,
