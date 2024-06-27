@@ -247,13 +247,13 @@ impl RuntimePanel {
             .ok_or_else(|| anyhow::anyhow!("No kernel found for language: {}", language_name))?;
 
         let session = self.sessions.entry(entity_id).or_insert_with(|| {
-            cx.new_view(|cx| Session::new(editor, language_name, fs, runtime_specification, cx))
+            cx.new_view(|cx| Session::new(editor, fs, runtime_specification, cx))
         });
 
         // todo!(): Check if session uses the same language as the snippet
 
         session.update(cx, |session, cx| {
-            session.run(&selected_text, cx);
+            session.run(&selected_text, cx).ok();
         });
 
         anyhow::Ok(())
