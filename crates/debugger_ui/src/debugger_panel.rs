@@ -265,7 +265,7 @@ impl Render for DebugPanel {
                     .p_2()
                     .gap_2()
                     .child(
-                        IconButton::new("debug-resume", IconName::Play)
+                        IconButton::new("debug-continue", IconName::DebugContinue)
                             .on_click(cx.listener(|view, _, cx| {
                                 let client = view.debug_adapter(cx);
                                 if let Some(thread_id) = view.thread_id {
@@ -277,19 +277,11 @@ impl Render for DebugPanel {
                             .tooltip(move |cx| Tooltip::text("Continue debug", cx)),
                     )
                     .child(
-                        IconButton::new("debug-step-over", IconName::Play)
-                            .on_click(cx.listener(|view, _, cx| {
-                                let client = view.debug_adapter(cx);
-                                if let Some(thread_id) = view.thread_id {
-                                    cx.background_executor()
-                                        .spawn(async move { client.step_over(thread_id).await })
-                                        .detach();
-                                }
-                            }))
+                        IconButton::new("debug-step-over", IconName::DebugStepOver)
                             .tooltip(move |cx| Tooltip::text("Step over", cx)),
                     )
                     .child(
-                        IconButton::new("debug-go-in", IconName::Play)
+                        IconButton::new("debug-go-in", IconName::DebugStepInto)
                             .on_click(cx.listener(|view, _, cx| {
                                 let client = view.debug_adapter(cx);
 
@@ -302,7 +294,7 @@ impl Render for DebugPanel {
                             .tooltip(move |cx| Tooltip::text("Go in", cx)),
                     )
                     .child(
-                        IconButton::new("debug-go-out", IconName::Play)
+                        IconButton::new("debug-go-out", IconName::DebugStepOut)
                             .on_click(cx.listener(|view, _, cx| {
                                 let client = view.debug_adapter(cx);
                                 if let Some(thread_id) = view.thread_id {
@@ -314,11 +306,11 @@ impl Render for DebugPanel {
                             .tooltip(move |cx| Tooltip::text("Go out", cx)),
                     )
                     .child(
-                        IconButton::new("debug-restart", IconName::Play)
+                        IconButton::new("debug-restart", IconName::DebugRestart)
                             .tooltip(move |cx| Tooltip::text("Restart", cx)),
                     )
                     .child(
-                        IconButton::new("debug-stop", IconName::Play)
+                        IconButton::new("debug-stop", IconName::DebugStop)
                             .tooltip(move |cx| Tooltip::text("Stop", cx)),
                     ),
             )
