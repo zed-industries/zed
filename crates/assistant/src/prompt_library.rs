@@ -34,7 +34,7 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
-    SharedString, Styled, Tooltip, UiTitleBar, ViewContext, VisualContext,
+    SharedString, Styled, Tooltip, ViewContext, VisualContext,
 };
 use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -721,7 +721,7 @@ impl PromptLibrary {
             .child(
                 h_flex()
                     .p(Spacing::Small.rems(cx))
-                    .h(UiTitleBar::height(cx))
+                    .h_9()
                     .w_full()
                     .flex_none()
                     .justify_end()

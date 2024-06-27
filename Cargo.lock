@@ -10260,6 +10260,7 @@ dependencies = [
  "story",
  "strum",
  "theme",
+ "title_bar",
  "ui",
 ]
 
@@ -11095,6 +11096,7 @@ dependencies = [
  "ui",
  "util",
  "vcs_menu",
+ "windows 0.57.0",
  "workspace",
  "zed_actions",
 ]
