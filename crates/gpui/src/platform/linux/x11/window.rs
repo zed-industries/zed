@@ -411,7 +411,8 @@ impl X11WindowState {
             // Note: this has to be done after the GPU init, or otherwise
             // the sizes are immediately invalidated.
             size: query_render_extent(xcb_connection, x_window),
-            transparent: params.window_background != WindowBackgroundAppearance::Opaque,
+            // In case we have window decorations to render
+            transparent: true,
         };
         xcb_connection.map_window(x_window).unwrap();
 
@@ -932,7 +933,7 @@ impl PlatformWindow for X11Window {
         log::info!("ignoring macOS specific set_edited");
     }
 
-    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+    fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut inner = self.0.state.borrow_mut();
         let transparent = background_appearance != WindowBackgroundAppearance::Opaque;
         inner.renderer.update_transparency(transparent);
@@ -1092,13 +1093,23 @@ impl PlatformWindow for X11Window {
             )
             .unwrap();
 
-        state.decorations = Decorations::Client {
-            shadows: false,
-            // TOOD: Implement tiling checking for x11
-            tiling: Tiling::default(),
-        };
+        match decorations {
+            WindowDecorations::Server => {
+                state.decorations = Decorations::Server;
+            }
+            WindowDecorations::Client => {
+                state.decorations = Decorations::Client {
+                    shadows: false,
+                    // TODO: Implement tiling checking for x11
+                    tiling: Tiling::default(),
+                };
 
-        drop(state);
+                drop(state);
+
+                self.set_background_appearance(WindowBackgroundAppearance::Transparent)
+            }
+        }
+
         let mut callbacks = self.0.callbacks.borrow_mut();
         if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
             appearance_changed();

@@ -311,7 +311,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn set_title(&mut self, title: &str);
-    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance);
+    fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_fullscreen(&self);
@@ -352,6 +352,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
             window_menu: false,
         }
     }
+    fn set_client_area(&self, _bounds: Bounds<Pixels>) {}
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

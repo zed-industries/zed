@@ -1,5 +1,6 @@
 use std::cell::{Ref, RefCell, RefMut};
 use std::ffi::c_void;
+use std::hash::Hash;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -25,7 +26,7 @@ use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, AnyWindowHandle, Bounds, Decorations, Globals, Modifiers, Output, Pixels,
+    point, px, size, AnyWindowHandle, Bounds, Decorations, Globals, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling,
     WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowParams,
@@ -97,6 +98,7 @@ pub struct WaylandWindowState {
     in_progress_configure: Option<InProgressConfigure>,
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
+    client_area: Bounds<Pixels>,
 }
 
 #[derive(Clone)]
@@ -147,7 +149,7 @@ impl WaylandWindowState {
                 height: options.bounds.size.height.0 as u32,
                 depth: 1,
             },
-            transparent: options.window_background != WindowBackgroundAppearance::Opaque,
+            transparent: true,
         };
 
         Ok(Self {
@@ -181,6 +183,10 @@ impl WaylandWindowState {
                 maximize: false,
                 minimize: false,
                 window_menu: false,
+            },
+            client_area: Bounds {
+                origin: point(px(0.), px(0.)),
+                size: size(px(f32::MAX), px(f32::MAX)),
             },
         })
     }
@@ -380,6 +386,7 @@ impl WaylandWindowStatePtr {
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
                     self.state.borrow_mut().decorations = WindowDecorations::Client;
+                    // Update background to be transparent
                     if let Some(mut appearance_changed) =
                         self.callbacks.borrow_mut().appearance_changed.as_mut()
                     {
@@ -804,16 +811,22 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().toplevel.set_app_id(app_id.to_owned());
     }
 
-    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+    fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let opaque = background_appearance == WindowBackgroundAppearance::Opaque;
         let mut state = self.borrow_mut();
         state.renderer.update_transparency(!opaque);
+        let opaque_area = state.client_area.map(|v| v.0 as i32);
 
         let region = state
             .globals
             .compositor
             .create_region(&state.globals.qh, ());
-        region.add(0, 0, i32::MAX, i32::MAX);
+        region.add(
+            opaque_area.origin.x,
+            opaque_area.origin.y,
+            opaque_area.size.width,
+            opaque_area.size.height,
+        );
 
         if opaque {
             // Promise the compositor that this region of the window surface
@@ -963,6 +976,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn window_controls(&self) -> WindowControls {
         self.borrow().window_controls
+    }
+
+    fn set_client_area(&self, bounds: Bounds<Pixels>) {
+        self.borrow_mut().client_area = bounds;
     }
 }
 

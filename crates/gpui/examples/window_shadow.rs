@@ -88,6 +88,16 @@ impl Render for WindowShadow {
             .size_full()
             .child(
                 div()
+                    .child(
+                        canvas(
+                            |bounds, cx| {
+                                cx.set_client_area(bounds);
+                            },
+                            |_, _, _| {},
+                        )
+                        .size_full()
+                        .absolute(),
+                    )
                     .cursor(CursorStyle::Arrow)
                     .map(|div| match decorations {
                         Decorations::Server => div,
@@ -190,7 +200,7 @@ fn main() {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_background: WindowBackgroundAppearance::Transparent,
+                window_background: WindowBackgroundAppearance::Opaque,
                 window_decorations: Some(WindowDecorations::Client),
                 ..Default::default()
             },
