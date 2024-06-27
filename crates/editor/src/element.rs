@@ -2646,7 +2646,12 @@ impl EditorElement {
             return;
         };
 
-        let cursor_row_layout = &line_layouts[display_point.row().minus(start_row) as usize];
+        let Some(cursor_row_layout) =
+            line_layouts.get(display_point.row().minus(start_row) as usize)
+        else {
+            return;
+        };
+
         let start_x = cursor_row_layout.x_for_index(display_point.column() as usize)
             - scroll_pixel_position.x
             + content_origin.x;
