@@ -10,7 +10,7 @@ use std::ops::Range;
 use ui::StyledExt;
 use workspace::Workspace;
 
-const SIGNATURE_HELP_HIGHLIGHT: MarkdownHighlight =
+pub const SIGNATURE_HELP_HIGHLIGHT: MarkdownHighlight =
     MarkdownHighlight::Style(MarkdownHighlightStyle {
         italic: false,
         underline: true,
@@ -18,7 +18,7 @@ const SIGNATURE_HELP_HIGHLIGHT: MarkdownHighlight =
         weight: FontWeight::EXTRA_BOLD,
     });
 
-const SIGNATURE_HELP_OVERLOAD_HIGHLIGHT: MarkdownHighlight =
+pub const SIGNATURE_HELP_OVERLOAD_HIGHLIGHT: MarkdownHighlight =
     MarkdownHighlight::Style(MarkdownHighlightStyle {
         italic: true,
         underline: false,

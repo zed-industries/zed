@@ -1,4 +1,5 @@
 use super::*;
+use crate::signature_help_popover::SIGNATURE_HELP_HIGHLIGHT;
 use crate::{
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -21,7 +22,7 @@ use language::{
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
-    Point,
+    ParsedMarkdown, Point,
 };
 use language_settings::IndentGuideSettings;
 use multi_buffer::MultiBufferIndentGuide;
@@ -6832,6 +6833,74 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
 }
 
 #[gpui::test]
+async fn test_signature_help(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            signature_help_provider: Some(lsp::SignatureHelpOptions {
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.update_editor(|editor, cx| {
+        editor.show_signature_help(&ShowSignatureHelp, cx);
+        assert!(editor.signature_help_task.is_some())
+    });
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8, param2: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                    documentation: None,
+                },
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param2: u8".to_string()),
+                    documentation: None,
+                },
+            ]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(0),
+    };
+    handle_signature_help_request(&mut cx, mocked_response).await;
+
+    cx.condition(|editor, _| editor.signature_help_state.is_some())
+        .await;
+
+    cx.editor(|editor, _| {
+        let signature_help_state = editor.signature_help_state.clone();
+        assert!(signature_help_state.is_some());
+        let ParsedMarkdown {
+            text,
+            highlights,
+            region_ranges,
+            ..
+        } = signature_help_state.unwrap().parsed_content;
+        assert_eq!(text, "param1: u8, param2: u8");
+        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT)]);
+        assert_eq!(region_ranges, vec![0..22]);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.hide_signature_help(cx);
+    });
+
+    cx.editor(|editor, _| {
+        assert!(editor.signature_help_state.as_ref().is_none());
+        assert!(editor.signature_help_task.as_ref().is_none());
+    });
+}
+
+#[gpui::test]
 async fn test_completion(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -12381,6 +12450,21 @@ fn assert_selection_ranges(marked_text: &str, view: &mut Editor, cx: &mut ViewCo
         "Assert selections are {}",
         marked_text
     );
+}
+
+pub fn handle_signature_help_request(
+    cx: &mut EditorLspTestContext,
+    mocked_response: lsp::SignatureHelp,
+) -> impl Future<Output = ()> {
+    let mut request =
+        cx.handle_request::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
+            let mocked_response = mocked_response.clone();
+            async move { Ok(Some(mocked_response)) }
+        });
+
+    async move {
+        request.next().await;
+    }
 }
 
 /// Handle completion request passing a marked string specifying where the completion
