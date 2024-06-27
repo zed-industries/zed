@@ -240,7 +240,13 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         for room in server_rooms.values_mut() {
             if let Some(room) = room.client_rooms.remove(&client_identity) {
-                room.0.lock().connection_state = ConnectionState::Disconnected;
+                let mut room = room.0.lock();
+                room.connection_state = ConnectionState::Disconnected;
+                room.updates_tx
+                    .blocking_send(RoomEvent::Disconnected {
+                        reason: DisconnectReason::SignalClose,
+                    })
+                    .ok();
             }
         }
     }

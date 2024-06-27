@@ -141,17 +141,25 @@ impl Room {
                         }
                     });
 
+                    let muted_by_user = Self::mute_on_join(cx);
                     this.live_kit = Some(LiveKitRoom {
                         room: Arc::new(room),
                         screen_track: LocalTrack::None,
                         microphone_track: LocalTrack::None,
                         next_publish_id: 0,
-                        muted_by_user: Self::mute_on_join(cx),
+                        muted_by_user,
                         deafened: false,
                         speaking: false,
                         _handle_updates,
-                    })
-                })
+                    });
+
+                    if !muted_by_user && this.can_use_microphone() {
+                        this.share_microphone(cx)
+                    } else {
+                        Task::ready(Ok(()))
+                    }
+                })?
+                .await
             })
             .detach_and_log_err(cx);
         }
