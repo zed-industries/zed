@@ -1,5 +1,9 @@
-use crate::events::Event;
 use anyhow::{anyhow, Context, Result};
+use dap_types::{
+    BreakpointEvent, CapabilitiesEvent, ContinuedEvent, ExitedEvent, InvalidatedEvent,
+    LoadedSourceEvent, MemoryEvent, ModuleEvent, OutputEvent, ProcessEvent, StoppedEvent,
+    TerminatedEvent, ThreadEvent,
+};
 use futures::{
     channel::mpsc::{unbounded, Sender, UnboundedReceiver, UnboundedSender},
     AsyncBufRead, AsyncWrite, SinkExt as _, StreamExt,
@@ -10,7 +14,38 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smol::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 use std::{collections::HashMap, sync::Arc};
-use util::ResultExt;
+use util::ResultExt as _;
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum Payload {
+    Event(Box<Events>),
+    Response(Response),
+    Request(Request),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(tag = "event", content = "body")]
+#[serde(rename_all = "camelCase")]
+pub enum Events {
+    Initialized,
+    Stopped(StoppedEvent),
+    Continued(ContinuedEvent),
+    Exited(ExitedEvent),
+    Terminated(TerminatedEvent),
+    Thread(ThreadEvent),
+    Output(OutputEvent),
+    Breakpoint(BreakpointEvent),
+    Module(ModuleEvent),
+    LoadedSource(LoadedSourceEvent),
+    Process(ProcessEvent),
+    Capabilities(CapabilitiesEvent),
+    ProgressStart,
+    ProgressUpdate,
+    ProgressEnd,
+    Invalidated(InvalidatedEvent),
+    Memory(MemoryEvent),
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Request {
@@ -28,14 +63,6 @@ pub struct Response {
     pub command: String,
     pub message: Option<String>,
     pub body: Option<Value>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum Payload {
-    Event(Box<Event>),
-    Response(Response),
-    Request(Request),
 }
 
 #[derive(Debug)]

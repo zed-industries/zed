@@ -23,7 +23,8 @@ use clock::ReplicaId;
 use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use dap::{
     client::{DebugAdapterClient, DebugAdapterClientId, TransportType},
-    config_templates::DebuggerConfigTemplate,
+    transport::Events,
+    SourceBreakpoint,
 };
 use debounced_delay::DebouncedDelay;
 use debugger_inventory::{DebuggerConfigSourceKind, DebuggerInventory};
@@ -343,7 +344,7 @@ pub enum Event {
     DebugClientStarted(DebugAdapterClientId),
     DebugClientEvent {
         client_id: DebugAdapterClientId,
-        event: dap::events::Event,
+        event: Events,
     },
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -1089,7 +1090,7 @@ impl Project {
                             client_id: id,
                             event,
                         })
-                    });
+                    }).log_err();
                 },
             )
             .await
@@ -1170,7 +1171,17 @@ impl Project {
             .spawn(async move {
                 for client in clients {
                     client
-                        .set_breakpoints(abs_path.clone(), row as usize)
+                        .set_breakpoints(
+                            abs_path.clone(),
+                            Some(vec![SourceBreakpoint {
+                                line: row as u64,
+                                condition: None,
+                                hit_condition: None,
+                                log_message: None,
+                                column: None,
+                                mode: None,
+                            }]),
+                        )
                         .await?;
                 }
                 anyhow::Ok(())

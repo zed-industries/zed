@@ -3194,6 +3194,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-std",
+ "dap-types",
  "futures 0.3.28",
  "gpui",
  "log",
@@ -3206,6 +3207,15 @@ dependencies = [
  "serde_json_lenient",
  "smol",
  "util",
+]
+
+[[package]]
+name = "dap-types"
+version = "0.0.1"
+source = "git+https://github.com/zed-industries/dap-types#6e85834f9948cb5e5f085f7d5792235696ea78e2"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

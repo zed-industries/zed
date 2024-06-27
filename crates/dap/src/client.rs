@@ -1,19 +1,21 @@
-use crate::{
-    events::{self},
-    requests::{
-        ConfigurationDone, Continue, ContinueArguments, Initialize, InitializeArguments, Launch,
-        LaunchRequestArguments, Next, NextArguments, SetBreakpoints, SetBreakpointsArguments,
-        SetBreakpointsResponse, StepIn, StepInArguments, StepOut, StepOutArguments,
-    },
-    transport::{self, Payload, Request, Transport},
-    types::{DebuggerCapabilities, Source, SourceBreakpoint, ThreadId},
-};
+use crate::transport::{self, Events, Payload, Request, Transport};
 use anyhow::{anyhow, Context, Result};
+
+use dap_types::{
+    requests::{
+        ConfigurationDone, Continue, Initialize, Launch, Next, SetBreakpoints, StepBack, StepIn,
+        StepOut,
+    },
+    ConfigurationDoneArguments, ContinueArguments, InitializeRequestArgumentsPathFormat,
+    LaunchRequestArguments, NextArguments, SetBreakpointsArguments, SetBreakpointsResponse, Source,
+    SourceBreakpoint, StepBackArguments, StepInArguments, StepOutArguments, SteppingGranularity,
+};
 use futures::{
     channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
     AsyncBufRead, AsyncReadExt, AsyncWrite, SinkExt as _, StreamExt,
 };
 use gpui::{AppContext, AsyncAppContext};
+use serde_json::json;
 use smol::{
     io::BufReader,
     net::TcpStream,
@@ -32,6 +34,7 @@ pub enum TransportType {
     TCP,
     STDIO,
 }
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct DebugAdapterClientId(pub usize);
@@ -41,7 +44,7 @@ pub struct DebugAdapterClient {
     _process: Option<Child>,
     server_tx: UnboundedSender<Payload>,
     request_count: AtomicU64,
-    capabilities: Option<DebuggerCapabilities>,
+    capabilities: Option<dap_types::Capabilities>,
 }
 
 impl DebugAdapterClient {
@@ -55,7 +58,7 @@ impl DebugAdapterClient {
         event_handler: F,
     ) -> Result<Self>
     where
-        F: FnMut(events::Event, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         match transport_type {
             TransportType::TCP => {
@@ -76,7 +79,7 @@ impl DebugAdapterClient {
         event_handler: F,
     ) -> Result<Self>
     where
-        F: FnMut(events::Event, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         let mut command = process::Command::new(command);
         command
@@ -129,7 +132,7 @@ impl DebugAdapterClient {
         event_handler: F,
     ) -> Result<Self>
     where
-        F: FnMut(events::Event, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
         let (client_tx, client_rx) = unbounded::<Payload>();
@@ -156,7 +159,7 @@ impl DebugAdapterClient {
         cx: AsyncAppContext,
     ) -> Result<()>
     where
-        F: FnMut(events::Event, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
         while let Some(payload) = client_rx.next().await {
             cx.update(|cx| match payload {
@@ -182,10 +185,10 @@ impl DebugAdapterClient {
         }
     }
 
-    pub async fn request<R: crate::requests::Request>(
+    pub async fn request<R: dap_types::requests::Request>(
         &self,
         arguments: R::Arguments,
-    ) -> Result<R::Result> {
+    ) -> Result<R::Response> {
         let serialized_arguments = serde_json::to_value(arguments)?;
 
         let (callback_tx, mut callback_rx) = channel::<Result<transport::Response>>(1);
@@ -214,21 +217,24 @@ impl DebugAdapterClient {
         self.request_count.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub async fn initialize(&mut self) -> Result<DebuggerCapabilities> {
-        let args = InitializeArguments {
+    pub async fn initialize(&mut self) -> Result<dap_types::Capabilities> {
+        let args = dap_types::InitializeRequestArguments {
             client_id: Some("zed".to_owned()),
             client_name: Some("Zed".to_owned()),
-            adapter_id: "xdebug".into(),
+            adapter_id: "xdebug".into(), // TODO: read from config
             locale: Some("en-us".to_owned()),
-            lines_start_at_one: Some(true),
-            columns_start_at_one: Some(true),
-            path_format: Some("path".to_owned()),
+            path_format: Some(InitializeRequestArgumentsPathFormat::Path),
             supports_variable_type: Some(true),
             supports_variable_paging: Some(false),
-            supports_run_in_terminal_request: Some(false),
+            supports_run_in_terminal_request: Some(false), // TODO: we should support this
             supports_memory_references: Some(false),
             supports_progress_reporting: Some(false),
             supports_invalidated_event: Some(false),
+            lines_start_at1: Some(true),
+            columns_start_at1: Some(true),
+            supports_memory_event: None,
+            supports_args_can_be_interpreted_by_shell: None,
+            supports_start_debugging_request: None,
         };
 
         let capabilities = self.request::<Initialize>(args).await?;
@@ -238,54 +244,74 @@ impl DebugAdapterClient {
         Ok(capabilities)
     }
 
-    pub async fn launch(&mut self) -> Result<()> {
+    pub async fn launch(&self) -> Result<()> {
         self.request::<Launch>(LaunchRequestArguments {
-            no_debug: Some(false),
-            __restart: None,
+            raw: json!({"noDebug": false}),
         })
         .await
     }
 
-    pub async fn next_thread(&self, thread_id: ThreadId) {
+    pub async fn resume(&self, thread_id: u64) {
+        let _ = self
+            .request::<Continue>(ContinueArguments {
+                thread_id,
+                single_thread: self
+                    .capabilities
+                    .clone()
+                    .and_then(|c| c.supports_single_thread_execution_requests),
+            })
+            .await;
+    }
+
+    pub async fn step_over(&self, thread_id: u64) {
         let _ = self
             .request::<Next>(NextArguments {
                 thread_id,
-                granularity: None,
+                granularity: Some(SteppingGranularity::Statement),
+                single_thread: self
+                    .capabilities
+                    .clone()
+                    .and_then(|c| c.supports_single_thread_execution_requests),
             })
             .await;
     }
 
-    pub async fn continue_thread(&self, thread_id: ThreadId) {
-        let _ = self
-            .request::<Continue>(ContinueArguments { thread_id })
-            .await;
-    }
-
-    pub async fn step_in(&self, thread_id: ThreadId) {
+    pub async fn step_in(&self, thread_id: u64) {
         let _ = self
             .request::<StepIn>(StepInArguments {
                 thread_id,
                 target_id: None,
-                granularity: None,
+                granularity: Some(SteppingGranularity::Statement),
+                single_thread: self
+                    .capabilities
+                    .clone()
+                    .and_then(|c| c.supports_single_thread_execution_requests),
             })
             .await;
     }
 
-    pub async fn step_out(&self, thread_id: ThreadId) {
+    pub async fn step_out(&self, thread_id: u64) {
         let _ = self
             .request::<StepOut>(StepOutArguments {
                 thread_id,
-                granularity: None,
+                granularity: Some(SteppingGranularity::Statement),
+                single_thread: self
+                    .capabilities
+                    .clone()
+                    .and_then(|c| c.supports_single_thread_execution_requests),
             })
             .await;
     }
 
-    pub async fn step_back(&self, thread_id: ThreadId) {
+    pub async fn step_back(&self, thread_id: u64) {
         let _ = self
-            .request::<StepIn>(StepInArguments {
+            .request::<StepBack>(StepBackArguments {
                 thread_id,
-                target_id: None,
-                granularity: None,
+                single_thread: self
+                    .capabilities
+                    .clone()
+                    .and_then(|c| c.supports_single_thread_execution_requests),
+                granularity: Some(SteppingGranularity::Statement),
             })
             .await;
     }
@@ -293,26 +319,28 @@ impl DebugAdapterClient {
     pub async fn set_breakpoints(
         &self,
         path: PathBuf,
-        line: usize,
+        breakpoints: Option<Vec<SourceBreakpoint>>,
     ) -> Result<SetBreakpointsResponse> {
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
-                path: Some(path),
-                ..Default::default()
+                path: Some(String::from(path.to_string_lossy())),
+                name: None,
+                source_reference: None,
+                presentation_hint: None,
+                origin: None,
+                sources: None,
+                adapter_data: None,
+                checksums: None,
             },
-            breakpoints: Some(vec![SourceBreakpoint {
-                line,
-                column: None,
-                condition: None,
-                hit_condition: None,
-                log_message: None,
-            }]),
+            breakpoints,
             source_modified: None,
+            lines: None,
         })
         .await
     }
 
     pub async fn configuration_done(&self) -> Result<()> {
-        self.request::<ConfigurationDone>(()).await
+        self.request::<ConfigurationDone>(ConfigurationDoneArguments)
+            .await
     }
 }
