@@ -56,10 +56,9 @@ static const float M_PI_F = 3.141592653f;
 static const float3 GRAYSCALE_FACTORS = float3(0.2126f, 0.7152f, 0.0722f);
 
 float4 to_device_position(float2 unit_vertex, Bounds bounds) {
-  float2 position = unit_vertex * bounds.size + bounds.origin;
-  float2 device_position =
-      position / global_viewport_size * float2(2., -2.) + float2(-1., 1.);
-  return float4(device_position, 0., 1.);
+    float2 position = unit_vertex * bounds.size + bounds.origin;
+    float2 device_position = position / global_viewport_size * float2(2., -2.) + float2(-1., 1.);
+    return float4(device_position, 0., 1.);
 }
 
 float4 distance_from_clip_rect(float2 unit_vertex, Bounds bounds, Bounds clip_bounds) {
@@ -139,20 +138,28 @@ float gaussian(float x, float sigma) {
     return exp(-(x * x) / (2. * sigma * sigma)) / (sqrt(2. * M_PI_F) * sigma);
 }
 
+float4 over(float4 below, float4 above) {
+    float4 result;
+    float alpha = above.a + below.a * (1.0 - above.a);
+    result.rgb = (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
+    result.a = alpha;
+    return result;
+}
+
 // --- shadows --- //
 
 struct ShadowVertexOutput {
     float4 position: SV_POSITION;
     float4 color: COLOR;
     uint shadow_id: FLAT;
-    float4 clip_distance: SV_CLIPDISTANCE;
+    // float4 clip_distance: SV_CLIPDISTANCE;
 };
 
-struct ShadowFragmentInput {
-  float4 position: SV_POSITION;
-  float4 color: COLOR;
-  uint shadow_id: FLAT;
-};
+// struct ShadowFragmentInput {
+//   float4 position: SV_POSITION;
+//   float4 color: COLOR;
+//   uint shadow_id: ID;
+// };
 
 struct Shadow {
     uint order;
@@ -163,11 +170,9 @@ struct Shadow {
     Hsla color;
 };
 
-StructuredBuffer<Shadow> unit_vertices : register(t0);
 StructuredBuffer<Shadow> shadows : register(t0);
 
-ShadowVertexOutput shadow_vertex(uint unit_vertex_id : SV_VertexID, uint shadow_id : SV_InstanceID) {
-    float2 unit_vertex = unit_vertices[unit_vertex_id];
+ShadowVertexOutput shadow_vertex(float2 uint_vertex: POSITION, uint shadow_id: SV_InstanceID) {
     Shadow shadow = shadows[shadow_id];
 
     float margin = 3.0 * shadow.blur_radius;
@@ -175,20 +180,20 @@ ShadowVertexOutput shadow_vertex(uint unit_vertex_id : SV_VertexID, uint shadow_
     bounds.origin -= margin;
     bounds.size += 2.0 * margin;
 
-    float4 device_position = to_device_position(unit_vertex, bounds);
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask);
+    float4 device_position = to_device_position(uint_vertex, bounds);
+    // float4 clip_distance = distance_from_clip_rect(uint_vertex, bounds, shadow.content_mask);
     float4 color = hsla_to_rgba(shadow.color);
 
     ShadowVertexOutput output;
     output.position = device_position;
     output.color = color;
     output.shadow_id = shadow_id;
-    output.clip_distance = clip_distance;
+    // output.clip_distance = clip_distance;
     
     return output;
 }
 
-float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
+float4 shadow_fragment(ShadowVertexOutput input): SV_TARGET {
     Shadow shadow = shadows[input.shadow_id];
 
     float2 half_size = shadow.bounds.size / 2.;
@@ -227,4 +232,112 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
     }
 
     return input.color * float4(1., 1., 1., alpha);
+}
+
+/*
+**
+**              Shadows
+**
+*/
+
+struct Quad {
+    uint order;
+    uint pad;
+    Bounds bounds;
+    Bounds content_mask;
+    Hsla background;
+    Hsla border_color;
+    Corners corner_radii;
+    Edges border_widths;
+};
+
+struct QuadVertexOutput {
+    float4 position: SV_POSITION;
+    float4 background_color: COLOR0;
+    float4 border_color: COLOR1;
+    uint quad_id: FLAT;
+    // float4 clip_distance: SV_CLIPDISTANCE;
+};
+
+StructuredBuffer<Quad> quads : register(t0);
+
+QuadVertexOutput quad_vertex(float2 unit_vertex: POSITION, uint quad_id: SV_InstanceID) {
+    Quad quad = quads[quad_id];
+    float4 device_position = to_device_position(unit_vertex, quad.bounds);
+    float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
+    float4 background_color = hsla_to_rgba(quad.background);
+    float4 border_color = hsla_to_rgba(quad.border_color);
+    
+    QuadVertexOutput output;
+    output.position = device_position;
+    output.background_color = background_color;
+    output.border_color = border_color;
+    output.quad_id = quad_id;
+    return output;
+}
+
+float4 quad_fragment(QuadVertexOutput input): SV_TARGET {
+    Quad quad = quads[input.quad_id];
+
+    // Fast path when the quad is not rounded and doesn't have any border.
+    if (quad.corner_radii.top_left == 0. && quad.corner_radii.bottom_left == 0. &&
+        quad.corner_radii.top_right == 0. &&
+        quad.corner_radii.bottom_right == 0. && quad.border_widths.top == 0. &&
+        quad.border_widths.left == 0. && quad.border_widths.right == 0. &&
+        quad.border_widths.bottom == 0.) {
+        return input.background_color;
+    }
+
+    float2 half_size = quad.bounds.size / 2.;
+    float2 center = quad.bounds.origin + half_size;
+    float2 center_to_point = input.position.xy - center;
+    float corner_radius;
+    if (center_to_point.x < 0.) {
+        if (center_to_point.y < 0.) {
+            corner_radius = quad.corner_radii.top_left;
+        } else {
+            corner_radius = quad.corner_radii.bottom_left;
+        }
+    } else {
+        if (center_to_point.y < 0.) {
+            corner_radius = quad.corner_radii.top_right;
+        } else {
+            corner_radius = quad.corner_radii.bottom_right;
+        }
+    }
+
+    float2 rounded_edge_to_point = abs(center_to_point) - half_size + corner_radius;
+    float distance =
+        length(max(0., rounded_edge_to_point)) +
+        min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) -
+        corner_radius;
+
+    float vertical_border = center_to_point.x <= 0. ? quad.border_widths.left
+                                                    : quad.border_widths.right;
+    float horizontal_border = center_to_point.y <= 0. ? quad.border_widths.top
+                                                        : quad.border_widths.bottom;
+    float2 inset_size = half_size - corner_radius - float2(vertical_border, horizontal_border);
+    float2 point_to_inset_corner = abs(center_to_point) - inset_size;
+    float border_width;
+    if (point_to_inset_corner.x < 0. && point_to_inset_corner.y < 0.) {
+        border_width = 0.;
+    } else if (point_to_inset_corner.y > point_to_inset_corner.x) {
+        border_width = horizontal_border;
+    } else {
+        border_width = vertical_border;
+    }
+
+    float4 color;
+    if (border_width == 0.) {
+        color = input.background_color;
+    } else {
+        float inset_distance = distance + border_width;
+        // Blend the border on top of the background and then linearly interpolate
+        // between the two as we slide inside the background.
+        float4 blended_border = over(input.background_color, input.border_color);
+        color = lerp(blended_border, input.background_color,
+                    saturate(0.5 - inset_distance));
+    }
+
+    return color * float4(1., 1., 1., saturate(0.5 - distance));
 }
