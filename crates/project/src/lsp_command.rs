@@ -1255,7 +1255,7 @@ impl LspCommand for GetSignatureHelp {
             context: None,
             text_document_position_params: lsp::TextDocumentPositionParams {
                 text_document: lsp::TextDocumentIdentifier {
-                    uri: url_result.expect("invalid file path").into(),
+                    uri: url_result.expect("invalid file path"),
                 },
                 position: point_to_lsp(self.position),
             },
