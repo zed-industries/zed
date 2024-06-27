@@ -1,12 +1,17 @@
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
+use heed::{
+    types::{SerdeJson, Str},
+    Database as HeedDatabase, EnvOpenOptions, RwTxn,
+};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use reqwest::Client;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::Arc,
+    time::SystemTime,
 };
 use tokenizers::tokenizer::Tokenizer;
 use tokenizers::FromPretrainedParameters;
@@ -87,7 +92,72 @@ enum Entry {
     Directory(PathBuf),
 }
 
-async fn summarize_project(root: &Path, num_workers: usize) -> Result<BTreeMap<PathBuf, String>> {
+#[derive(Debug, Serialize, Deserialize)]
+struct CachedSummary {
+    summary: String,
+    mtime: SystemTime,
+}
+
+#[derive(Clone)]
+struct Database {
+    tx: mpsc::Sender<Box<dyn FnOnce(&HeedDatabase<Str, SerdeJson<CachedSummary>>, RwTxn) + Send>>,
+}
+
+impl Database {
+    async fn new(db_path: &Path, root: &Path) -> Result<Self> {
+        std::fs::create_dir_all(&db_path)?;
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .map_size(1024 * 1024 * 1024)
+                .max_dbs(3000)
+                .open(db_path)?
+        };
+        let mut wtxn = env.write_txn()?;
+        let db_name = format!("summaries_{}", root.to_string_lossy());
+        let db: HeedDatabase<Str, SerdeJson<CachedSummary>> =
+            env.create_database(&mut wtxn, Some(&db_name))?;
+        wtxn.commit()?;
+
+        let (tx, mut rx) = mpsc::channel::<
+            Box<dyn FnOnce(&HeedDatabase<Str, SerdeJson<CachedSummary>>, RwTxn) + Send>,
+        >(100);
+
+        tokio::spawn(async move {
+            while let Some(f) = rx.recv().await {
+                let wtxn = env.write_txn().unwrap();
+                f(&db, wtxn);
+            }
+        });
+
+        Ok(Self { tx })
+    }
+
+    async fn transact<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&HeedDatabase<Str, SerdeJson<CachedSummary>>, RwTxn) -> Result<T>
+            + Send
+            + 'static,
+        T: 'static + Send,
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.tx
+            .send(Box::new(move |db, txn| {
+                let result = f(db, txn);
+                let _ = tx.send(result);
+            }))
+            .await
+            .map_err(|_| anyhow!("database closed"))?;
+        Ok(rx.await.map_err(|_| anyhow!("transaction failed"))??)
+    }
+}
+
+async fn summarize_project(
+    db_path: &Path,
+    root: &Path,
+    num_workers: usize,
+) -> Result<BTreeMap<PathBuf, String>> {
+    let database = Database::new(db_path, root).await?;
+
     let tokenizer = Tokenizer::from_pretrained(
         "Qwen/Qwen2-0.5B",
         Some(FromPretrainedParameters {
@@ -137,6 +207,7 @@ async fn summarize_project(root: &Path, num_workers: usize) -> Result<BTreeMap<P
     );
 
     let summaries = Arc::new(Mutex::new(BTreeMap::new()));
+    let paths_loaded_from_cache = Arc::new(Mutex::new(BTreeMap::new()));
 
     let workers: Vec<_> = (0..num_workers)
         .map(|_| {
@@ -145,6 +216,8 @@ async fn summarize_project(root: &Path, num_workers: usize) -> Result<BTreeMap<P
             let summaries = Arc::clone(&summaries);
             let tokenizer = tokenizer.clone();
             let progress_bar = progress_bar.clone();
+            let database = database.clone();
+            let paths_loaded_from_cache = Arc::clone(&paths_loaded_from_cache);
 
             tokio::spawn(async move {
                 loop {
@@ -157,11 +230,49 @@ async fn summarize_project(root: &Path, num_workers: usize) -> Result<BTreeMap<P
                         Entry::File(path) => {
                             drop(queue_lock);
                             let summary = async {
-                                let content = tokio::fs::read_to_string(&path).await?;
+                                let mtime = tokio::fs::metadata(&path).await?.modified()?;
+                                let key = path.to_string_lossy().to_string();
+
+                                let cached = database
+                                    .transact({
+                                        let key = key.clone();
+                                        move |db, txn| Ok(db.get(&txn, &key)?)
+                                    })
+                                    .await?;
+                                if let Some(cached) = cached {
+                                    if cached.mtime == mtime {
+                                        paths_loaded_from_cache
+                                            .lock()
+                                            .await
+                                            .insert(path.clone(), true);
+                                        return Ok(cached.summary);
+                                    }
+                                }
+
+                                progress_bar.set_message(format!("Summarizing {}", path.display()));
+
+                                let content = tokio::fs::read_to_string(&path)
+                                    .await
+                                    .unwrap_or_else(|_| "binary file".into());
                                 let chunks =
                                     split_into_chunks(&content, &tokenizer, CHUNK_SIZE, OVERLAP);
                                 let chunk_summaries = summarize_chunks(&client, &chunks).await?;
-                                combine_summaries(&client, &chunk_summaries, true).await
+                                let summary =
+                                    combine_summaries(&client, &chunk_summaries, true).await?;
+
+                                let cached_summary = CachedSummary {
+                                    summary: summary.clone(),
+                                    mtime,
+                                };
+                                database
+                                    .transact(move |db, mut txn| {
+                                        db.put(&mut txn, &key, &cached_summary)?;
+                                        txn.commit()?;
+                                        Ok(())
+                                    })
+                                    .await?;
+
+                                anyhow::Ok(summary)
                             };
 
                             let summary = summary
@@ -173,6 +284,7 @@ async fn summarize_project(root: &Path, num_workers: usize) -> Result<BTreeMap<P
                         Entry::Directory(path) => {
                             let mut dir_summaries = Vec::new();
                             let mut all_children_summarized = true;
+                            let mut all_children_from_cache = true;
                             let dir_walker = ignore::WalkBuilder::new(&path)
                                 .hidden(true)
                                 .ignore(true)
@@ -185,6 +297,14 @@ async fn summarize_project(root: &Path, num_workers: usize) -> Result<BTreeMap<P
                                             summaries.lock().await.get(entry.path())
                                         {
                                             dir_summaries.push(summary.clone());
+                                            if !paths_loaded_from_cache
+                                                .lock()
+                                                .await
+                                                .get(entry.path())
+                                                .unwrap_or(&false)
+                                            {
+                                                all_children_from_cache = false;
+                                            }
                                         } else {
                                             all_children_summarized = false;
                                             break;
@@ -194,8 +314,49 @@ async fn summarize_project(root: &Path, num_workers: usize) -> Result<BTreeMap<P
                             }
                             if all_children_summarized {
                                 drop(queue_lock);
-                                let combined_summary =
-                                    combine_summaries(&client, &dir_summaries, false).await?;
+
+                                let combined_summary = async {
+                                    let key = path.to_string_lossy().to_string();
+                                    let mtime = tokio::fs::metadata(&path).await?.modified()?;
+
+                                    if all_children_from_cache {
+                                        if let Some(cached) = database
+                                            .transact({
+                                                let key = key.clone();
+                                                move |db, txn| Ok(db.get(&txn, &key)?)
+                                            })
+                                            .await?
+                                        {
+                                            paths_loaded_from_cache
+                                                .lock()
+                                                .await
+                                                .insert(path.clone(), true);
+                                            return Ok(cached.summary);
+                                        }
+                                    }
+
+                                    progress_bar
+                                        .set_message(format!("Summarizing {}", path.display()));
+
+                                    let combined_summary =
+                                        combine_summaries(&client, &dir_summaries, false).await?;
+                                    let cached_summary = CachedSummary {
+                                        summary: combined_summary.clone(),
+                                        mtime,
+                                    };
+                                    database
+                                        .transact(move |db, mut txn| {
+                                            db.put(&mut txn, &key, &cached_summary)?;
+                                            txn.commit()?;
+                                            Ok(())
+                                        })
+                                        .await?;
+                                    anyhow::Ok(combined_summary)
+                                };
+
+                                let combined_summary = combined_summary
+                                    .await
+                                    .unwrap_or_else(|_| "could not combine summaries".into());
                                 summaries.lock().await.insert(path, combined_summary);
                                 progress_bar.inc(1);
                             } else {
@@ -213,6 +374,26 @@ async fn summarize_project(root: &Path, num_workers: usize) -> Result<BTreeMap<P
     for worker in workers {
         worker.await??;
     }
+
+    // Remove deleted entries from the database
+    database
+        .transact(|db, mut txn| {
+            let mut paths_to_delete = Vec::new();
+            for item in db.iter(&txn)? {
+                let (path, _) = item?;
+                let path = PathBuf::from(path);
+                if !path.exists() {
+                    paths_to_delete.push(path);
+                }
+            }
+
+            for path in paths_to_delete {
+                db.delete(&mut txn, &path.to_string_lossy())?;
+            }
+            txn.commit()?;
+            Ok(())
+        })
+        .await?;
 
     progress_bar.finish_with_message("Summarization complete");
     overall_progress.finish_with_message("Project summarization finished");
@@ -339,19 +520,26 @@ async fn combine_summaries(
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() != 2 {
-        eprintln!("Usage: {} <project_path>", args[0]);
+    if args.len() < 2 || args.len() > 3 {
+        eprintln!("Usage: {} <project_path> [db_path]", args[0]);
         std::process::exit(1);
     }
 
     let project_path = Path::new(&args[1]);
     if !project_path.exists() || !project_path.is_dir() {
-        eprintln!("Error: The provided path does not exist or is not a directory.");
+        eprintln!("Error: The provided project path does not exist or is not a directory.");
         std::process::exit(1);
     }
 
+    let db_path = if args.len() == 3 {
+        PathBuf::from(&args[2])
+    } else {
+        std::env::current_dir()?.join("project_summaries")
+    };
+
     println!("Summarizing project at: {}", project_path.display());
-    let summary = summarize_project(project_path, 16).await?;
+    println!("Using database at: {}", db_path.display());
+    let summary = summarize_project(&db_path, project_path, 16).await?;
     println!("Project Summary:\n{:?}", summary);
 
     Ok(())
@@ -410,39 +598,4 @@ async fn main() -> Result<()> {
 //             .post("https://api.groq.com/openai/v1/chat/completions")
 //             .header("Authorization", format!("Bearer {}", self.api_key))
 //             .json(&request)
-//             .send()
-//             .await?;
-
-//         if !response.status().is_success() {
-//             return Err(anyhow!(
-//                 "error streaming completion: {:?}",
-//                 response.text().await?
-//             ));
-//         }
-
-//         tokio::spawn(async move {
-//             let mut stream = response.bytes_stream();
-//             while let Some(chunk) = stream.next().await {
-//                 if let Ok(chunk) = chunk {
-//                     if let Ok(text) = String::from_utf8(chunk.to_vec()) {
-//                         for line in text.lines() {
-//                             if line.starts_with("data: ") && line != "data: [DONE]" {
-//                                 if let Ok(mut chunk) =
-//                                     serde_json::from_str::<ChatCompletionChunk>(&line[6..])
-//                                 {
-//                                     if let Some(content) =
-//                                         chunk.choices.pop().and_then(|choice| choice.delta.content)
-//                                     {
-//                                         let _ = tx.send(content).await;
-//                                     }
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 }
-//             }
-//         });
-
-//         Ok(rx)
-//     }
-// }
+//             .send

@@ -12,6 +12,7 @@ path = "src/miner.rs"
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
+heed.workspace = true
 ignore.workspace = true
 indicatif = "0.17.8"
 reqwest = { version = "0.12.5", features = ["json", "stream"] }
