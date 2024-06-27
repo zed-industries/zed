@@ -17,7 +17,7 @@ pub fn init(cx: &mut AppContext) {
                     |workspace: &mut Workspace,
                      action: &StartDebugger,
                      cx: &mut ViewContext<'_, Workspace>| {
-                        select_debugger(workspace, action, cx).detach();
+                        tasks_ui::toggle_modal(workspace, cx, task::TaskType::Debug).detach();
                     },
                 );
         },

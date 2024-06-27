@@ -108,9 +108,7 @@ impl PickerDelegate for DebuggerModelDelegate {
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         self.workspace.update(cx, |workspace, cx| {
-            workspace.project().update(cx, |project, cx| {
-                project.start_debug_adapter_client(cx);
-            });
+            workspace.project().update(cx, |project, cx| {});
 
             workspace.focus_panel::<DebugPanel>(cx);
         });
