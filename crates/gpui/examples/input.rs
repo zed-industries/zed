@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::ops::Range;
 
 use gpui::*;
@@ -15,7 +16,9 @@ actions!(
         SelectAll,
         Home,
         End,
-        ShowCharacterPalette
+        ShowCharacterPalette,
+        Copy,
+        Paste
     ]
 );
 
@@ -78,6 +81,20 @@ impl TextInput {
             self.select_to(self.next_boundary(self.cursor_offset()), cx)
         }
         self.replace_text_in_range(None, "", cx)
+    }
+
+    fn copy(&mut self, _: &crate::Copy, cx: &mut ViewContext<Self>) {
+        if self.selected_range.is_empty() {
+            return;
+        }
+        let selected_text = &self.content[self.selected_range.clone()];
+        cx.write_to_clipboard(ClipboardItem::new(selected_text.to_string()));
+    }
+
+    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        if let Some(item) = cx.read_from_clipboard() {
+            self.replace_text_in_range(None, &item.text().replace("\n", ""), cx);
+        }
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
@@ -429,6 +446,9 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::show_character_palette))
+            .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(Self::copy))
+            .font_family("Zed Mono")
             .bg(rgb(0xeeeeee))
             .size_full()
             .line_height(px(30.))
@@ -447,8 +467,19 @@ impl Render for TextInput {
 }
 
 fn main() {
+    env_logger::Builder::new().parse_default_env().init();
     App::new().run(|cx: &mut AppContext| {
         let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
+        let fonts = vec![
+            std::fs::read("assets/fonts/zed-mono/zed-mono-extended.ttf")
+                .unwrap()
+                .into(),
+            std::fs::read("assets/fonts/zed-sans/zed-sans-extended.ttf")
+                .unwrap()
+                .into(),
+        ];
+
+        cx.text_system().add_fonts(fonts);
         cx.bind_keys([
             KeyBinding::new("backspace", Backspace, None),
             KeyBinding::new("delete", Delete, None),
@@ -457,9 +488,15 @@ fn main() {
             KeyBinding::new("shift-left", SelectLeft, None),
             KeyBinding::new("shift-right", SelectRight, None),
             KeyBinding::new("cmd-a", SelectAll, None),
+            KeyBinding::new("cmd-c", Copy, None),
+            KeyBinding::new("cmd-v", Paste, None),
             KeyBinding::new("home", Home, None),
             KeyBinding::new("end", End, None),
             KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
+            KeyBinding::new("ctrl-a", SelectAll, None),
+            KeyBinding::new("ctrl-c", Copy, None),
+            KeyBinding::new("ctrl-v", Paste, None),
+            KeyBinding::new("ctrl-.", ShowCharacterPalette, None),
         ]);
         let window = cx
             .open_window(
@@ -470,7 +507,7 @@ fn main() {
                 |cx| {
                     cx.new_view(|cx| TextInput {
                         focus_handle: cx.focus_handle(),
-                        content: "".into(),
+                        content: "aチ".into(),
                         selected_range: 0..0,
                         selection_reversed: false,
                         marked_range: None,
