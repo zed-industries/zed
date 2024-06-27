@@ -9,6 +9,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
+    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
     time::SystemTime,
@@ -83,7 +84,83 @@ impl OllamaClient {
     }
 }
 
-const CHUNK_SIZE: usize = 16_000;
+pub struct HuggingFaceClient {
+    client: Client,
+    endpoint: String,
+    api_key: String,
+}
+
+impl HuggingFaceClient {
+    pub fn new(endpoint: String, api_key: String) -> Self {
+        Self {
+            client: Client::new(),
+            endpoint,
+            api_key,
+        }
+    }
+
+    async fn stream_completion(
+        &self,
+        model: String,
+        messages: Vec<Message>,
+    ) -> Result<mpsc::Receiver<String>> {
+        let (tx, rx) = mpsc::channel(100);
+
+        let request = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "stream": true,
+        });
+
+        let response = self
+            .client
+            .post(&self.endpoint)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "error streaming completion: {:?}",
+                response.text().await?
+            ));
+        }
+
+        tokio::spawn(async move {
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                if let Ok(chunk) = chunk {
+                    if let Ok(text) = String::from_utf8(chunk.to_vec()) {
+                        for line in text.lines() {
+                            if line.starts_with("data:") {
+                                let json_str = line.trim_start_matches("data:");
+                                if json_str == "[DONE]" {
+                                    break;
+                                }
+
+                                if let Ok(response) =
+                                    serde_json::from_str::<serde_json::Value>(json_str)
+                                {
+                                    if let Some(content) =
+                                        response["choices"][0]["delta"]["content"].as_str()
+                                    {
+                                        let _ = tx.send(content.to_string()).await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+}
+
+const CHUNK_SIZE: usize = 5000;
 const OVERLAP: usize = 2_000;
 
 #[derive(Debug)]
@@ -159,7 +236,7 @@ async fn summarize_project(
     let database = Database::new(db_path, root).await?;
 
     let tokenizer = Tokenizer::from_pretrained(
-        "Qwen/Qwen2-0.5B",
+        "mistralai/Mistral-7B-Instruct-v0.1",
         Some(FromPretrainedParameters {
             revision: "main".into(),
             user_agent: HashMap::default(),
@@ -169,7 +246,11 @@ async fn summarize_project(
         }),
     )
     .unwrap();
-    let client = Arc::new(OllamaClient::new("http://localhost:11434".into()));
+    let client = Arc::new(HuggingFaceClient::new(
+        "https://c0es55wrh8muqy3g.us-east-1.aws.endpoints.huggingface.cloud/v1/chat/completions"
+            .into(),
+        std::env::var("HUGGINGFACE_API_TOKEN").expect("HUGGINGFACE_API_TOKEN not set"),
+    ));
     let queue = Arc::new(Mutex::new(VecDeque::new()));
 
     let multi_progress = Arc::new(MultiProgress::new());
@@ -275,9 +356,9 @@ async fn summarize_project(
                                 anyhow::Ok(summary)
                             };
 
-                            let summary = summary
-                                .await
-                                .unwrap_or_else(|_| "path could not be summarized".into());
+                            let summary = summary.await.unwrap_or_else(|error| {
+                                format!("path could not be summarized: {error:?}")
+                            });
                             summaries.lock().await.insert(path, summary);
                             progress_bar.inc(1);
                         }
@@ -445,7 +526,7 @@ fn split_into_chunks(
     chunks
 }
 
-async fn summarize_chunks(client: &OllamaClient, chunks: &[String]) -> Result<Vec<String>> {
+async fn summarize_chunks(client: &HuggingFaceClient, chunks: &[String]) -> Result<Vec<String>> {
     let mut chunk_summaries = Vec::new();
 
     for chunk in chunks {
@@ -456,21 +537,19 @@ async fn summarize_chunks(client: &OllamaClient, chunks: &[String]) -> Result<Ve
     Ok(chunk_summaries)
 }
 
-async fn summarize_file(client: &OllamaClient, content: &str) -> Result<String> {
+async fn summarize_file(client: &HuggingFaceClient, content: &str) -> Result<String> {
     let messages = vec![
         Message {
-            role: "system".to_string(),
-            content:
-                "You are a code summarization assistant. Provide a brief summary of the given code chunk, focusing on its main functionality and purpose.".to_string(),
-        },
-        Message {
             role: "user".to_string(),
-            content: content.to_string(),
+            content: format!(
+                "You are a code summarization assistant. Provide a brief summary of the given code chunk, focusing on its main functionality and purpose. Be terse.\n\n{}",
+                content
+            ),
         },
     ];
 
     let mut receiver = client
-        .stream_completion("qwen2:0.5b".to_string(), messages)
+        .stream_completion("tgi".to_string(), messages)
         .await?;
 
     let mut summary = String::new();
@@ -482,30 +561,24 @@ async fn summarize_file(client: &OllamaClient, content: &str) -> Result<String> 
 }
 
 async fn combine_summaries(
-    client: &OllamaClient,
+    client: &HuggingFaceClient,
     summaries: &[String],
     is_chunk: bool,
 ) -> Result<String> {
     let combined_content = summaries.join("\n\n");
     let prompt = if is_chunk {
-        "You are a code summarization assistant. Combine the given summaries into a single, coherent summary that captures the overall functionality and structure of the code. Ensure that the final summary is comprehensive and reflects the content as if it was summarized from a single, complete file."
+        "You are a code summarization assistant. Combine the given summaries into a single, coherent summary that captures the overall functionality and structure of the code. Ensure that the final summary is comprehensive and reflects the content as if it was summarized from a single, complete file. Be terse."
     } else {
-        "You are a code summarization assistant. Combine the given summaries of different files or directories into a single, coherent summary that captures the overall structure and functionality of the project or directory. Focus on the relationships between different components and the high-level architecture."
+        "You are a code summarization assistant. Combine the given summaries of different files or directories into a single, coherent summary that captures the overall structure and functionality of the project or directory. Focus on the relationships between different components and the high-level architecture. Be terse."
     };
 
-    let messages = vec![
-        Message {
-            role: "system".to_string(),
-            content: prompt.to_string(),
-        },
-        Message {
-            role: "user".to_string(),
-            content: combined_content,
-        },
-    ];
+    let messages = vec![Message {
+        role: "user".to_string(),
+        content: format!("{}\n\n{}", prompt, combined_content),
+    }];
 
     let mut receiver = client
-        .stream_completion("qwen2:0.5b".to_string(), messages)
+        .stream_completion("tgi".to_string(), messages)
         .await?;
 
     let mut combined_summary = String::new();
@@ -520,8 +593,8 @@ async fn combine_summaries(
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() < 2 || args.len() > 3 {
-        eprintln!("Usage: {} <project_path> [db_path]", args[0]);
+    if args.len() < 2 || args.len() > 4 {
+        eprintln!("Usage: {} <project_path> [db_path] [num_workers]", args[0]);
         std::process::exit(1);
     }
 
@@ -531,15 +604,22 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    let db_path = if args.len() == 3 {
+    let db_path = if args.len() >= 3 {
         PathBuf::from(&args[2])
     } else {
         std::env::current_dir()?.join("project_summaries")
     };
 
+    let num_workers = if args.len() == 4 {
+        args[3].parse().unwrap_or(8)
+    } else {
+        8
+    };
+
     println!("Summarizing project at: {}", project_path.display());
     println!("Using database at: {}", db_path.display());
-    let summary = summarize_project(&db_path, project_path, 16).await?;
+    println!("Number of workers: {}", num_workers);
+    let summary = summarize_project(&db_path, project_path, num_workers).await?;
     println!("Project Summary:\n{:?}", summary);
 
     Ok(())
