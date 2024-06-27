@@ -205,7 +205,7 @@ impl CosmicTextSystemState {
     ) -> Result<SmallVec<[FontId; 4]>> {
         // TODO: Determine the proper system UI font.
         let name = if name == ".SystemUIFont" {
-            "Zed Sans"
+            "IBM Plex Sans"
         } else {
             name
         };

@@ -159,7 +159,7 @@ mod tests {
             .unwrap()
             .into()])
             .unwrap();
-        let id = cx.text_system().font_id(&font("Zed Mono")).unwrap();
+        let id = cx.text_system().font_id(&font("IBM Plex Mono")).unwrap();
 
         cx.update(|cx| {
             let text_system = cx.text_system().clone();

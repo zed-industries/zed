@@ -2016,7 +2016,7 @@ mod tests {
         theme::init(theme::LoadThemes::JustBase, cx);
         cx.text_system()
             .add_fonts(vec![assets::Assets
-                .load("fonts/zed-mono/zed-mono-extended.ttf")
+                .load("fonts/plex-mono/IBMPlexMono-Regular.ttfv")
                 .unwrap()
                 .unwrap()])
             .unwrap();

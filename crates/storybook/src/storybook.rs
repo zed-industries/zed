@@ -117,7 +117,7 @@ impl Render for StoryWrapper {
             .flex()
             .flex_col()
             .size_full()
-            .font_family("Zed Mono")
+            .font_family("IBM Plex Mono")
             .child(self.story.clone())
     }
 }
