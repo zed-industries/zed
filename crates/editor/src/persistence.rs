@@ -80,8 +80,7 @@ impl EditorDb {
             SELECT contents
             FROM editor_contents
             WHERE item_id = ?1
-            AND workspace_id = ?
-            AND item_id = ?
+            AND workspace_id = ?2
         }
     }
 
