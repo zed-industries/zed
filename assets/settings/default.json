@@ -29,7 +29,7 @@
     "inline_completion_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
-  "buffer_font_family": "IBM Plex Sans",
+  "buffer_font_family": "IBM Plex Mono",
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
