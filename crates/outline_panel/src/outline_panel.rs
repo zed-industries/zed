@@ -272,6 +272,7 @@ pub enum Event {
 #[derive(Serialize, Deserialize)]
 struct SerializedOutlinePanel {
     width: Option<Pixels>,
+    active: Option<bool>,
 }
 
 pub fn init_settings(cx: &mut AppContext) {
@@ -312,6 +313,7 @@ impl OutlinePanel {
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
                     panel.width = serialized_panel.width.map(|px| px.round());
+                    panel.active = serialized_panel.active.unwrap_or(false);
                     cx.notify();
                 });
             }
@@ -407,12 +409,13 @@ impl OutlinePanel {
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
         let width = self.width;
+        let active = Some(self.active);
         self.pending_serialization = cx.background_executor().spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
                         OUTLINE_PANEL_KEY.into(),
-                        serde_json::to_string(&SerializedOutlinePanel { width })?,
+                        serde_json::to_string(&SerializedOutlinePanel { width, active })?,
                     )
                     .await?;
                 anyhow::Ok(())
@@ -2522,7 +2525,7 @@ impl Panel for OutlinePanel {
     }
 
     fn starts_open(&self, _: &WindowContext) -> bool {
-        self.active_item.is_some()
+        self.active
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
@@ -2551,6 +2554,7 @@ impl Panel for OutlinePanel {
                 }
             }
         }
+        self.serialize(cx);
     }
 }
 
