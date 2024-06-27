@@ -85,18 +85,15 @@ async fn peek_ports(ip: IpAddr) -> anyhow::Result<[u16; 5]> {
 
 pub struct RunningKernel {
     #[allow(unused)]
-    pub runtime_specification: RuntimeSpecification,
-    #[allow(unused)]
     pub process: smol::process::Child,
     // pub request_tx: mpsc::UnboundedSender<Request>,
-    pub shell: ClientShellConnection,
-    pub iopub: ClientIoPubConnection,
+    // pub shell: ClientShellConnection,
+    // pub iopub: ClientIoPubConnection,
 }
 
 impl Debug for RunningKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunningKernel")
-            .field("runtime_specification", &self.runtime_specification)
             .field("process", &self.process)
             .finish()
     }
@@ -107,7 +104,8 @@ impl RunningKernel {
         runtime_specification: &RuntimeSpecification,
         entity_id: EntityId,
         fs: Arc<dyn Fs>,
-    ) -> anyhow::Result<Self> {
+        _cx: AsyncWindowContext,
+    ) -> anyhow::Result<(ClientIoPubConnection, ClientShellConnection, Self)> {
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let ports = peek_ports(ip).await?;
 
@@ -140,12 +138,14 @@ impl RunningKernel {
         let iopub = connection_info.create_client_iopub_connection("").await?;
         let shell = connection_info.create_client_shell_connection().await?;
 
-        Ok(Self {
-            runtime_specification: runtime_specification.clone(),
-            shell,
-            iopub,
-            process,
-        })
+        Ok((iopub, shell, Self { process }))
+
+        // Ok(Self {
+        //     // runtime_specification: runtime_specification.clone(),
+        //     shell,
+        //     iopub,
+        //     process,
+        // })
 
         // Spawn a background task to handle incoming messages from the kernel as well
         // as outgoing messages to the kernel
