@@ -436,21 +436,24 @@ impl Worktree {
                     abs_path,
                 ),
             };
-            snapshot.insert_entry(
-                Entry::new(
-                    Arc::from(Path::new("")),
-                    metadata.as_ref(),
-                    &next_entry_id,
-                    snapshot.root_char_bag,
-                    None,
-                ),
-                fs.as_ref(),
-            );
+            if let Some(metadata) = metadata.as_ref() {
+                snapshot.insert_entry(
+                    Entry::new(
+                        Arc::from(Path::new("")),
+                        EntryArg::Metadata(metadata),
+                        &next_entry_id,
+                        snapshot.root_char_bag,
+                        None,
+                    ),
+                    fs.as_ref(),
+                );
+            }
+
             if let Some((_, nested_path)) = zip_path {
                 let path = char_bag_for_path(snapshot.root_char_bag, &nested_path);
                 let mut entry = Entry::new(
                     nested_path,
-                    None,
+                    EntryArg::Contents(String::from("I *really* like trains").into()),
                     &next_entry_id,
                     snapshot.root_char_bag,
                     None,
@@ -2337,8 +2340,7 @@ impl Snapshot {
 
     pub fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
         self.entry_for_path(path.as_ref())
-            .map(|e| e.inode)
-            .flatten()
+            .and_then(|e| e.data.inode())
     }
 }
 
@@ -2488,7 +2490,7 @@ impl LocalSnapshot {
         let mut inodes = TreeSet::default();
         for ancestor in path.ancestors().skip(1) {
             if let Some(entry) = self.entry_for_path(ancestor) {
-                if let Some(inode) = entry.inode {
+                if let Some(inode) = entry.data.inode() {
                     inodes.insert(inode);
                 }
             }
@@ -2656,7 +2658,7 @@ impl BackgroundScannerState {
                 }
             }
         }
-        if let Some(inode) = entry.inode {
+        if let Some(inode) = entry.data.inode() {
             if !ancestor_inodes.contains(&inode) {
                 ancestor_inodes.insert(inode);
                 scan_job_tx
@@ -2675,7 +2677,7 @@ impl BackgroundScannerState {
     }
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
-        if let Some(key) = entry.inode.zip(entry.mtime) {
+        if let Some(key) = entry.data.disk_entry() {
             if let Some(removed_entry_id) = self.removed_entry_ids.remove(&key) {
                 entry.id = removed_entry_id;
             } else if let Some(existing_entry) = self.snapshot.entry_for_path(&entry.path) {
@@ -2773,7 +2775,7 @@ impl BackgroundScannerState {
 
         let mut entries_by_id_edits = Vec::new();
         for entry in removed_entries.cursor::<()>() {
-            if let Some(key) = entry.inode.zip(entry.mtime) {
+            if let Some(key) = entry.data.disk_entry() {
                 let removed_entry_id = self.removed_entry_ids.entry(key).or_insert(entry.id);
                 *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
             }
@@ -3078,7 +3080,7 @@ impl File {
         Arc::new(Self {
             worktree,
             path: entry.path.clone(),
-            mtime: entry.mtime,
+            mtime: entry.data.disk_entry().map(|entry| entry.1),
             entry_id: Some(entry.id),
             is_local: true,
             is_deleted: false,
@@ -3130,13 +3132,39 @@ impl File {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum EntryData {
+    DiskEntry {
+        inode: u64,
+        mtime: Option<SystemTime>,
+    },
+    Contents {
+        inner: Vec<u8>,
+    },
+}
+
+impl EntryData {
+    fn inode(&self) -> Option<u64> {
+        if let Self::DiskEntry { inode, .. } = self {
+            Some(*inode)
+        } else {
+            None
+        }
+    }
+    pub fn disk_entry(&self) -> Option<(u64, SystemTime)> {
+        if let Self::DiskEntry { inode, mtime } = self {
+            mtime.map(|mtime| (*inode, mtime))
+        } else {
+            None
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Entry {
     pub id: ProjectEntryId,
     pub kind: EntryKind,
     pub path: Arc<Path>,
-    pub inode: Option<u64>,
-    pub mtime: Option<SystemTime>,
 
+    pub data: EntryData,
     pub canonical_path: Option<PathBuf>,
     pub is_symlink: bool,
     /// Whether this entry is ignored by Git.
@@ -3190,15 +3218,20 @@ pub struct GitRepositoryChange {
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
 pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 
+enum EntryArg<'a> {
+    Metadata(&'a fs::Metadata),
+    Contents(Vec<u8>),
+}
+
 impl Entry {
     fn new(
         path: Arc<Path>,
-        metadata: Option<&fs::Metadata>,
+        metadata: EntryArg,
         next_entry_id: &AtomicUsize,
         root_char_bag: CharBag,
         canonical_path: Option<PathBuf>,
     ) -> Self {
-        let kind = if let Some(meta) = metadata {
+        let kind = if let EntryArg::Metadata(meta) = &metadata {
             if meta.is_dir {
                 EntryKind::PendingContainer
             } else {
@@ -3207,14 +3240,23 @@ impl Entry {
         } else {
             EntryKind::UnloadedContainer
         };
+        let (data, is_symlink) = match metadata {
+            EntryArg::Metadata(meta) => (
+                EntryData::DiskEntry {
+                    inode: meta.inode,
+                    mtime: Some(meta.mtime),
+                },
+                meta.is_symlink,
+            ),
+            EntryArg::Contents(contents) => (EntryData::Contents { inner: contents }, false),
+        };
         Self {
             id: ProjectEntryId::new(next_entry_id),
             kind,
             path,
-            inode: metadata.map(|meta| meta.inode),
-            mtime: metadata.map(|meta| meta.mtime),
+            data,
             canonical_path,
-            is_symlink: metadata.map_or(false, |meta| meta.is_symlink),
+            is_symlink,
             is_ignored: false,
             is_external: false,
             is_private: false,
@@ -3223,7 +3265,7 @@ impl Entry {
     }
 
     pub fn is_created(&self) -> bool {
-        self.mtime.is_some()
+        self.data.disk_entry().is_some()
     }
 
     pub fn is_container(&self) -> bool {
@@ -3920,7 +3962,7 @@ impl BackgroundScanner {
 
             let mut child_entry = Entry::new(
                 child_path.clone(),
-                Some(&child_metadata),
+                EntryArg::Metadata(&child_metadata),
                 &next_entry_id,
                 root_char_bag,
                 None,
@@ -3965,7 +4007,7 @@ impl BackgroundScanner {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
 
                 // Avoid recursing until crash in the case of a recursive symlink
-                if let Some(inode) = child_entry.inode {
+                if let Some(inode) = child_entry.data.inode() {
                     if job.ancestor_inodes.contains(&inode) {
                         new_jobs.push(None);
                     } else {
@@ -4101,7 +4143,7 @@ impl BackgroundScanner {
 
                     let mut fs_entry = Entry::new(
                         path.clone(),
-                        Some(metadata),
+                        EntryArg::Metadata(metadata),
                         self.next_entry_id.as_ref(),
                         state.snapshot.root_char_bag,
                         if metadata.is_symlink {
@@ -5072,12 +5114,31 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
 
 impl<'a> From<&'a Entry> for proto::Entry {
     fn from(entry: &'a Entry) -> Self {
+        let inode;
+        let mtime;
+        let contents;
+        match entry.data {
+            EntryData::DiskEntry {
+                inode: entry_inode,
+                mtime: entry_mtime,
+            } => {
+                contents = vec![];
+                inode = entry_inode;
+                mtime = entry_mtime.map(|mtime| mtime.into());
+            }
+            EntryData::Contents { ref inner } => {
+                contents = inner.clone();
+                inode = 0;
+                mtime = None;
+            }
+        }
         Self {
             id: entry.id.to_proto(),
             is_dir: entry.is_container(),
             path: entry.path.to_string_lossy().into(),
-            inode: entry.inode.unwrap_or_default(),
-            mtime: entry.mtime.map(|time| time.into()),
+            inode,
+            mtime,
+            contents,
             is_symlink: entry.is_symlink,
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
@@ -5098,12 +5159,19 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             EntryKind::File(char_bag)
         };
         let path: Arc<Path> = PathBuf::from(entry.path).into();
+        let data = if entry.inode != 0 {
+            EntryData::DiskEntry {
+                inode: entry.inode,
+                mtime: entry.mtime.map(|time| time.into()),
+            }
+        } else {
+            EntryData::Contents { inner: vec![] }
+        };
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
             kind,
             path,
-            inode: Some(entry.inode).filter(|inode| *inode != 0),
-            mtime: entry.mtime.map(|time| time.into()),
+            data,
             canonical_path: None,
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,

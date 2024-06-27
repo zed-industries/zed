@@ -45,7 +45,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyTaskExt},
     DraggedSelection, OpenInTerminal, SelectedEntry, Workspace,
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, EntryData};
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -1620,12 +1620,16 @@ impl ProjectPanel {
 
                 visible_worktree_entries.push(entry.clone());
                 if Some(entry.id) == new_entry_parent_id {
+                    let mtime = if let EntryData::DiskEntry { mtime, .. } = entry.data {
+                        mtime
+                    } else {
+                        None
+                    };
                     visible_worktree_entries.push(Entry {
                         id: NEW_ENTRY_ID,
                         kind: new_entry_kind,
                         path: entry.path.join("\0").into(),
-                        inode: None,
-                        mtime: entry.mtime,
+                        data: EntryData::DiskEntry { inode: 0, mtime },
                         is_ignored: entry.is_ignored,
                         is_external: false,
                         is_private: false,

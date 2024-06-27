@@ -667,7 +667,7 @@ impl WorktreeIndex {
                     }
                 }
 
-                if entry.mtime != saved_mtime {
+                if entry.data.disk_entry().map(|entry| entry.1) != saved_mtime {
                     let handle = entries_being_indexed.insert(entry.id);
                     updated_entries_tx.send((entry.clone(), handle)).await?;
                 }
@@ -768,7 +768,7 @@ impl WorktreeIndex {
                                     chunks: chunk_text(&text, language.as_ref(), &entry.path),
                                     handle,
                                     path: entry.path,
-                                    mtime: entry.mtime,
+                                    mtime: entry.data.disk_entry().map(|entry| entry.1),
                                     text,
                                 };
 

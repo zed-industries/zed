@@ -7904,7 +7904,7 @@ impl Project {
                         File {
                             is_local: true,
                             entry_id: Some(entry.id),
-                            mtime: entry.mtime,
+                            mtime: entry.data.disk_entry().map(|entry| entry.1),
                             path: entry.path.clone(),
                             worktree: worktree_handle.clone(),
                             is_deleted: false,
@@ -7914,7 +7914,7 @@ impl Project {
                         File {
                             is_local: true,
                             entry_id: Some(entry.id),
-                            mtime: entry.mtime,
+                            mtime: entry.data.disk_entry().map(|entry| entry.1),
                             path: entry.path.clone(),
                             worktree: worktree_handle.clone(),
                             is_deleted: false,
