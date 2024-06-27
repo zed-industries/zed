@@ -203,13 +203,24 @@ impl ScrollManager {
             let scroll_top = scroll_position.y;
             let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
                 ScrollBeyondLastLine::OnePage => scroll_top,
-                ScrollBeyondLastLine::Off => scroll_top
-                    .min((map.max_buffer_row().as_f32()) - self.visible_line_count.unwrap() + 1.0),
-                ScrollBeyondLastLine::VerticalScrollMargin => scroll_top.min(
-                    (map.max_buffer_row().as_f32()) - self.visible_line_count.unwrap()
-                        + 1.0
-                        + self.vertical_scroll_margin,
-                ),
+                ScrollBeyondLastLine::Off => {
+                    if let Some(height_in_lines) = self.visible_line_count {
+                        let max_row = map.max_buffer_row().as_f32();
+                        scroll_top.min(max_row - height_in_lines + 1.).max(0.)
+                    } else {
+                        scroll_top
+                    }
+                }
+                ScrollBeyondLastLine::VerticalScrollMargin => {
+                    if let Some(height_in_lines) = self.visible_line_count {
+                        let max_row = map.max_buffer_row().as_f32();
+                        scroll_top
+                            .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
+                            .max(0.)
+                    } else {
+                        scroll_top
+                    }
+                }
             };
 
             let scroll_top_buffer_point =
