@@ -12,10 +12,10 @@ path = "src/miner.rs"
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
-project.workspace = true
+ignore.workspace = true
+indicatif = "0.17.8"
 reqwest = { version = "0.12.5", features = ["json", "stream"] }
 serde.workspace = true
 serde_json.workspace = true
 tokenizers = { version = "0.19.1", features = ["http"] }
 tokio.workspace = true
-walkdir = "2.5.0"
