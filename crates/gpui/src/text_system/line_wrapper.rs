@@ -154,7 +154,7 @@ mod tests {
         let cx = TestAppContext::new(dispatcher, None);
         cx.text_system()
             .add_fonts(vec![std::fs::read(
-                "../../assets/fonts/zed-mono/zed-mono-extended.ttf",
+                "../../assets/fonts/plex-mono/IBMPlexMono-Regular.ttf",
             )
             .unwrap()
             .into()])
