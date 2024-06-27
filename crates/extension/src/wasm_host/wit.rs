@@ -6,7 +6,7 @@ use release_channel::ReleaseChannel;
 use since_v0_0_7 as latest;
 
 use super::{wasm_engine, WasmState};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use language::{LanguageServerName, LspAdapterDelegate};
 use semantic_version::SemanticVersion;
 use std::{ops::RangeInclusive, sync::Arc};
@@ -19,6 +19,7 @@ use wasmtime::{
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind},
+    zed::extension::slash_command::SlashCommandOutput,
     CodeLabel, CodeLabelSpan, Command, Range, SlashCommand,
 };
 pub use since_v0_0_4::LanguageServerConfig;
@@ -256,19 +257,36 @@ impl Extension {
         }
     }
 
+    pub async fn call_complete_slash_command_argument(
+        &self,
+        store: &mut Store<WasmState>,
+        command: &SlashCommand,
+        query: &str,
+    ) -> Result<Result<Vec<String>, String>> {
+        match self {
+            Extension::V007(ext) => {
+                ext.call_complete_slash_command_argument(store, command, query)
+                    .await
+            }
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(Vec::new())),
+        }
+    }
+
     pub async fn call_run_slash_command(
         &self,
         store: &mut Store<WasmState>,
         command: &SlashCommand,
         argument: Option<&str>,
         resource: Resource<Arc<dyn LspAdapterDelegate>>,
-    ) -> Result<Result<Option<String>, String>> {
+    ) -> Result<Result<SlashCommandOutput, String>> {
         match self {
             Extension::V007(ext) => {
                 ext.call_run_slash_command(store, command, argument, resource)
                     .await
             }
-            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(None)),
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
+                Err(anyhow!("`run_slash_command` not available prior to v0.0.7"))
+            }
         }
     }
 }

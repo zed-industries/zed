@@ -204,7 +204,7 @@ Currently supported vim-specific commands:
 :%s/foo/bar/
   to replace instances of foo with bar
 :X,Ys/foo/bar/
-    to limit replcaement between line X and Y
+    to limit replacement between line X and Y
     other ranges are not yet implemented
 
 # editing
@@ -219,13 +219,13 @@ Currently supported vim-specific commands:
 As any Zed command is available, you may find that it's helpful to remember mnemonics that run the correct command. For example:
 
 ```
-:diff    Toggle Hunk [Diff]
-:diffs    Toggle all Hunk [Diffs]
-:revert  Revert Selected Hunks
-:cpp  [C]o[p]y [P]ath to file
-:crp  [C]opy [r]elative [P]ath
+:diff   Toggle Hunk [Diff]
+:diffs  Toggle all Hunk [Diffs]
+:revert Revert Selected Hunks
+:cpp    [C]o[p]y [P]ath to file
+:crp    [C]opy [r]elative [P]ath
 :reveal [Reveal] in finder
-:zlog Open [Z]ed Log
+:zlog   Open [Z]ed Log
 ```
 
 ## Settings
@@ -291,6 +291,22 @@ Subword motion is not enabled by default. To enable it, add these bindings to yo
       "g e": "vim::PreviousSubwordEnd"
     }
   },
+```
+
+Surrounding the selection in visual mode is also not enabled by default (`shift-s` normally behaves like `c`). To enable it, add the following to your keymap.
+
+```json
+  {
+    "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
+    "bindings": {
+      "shift-s": [
+        "vim::PushOperator",
+        {
+          "AddSurrounds": {}
+        }
+      ]
+    }
+  }
 ```
 
 ## Supported plugins

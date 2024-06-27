@@ -30,6 +30,7 @@ if [[ -n $apt ]]; then
     jq
     gettext-base
     elfutils
+    libsqlite3-dev
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0
@@ -56,6 +57,7 @@ if [[ -n $dnf ]]; then
     perl-File-Compare
     perl-File-Copy
     vulkan-loader
+    sqlite-devel
   )
 
   # libxkbcommon-x11-devel is in the crb repo on RHEL and CentOS, not needed for Fedora
@@ -84,6 +86,7 @@ if [[ -n $zyp ]]; then
     libzstd-devel
     libvulkan1
     mold
+    sqlite3-devel
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   exit 0
@@ -105,6 +108,7 @@ if [[ -n $pacman ]]; then
     zstd
     pkgconf
     mold
+    sqlite
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
@@ -124,6 +128,7 @@ if [[ -n $xbps ]]; then
     wayland-devel
     vulkan-loader
     mold
+    sqlite-devel
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
   exit 0
@@ -143,6 +148,7 @@ if [[ -n $emerge ]]; then
     x11-libs/libxcb
     x11-libs/libxkbcommon
     sys-devel/mold
+    dev-db/sqlite
   )
   $maysudo "$emerge" -u "${deps[@]}"
   exit 0

@@ -16,6 +16,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_, _: &ToggleReplace, cx: &mut ViewContext<Workspace>| {
         Vim::update(cx, |vim, cx| {
             vim.update_state(|state| state.replacements = vec![]);
+            vim.start_recording(cx);
             vim.switch_mode(Mode::Replace, false, cx);
         });
     });
@@ -235,6 +236,30 @@ mod test {
             Twoˇ"},
             Mode::Replace,
         );
+    }
+
+    #[gpui::test]
+    async fn test_replace_mode_with_counts(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("3 shift-r - escape").await;
+        cx.shared_state().await.assert_eq("--ˇ-lo\n");
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("3 shift-r a b c escape")
+            .await;
+        cx.shared_state().await.assert_eq("abcabcabˇc\n");
+    }
+
+    #[gpui::test]
+    async fn test_replace_mode_repeat(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello world\n").await;
+        cx.simulate_shared_keystrokes("shift-r - - - escape 4 l .")
+            .await;
+        cx.shared_state().await.assert_eq("---lo --ˇ-ld\n");
     }
 
     #[gpui::test]

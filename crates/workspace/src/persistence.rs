@@ -667,8 +667,8 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, Option<u64>)>> {
-            SELECT workspace_id, local_paths, dev_server_project_id
+        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, LocalPathsOrder, Option<u64>)>> {
+            SELECT workspace_id, local_paths, local_paths_order, dev_server_project_id
             FROM workspaces
             WHERE local_paths IS NOT NULL OR dev_server_project_id IS NOT NULL
             ORDER BY timestamp DESC
@@ -732,7 +732,7 @@ impl WorkspaceDb {
         let mut delete_tasks = Vec::new();
         let dev_server_projects = self.dev_server_projects()?;
 
-        for (id, location, dev_server_project_id) in self.recent_workspaces()? {
+        for (id, location, order, dev_server_project_id) in self.recent_workspaces()? {
             if let Some(dev_server_project_id) = dev_server_project_id.map(DevServerProjectId) {
                 if let Some(dev_server_project) = dev_server_projects
                     .iter()
@@ -748,7 +748,7 @@ impl WorkspaceDb {
             if location.paths().iter().all(|path| path.exists())
                 && location.paths().iter().any(|path| path.is_dir())
             {
-                result.push((id, location.into()));
+                result.push((id, SerializedWorkspaceLocation::Local(location, order)));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }

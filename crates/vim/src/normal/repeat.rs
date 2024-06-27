@@ -31,6 +31,8 @@ fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
                 || super::InsertLineBelow.partial_eq(&**action)
             {
                 Some(super::InsertLineBelow.boxed_clone())
+            } else if crate::replace::ToggleReplace.partial_eq(&**action) {
+                Some(crate::replace::ToggleReplace.boxed_clone())
             } else {
                 None
             }

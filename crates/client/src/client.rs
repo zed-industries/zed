@@ -692,6 +692,22 @@ impl Client {
     where
         M: EnvelopedMessage,
         E: 'static,
+        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
+        F: 'static + Future<Output = Result<()>>,
+    {
+        self.add_message_handler_impl(entity, move |model, message, _, cx| {
+            handler(model, message, cx)
+        })
+    }
+
+    fn add_message_handler_impl<M, E, H, F>(
+        self: &Arc<Self>,
+        entity: WeakModel<E>,
+        handler: H,
+    ) -> Subscription
+    where
+        M: EnvelopedMessage,
+        E: 'static,
         H: 'static
             + Sync
             + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F
@@ -737,19 +753,11 @@ impl Client {
     where
         M: RequestMessage,
         E: 'static,
-        H: 'static
-            + Sync
-            + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F
-            + Send
-            + Sync,
+        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
-        self.add_message_handler(model, move |handle, envelope, this, cx| {
-            Self::respond_to_request(
-                envelope.receipt(),
-                handler(handle, envelope, this.clone(), cx),
-                this,
-            )
+        self.add_message_handler_impl(model, move |handle, envelope, this, cx| {
+            Self::respond_to_request(envelope.receipt(), handler(handle, envelope, cx), this)
         })
     }
 
@@ -757,11 +765,11 @@ impl Client {
     where
         M: EntityMessage,
         E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<()>>,
     {
-        self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, client, cx| {
-            handler(subscriber.downcast::<E>().unwrap(), message, client, cx)
+        self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, _, cx| {
+            handler(subscriber.downcast::<E>().unwrap(), message, cx)
         })
     }
 
@@ -808,13 +816,13 @@ impl Client {
     where
         M: EntityMessage + RequestMessage,
         E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
-        self.add_model_message_handler(move |entity, envelope, client, cx| {
+        self.add_entity_message_handler::<M, E, _, _>(move |entity, envelope, client, cx| {
             Self::respond_to_request::<M, _>(
                 envelope.receipt(),
-                handler(entity, envelope, client.clone(), cx),
+                handler(entity.downcast::<E>().unwrap(), envelope, cx),
                 client,
             )
         })
@@ -1912,7 +1920,7 @@ mod tests {
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         client.add_model_message_handler(
-            move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, _, mut cx| {
+            move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
                 match model.update(&mut cx, |model, _| model.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
@@ -1974,7 +1982,7 @@ mod tests {
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         let subscription1 = client.add_message_handler(
             model.downgrade(),
-            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+            move |_, _: TypedEnvelope<proto::Ping>, _| {
                 done_tx1.try_send(()).unwrap();
                 async { Ok(()) }
             },
@@ -1982,7 +1990,7 @@ mod tests {
         drop(subscription1);
         let _subscription2 = client.add_message_handler(
             model.downgrade(),
-            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+            move |_, _: TypedEnvelope<proto::Ping>, _| {
                 done_tx2.try_send(()).unwrap();
                 async { Ok(()) }
             },
@@ -2008,7 +2016,7 @@ mod tests {
         let (done_tx, mut done_rx) = smol::channel::unbounded();
         let subscription = client.add_message_handler(
             model.clone().downgrade(),
-            move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, _, mut cx| {
+            move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, mut cx| {
                 model
                     .update(&mut cx, |model, _| model.subscription.take())
                     .unwrap();

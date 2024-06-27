@@ -28,7 +28,7 @@ impl SlashCommand for PromptSlashCommand {
     }
 
     fn complete_argument(
-        &self,
+        self: Arc<Self>,
         query: String,
         _cancellation_flag: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,

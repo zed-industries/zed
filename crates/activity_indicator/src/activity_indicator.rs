@@ -3,15 +3,18 @@ use editor::Editor;
 use extension::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
-    actions, percentage, Animation, AnimationExt as _, AppContext, CursorStyle, EventEmitter,
-    InteractiveElement as _, Model, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement, Styled, Transformation, View, ViewContext, VisualContext as _,
+    actions, anchored, deferred, percentage, Animation, AnimationExt as _, AppContext, CursorStyle,
+    DismissEvent, EventEmitter, InteractiveElement as _, Model, ParentElement as _, Render,
+    SharedString, StatefulInteractiveElement, Styled, Transformation, View, ViewContext,
+    VisualContext as _,
 };
-use language::{LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
+use language::{
+    LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId, LanguageServerName,
+};
 use project::{LanguageServerProgress, Project};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
-use ui::prelude::*;
+use ui::{prelude::*, ContextMenu};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 actions!(activity_indicator, [ShowErrorMessage]);
@@ -24,6 +27,7 @@ pub struct ActivityIndicator {
     statuses: Vec<LspStatus>,
     project: Model<Project>,
     auto_updater: Option<Model<AutoUpdater>>,
+    context_menu: Option<View<ContextMenu>>,
 }
 
 struct LspStatus {
@@ -32,6 +36,7 @@ struct LspStatus {
 }
 
 struct PendingWork<'a> {
+    language_server_id: LanguageServerId,
     progress_token: &'a str,
     progress: &'a LanguageServerProgress,
 }
@@ -74,6 +79,7 @@ impl ActivityIndicator {
                 statuses: Default::default(),
                 project: project.clone(),
                 auto_updater,
+                context_menu: None,
             }
         });
 
@@ -147,7 +153,7 @@ impl ActivityIndicator {
             .read(cx)
             .language_server_statuses()
             .rev()
-            .filter_map(|status| {
+            .filter_map(|(server_id, status)| {
                 if status.pending_work.is_empty() {
                     None
                 } else {
@@ -155,6 +161,7 @@ impl ActivityIndicator {
                         .pending_work
                         .iter()
                         .map(|(token, progress)| PendingWork {
+                            language_server_id: server_id,
                             progress_token: token.as_str(),
                             progress,
                         })
@@ -172,6 +179,7 @@ impl ActivityIndicator {
         if let Some(PendingWork {
             progress_token,
             progress,
+            ..
         }) = pending_work.next()
         {
             let mut message = progress
@@ -206,7 +214,7 @@ impl ActivityIndicator {
                         .into_any_element(),
                 ),
                 message,
-                on_click: None,
+                on_click: Some(Arc::new(Self::toggle_language_server_work_context_menu)),
             };
         }
 
@@ -357,6 +365,75 @@ impl ActivityIndicator {
 
         Default::default()
     }
+
+    fn toggle_language_server_work_context_menu(&mut self, cx: &mut ViewContext<Self>) {
+        if self.context_menu.take().is_some() {
+            return;
+        }
+
+        self.build_lsp_work_context_menu(cx);
+        cx.notify();
+    }
+
+    fn build_lsp_work_context_menu(&mut self, cx: &mut ViewContext<Self>) {
+        let mut has_work = false;
+        let this = cx.view().downgrade();
+        let context_menu = ContextMenu::build(cx, |mut menu, cx| {
+            for work in self.pending_language_server_work(cx) {
+                has_work = true;
+
+                let this = this.clone();
+                let title = SharedString::from(
+                    work.progress
+                        .title
+                        .as_deref()
+                        .unwrap_or(work.progress_token)
+                        .to_string(),
+                );
+                if work.progress.is_cancellable {
+                    let language_server_id = work.language_server_id;
+                    let token = work.progress_token.to_string();
+                    menu = menu.custom_entry(
+                        move |_| {
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .child(Label::new(title.clone()))
+                                .child(Icon::new(IconName::XCircle))
+                                .into_any_element()
+                        },
+                        move |cx| {
+                            this.update(cx, |this, cx| {
+                                this.project.update(cx, |project, cx| {
+                                    project.cancel_language_server_work(
+                                        language_server_id,
+                                        Some(token.clone()),
+                                        cx,
+                                    );
+                                });
+                                this.context_menu.take();
+                            })
+                            .ok();
+                        },
+                    );
+                } else {
+                    menu = menu.label(title.clone());
+                }
+            }
+            menu
+        });
+
+        if has_work {
+            cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                this.context_menu.take();
+                cx.notify();
+            })
+            .detach();
+            cx.focus_view(&context_menu);
+            self.context_menu = Some(context_menu);
+            cx.notify();
+        }
+    }
 }
 
 impl EventEmitter<Event> for ActivityIndicator {}
@@ -382,6 +459,14 @@ impl Render for ActivityIndicator {
             .gap_2()
             .children(content.icon)
             .child(Label::new(SharedString::from(content.message)).size(LabelSize::Small))
+            .children(self.context_menu.as_ref().map(|menu| {
+                deferred(
+                    anchored()
+                        .anchor(gpui::AnchorCorner::BottomLeft)
+                        .child(menu.clone()),
+                )
+                .with_priority(1)
+            }))
     }
 }
 

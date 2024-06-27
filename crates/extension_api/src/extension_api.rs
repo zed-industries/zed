@@ -24,7 +24,7 @@ pub use wit::{
         npm_package_latest_version,
     },
     zed::extension::platform::{current_platform, Architecture, Os},
-    zed::extension::slash_command::SlashCommand,
+    zed::extension::slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection},
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
     LanguageServerInstallationStatus, Range, Worktree,
 };
@@ -66,9 +66,11 @@ pub trait Extension: Send + Sync {
     /// language.
     fn language_server_command(
         &mut self,
-        language_server_id: &LanguageServerId,
-        worktree: &Worktree,
-    ) -> Result<Command>;
+        _language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Result<Command> {
+        Err("`language_server_command` not implemented".to_string())
+    }
 
     /// Returns the initialization options to pass to the specified language server.
     fn language_server_initialization_options(
@@ -106,14 +108,23 @@ pub trait Extension: Send + Sync {
         None
     }
 
-    /// Runs the given slash command.
+    /// Returns the completions that should be shown when completing the provided slash command with the given query.
+    fn complete_slash_command_argument(
+        &self,
+        _command: SlashCommand,
+        _query: String,
+    ) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Returns the output from running the provided slash command.
     fn run_slash_command(
         &self,
         _command: SlashCommand,
         _argument: Option<String>,
         _worktree: &Worktree,
-    ) -> Result<Option<String>, String> {
-        Ok(None)
+    ) -> Result<SlashCommandOutput, String> {
+        Err("`run_slash_command` not implemented".to_string())
     }
 }
 
@@ -223,11 +234,18 @@ impl wit::Guest for Component {
         Ok(labels)
     }
 
+    fn complete_slash_command_argument(
+        command: SlashCommand,
+        query: String,
+    ) -> Result<Vec<String>, String> {
+        extension().complete_slash_command_argument(command, query)
+    }
+
     fn run_slash_command(
         command: SlashCommand,
         argument: Option<String>,
         worktree: &Worktree,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<SlashCommandOutput, String> {
         extension().run_slash_command(command, argument, worktree)
     }
 }

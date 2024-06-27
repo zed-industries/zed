@@ -14,6 +14,7 @@ use theme::ThemeSettings;
 enum ContextMenuItem {
     Separator,
     Header(SharedString),
+    Label(SharedString),
     Entry {
         toggled: Option<bool>,
         label: SharedString,
@@ -144,6 +145,12 @@ impl ContextMenu {
             handler: Rc::new(move |_, cx| handler(cx)),
             selectable: true,
         });
+        self
+    }
+
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        let label = label.into();
+        self.items.push(ContextMenuItem::Label(label));
         self
     }
 
@@ -284,6 +291,7 @@ impl ContextMenuItem {
     fn is_selectable(&self) -> bool {
         match self {
             ContextMenuItem::Separator => false,
+            ContextMenuItem::Label { .. } => false,
             ContextMenuItem::Header(_) => false,
             ContextMenuItem::Entry { .. } => true,
             ContextMenuItem::CustomEntry { selectable, .. } => *selectable,
@@ -333,6 +341,11 @@ impl Render for ContextMenu {
                                         .inset(true)
                                         .into_any_element()
                                 }
+                                ContextMenuItem::Label(label) => ListItem::new(ix)
+                                    .inset(true)
+                                    .disabled(true)
+                                    .child(Label::new(label.clone()))
+                                    .into_any_element(),
                                 ContextMenuItem::Entry {
                                     toggled,
                                     label,

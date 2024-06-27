@@ -99,6 +99,9 @@ impl HostWorktree for WasmState {
 }
 
 #[async_trait]
+impl common::Host for WasmState {}
+
+#[async_trait]
 impl nodejs::Host for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
         self.host

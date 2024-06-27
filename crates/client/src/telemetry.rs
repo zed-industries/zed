@@ -590,10 +590,6 @@ impl Telemetry {
             return;
         }
 
-        if ZED_CLIENT_CHECKSUM_SEED.is_none() {
-            return;
-        };
-
         let this = self.clone();
         self.executor
             .spawn(
@@ -615,6 +611,7 @@ impl Telemetry {
 
                         let request_body = EventRequestBody {
                             installation_id: state.installation_id.as_deref().map(Into::into),
+                            metrics_id: state.metrics_id.as_deref().map(Into::into),
                             session_id: state.session_id.clone(),
                             is_staff: state.is_staff,
                             app_version: state.app_version.clone(),
@@ -629,9 +626,7 @@ impl Telemetry {
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
 
-                    let Some(checksum) = calculate_json_checksum(&json_bytes) else {
-                        return Ok(());
-                    };
+                    let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
 
                     let request = http::Request::builder()
                         .method(Method::POST)

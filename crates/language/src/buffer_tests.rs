@@ -1782,12 +1782,14 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
                             start: "{".into(),
                             end: "}".into(),
                             close: true,
+                            surround: true,
                             newline: false,
                         },
                         BracketPair {
                             start: "'".into(),
                             end: "'".into(),
                             close: true,
+                            surround: true,
                             newline: false,
                         },
                     ],
@@ -1910,12 +1912,14 @@ fn test_language_scope_at_with_rust(cx: &mut AppContext) {
                             start: "{".into(),
                             end: "}".into(),
                             close: true,
+                            surround: true,
                             newline: false,
                         },
                         BracketPair {
                             start: "'".into(),
                             end: "'".into(),
                             close: true,
+                            surround: true,
                             newline: false,
                         },
                     ],
@@ -2412,7 +2416,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
     for buffer in &buffers {
         let buffer = buffer.read(cx).snapshot();
         let actual_remote_selections = buffer
-            .remote_selections_in_range(Anchor::MIN..Anchor::MAX)
+            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
             .map(|(replica_id, _, _, selections)| (replica_id, selections.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         let expected_remote_selections = active_selections

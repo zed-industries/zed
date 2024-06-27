@@ -1,6 +1,30 @@
 use crate::html_element::HtmlElement;
 use crate::markdown_writer::{HandleTag, HandlerOutcome, MarkdownWriter, StartTagOutcome};
 
+pub struct WebpageChromeRemover;
+
+impl HandleTag for WebpageChromeRemover {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "head" | "script" | "style" | "nav" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        _writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag() {
+            "head" | "script" | "style" | "nav" => return StartTagOutcome::Skip,
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
+}
+
 pub struct ParagraphHandler;
 
 impl HandleTag for ParagraphHandler {

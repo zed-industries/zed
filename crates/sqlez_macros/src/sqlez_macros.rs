@@ -12,7 +12,12 @@ lazy_static::lazy_static! {
 pub fn sql(tokens: TokenStream) -> TokenStream {
     let (spans, sql) = make_sql(tokens);
 
+    #[cfg(not(target_os = "linux"))]
     let error = SQLITE.sql_has_syntax_error(sql.trim());
+
+    #[cfg(target_os = "linux")]
+    let error: Option<(String, usize)> = None;
+
     let formatted_sql = sqlformat::format(&sql, &sqlformat::QueryParams::None, Default::default());
 
     if let Some((error, error_offset)) = error {
