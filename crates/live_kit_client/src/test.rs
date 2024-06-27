@@ -75,9 +75,8 @@ impl TestServer {
     }
 
     pub async fn create_room(&self, room: String) -> Result<()> {
-        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
-        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
+
         let mut server_rooms = self.rooms.lock();
         if server_rooms.contains_key(&room) {
             Err(anyhow!("room {:?} already exists", room))
@@ -88,10 +87,8 @@ impl TestServer {
     }
 
     async fn delete_room(&self, room: String) -> Result<()> {
-        // TODO: clear state associated with all `Room`s.
-        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
-        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
+
         let mut server_rooms = self.rooms.lock();
         server_rooms
             .remove(&room)
@@ -100,17 +97,10 @@ impl TestServer {
     }
 
     async fn join_room(&self, token: String, client_room: Room) -> Result<ParticipantIdentity> {
-        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
-        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
 
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
-        let identity = claims
-            .sub
-            .unwrap()
-            .to_string()
-            .try_into()
-            .expect("invalid room sid");
+        let identity = claims.sub.unwrap().to_string().into();
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
         let room = (*server_rooms).entry(room_name.to_string()).or_default();
@@ -170,9 +160,8 @@ impl TestServer {
     }
 
     async fn leave_room(&self, token: String) -> Result<()> {
-        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
-        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
+
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
@@ -195,9 +184,6 @@ impl TestServer {
         room_name: String,
         identity: ParticipantIdentity,
     ) -> Result<()> {
-        // TODO: clear state associated with the `Room`.
-        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
-        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
 
         let mut server_rooms = self.rooms.lock();
@@ -220,8 +206,8 @@ impl TestServer {
         identity: String,
         permission: proto::ParticipantPermission,
     ) -> Result<()> {
-        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
+
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&room_name)
@@ -234,7 +220,6 @@ impl TestServer {
     pub async fn disconnect_client(&self, client_identity: String) {
         let client_identity = ParticipantIdentity(client_identity);
 
-        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
 
         let mut server_rooms = self.rooms.lock();
@@ -256,7 +241,6 @@ impl TestServer {
         token: String,
         _local_track: LocalVideoTrack,
     ) -> Result<TrackSid> {
-        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
 
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
@@ -320,8 +304,6 @@ impl TestServer {
         token: String,
         _local_track: &LocalAudioTrack,
     ) -> Result<TrackSid> {
-        // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
-        #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
 
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;

@@ -2,7 +2,7 @@ mod remote_video_track_view;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-use anyhow::Result;
+use anyhow::{anyhow, Context as _, Result};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait as _},
     StreamConfig,
@@ -11,7 +11,7 @@ use futures::{Stream, StreamExt as _};
 use gpui::{AppContext, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task};
 use parking_lot::Mutex;
 use std::{borrow::Cow, sync::Arc};
-use util::ResultExt as _;
+use util::{ResultExt as _, TryFutureExt};
 use webrtc::{
     audio_frame::AudioFrame,
     audio_source::{native::NativeAudioSource, AudioSourceOptions, RtcAudioSource},
@@ -29,7 +29,7 @@ pub use test::*;
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 
 pub struct AudioStream {
-    _tasks: [Task<()>; 2],
+    _tasks: [Task<Option<()>>; 2],
 }
 
 struct Dispatcher(Arc<dyn gpui::PlatformDispatcher>);
@@ -92,10 +92,10 @@ pub fn capture_local_audio_track(
 
     let device = host
         .default_input_device()
-        .expect("No input device available");
+        .ok_or_else(|| anyhow!("no audio input device available"))?;
     let config = device
         .default_input_config()
-        .expect("Failed to get default input config");
+        .context("failed to get default input config")?;
     let sample_rate = config.sample_rate();
     let channels = config.channels() as u32;
     let source = NativeAudioSource::new(
@@ -128,7 +128,7 @@ pub fn capture_local_audio_track(
             |err| log::error!("error capturing audio track: {:?}", err),
             None,
         )
-        .expect("Failed to build input stream");
+        .context("failed to build input stream")?;
 
     let stream_task = cx.foreground_executor().spawn(async move {
         stream.play().log_err();
@@ -141,6 +141,7 @@ pub fn capture_local_audio_track(
             while let Some(frame) = frame_rx.next().await {
                 source.capture_frame(&frame).await.ok();
             }
+            Some(())
         }
     });
 
@@ -164,9 +165,9 @@ pub fn play_remote_audio_track(
     let mut stream = NativeAudioStream::new(track.rtc_track());
 
     let receive_task = cx.background_executor().spawn({
-        let mut stream_config = None;
         let buffer = buffer.clone();
         async move {
+            let mut stream_config = None;
             while let Some(frame) = stream.next().await {
                 let mut buffer = buffer.lock();
                 let buffer_size = frame.samples_per_channel * frame.num_channels;
@@ -190,45 +191,47 @@ pub fn play_remote_audio_track(
                     buffer.iter_mut().for_each(|x| *x = 0);
                 }
             }
+            Some(())
         }
     });
 
-    let play_task = cx.foreground_executor().spawn({
-        let buffer = buffer.clone();
-        async move {
-            if cfg!(any(test, feature = "test-support")) {
-                return;
-            }
+    let play_task = cx.foreground_executor().spawn(
+        {
+            let buffer = buffer.clone();
+            async move {
+                if cfg!(any(test, feature = "test-support")) {
+                    return Err(anyhow!("can't play audio in tests"));
+                }
 
-            let device = cpal::default_host()
-                .default_output_device()
-                .expect("No output device available");
+                let device = cpal::default_host()
+                    .default_output_device()
+                    .ok_or_else(|| anyhow!("no audio output device available"))?;
 
-            let mut _output_stream = None;
-            while let Some(config) = stream_config_rx.next().await {
-                _output_stream = Some(
-                    device
-                        .build_output_stream(
-                            &config,
-                            {
-                                let buffer = buffer.clone();
-                                move |data, _info| {
-                                    let buffer = buffer.lock();
-                                    if data.len() == buffer.len() {
-                                        data.copy_from_slice(&buffer);
-                                    } else {
-                                        data.iter_mut().for_each(|x| *x = 0);
-                                    }
+                let mut _output_stream = None;
+                while let Some(config) = stream_config_rx.next().await {
+                    _output_stream = Some(device.build_output_stream(
+                        &config,
+                        {
+                            let buffer = buffer.clone();
+                            move |data, _info| {
+                                let buffer = buffer.lock();
+                                if data.len() == buffer.len() {
+                                    data.copy_from_slice(&buffer);
+                                } else {
+                                    data.iter_mut().for_each(|x| *x = 0);
                                 }
-                            },
-                            |error| log::error!("error playing audio track: {:?}", error),
-                            None,
-                        )
-                        .unwrap(),
-                );
+                            }
+                        },
+                        |error| log::error!("error playing audio track: {:?}", error),
+                        None,
+                    )?);
+                }
+
+                Ok(())
             }
         }
-    });
+        .log_err(),
+    );
 
     AudioStream {
         _tasks: [receive_task, play_task],
