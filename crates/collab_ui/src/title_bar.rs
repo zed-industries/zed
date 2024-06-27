@@ -15,7 +15,8 @@ use std::sync::Arc;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     h_flex, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike, ButtonStyle,
-    ContextMenu, Icon, IconButton, IconName, Indicator, PopoverMenu, TintColor, TitleBar, Tooltip,
+    ContextMenu, Icon, IconButton, IconName, Indicator, PopoverMenu, TintColor,
+    TitleBar as UiTitleBar, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
@@ -37,13 +38,13 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        let titlebar_item = cx.new_view(|cx| CollabTitlebarItem::new(workspace, cx));
-        workspace.set_titlebar_item(titlebar_item.into(), cx)
+        let item = cx.new_view(|cx| TitleBar::new(workspace, cx));
+        workspace.set_titlebar_item(item.into(), cx)
     })
     .detach();
 }
 
-pub struct CollabTitlebarItem {
+pub struct TitleBar {
     project: Model<Project>,
     user_store: Model<UserStore>,
     client: Arc<Client>,
@@ -51,7 +52,7 @@ pub struct CollabTitlebarItem {
     _subscriptions: Vec<Subscription>,
 }
 
-impl Render for CollabTitlebarItem {
+impl Render for TitleBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let room = ActiveCall::global(cx).read(cx).room().cloned();
         let current_user = self.user_store.read(cx).current_user();
@@ -61,7 +62,8 @@ impl Render for CollabTitlebarItem {
 
         let platform_supported = cfg!(target_os = "macos");
 
-        TitleBar::new("collab-titlebar", Box::new(workspace::CloseWindow))
+        // TODO: Merge [ui::TitleBar] with our TitleBar struct
+        UiTitleBar::new("collab-titlebar", Box::new(workspace::CloseWindow))
             // note: on windows titlebar behaviour is handled by the platform implementation
             .when(cfg!(not(windows)), |this| {
                 this.on_click(|event, cx| {
@@ -362,7 +364,7 @@ fn render_color_ribbon(color: Hsla) -> impl Element {
     .w_full()
 }
 
-impl CollabTitlebarItem {
+impl TitleBar {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();

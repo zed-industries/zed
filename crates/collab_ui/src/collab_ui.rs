@@ -1,17 +1,16 @@
 pub mod channel_view;
 pub mod chat_panel;
 pub mod collab_panel;
-mod collab_titlebar_item;
 mod face_pile;
 pub mod notification_panel;
 pub mod notifications;
 mod panel_settings;
+mod title_bar;
 
 use std::{rc::Rc, sync::Arc};
 
 use call::{report_call_event_for_room, ActiveCall};
 pub use collab_panel::CollabPanel;
-pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::{
     actions, point, AppContext, Pixels, PlatformDisplay, Size, Task, WindowBackgroundAppearance,
     WindowBounds, WindowContext, WindowKind, WindowOptions,
@@ -22,6 +21,7 @@ pub use panel_settings::{
 };
 use release_channel::ReleaseChannel;
 use settings::Settings;
+pub use title_bar::TitleBar;
 use ui::px;
 use workspace::{notifications::DetachAndPromptErr, AppState};
 
@@ -37,7 +37,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     MessageEditorSettings::register(cx);
 
     vcs_menu::init(cx);
-    collab_titlebar_item::init(cx);
+    title_bar::init(cx);
     collab_panel::init(cx);
     channel_view::init(cx);
     chat_panel::init(cx);
