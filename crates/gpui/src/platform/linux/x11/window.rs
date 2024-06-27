@@ -47,6 +47,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE_FULLSCREEN,
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
+        _NET_ACTIVE_WINDOW,
         _NET_WM_MOVERESIZE,
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
@@ -801,10 +802,21 @@ impl PlatformWindow for X11Window {
     }
 
     fn activate(&self) {
-        let win_aux = xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE);
+        let data = [1, xproto::Time::CURRENT_TIME.into(), 0, 0, 0];
+        let message = xproto::ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            self.0.state.borrow().atoms._NET_ACTIVE_WINDOW,
+            data,
+        );
         self.0
             .xcb_connection
-            .configure_window(self.0.x_window, &win_aux)
+            .send_event(
+                false,
+                self.0.state.borrow().x_root_window,
+                xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
             .log_err();
         self.0
             .xcb_connection
