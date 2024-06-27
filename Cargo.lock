@@ -11047,6 +11047,59 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
+name = "title_bar"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "auto_update",
+ "call",
+ "channel",
+ "client",
+ "collab_ui",
+ "collections",
+ "command_palette",
+ "db",
+ "dev_server_projects",
+ "editor",
+ "emojis",
+ "extensions_ui",
+ "feedback",
+ "futures 0.3.28",
+ "fuzzy",
+ "gpui",
+ "http 0.1.0",
+ "language",
+ "lazy_static",
+ "menu",
+ "notifications",
+ "parking_lot",
+ "picker",
+ "pretty_assertions",
+ "project",
+ "recent_projects",
+ "release_channel",
+ "rich_text",
+ "rpc",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "story",
+ "theme",
+ "theme_selector",
+ "time",
+ "time_format",
+ "tree-sitter-markdown",
+ "ui",
+ "util",
+ "vcs_menu",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "tokio"
 version = "1.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13633,6 +13686,7 @@ dependencies = [
  "terminal_view",
  "theme",
  "theme_selector",
+ "title_bar",
  "tree-sitter-markdown",
  "tree-sitter-rust",
  "ui",

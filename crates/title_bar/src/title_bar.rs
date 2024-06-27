@@ -1,4 +1,3 @@
-use crate::face_pile::FacePile;
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, User, UserStore};
@@ -15,7 +14,7 @@ use std::sync::Arc;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     h_flex, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike, ButtonStyle,
-    ContextMenu, Icon, IconButton, IconName, Indicator, PopoverMenu, TintColor, Tooltip,
+    ContextMenu, Facepile, Icon, IconButton, IconName, Indicator, PopoverMenu, TintColor, Tooltip,
     UiTitleBar,
 };
 use util::ResultExt;
@@ -129,7 +128,7 @@ impl Render for TitleBar {
                                             == ParticipantLocation::SharedProject { project_id }
                                     });
 
-                                    let face_pile = self.render_collaborator(
+                                    let facepile = self.render_collaborator(
                                         &collaborator.user,
                                         collaborator.peer_id,
                                         is_present,
@@ -145,7 +144,7 @@ impl Render for TitleBar {
                                     Some(
                                         v_flex()
                                             .id(("collaborator", collaborator.user.id))
-                                            .child(face_pile)
+                                            .child(facepile)
                                             .child(render_color_ribbon(player_color.cursor))
                                             .cursor_pointer()
                                             .on_click({
@@ -264,7 +263,9 @@ impl Render for TitleBar {
                                 .selected(platform_supported && is_muted)
                                 .disabled(!platform_supported)
                                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-                                .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
+                                .on_click(move |_, cx| {
+                                    collab_ui::toggle_mute(&Default::default(), cx)
+                                }),
                             )
                         })
                         .child(
@@ -295,7 +296,9 @@ impl Render for TitleBar {
                                     Tooltip::text("Deafen Audio", cx)
                                 }
                             })
-                            .on_click(move |_, cx| crate::toggle_deafen(&Default::default(), cx)),
+                            .on_click(move |_, cx| {
+                                collab_ui::toggle_deafen(&Default::default(), cx)
+                            }),
                         )
                         .when(can_share_projects, |this| {
                             this.child(
@@ -318,7 +321,7 @@ impl Render for TitleBar {
                                         )
                                     })
                                     .on_click(move |_, cx| {
-                                        crate::toggle_screen_sharing(&Default::default(), cx)
+                                        collab_ui::toggle_screen_sharing(&Default::default(), cx)
                                     }),
                             )
                         })
@@ -746,7 +749,7 @@ impl TitleBar {
                     div.rounded_md().bg(color)
                 })
                 .child(
-                    FacePile::empty()
+                    Facepile::empty()
                         .child(
                             Avatar::new(user.avatar_uri.clone())
                                 .grayscale(!is_present)

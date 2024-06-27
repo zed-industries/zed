@@ -1,11 +1,9 @@
 pub mod channel_view;
 pub mod chat_panel;
 pub mod collab_panel;
-mod face_pile;
 pub mod notification_panel;
 pub mod notifications;
 mod panel_settings;
-mod title_bar;
 
 use std::{rc::Rc, sync::Arc};
 
@@ -21,7 +19,6 @@ pub use panel_settings::{
 };
 use release_channel::ReleaseChannel;
 use settings::Settings;
-pub use title_bar::TitleBar;
 use ui::px;
 use workspace::{notifications::DetachAndPromptErr, AppState};
 
@@ -37,7 +34,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     MessageEditorSettings::register(cx);
 
     vcs_menu::init(cx);
-    title_bar::init(cx);
     collab_panel::init(cx);
     channel_view::init(cx);
     chat_panel::init(cx);

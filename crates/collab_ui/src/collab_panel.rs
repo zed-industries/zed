@@ -2,10 +2,7 @@ mod channel_modal;
 mod contact_finder;
 
 use self::channel_modal::ChannelModal;
-use crate::{
-    channel_view::ChannelView, chat_panel::ChatPanel, face_pile::FacePile,
-    CollaborationPanelSettings,
-};
+use crate::{channel_view::ChannelView, chat_panel::ChatPanel, CollaborationPanelSettings};
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, ProjectId, User, UserStore};
@@ -34,7 +31,8 @@ use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     prelude::*, tooltip_container, Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu,
-    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tooltip,
+    Facepile, Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem,
+    Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2542,7 +2540,7 @@ impl CollabPanel {
             None
         } else {
             let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
-            let result = FacePile::new(
+            let result = Facepile::new(
                 participants
                     .iter()
                     .map(|user| Avatar::new(user.avatar_uri.clone()).into_any_element())

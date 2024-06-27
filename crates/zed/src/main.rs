@@ -202,6 +202,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     collab_ui::init(&app_state, cx);
+    title_bar::init(cx);
     feedback::init(cx);
     markdown_preview::init(cx);
     welcome::init(cx);
