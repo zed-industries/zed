@@ -2,8 +2,7 @@ mod call_controls;
 mod collab;
 mod platforms;
 
-use crate::platforms::{linux, mac, windows};
-
+use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation};
 use client::{Client, UserStore};
@@ -82,7 +81,7 @@ impl Render for TitleBar {
                 if cx.is_fullscreen() {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac {
-                    this.pl(px(mac::TRAFFIC_LIGHT_PADDING))
+                    this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
                 } else {
                     this.pl_2()
                 }
@@ -375,7 +374,7 @@ impl Render for TitleBar {
             )
             .when(
                 self.platform_style == PlatformStyle::Windows && !cx.is_fullscreen(),
-                |title_bar| title_bar.child(windows::WindowsWindowControls::new(height)),
+                |title_bar| title_bar.child(platform_windows::WindowsWindowControls::new(height)),
             )
             .when(
                 self.platform_style == PlatformStyle::Linux
@@ -383,7 +382,7 @@ impl Render for TitleBar {
                     && cx.should_render_window_controls(),
                 |title_bar| {
                     title_bar
-                        .child(linux::LinuxWindowControls::new(height, close_action))
+                        .child(platform_linux::LinuxWindowControls::new(height, close_action))
                         .on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
                             cx.show_window_menu(ev.position)
                         })

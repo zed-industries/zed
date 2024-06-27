@@ -1,3 +1,3 @@
-pub mod linux;
-pub mod mac;
-pub mod windows;
+pub mod platform_linux;
+pub mod platform_mac;
+pub mod platform_windows;
