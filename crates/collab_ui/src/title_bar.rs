@@ -15,8 +15,8 @@ use std::sync::Arc;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     h_flex, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike, ButtonStyle,
-    ContextMenu, Icon, IconButton, IconName, Indicator, PopoverMenu, TintColor,
-    TitleBar as UiTitleBar, Tooltip,
+    ContextMenu, Icon, IconButton, IconName, Indicator, PopoverMenu, TintColor, Tooltip,
+    UiTitleBar,
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};

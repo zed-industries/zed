@@ -6,14 +6,14 @@ use crate::components::title_bar::windows_window_controls::WindowsWindowControls
 use crate::prelude::*;
 
 #[derive(IntoElement)]
-pub struct TitleBar {
+pub struct UiTitleBar {
     platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
     close_window_action: Box<dyn Action>,
 }
 
-impl TitleBar {
+impl UiTitleBar {
     #[cfg(not(target_os = "windows"))]
     pub fn height(cx: &mut WindowContext) -> Pixels {
         (1.75 * cx.rem_size()).max(px(34.))
@@ -63,21 +63,21 @@ impl TitleBar {
     }
 }
 
-impl InteractiveElement for TitleBar {
+impl InteractiveElement for UiTitleBar {
     fn interactivity(&mut self) -> &mut Interactivity {
         self.content.interactivity()
     }
 }
 
-impl StatefulInteractiveElement for TitleBar {}
+impl StatefulInteractiveElement for UiTitleBar {}
 
-impl ParentElement for TitleBar {
+impl ParentElement for UiTitleBar {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
 
-impl RenderOnce for TitleBar {
+impl RenderOnce for UiTitleBar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let height = Self::height(cx);
         h_flex()
