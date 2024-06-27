@@ -110,6 +110,7 @@ impl HuggingFaceClient {
             "model": model,
             "messages": messages,
             "stream": true,
+            "max_tokens": 2048
         });
 
         let response = self
@@ -610,8 +611,11 @@ async fn combine_summaries(
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() < 2 || args.len() > 4 {
-        eprintln!("Usage: {} <project_path> [db_path] [num_workers]", args[0]);
+    if args.len() < 2 {
+        eprintln!(
+            "Usage: {} <project_path> [db_path] [num_workers] [--read=path]",
+            args[0]
+        );
         std::process::exit(1);
     }
 
@@ -621,13 +625,13 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    let db_path = if args.len() >= 3 {
+    let db_path = if args.len() >= 3 && !args[2].starts_with("--") {
         PathBuf::from(&args[2])
     } else {
         std::env::current_dir()?.join("project_summaries")
     };
 
-    let num_workers = if args.len() == 4 {
+    let num_workers = if args.len() >= 4 && !args[3].starts_with("--") {
         args[3].parse().unwrap_or(8)
     } else {
         8
@@ -636,8 +640,23 @@ async fn main() -> Result<()> {
     println!("Summarizing project at: {}", project_path.display());
     println!("Using database at: {}", db_path.display());
     println!("Number of workers: {}", num_workers);
-    let summary = summarize_project(&db_path, project_path, num_workers).await?;
-    println!("Project Summary:\n{:?}", summary);
+    let summaries = summarize_project(&db_path, project_path, num_workers).await?;
+    println!("Finished summarization");
+
+    // Check if --read flag is provided
+    if let Some(read_path) = args.iter().find(|arg| arg.starts_with("--read=")) {
+        let path = Path::new(&read_path[7..]);
+        let full_path = project_path.join(path);
+        for (child_path, summary) in summaries.iter() {
+            if child_path.parent() == Some(&full_path) {
+                println!("<path>{}</path>", child_path.to_string_lossy());
+                println!("<summary>{}</summary>", summary);
+                println!();
+            }
+        }
+    } else {
+        dbg!(summaries);
+    }
 
     Ok(())
 }
