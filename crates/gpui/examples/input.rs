@@ -33,7 +33,7 @@ impl TextInput {
         if self.selected_range.is_empty() {
             self.move_to(self.previous_boundary(self.cursor_offset()), cx);
         } else {
-            self.move_to(self.selected_range.end, cx)
+            self.move_to(self.selected_range.start, cx)
         }
     }
 
@@ -41,7 +41,7 @@ impl TextInput {
         if self.selected_range.is_empty() {
             self.move_to(self.next_boundary(self.selected_range.end), cx);
         } else {
-            self.move_to(self.selected_range.start, cx)
+            self.move_to(self.selected_range.end, cx)
         }
     }
 
@@ -53,7 +53,7 @@ impl TextInput {
         self.select_to(self.next_boundary(self.cursor_offset()), cx);
     }
 
-    fn select_all(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
+    fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
         self.move_to(0, cx);
         self.select_to(self.content.len(), cx)
     }
