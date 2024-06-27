@@ -8,10 +8,10 @@ use anyhow::Context;
 
 use async_task::Runnable;
 use calloop::channel::Channel;
-use calloop::EventLoop;
 
 use collections::HashMap;
 
+use futures::channel::oneshot;
 use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::cursor;
@@ -32,7 +32,7 @@ use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
     DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput,
-    Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    Point, QuitSignal, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
 use super::{
@@ -128,6 +128,8 @@ pub struct X11ClientState {
     pub(crate) clipboard: x11_clipboard::Clipboard,
     pub(crate) clipboard_item: Option<ClipboardItem>,
 
+    quit_signal_rx: oneshot::Receiver<()>,
+
     runnables: Channel<Runnable>,
     xdp_event_source: XDPEventSource,
 }
@@ -150,7 +152,29 @@ impl X11ClientStatePtr {
         state.cursor_styles.remove(&x_window);
 
         if state.windows.is_empty() {
-            state.common.signal.stop();
+            state.common.signal.quit();
+        }
+    }
+}
+
+struct ChannelQuitSignal {
+    tx: Option<oneshot::Sender<()>>,
+}
+
+impl ChannelQuitSignal {
+    fn new() -> (Self, oneshot::Receiver<()>) {
+        let (tx, rx) = oneshot::channel::<()>();
+
+        let quit_signal = ChannelQuitSignal { tx: Some(tx) };
+
+        (quit_signal, rx)
+    }
+}
+
+impl QuitSignal for ChannelQuitSignal {
+    fn quit(&mut self) {
+        if let Some(tx) = self.tx.take() {
+            tx.send(()).log_err();
         }
     }
 }
@@ -160,11 +184,9 @@ pub(crate) struct X11Client(Rc<RefCell<X11ClientState>>);
 
 impl X11Client {
     pub(crate) fn new() -> Self {
-        // TODO: We don't need this anymore.
-        let event_loop: calloop::EventLoop<X11Client> = EventLoop::try_new().unwrap();
+        let (quit_signal, quit_signal_rx) = ChannelQuitSignal::new();
 
-        // TODO: We need to send a quit signal in there.
-        let (common, runnables) = LinuxCommon::new(event_loop.get_signal());
+        let (common, runnables) = LinuxCommon::new(Box::new(quit_signal));
 
         let (xcb_connection, x_root_index) = XCBConnection::connect(None).unwrap();
         xcb_connection
@@ -268,6 +290,7 @@ impl X11Client {
         X11Client(Rc::new(RefCell::new(X11ClientState {
             runnables,
             xdp_event_source,
+            quit_signal_rx,
 
             common,
 
@@ -1072,7 +1095,12 @@ impl LinuxClient for X11Client {
 
     fn run(&self) {
         loop {
-            let mut sleep = true;
+            {
+                let mut state = self.0.borrow_mut();
+                if let Ok(Some(())) = state.quit_signal_rx.try_recv() {
+                    return;
+                }
+            }
 
             // Send expose events to windows that need refreshing
             let mut windows_to_expose = HashSet::new();
@@ -1085,7 +1113,7 @@ impl LinuxClient for X11Client {
                     }
                 }
             }
-            sleep = windows_to_expose.is_empty();
+            let mut sleep = windows_to_expose.is_empty();
             let _ = self.send_window_expose_events(windows_to_expose).log_err();
 
             // Read all X11 events and then handle them in a batch

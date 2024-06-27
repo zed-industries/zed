@@ -310,7 +310,7 @@ impl WaylandClientStatePtr {
             }
         }
         if state.windows.is_empty() {
-            state.common.signal.stop();
+            state.common.signal.quit();
         }
     }
 }
@@ -406,7 +406,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver) = LinuxCommon::new(Box::new(event_loop.get_signal()));
 
         let handle = event_loop.handle();
         handle
