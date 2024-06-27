@@ -32,7 +32,7 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::{self, Arc},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use super::{X11Display, XINPUT_MASTER_DEVICE};
@@ -161,6 +161,8 @@ pub struct Callbacks {
 pub struct X11WindowState {
     pub destroyed: bool,
     pub refresh_rate: Duration,
+    refresh_queued: bool,
+    pub last_refresh_at: Option<Instant>,
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
@@ -180,7 +182,7 @@ pub(crate) struct X11WindowStatePtr {
     pub state: Rc<RefCell<X11WindowState>>,
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb_connection: Rc<XCBConnection>,
-    x_window: xproto::Window,
+    pub x_window: xproto::Window,
 }
 
 impl rwh::HasWindowHandle for RawWindow {
@@ -441,6 +443,8 @@ impl X11WindowState {
             handle,
             destroyed: false,
             refresh_rate,
+            refresh_queued: false,
+            last_refresh_at: None,
         })
     }
 
@@ -610,6 +614,10 @@ impl X11WindowStatePtr {
         let mut cb = self.callbacks.borrow_mut();
         if let Some(ref mut fun) = cb.request_frame {
             fun();
+            self.state
+                .borrow_mut()
+                .last_refresh_at
+                .replace(Instant::now());
         }
     }
 
@@ -742,6 +750,23 @@ impl X11WindowStatePtr {
         if let Some(ref mut fun) = callbacks.appearance_changed {
             (fun)()
         }
+    }
+
+    pub fn needs_refresh(&self) -> bool {
+        let state = self.state.borrow();
+
+        if state.refresh_queued {
+            return false;
+        }
+
+        let refresh_rate = state.refresh_rate;
+        state.last_refresh_at.map_or(false, |last_refresh_at| {
+            last_refresh_at.elapsed() >= refresh_rate
+        })
+    }
+
+    pub fn set_refresh_queued(&self, value: bool) {
+        self.state.borrow_mut().refresh_queued = value;
     }
 }
 

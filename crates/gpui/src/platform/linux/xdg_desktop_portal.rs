@@ -2,6 +2,8 @@
 //!
 //! This module uses the [ashpd] crate
 
+use anyhow::anyhow;
+
 use ashpd::desktop::settings::{ColorScheme, Settings};
 use calloop::channel::Channel;
 use calloop::{EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
@@ -97,6 +99,12 @@ impl XDPEventSource {
             .detach();
 
         Self { channel }
+    }
+
+    pub fn try_recv(&self) -> anyhow::Result<Event> {
+        self.channel
+            .try_recv()
+            .map_err(|error| anyhow!("{}", error))
     }
 }
 
