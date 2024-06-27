@@ -234,11 +234,26 @@ pub enum ResizeEdge {
 /// A type to describe the appearance of a window
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub enum WindowDecorations {
-    /// Client side decorations
-    Client,
     #[default]
     /// Server side decorations
     Server,
+    /// Client side decorations
+    Client,
+}
+
+/// A type to describe how this window is currently configured
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub enum Decorations {
+    /// The window is configured to use server side decorations
+    #[default]
+    Server,
+    /// The window is configured to use client side decorations
+    Client {
+        /// Whether this window has shadows
+        shadows: bool,
+        /// The edge tiling state
+        tiling: Tiling,
+    },
 }
 
 /// What window controls this platform supports
@@ -325,18 +340,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
     fn start_window_resize(&self, _edge: ResizeEdge) {}
-    fn window_decorations(&self) -> WindowDecorations {
-        WindowDecorations::Client
+    fn window_decorations(&self) -> Decorations {
+        Decorations::default()
     }
     fn set_app_id(&mut self, _app_id: &str) {}
-    fn tiling(&self) -> Tiling {
-        Tiling {
-            top: false,
-            left: false,
-            right: false,
-            bottom: false,
-        }
-    }
     fn window_controls(&self) -> WindowControls {
         WindowControls {
             fullscreen: true,
@@ -751,7 +758,7 @@ pub struct TitlebarOptions {
     /// The initial title of the window
     pub title: Option<SharedString>,
 
-    /// Whether the titlebar should appear transparent
+    /// Whether the titlebar should appear transparent (macOS only)
     pub appears_transparent: bool,
 
     /// The position of the macOS traffic light buttons

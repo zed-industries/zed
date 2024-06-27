@@ -2,10 +2,11 @@ use anyhow::Context;
 
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    px, size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptLevel, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowKind, WindowParams, X11ClientStatePtr,
+    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, Modifiers,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowParams,
+    X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
@@ -52,6 +53,7 @@ x11rb::atom_manager! {
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
         _GTK_SHOW_WINDOW_MENU,
+        _MOTIF_WM_HINTS,
     }
 }
 
@@ -65,6 +67,21 @@ fn query_render_extent(xcb_connection: &XCBConnection, x_window: xproto::Window)
         width: reply.width as u32,
         height: reply.height as u32,
         depth: 1,
+    }
+}
+
+impl ResizeEdge {
+    fn to_moveresize(&self) -> u32 {
+        match self {
+            ResizeEdge::TopLeft => 0,
+            ResizeEdge::Top => 1,
+            ResizeEdge::TopRight => 2,
+            ResizeEdge::Right => 3,
+            ResizeEdge::BottomRight => 4,
+            ResizeEdge::Bottom => 5,
+            ResizeEdge::BottomLeft => 6,
+            ResizeEdge::Left => 7,
+        }
     }
 }
 
@@ -170,6 +187,7 @@ pub struct X11WindowState {
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
+    decorations: Decorations,
     pub handle: AnyWindowHandle,
 }
 
@@ -413,6 +431,7 @@ impl X11WindowState {
             appearance,
             handle,
             destroyed: false,
+            decorations: Decorations::Server,
         })
     }
 
@@ -556,6 +575,39 @@ impl X11Window {
             .unwrap()
             .reply()
             .unwrap()
+    }
+
+    fn send_moveresize(&self, flag: u32) {
+        let state = self.0.state.borrow();
+
+        let pointer = self
+            .0
+            .xcb_connection
+            .query_pointer(self.0.x_window)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let message = ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            state.atoms._NET_WM_MOVERESIZE,
+            [
+                pointer.root_x as u32,
+                pointer.root_y as u32,
+                flag,
+                1, // Left mouse button
+                1,
+            ],
+        );
+        self.0
+            .xcb_connection
+            .send_event(
+                false,
+                state.x_root_window,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
+            .unwrap();
     }
 }
 
@@ -1003,50 +1055,53 @@ impl PlatformWindow for X11Window {
     }
 
     fn start_window_move(&self) {
-        let state = self.0.state.borrow();
-        let pointer = self
-            .0
-            .xcb_connection
-            .query_pointer(self.0.x_window)
-            .unwrap()
-            .reply()
-            .unwrap();
         const MOVERESIZE_MOVE: u32 = 8;
-        let message = ClientMessageEvent::new(
-            32,
-            self.0.x_window,
-            state.atoms._NET_WM_MOVERESIZE,
-            [
-                pointer.root_x as u32,
-                pointer.root_y as u32,
-                MOVERESIZE_MOVE,
-                1, // Left mouse button
-                1,
-            ],
-        );
+        self.send_moveresize(MOVERESIZE_MOVE);
+    }
+
+    fn start_window_resize(&self, edge: ResizeEdge) {
+        self.send_moveresize(edge.to_moveresize());
+    }
+
+    fn window_decorations(&self) -> crate::Decorations {
+        self.0.state.borrow().decorations
+    }
+
+    fn request_decorations(&self, decorations: crate::WindowDecorations) {
+        // 1<<1 to "set the window decorations"
+        // 0 to "set them to nothing"
+        // https://github.com/rust-windowing/winit/blob/master/src/platform_impl/linux/x11/util/hint.rs#L53-L87
+        let hints_data: [u32; 5] = match decorations {
+            WindowDecorations::Server => [1 << 1, 0, 0, 0, 0],
+            // TODO: figure out how to select client side here
+            WindowDecorations::Client => [1 << 1, 0, 0, 0, 0],
+        };
+
+        let mut state = self.0.state.borrow_mut();
+
         self.0
             .xcb_connection
-            .send_event(
-                false,
-                state.x_root_window,
-                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-                message,
+            .change_property(
+                xproto::PropMode::REPLACE,
+                self.0.x_window,
+                state.atoms._MOTIF_WM_HINTS,
+                state.atoms._MOTIF_WM_HINTS,
+                std::mem::size_of::<u32>() as u8 * 8,
+                5,
+                bytemuck::cast_slice::<u32, u8>(&hints_data),
             )
             .unwrap();
-    }
 
-    // TODO: implement X11 decoration management
-    fn window_decorations(&self) -> crate::WindowDecorations {
-        crate::WindowDecorations::Server
-    }
+        state.decorations = Decorations::Client {
+            shadows: false,
+            // TOOD: Implement tiling checking for x11
+            tiling: Tiling::default(),
+        };
 
-    // TODO: implement X11 decoration management
-    fn tiling(&self) -> Tiling {
-        Tiling {
-            top: false,
-            left: false,
-            right: false,
-            bottom: false,
+        drop(state);
+        let mut callbacks = self.0.callbacks.borrow_mut();
+        if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
+            appearance_changed();
         }
     }
 }

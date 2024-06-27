@@ -25,10 +25,10 @@ use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, AnyWindowHandle, Bounds, Globals, Modifiers, Output, Pixels, PlatformDisplay,
-    PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling, WaylandClientStatePtr,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowParams,
+    px, size, AnyWindowHandle, Bounds, Decorations, Globals, Modifiers, Output, Pixels,
+    PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling,
+    WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowParams,
 };
 
 #[derive(Default)]
@@ -86,7 +86,7 @@ pub struct WaylandWindowState {
     bounds: Bounds<Pixels>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
-    decoration_state: WindowDecorations,
+    decorations: WindowDecorations,
     fullscreen: bool,
     maximized: bool,
     tiling: Tiling,
@@ -165,7 +165,7 @@ impl WaylandWindowState {
             bounds: options.bounds,
             scale: 1.0,
             input_handler: None,
-            decoration_state: WindowDecorations::Client,
+            decorations: WindowDecorations::Client,
             fullscreen: false,
             maximized: false,
             tiling: Tiling::default(),
@@ -368,10 +368,11 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_toplevel_decoration_event(&self, event: zxdg_toplevel_decoration_v1::Event) {
+        dbg!(&event);
         match event {
             zxdg_toplevel_decoration_v1::Event::Configure { mode } => match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
-                    self.state.borrow_mut().decoration_state = WindowDecorations::Server;
+                    self.state.borrow_mut().decorations = WindowDecorations::Server;
                     if let Some(mut appearance_changed) =
                         self.callbacks.borrow_mut().appearance_changed.as_mut()
                     {
@@ -379,7 +380,7 @@ impl WaylandWindowStatePtr {
                     }
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
-                    self.state.borrow_mut().decoration_state = WindowDecorations::Client;
+                    self.state.borrow_mut().decorations = WindowDecorations::Client;
                     if let Some(mut appearance_changed) =
                         self.callbacks.borrow_mut().appearance_changed.as_mut()
                     {
@@ -943,12 +944,15 @@ impl PlatformWindow for WaylandWindow {
         )
     }
 
-    fn window_decorations(&self) -> WindowDecorations {
-        self.borrow().decoration_state
-    }
-
-    fn tiling(&self) -> Tiling {
-        self.borrow().tiling
+    fn window_decorations(&self) -> Decorations {
+        let state = self.borrow();
+        match state.decorations {
+            WindowDecorations::Server => Decorations::Server,
+            WindowDecorations::Client => Decorations::Client {
+                shadows: false,
+                tiling: state.tiling,
+            },
+        }
     }
 
     fn request_decorations(&self, decorations: WindowDecorations) {

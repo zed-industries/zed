@@ -14,16 +14,19 @@ Things to do:
 impl Render for WindowShadow {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let decorations = cx.window_decorations();
-        let tiling = cx.window_tiling();
         let rounding = px(10.0);
         let shadow_size = px(10.0);
         let border_size = px(1.0);
         let grey = rgb(0x808080);
 
+        dbg!(&decorations);
+
         div()
             .id("window-backdrop")
-            .when(decorations == WindowDecorations::Client, |div| {
-                div.bg(gpui::transparent_black())
+            .map(|div| match decorations {
+                Decorations::Server => div,
+                Decorations::Client { tiling, .. } => div
+                    .bg(gpui::transparent_black())
                     .child(
                         canvas(
                             |_bounds, cx| {
@@ -82,14 +85,16 @@ impl Render for WindowShadow {
                         };
 
                         cx.start_window_resize(edge);
-                    })
+                    }),
             })
             .size_full()
             .child(
                 div()
                     .cursor(CursorStyle::Arrow)
-                    .when(decorations == WindowDecorations::Client, |div| {
-                        div.border_color(grey)
+                    .map(|div| match decorations {
+                        Decorations::Server => div,
+                        Decorations::Client { shadows, tiling } => div
+                            .border_color(grey)
                             .when(!(tiling.top || tiling.right), |div| {
                                 div.rounded_tr(rounding)
                             })
@@ -98,22 +103,24 @@ impl Render for WindowShadow {
                             .when(!tiling.bottom, |div| div.border_b(border_size))
                             .when(!tiling.left, |div| div.border_l(border_size))
                             .when(!tiling.right, |div| div.border_r(border_size))
+                            .when(!shadows, |div| {
+                                div.shadow(smallvec::smallvec![gpui::BoxShadow {
+                                    color: Hsla {
+                                        h: 0.,
+                                        s: 0.,
+                                        l: 0.,
+                                        a: 0.4,
+                                    },
+                                    blur_radius: shadow_size / 2.,
+                                    spread_radius: px(0.),
+                                    offset: point(px(0.0), px(0.0)),
+                                }])
+                            }),
                     })
                     .on_mouse_move(|_e, cx| {
                         cx.stop_propagation();
                     })
                     .bg(gpui::rgb(0xCCCCFF))
-                    .shadow(smallvec::smallvec![gpui::BoxShadow {
-                        color: Hsla {
-                            h: 0.,
-                            s: 0.,
-                            l: 0.,
-                            a: 0.4,
-                        },
-                        blur_radius: shadow_size / 2.,
-                        spread_radius: px(0.),
-                        offset: point(px(0.0), px(0.0)),
-                    }])
                     .size_full()
                     .flex()
                     .flex_col()
@@ -186,12 +193,13 @@ fn main() {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_background: WindowBackgroundAppearance::Transparent,
+                window_decorations: Some(WindowDecorations::Client),
                 ..Default::default()
             },
             |cx| {
                 cx.new_view(|cx| {
                     cx.observe_window_appearance(|_, cx| {
-                        cx.notify();
+                        cx.refresh();
                     })
                     .detach();
                     WindowShadow {}
