@@ -538,15 +538,17 @@ async fn summarize_chunks(client: &HuggingFaceClient, chunks: &[String]) -> Resu
 }
 
 async fn summarize_file(client: &HuggingFaceClient, content: &str) -> Result<String> {
-    let messages = vec![
-        Message {
-            role: "user".to_string(),
-            content: format!(
-                "You are a code summarization assistant. Provide a brief summary of the given code chunk, focusing on its main functionality and purpose. Be terse.\n\n{}",
-                content
-            ),
-        },
-    ];
+    let messages = vec![Message {
+        role: "user".to_string(),
+        content: format!(
+            "You are a code summarization assistant. \
+            Provide a brief summary of the given file, \
+            focusing on its main functionality and purpose. \
+            Be terse and start your response directly with \"Summary: \".\n\
+            File:\n{}",
+            content
+        ),
+    }];
 
     let mut receiver = client
         .stream_completion("tgi".to_string(), messages)
@@ -565,16 +567,31 @@ async fn combine_summaries(
     summaries: &[String],
     is_chunk: bool,
 ) -> Result<String> {
-    let combined_content = summaries.join("\n\n");
+    let combined_content = summaries.join("\n## Summary\n");
     let prompt = if is_chunk {
-        "You are a code summarization assistant. Combine the given summaries into a single, coherent summary that captures the overall functionality and structure of the code. Ensure that the final summary is comprehensive and reflects the content as if it was summarized from a single, complete file. Be terse."
+        concat!(
+            "You are a code summarization assistant. ",
+            "Combine the given summaries into a single, coherent summary ",
+            "that captures the overall functionality and structure of the code. ",
+            "Ensure that the final summary is comprehensive and reflects ",
+            "the content as if it was summarized from a single, complete file. ",
+            "Be terse and start your response with \"Summary: \""
+        )
     } else {
-        "You are a code summarization assistant. Combine the given summaries of different files or directories into a single, coherent summary that captures the overall structure and functionality of the project or directory. Focus on the relationships between different components and the high-level architecture. Be terse."
+        concat!(
+            "You are a code summarization assistant. ",
+            "Combine the given summaries of different files or directories ",
+            "into a single, coherent summary that captures the overall ",
+            "structure and functionality of the project or directory. ",
+            "Focus on the relationships between different components ",
+            "and the high-level architecture. ",
+            "Be terse and start your response with \"Summary: \""
+        )
     };
 
     let messages = vec![Message {
         role: "user".to_string(),
-        content: format!("{}\n\n{}", prompt, combined_content),
+        content: format!("{}\n# Summaries\n{}", prompt, combined_content),
     }];
 
     let mut receiver = client
