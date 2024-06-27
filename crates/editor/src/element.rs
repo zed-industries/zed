@@ -1119,11 +1119,12 @@ impl EditorElement {
             ScrollBeyondLastLine::Off => 1.0,
             ScrollBeyondLastLine::VerticalScrollMargin => 1.0 + settings.vertical_scroll_margin,
         };
-        let total_rows = snapshot.max_point().row().as_f32() + scroll_beyond_last_line;
+        let total_rows =
+            (snapshot.max_point().row().as_f32() + scroll_beyond_last_line).max(rows_per_page);
         let height = bounds.size.height;
         let px_per_row = height / total_rows;
         let thumb_height = (rows_per_page * px_per_row).max(ScrollbarLayout::MIN_THUMB_HEIGHT);
-        let row_height = (height - thumb_height) / (total_rows - rows_per_page).max(0.0);
+        let row_height = (height - thumb_height) / (total_rows - rows_per_page).max(0.);
 
         Some(ScrollbarLayout {
             hitbox: cx.insert_hitbox(track_bounds, false),
@@ -4676,17 +4677,17 @@ impl Element for EditorElement {
                         text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
 
                     let height_in_lines = bounds.size.height / line_height;
+                    let max_row = snapshot.max_point().row().as_f32();
                     let max_scroll_top = if matches!(snapshot.mode, EditorMode::AutoHeight { .. }) {
-                        (snapshot.max_point().row().as_f32() - height_in_lines + 1.).max(0.)
+                        (max_row - height_in_lines + 1.).max(0.)
                     } else {
                         let settings = EditorSettings::get_global(cx);
-                        let max_row = snapshot.max_point().row().as_f32();
                         match settings.scroll_beyond_last_line {
                             ScrollBeyondLastLine::OnePage => max_row,
-                            ScrollBeyondLastLine::Off => (max_row - height_in_lines + 1.0).max(0.0),
+                            ScrollBeyondLastLine::Off => (max_row - height_in_lines + 1.).max(0.),
                             ScrollBeyondLastLine::VerticalScrollMargin => {
-                                (max_row - height_in_lines + 1.0 + settings.vertical_scroll_margin)
-                                    .max(0.0)
+                                (max_row - height_in_lines + 1. + settings.vertical_scroll_margin)
+                                    .max(0.)
                             }
                         }
                     };
