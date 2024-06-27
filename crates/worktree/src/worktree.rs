@@ -437,16 +437,17 @@ impl Worktree {
                 ),
             };
             if let Some(metadata) = metadata.as_ref() {
-                snapshot.insert_entry(
-                    Entry::new(
-                        Arc::from(Path::new("")),
-                        EntryArg::Metadata(metadata),
-                        &next_entry_id,
-                        snapshot.root_char_bag,
-                        None,
-                    ),
-                    fs.as_ref(),
+                let mut entry = Entry::new(
+                    Arc::from(Path::new("")),
+                    EntryArg::Metadata(metadata),
+                    &next_entry_id,
+                    snapshot.root_char_bag,
+                    None,
                 );
+                if zip_path.is_some() {
+                    entry.kind = EntryKind::UnloadedContainer;
+                }
+                snapshot.insert_entry(entry, fs.as_ref());
             }
 
             if let Some((_, nested_path)) = zip_path {
@@ -1280,7 +1281,6 @@ impl LocalWorktree {
 
         cx.spawn(|this, mut cx| async move {
             let abs_path = abs_path?;
-            let text = fs.load(&abs_path).await?;
             let mut index_task = None;
             let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
             if let Some(repo) = snapshot.repository_for_path(&path) {
@@ -1309,7 +1309,6 @@ impl LocalWorktree {
                     }
                 }
             }
-
             let diff_base = if let Some(index_task) = index_task {
                 index_task.await
             } else {
@@ -1319,7 +1318,16 @@ impl LocalWorktree {
             let worktree = this
                 .upgrade()
                 .ok_or_else(|| anyhow!("worktree was dropped"))?;
-            let file = match entry.await? {
+            let entry = entry.await?;
+            dbg!(&abs_path);
+            let text =
+                if let Some(contents) = entry.as_ref().and_then(|entry| entry.data.contents()) {
+                    dbg!("Grabbing existing contents");
+                    contents.to_string()
+                } else {
+                    fs.load(&abs_path).await?
+                };
+            let file = match entry {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
                     let metadata = fs
@@ -3138,7 +3146,7 @@ pub enum EntryData {
         mtime: Option<SystemTime>,
     },
     Contents {
-        inner: Vec<u8>,
+        inner: Arc<str>,
     },
 }
 
@@ -3153,6 +3161,13 @@ impl EntryData {
     pub fn disk_entry(&self) -> Option<(u64, SystemTime)> {
         if let Self::DiskEntry { inode, mtime } = self {
             mtime.map(|mtime| (*inode, mtime))
+        } else {
+            None
+        }
+    }
+    fn contents(&self) -> Option<Arc<str>> {
+        if let Self::Contents { inner } = self {
+            Some(inner.clone())
         } else {
             None
         }
@@ -3220,7 +3235,7 @@ pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 
 enum EntryArg<'a> {
     Metadata(&'a fs::Metadata),
-    Contents(Vec<u8>),
+    Contents(Arc<str>),
 }
 
 impl Entry {
@@ -3234,11 +3249,13 @@ impl Entry {
         let kind = if let EntryArg::Metadata(meta) = &metadata {
             if meta.is_dir {
                 EntryKind::PendingContainer
+            } else if path.ends_with(".zip") {
+                EntryKind::UnloadedContainer
             } else {
                 EntryKind::File(char_bag_for_path(root_char_bag, &path))
             }
         } else {
-            EntryKind::UnloadedContainer
+            EntryKind::File(char_bag_for_path(root_char_bag, &path))
         };
         let (data, is_symlink) = match metadata {
             EntryArg::Metadata(meta) => (
@@ -3864,6 +3881,33 @@ impl BackgroundScanner {
             .is_ok()
     }
 
+    async fn scan_zip(&self, _job: &ScanJob) -> Result<()> {
+        let file_contents = self.fs.load_bytes(&_job.abs_path).await?;
+        let zip = async_zip::base::read::mem::ZipFileReader::new(file_contents).await?; //._job.abs_path
+
+        let mut new_entries = Vec::new();
+        for i in 0..zip.file().entries().len() {
+            let Ok(mut entry) = zip.reader_with_entry(i).await else {
+                continue;
+            };
+            let path: PathBuf = entry.entry().filename().as_str()?.into();
+            let mut buf = String::with_capacity(entry.entry().uncompressed_size() as usize);
+            entry.read_to_string_checked(&mut buf).await?;
+            let entry = Entry::new(
+                path.into(),
+                EntryArg::Contents(buf.into()),
+                self.next_entry_id.as_ref(),
+                self.state.lock().snapshot.root_char_bag,
+                None,
+            );
+            new_entries.push(entry);
+        }
+        let root_path: Arc<Path> = Arc::from(Path::new(""));
+        self.state
+            .lock()
+            .populate_dir(&root_path, new_entries, None);
+        Ok(())
+    }
     async fn scan_dir(&self, job: &ScanJob) -> Result<()> {
         let root_abs_path;
         let root_char_bag;
@@ -3885,10 +3929,17 @@ impl BackgroundScanner {
         let mut root_canonical_path = None;
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
-        let mut child_paths = self
-            .fs
-            .read_dir(&job.abs_path)
-            .await?
+        let dir_contents = self.fs.read_dir(&job.abs_path).await;
+        if job
+            .abs_path
+            .as_os_str()
+            .as_encoded_bytes()
+            .ends_with(".zip".as_bytes())
+            && dir_contents.is_err()
+        {
+            return self.scan_zip(&job).await;
+        }
+        let mut child_paths = dir_contents?
             .filter_map(|entry| async {
                 match entry {
                     Ok(entry) => Some(entry),
@@ -5122,12 +5173,12 @@ impl<'a> From<&'a Entry> for proto::Entry {
                 inode: entry_inode,
                 mtime: entry_mtime,
             } => {
-                contents = vec![];
+                contents = String::new();
                 inode = entry_inode;
                 mtime = entry_mtime.map(|mtime| mtime.into());
             }
             EntryData::Contents { ref inner } => {
-                contents = inner.clone();
+                contents = inner.to_string();
                 inode = 0;
                 mtime = None;
             }
@@ -5165,7 +5216,9 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
                 mtime: entry.mtime.map(|time| time.into()),
             }
         } else {
-            EntryData::Contents { inner: vec![] }
+            EntryData::Contents {
+                inner: entry.contents.into(),
+            }
         };
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),

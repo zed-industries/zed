@@ -1685,7 +1685,7 @@ message Entry {
     string path = 3;
     uint64 inode = 4;
     Timestamp mtime = 5;
-    bytes contents = 10;
+    string contents = 10;
     bool is_symlink = 6;
     bool is_ignored = 7;
     bool is_external = 8;

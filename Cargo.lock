@@ -13288,6 +13288,7 @@ name = "worktree"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async_zip",
  "clock",
  "collections",
  "env_logger",
