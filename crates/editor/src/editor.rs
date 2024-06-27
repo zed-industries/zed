@@ -2131,7 +2131,7 @@ impl Editor {
         self.refresh_inline_completion(false, cx);
     }
 
-    pub fn placeholder_text(&self, _cx: &mut WindowContext) -> Option<&str> {
+    pub fn placeholder_text(&self, _cx: &WindowContext) -> Option<&str> {
         self.placeholder_text.as_deref()
     }
 
