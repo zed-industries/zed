@@ -7,14 +7,17 @@ use windows::{
     Win32::{
         Foundation::{HWND, RECT},
         Graphics::{
-            Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1},
+            Direct3D::{
+                Fxc::{D3DCompileFromFile, D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION},
+                ID3DBlob, D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
+            },
             Direct3D11::{
                 D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext,
                 ID3D11RenderTargetView, ID3D11Texture2D, D3D11_BIND_CONSTANT_BUFFER,
                 D3D11_BIND_FLAG, D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC,
                 D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                D3D11_CREATE_DEVICE_DEBUG, D3D11_SDK_VERSION, D3D11_SUBRESOURCE_DATA,
-                D3D11_USAGE_DYNAMIC, D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT,
+                D3D11_CREATE_DEVICE_DEBUG, D3D11_MAP_WRITE_DISCARD, D3D11_SDK_VERSION,
+                D3D11_SUBRESOURCE_DATA, D3D11_USAGE_DYNAMIC, D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT,
             },
             DirectComposition::{
                 DCompositionCreateDevice, DCompositionCreateDevice2, IDCompositionDesktopDevice,
@@ -43,6 +46,7 @@ pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
     context: DirectXContext,
     render: DirectXRenderContext,
+    size: Size<DevicePixels>,
 }
 
 struct DirectXContext {
@@ -74,6 +78,7 @@ impl DirectXRenderer {
             )),
             context,
             render,
+            size: size(1.into(), 1.into()),
         }
     }
 
@@ -88,6 +93,7 @@ impl DirectXRenderer {
                 &[0.0, 0.2, 0.4, 0.6],
             );
         }
+        self.update_buffers().log_err();
         self.draw_primitives(scene);
         unsafe { self.context.swap_chain.Present(0, 0).ok().log_err() };
     }
@@ -95,6 +101,7 @@ impl DirectXRenderer {
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) {
         // TODO:
         unsafe {
+            self.size = new_size;
             self.context.context.OMSetRenderTargets(None, None);
             drop(self.context.back_buffer.take().unwrap());
             self.context
@@ -234,6 +241,26 @@ impl DirectXRenderer {
         }
         true
     }
+
+    fn update_buffers(&self) -> Result<()> {
+        unsafe {
+            let mut resource = std::mem::zeroed();
+            self.context.context.Map(
+                &self.render.global_params_buffer,
+                0,
+                D3D11_MAP_WRITE_DISCARD,
+                0,
+                Some(&mut resource),
+            )?;
+            let globals = resource.pData as *mut GlobalParams;
+            (*globals).viewport_size = [self.size.width.0 as f32, self.size.height.0 as f32];
+            (*globals).premultiplied_alpha = 1;
+            self.context
+                .context
+                .Unmap(&self.render.global_params_buffer, 0);
+        }
+        Ok(())
+    }
 }
 
 impl DirectXContext {
@@ -330,6 +357,9 @@ impl DirectXRenderContext {
             device.CreateBuffer(&desc, Some(&data), Some(&mut buffer))?;
             buffer.unwrap()
         };
+
+        let shadow_vertext = build_shader("shadow_vertex")?;
+        let shadow_fragment = build_shader("shadow_fragment")?;
 
         Ok(Self {
             uint_vertices_buffer,
@@ -455,6 +485,43 @@ fn set_viewport(device_context: &ID3D11DeviceContext, width: f32, height: f32) {
         MaxDepth: 1.0,
     };
     unsafe { device_context.RSSetViewports(Some(&[viewport])) };
+}
+
+fn build_shader(entry: &str) -> Result<ID3DBlob> {
+    unsafe {
+        let mut compile_blob = None;
+        let mut error_blob = None;
+        let shader_path = std::path::PathBuf::from("crates/gpui/src/platform/windows/shaders.hlsl")
+            .canonicalize()?;
+        let entry_point = PCSTR::from_raw(entry.as_ptr());
+        let ret = D3DCompileFromFile(
+            &HSTRING::from(shader_path.as_os_str()),
+            None,
+            None,
+            entry_point,
+            windows::core::s!("vs_5_0"),
+            D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
+            0,
+            &mut compile_blob,
+            Some(&mut error_blob),
+        );
+        if ret.is_err() {
+            let Some(error_blob) = error_blob else {
+                return Err(anyhow::anyhow!("{ret:?}"));
+            };
+            let string_len = error_blob.GetBufferSize();
+            let error_string_encode = Vec::from_raw_parts(
+                error_blob.GetBufferPointer() as *mut u8,
+                string_len,
+                string_len,
+            );
+            return Err(anyhow::anyhow!(
+                "Compile error: {}",
+                String::from_utf8_lossy(&error_string_encode)
+            ));
+        }
+        Ok(compile_blob.unwrap())
+    }
 }
 
 const BUFFER_COUNT: usize = 3;
