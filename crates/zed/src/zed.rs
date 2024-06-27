@@ -3111,11 +3111,11 @@ mod tests {
         cx.text_system()
             .add_fonts(vec![
                 Assets
-                    .load("fonts/plex-mono/IBMPlexMono-Regular.ttf")
+                    .load("fonts/plex-mono/ZedPlexMono-Regular.ttf")
                     .unwrap()
                     .unwrap(),
                 Assets
-                    .load("fonts/plex-sans/IBMPlexSans-Regular.ttf")
+                    .load("fonts/plex-sans/ZedPlexSans-Regular.ttf")
                     .unwrap()
                     .unwrap(),
             ])
