@@ -178,7 +178,7 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str".to_string(),
+                "```foo: u8, bar: &str```".to_string(),
                 vec![(0..7, SIGNATURE_HELP_HIGHLIGHT)]
             )
         );
@@ -212,7 +212,7 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str".to_string(),
+                "```foo: u8, bar: &str```".to_string(),
                 vec![(9..18, SIGNATURE_HELP_HIGHLIGHT)]
             )
         );
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str (+1 overload)".to_string(),
+                "```foo: u8, bar: &str (+1 overload)```".to_string(),
                 vec![
                     (0..7, SIGNATURE_HELP_HIGHLIGHT),
                     (19..32, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool (+1 overload)".to_string(),
+                "```hoge: String, fuga: bool (+1 overload)```".to_string(),
                 vec![
                     (0..12, SIGNATURE_HELP_HIGHLIGHT),
                     (25..38, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
@@ -371,7 +371,7 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool (+1 overload)".to_string(),
+                "```hoge: String, fuga: bool (+1 overload)```".to_string(),
                 vec![
                     (14..24, SIGNATURE_HELP_HIGHLIGHT),
                     (25..38, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool (+1 overload)".to_string(),
+                "```hoge: String, fuga: bool (+1 overload)```".to_string(),
                 vec![(25..38, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)]
             )
         );
@@ -491,7 +491,7 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "one: usize, two: u32 (+2 overload)".to_string(),
+                "```one: usize, two: u32 (+2 overload)```".to_string(),
                 vec![
                     (12..20, SIGNATURE_HELP_HIGHLIGHT),
                     (21..34, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
@@ -539,7 +539,7 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str".to_string(),
+                "```foo: u8, bar: &str```".to_string(),
                 vec![(0..7, SIGNATURE_HELP_HIGHLIGHT)]
             )
         );
