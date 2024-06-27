@@ -6683,6 +6683,8 @@ dependencies = [
  "serde_json",
  "tokenizers",
  "tokio",
+ "tree-sitter",
+ "tree-sitter-rust",
 ]
 
 [[package]]

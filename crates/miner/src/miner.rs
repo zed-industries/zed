@@ -9,7 +9,6 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
     time::SystemTime,
@@ -291,6 +290,8 @@ async fn summarize_project(
     let summaries = Arc::new(Mutex::new(BTreeMap::new()));
     let paths_loaded_from_cache = Arc::new(Mutex::new(BTreeMap::new()));
 
+    let rust_language = tree_sitter_rust::language();
+
     let workers: Vec<_> = (0..num_workers)
         .map(|_| {
             let queue = Arc::clone(&queue);
@@ -300,6 +301,9 @@ async fn summarize_project(
             let progress_bar = progress_bar.clone();
             let database = database.clone();
             let paths_loaded_from_cache = Arc::clone(&paths_loaded_from_cache);
+            let mut parser = tree_sitter::Parser::new();
+            parser.set_language(&rust_language).unwrap();
+            let rust_language = rust_language.clone();
 
             tokio::spawn(async move {
                 loop {
@@ -336,11 +340,84 @@ async fn summarize_project(
                                 let content = tokio::fs::read_to_string(&path)
                                     .await
                                     .unwrap_or_else(|_| "binary file".into());
-                                let chunks =
-                                    split_into_chunks(&content, &tokenizer, CHUNK_SIZE, OVERLAP);
-                                let chunk_summaries = summarize_chunks(&client, &chunks).await?;
-                                let summary =
-                                    combine_summaries(&client, &chunk_summaries, true).await?;
+
+                                let mut summary = String::new();
+
+                                if path.extension().map_or(false, |ext| ext == "rs") {
+                                    let tree = parser.parse(&content, None).unwrap();
+                                    let root_node = tree.root_node();
+
+                                    let export_query = tree_sitter::Query::new(
+                                        &rust_language,
+                                        include_str!("./rust_exports.scm"),
+                                    )
+                                    .unwrap();
+                                    let mut export_cursor = tree_sitter::QueryCursor::new();
+                                    let mut exports = Vec::new();
+                                    for m in export_cursor.matches(
+                                        &export_query,
+                                        root_node,
+                                        content.as_bytes(),
+                                    ) {
+                                        let mut current_level = 0;
+                                        let mut current_export = String::new();
+                                        for c in m.captures {
+                                            let export = content[c.node.byte_range()].to_string();
+                                            let indent = "  ".repeat(current_level);
+                                            if current_level == 0 {
+                                                current_export = format!("{}{}", indent, export);
+                                            } else {
+                                                current_export
+                                                    .push_str(&format!("\n{}{}", indent, export));
+                                            }
+                                            current_level += 1;
+                                        }
+                                        exports.push(current_export);
+                                    }
+
+                                    let import_query = tree_sitter::Query::new(
+                                        &rust_language,
+                                        include_str!("./rust_imports.scm"),
+                                    )
+                                    .unwrap();
+                                    let mut import_cursor = tree_sitter::QueryCursor::new();
+                                    let imports: Vec<_> = import_cursor
+                                        .matches(&import_query, root_node, content.as_bytes())
+                                        .flat_map(|m| m.captures)
+                                        .map(|c| content[c.node.byte_range()].to_string())
+                                        .collect();
+
+                                    summary.push_str("Summary: Rust file containing ");
+                                    if !exports.is_empty() {
+                                        summary.push_str(&format!("{} exports", exports.len()));
+                                        if !imports.is_empty() {
+                                            summary.push_str(" and ");
+                                        }
+                                    }
+                                    if !imports.is_empty() {
+                                        summary.push_str(&format!("{} imports", imports.len()));
+                                    }
+                                    summary.push('.');
+
+                                    if !exports.is_empty() {
+                                        summary.push_str("\nExports:\n");
+                                        summary.push_str(&exports.join("\n"));
+                                    }
+                                    if !imports.is_empty() {
+                                        summary.push_str("\nImports: ");
+                                        summary.push_str(&imports.join(", "));
+                                    }
+
+                                    println!("{}", summary);
+                                } else {
+                                    let chunks = split_into_chunks(
+                                        &content, &tokenizer, CHUNK_SIZE, OVERLAP,
+                                    );
+                                    let chunk_summaries =
+                                        summarize_chunks(&client, &chunks).await?;
+                                    summary =
+                                        combine_summaries(&client, &chunk_summaries, true).await?;
+                                }
 
                                 let cached_summary = CachedSummary {
                                     summary: summary.clone(),

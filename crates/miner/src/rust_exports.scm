@@ -1,0 +1,6 @@
+(mod_item name: (identifier) @export)
+(struct_item name: (type_identifier) @export)
+(impl_item type: (type_identifier) @export)
+(enum_item name: (type_identifier) @export)
+(function_item name: (identifier) @export)
+(trait_item name: (type_identifier) @export)
