@@ -379,7 +379,6 @@ impl CosmicTextSystemState {
                 offs..(offs + run.len),
                 Attrs::new()
                     .family(Family::Name(&font.families.first().unwrap().0))
-                    .stretch(font.stretch)
                     .style(font.style)
                     .weight(font.weight),
             );
