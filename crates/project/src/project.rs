@@ -1085,12 +1085,14 @@ impl Project {
                 "/Users/remcosmits/Documents/code/symfony_demo".into(),
                 &mut cx,
                 move |event, cx| {
-                    this2.update(cx, |_, cx| {
-                        cx.emit(Event::DebugClientEvent {
-                            client_id: id,
-                            event,
+                    this2
+                        .update(cx, |_, cx| {
+                            cx.emit(Event::DebugClientEvent {
+                                client_id: id,
+                                event,
+                            })
                         })
-                    }).log_err();
+                        .log_err();
                 },
             )
             .await
@@ -1155,7 +1157,7 @@ impl Project {
         {
             breakpoints_for_buffer.remove(ix);
         } else {
-            breakpoints_for_buffer.push(Breakpoint { row });
+            breakpoints_for_buffer.push(Breakpoint { row: row + 1 });
         }
 
         let clients = self
