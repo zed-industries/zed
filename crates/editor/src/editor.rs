@@ -8816,13 +8816,7 @@ impl Editor {
         let display_point = initial_point.to_display_point(snapshot);
         let mut hunks = hunks
             .map(|hunk| diff_hunk_to_display(&hunk, &snapshot))
-            .filter(|hunk| {
-                if is_wrapped {
-                    true
-                } else {
-                    !hunk.contains_display_row(display_point.row())
-                }
-            })
+            .filter(|hunk| is_wrapped || !hunk.contains_display_row(display_point.row()))
             .dedup();
 
         if let Some(hunk) = hunks.next() {
@@ -12521,7 +12515,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
         let group_id: SharedString = cx.block_id.to_string().into();
 
         let mut text_style = cx.text_style().clone();
-        text_style.color = diagnostic_style(diagnostic.severity, true, cx.theme().status());
+        text_style.color = diagnostic_style(diagnostic.severity, cx.theme().status());
         let theme_settings = ThemeSettings::get_global(cx);
         text_style.font_family = theme_settings.buffer_font.family.clone();
         text_style.font_style = theme_settings.buffer_font.style;
@@ -12617,25 +12611,19 @@ pub fn highlight_diagnostic_message(diagnostic: &Diagnostic) -> (SharedString, V
         prev_offset = ix + 1;
         if in_code_block {
             code_ranges.push(prev_len..text_without_backticks.len());
-            in_code_block = false;
-        } else {
-            in_code_block = true;
         }
+        in_code_block = !in_code_block;
     }
 
     (text_without_backticks.into(), code_ranges)
 }
 
-fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, colors: &StatusColors) -> Hsla {
-    match (severity, valid) {
-        (DiagnosticSeverity::ERROR, true) => colors.error,
-        (DiagnosticSeverity::ERROR, false) => colors.error,
-        (DiagnosticSeverity::WARNING, true) => colors.warning,
-        (DiagnosticSeverity::WARNING, false) => colors.warning,
-        (DiagnosticSeverity::INFORMATION, true) => colors.info,
-        (DiagnosticSeverity::INFORMATION, false) => colors.info,
-        (DiagnosticSeverity::HINT, true) => colors.info,
-        (DiagnosticSeverity::HINT, false) => colors.info,
+fn diagnostic_style(severity: DiagnosticSeverity, colors: &StatusColors) -> Hsla {
+    match severity {
+        DiagnosticSeverity::ERROR => colors.error,
+        DiagnosticSeverity::WARNING => colors.warning,
+        DiagnosticSeverity::INFORMATION => colors.info,
+        DiagnosticSeverity::HINT => colors.info,
         _ => colors.ignored,
     }
 }
