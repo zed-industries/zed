@@ -29,7 +29,7 @@
     "inline_completion_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
-  "buffer_font_family": "IBM Plex Mono",
+  "buffer_font_family": "Zed Plex Mono",
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
@@ -52,7 +52,7 @@
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
   // (On macOS) You can set this to ".SysmtemUIFont" to use the system font
-  "ui_font_family": "IBM Plex Sans",
+  "ui_font_family": "Zed Plex Sans",
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
@@ -679,7 +679,7 @@
     // "font_size": 15,
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": "IBM Plex Mono",
+    // "font_family": "Zed Plex Mono",
     // Sets the maximum number of lines in the terminal's scrollback buffer.
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
