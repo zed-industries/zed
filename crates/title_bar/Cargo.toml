@@ -32,7 +32,6 @@ test-support = [
 auto_update.workspace = true
 call.workspace = true
 client.workspace = true
-collab_ui.workspace = true
 command_palette.workspace = true
 dev_server_projects.workspace = true
 extensions_ui.workspace = true

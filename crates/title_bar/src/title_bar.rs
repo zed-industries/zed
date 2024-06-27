@@ -1,3 +1,4 @@
+mod call_controls;
 mod collab;
 mod platforms;
 
@@ -296,7 +297,7 @@ impl Render for TitleBar {
                                             .disabled(!platform_supported)
                                             .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                                             .on_click(move |_, cx| {
-                                                collab_ui::toggle_mute(&Default::default(), cx)
+                                                call_controls::toggle_mute(&Default::default(), cx);
                                             }),
                                         )
                                     })
@@ -329,7 +330,7 @@ impl Render for TitleBar {
                                             }
                                         })
                                         .on_click(move |_, cx| {
-                                            collab_ui::toggle_deafen(&Default::default(), cx)
+                                            call_controls::toggle_deafen(&Default::default(), cx)
                                         }),
                                     )
                                     .when(can_share_projects, |this| {
@@ -353,7 +354,7 @@ impl Render for TitleBar {
                                                     )
                                                 })
                                                 .on_click(move |_, cx| {
-                                                    collab_ui::toggle_screen_sharing(&Default::default(), cx)
+                                                    call_controls::toggle_screen_sharing(&Default::default(), cx)
                                                 }),
                                         )
                                     })
