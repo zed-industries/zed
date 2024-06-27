@@ -368,7 +368,6 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_toplevel_decoration_event(&self, event: zxdg_toplevel_decoration_v1::Event) {
-        dbg!(&event);
         match event {
             zxdg_toplevel_decoration_v1::Event::Configure { mode } => match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {

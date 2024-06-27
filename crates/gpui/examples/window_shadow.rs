@@ -19,8 +19,6 @@ impl Render for WindowShadow {
         let border_size = px(1.0);
         let grey = rgb(0x808080);
 
-        dbg!(&decorations);
-
         div()
             .id("window-backdrop")
             .map(|div| match decorations {
