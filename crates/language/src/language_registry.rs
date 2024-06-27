@@ -511,7 +511,7 @@ impl LanguageRegistry {
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension_or_hidden_file_name();
-        let path_suffixes = [extension, filename];
+        let path_suffixes = [extension, filename, path.to_str()];
         let empty = GlobSet::empty();
 
         let rx = self.get_or_load_language(move |language_name, config| {
