@@ -770,7 +770,7 @@ fn open_local_file(
     let worktree = project
         .read(cx)
         .visible_worktrees(cx)
-        .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
+        .find_map(|tree| tree.read(cx).root_entry()?.is_container().then_some(tree));
     if let Some(worktree) = worktree {
         let tree_id = worktree.read(cx).id();
         cx.spawn(|workspace, mut cx| async move {

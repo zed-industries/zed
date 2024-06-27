@@ -221,11 +221,11 @@ fn collect_files(
                     .unwrap_or_default()
                     .to_string();
 
-                if entry.is_dir() {
+                if entry.is_container() {
                     // Auto-fold directories that contain no files
                     let mut child_entries = snapshot.child_entries(&entry.path);
                     if let Some(child) = child_entries.next() {
-                        if child_entries.next().is_none() && child.kind.is_dir() {
+                        if child_entries.next().is_none() && child.kind.is_container() {
                             if is_top_level_directory {
                                 is_top_level_directory = false;
                                 folded_directory_names_stack.push(

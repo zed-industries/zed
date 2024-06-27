@@ -456,7 +456,7 @@ impl ProjectPanel {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             let auto_fold_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
             let is_root = Some(entry) == worktree.root_entry();
-            let is_dir = entry.is_dir();
+            let is_dir = entry.is_container();
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let worktree_id = worktree.id();
@@ -559,7 +559,7 @@ impl ProjectPanel {
     }
 
     fn is_unfoldable(&self, entry: &Entry, worktree: &Worktree) -> bool {
-        if !entry.is_dir() || self.unfolded_dir_ids.contains(&entry.id) {
+        if !entry.is_container() || self.unfolded_dir_ids.contains(&entry.id) {
             return false;
         }
 
@@ -568,7 +568,7 @@ impl ProjectPanel {
             let mut child_entries = snapshot.child_entries(&parent_path);
             if let Some(child) = child_entries.next() {
                 if child_entries.next().is_none() {
-                    return child.kind.is_dir();
+                    return child.kind.is_container();
                 }
             }
         };
@@ -576,13 +576,13 @@ impl ProjectPanel {
     }
 
     fn is_foldable(&self, entry: &Entry, worktree: &Worktree) -> bool {
-        if entry.is_dir() {
+        if entry.is_container() {
             let snapshot = worktree.snapshot();
 
             let mut child_entries = snapshot.child_entries(&entry.path);
             if let Some(child) = child_entries.next() {
                 if child_entries.next().is_none() {
-                    return child.kind.is_dir();
+                    return child.kind.is_container();
                 }
             }
         }
@@ -591,7 +591,7 @@ impl ProjectPanel {
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            if entry.is_dir() {
+            if entry.is_container() {
                 let worktree_id = worktree.id();
                 let entry_id = entry.id;
                 let expanded_dir_ids =
@@ -911,7 +911,7 @@ impl ProjectPanel {
                 let worktree = worktree.read(cx);
                 if let Some(mut entry) = worktree.entry_for_id(entry_id) {
                     loop {
-                        if entry.is_dir() {
+                        if entry.is_container() {
                             if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
                                 expanded_dir_ids.insert(ix, entry.id);
                             }
@@ -963,7 +963,7 @@ impl ProjectPanel {
                         worktree_id,
                         entry_id,
                         is_new_entry: false,
-                        is_dir: entry.is_dir(),
+                        is_dir: entry.is_container(),
                         processing_filename: None,
                     });
                     let file_name = entry
@@ -1117,7 +1117,7 @@ impl ProjectPanel {
             loop {
                 let mut child_entries_iter = snapshot.child_entries(path);
                 if let Some(child) = child_entries_iter.next() {
-                    if child_entries_iter.next().is_none() && child.is_dir() {
+                    if child_entries_iter.next().is_none() && child.is_container() {
                         self.unfolded_dir_ids.remove(&child.id);
                         path = &*child.path;
                     } else {
@@ -1259,7 +1259,9 @@ impl ProjectPanel {
     ) -> Option<PathBuf> {
         let mut new_path = target_entry.path.to_path_buf();
         // If we're pasting into a file, or a directory into itself, go up one level.
-        if target_entry.is_file() || (target_entry.is_dir() && target_entry.id == source.entry_id) {
+        if target_entry.is_file()
+            || (target_entry.is_container() && target_entry.id == source.entry_id)
+        {
             new_path.pop();
         }
         let clipboard_entry_file_name = self
@@ -1362,7 +1364,7 @@ impl ProjectPanel {
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             let abs_path = worktree.abs_path().join(&entry.path);
-            let working_directory = if entry.is_dir() {
+            let working_directory = if entry.is_container() {
                 Some(abs_path)
             } else {
                 if entry.is_symlink {
@@ -1384,7 +1386,7 @@ impl ProjectPanel {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            if entry.is_dir() {
+            if entry.is_container() {
                 let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
                 let dir_path = if include_root {
                     let mut full_path = PathBuf::from(worktree.root_name());
@@ -1540,7 +1542,7 @@ impl ProjectPanel {
             let Some(entry) = worktree.entry_for_path(path) else {
                 continue;
             };
-            if entry.is_dir() {
+            if entry.is_container() {
                 if let Err(idx) = expanded_dir_ids.binary_search(&entry.id) {
                     expanded_dir_ids.insert(idx, entry.id);
                 }
@@ -1583,12 +1585,12 @@ impl ProjectPanel {
             };
 
             let mut new_entry_parent_id = None;
-            let mut new_entry_kind = EntryKind::Dir;
+            let mut new_entry_kind = EntryKind::Container;
             if let Some(edit_state) = &self.edit_state {
                 if edit_state.worktree_id == worktree_id && edit_state.is_new_entry {
                     new_entry_parent_id = Some(edit_state.entry_id);
                     new_entry_kind = if edit_state.is_dir {
-                        EntryKind::Dir
+                        EntryKind::Container
                     } else {
                         EntryKind::File(Default::default())
                     };
@@ -1599,7 +1601,7 @@ impl ProjectPanel {
             let mut entry_iter = snapshot.entries(true, 0);
             while let Some(entry) = entry_iter.entry() {
                 if auto_collapse_dirs
-                    && entry.kind.is_dir()
+                    && entry.kind.is_container()
                     && !self.unfolded_dir_ids.contains(&entry.id)
                 {
                     if let Some(root_path) = snapshot.root_entry() {
@@ -1607,7 +1609,7 @@ impl ProjectPanel {
                         if let Some(child) = child_entries.next() {
                             if entry.path != root_path.path
                                 && child_entries.next().is_none()
-                                && child.kind.is_dir()
+                                && child.kind.is_container()
                             {
                                 entry_iter.advance();
                                 continue;
@@ -2169,7 +2171,7 @@ impl ProjectPanel {
                                 if !this.marked_entries.insert(selection) {
                                     this.marked_entries.remove(&selection);
                                 }
-                            } else if kind.is_dir() {
+                            } else if kind.is_container() {
                                 this.toggle_expanded(entry_id, cx);
                             } else {
                                 let click_count = event.up.click_count;
@@ -2596,7 +2598,7 @@ impl Panel for ProjectPanel {
             || project.visible_worktrees(cx).any(|tree| {
                 tree.read(cx)
                     .root_entry()
-                    .map_or(false, |entry| entry.is_dir())
+                    .map_or(false, |entry| entry.is_container())
             })
     }
 }
@@ -5016,7 +5018,7 @@ mod tests {
                 }
 
                 let indent = "    ".repeat(details.depth);
-                let icon = if details.kind.is_dir() {
+                let icon = if details.kind.is_container() {
                     if details.is_expanded {
                         "v "
                     } else {

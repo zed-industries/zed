@@ -241,7 +241,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
 
         assert_eq!(
             tree.entry_for_path("deps/dep-dir2").unwrap().kind,
-            EntryKind::UnloadedDir
+            EntryKind::UnloadedContainer
         );
     });
 
@@ -1194,11 +1194,14 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         .unwrap()
         .to_included()
         .unwrap();
-    assert!(entry.is_dir());
+    assert!(entry.is_container());
 
     cx.executor().run_until_parked();
     tree.read_with(cx, |tree, _| {
-        assert_eq!(tree.entry_for_path("a/e").unwrap().kind, EntryKind::Dir);
+        assert_eq!(
+            tree.entry_for_path("a/e").unwrap().kind,
+            EntryKind::Container
+        );
     });
 
     let snapshot2 = tree.update(cx, |tree, _| tree.as_local().unwrap().snapshot());
@@ -1248,8 +1251,8 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
     tree_fake.read_with(cx, |tree, _| {
         assert!(tree.entry_for_path("a/b/c/d.txt").unwrap().is_file());
-        assert!(tree.entry_for_path("a/b/c/").unwrap().is_dir());
-        assert!(tree.entry_for_path("a/b/").unwrap().is_dir());
+        assert!(tree.entry_for_path("a/b/c/").unwrap().is_container());
+        assert!(tree.entry_for_path("a/b/").unwrap().is_container());
     });
 
     let fs_real = Arc::new(RealFs::default());
@@ -1282,8 +1285,8 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
     tree_real.read_with(cx, |tree, _| {
         assert!(tree.entry_for_path("a/b/c/d.txt").unwrap().is_file());
-        assert!(tree.entry_for_path("a/b/c/").unwrap().is_dir());
-        assert!(tree.entry_for_path("a/b/").unwrap().is_dir());
+        assert!(tree.entry_for_path("a/b/c/").unwrap().is_container());
+        assert!(tree.entry_for_path("a/b/").unwrap().is_container());
     });
 
     // Test smallest change
@@ -1320,9 +1323,9 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
     tree_real.read_with(cx, |tree, _| {
         assert!(tree.entry_for_path("d/e/f/g.txt").unwrap().is_file());
-        assert!(tree.entry_for_path("d/e/f").unwrap().is_dir());
-        assert!(tree.entry_for_path("d/e/").unwrap().is_dir());
-        assert!(tree.entry_for_path("d/").unwrap().is_dir());
+        assert!(tree.entry_for_path("d/e/f").unwrap().is_container());
+        assert!(tree.entry_for_path("d/e/").unwrap().is_container());
+        assert!(tree.entry_for_path("d/").unwrap().is_container());
     });
 }
 
@@ -1558,8 +1561,8 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
     fn ignore_pending_dir(entry: &Entry) -> Entry {
         let mut entry = entry.clone();
-        if entry.kind.is_dir() {
-            entry.kind = EntryKind::Dir
+        if entry.kind.is_container() {
+            entry.kind = EntryKind::Container
         }
         entry
     }
@@ -1620,7 +1623,7 @@ fn randomly_mutate_worktree(
         }
         ..=66 if entry.path.as_ref() != Path::new("") => {
             let other_entry = snapshot.entries(false, 0).choose(rng).unwrap();
-            let new_parent_path = if other_entry.is_dir() {
+            let new_parent_path = if other_entry.is_container() {
                 other_entry.path.clone()
             } else {
                 other_entry.path.parent().unwrap().into()
@@ -1643,7 +1646,7 @@ fn randomly_mutate_worktree(
             })
         }
         _ => {
-            if entry.is_dir() {
+            if entry.is_container() {
                 let child_path = entry.path.join(random_filename(rng));
                 let is_dir = rng.gen_bool(0.3);
                 log::info!(

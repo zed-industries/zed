@@ -493,7 +493,7 @@ impl OutlinePanel {
         }
         for child_dir in worktree
             .child_entries(&entry.path)
-            .filter(|entry| entry.is_dir())
+            .filter(|entry| entry.is_container())
         {
             let removed = unfolded_dirs.remove(&child_dir.id);
             if !removed {
@@ -1197,7 +1197,7 @@ impl OutlinePanel {
                 );
                 let mut current_entry = buffer_entry;
                 loop {
-                    if current_entry.is_dir() {
+                    if current_entry.is_container() {
                         if self
                             .collapsed_entries
                             .remove(&CollapsedEntry::Dir(worktree_id, current_entry.id))
@@ -1694,7 +1694,7 @@ impl OutlinePanel {
                                             .insert(entry.id, (buffer_id, excerpts));
                                         let mut current_entry = entry;
                                         loop {
-                                            if current_entry.is_dir() {
+                                            if current_entry.is_container() {
                                                 let is_root =
                                                     worktree.root_entry().map(|entry| entry.id)
                                                         == Some(current_entry.id);
@@ -1787,7 +1787,7 @@ impl OutlinePanel {
                                                         .or_default()
                                                         .entry(parent.to_path_buf())
                                                         .or_default();
-                                                    if entry.is_dir() {
+                                                    if entry.is_container() {
                                                         children.dirs += 1;
                                                     } else {
                                                         children.files += 1;
@@ -1795,7 +1795,7 @@ impl OutlinePanel {
                                                 }
                                             }
 
-                                            if entry.is_dir() {
+                                            if entry.is_container() {
                                                 Some(FsEntry::Directory(worktree_id, entry))
                                             } else {
                                                 let (buffer_id, excerpts) = worktree_excerpts

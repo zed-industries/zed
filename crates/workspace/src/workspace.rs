@@ -4615,7 +4615,7 @@ async fn join_channel_internal(
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
-                                .map_or(false, |entry| entry.is_dir())
+                                .map_or(false, |entry| entry.is_container())
                         })
                     {
                         Some(workspace.project.clone())

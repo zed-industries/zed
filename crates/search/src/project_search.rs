@@ -2401,7 +2401,7 @@ pub mod tests {
                 .entry_for_path(&(worktree_id, "a").into(), cx)
                 .expect("no entry for /a/ directory")
         });
-        assert!(a_dir_entry.is_dir());
+        assert!(a_dir_entry.is_container());
         window
             .update(cx, |workspace, cx| {
                 ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry.path, cx)

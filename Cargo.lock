@@ -4400,10 +4400,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fs_zip"
-version = "0.1.0"
-
-[[package]]
 name = "fsevent"
 version = "0.1.0"
 dependencies = [

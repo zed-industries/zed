@@ -46,7 +46,7 @@ impl Match {
     }
 
     fn is_dir(&self, project: &Project, cx: &WindowContext) -> bool {
-        self.entry(project, cx).is_some_and(|e| e.is_dir())
+        self.entry(project, cx).is_some_and(|e| e.is_container())
             || self.suffix.as_ref().is_some_and(|s| s.ends_with('/'))
     }
 
@@ -121,7 +121,7 @@ impl Match {
                 text.push_str(suffix);
                 let entry = self.entry(project, cx);
                 let color = if let Some(entry) = entry {
-                    if entry.is_dir() {
+                    if entry.is_container() {
                         Color::Accent
                     } else {
                         Color::Conflict
@@ -134,7 +134,7 @@ impl Match {
                     HighlightStyle::color(color.color(cx)),
                 ));
                 offset += suffix.as_bytes().len();
-                if entry.is_some_and(|e| e.is_dir()) {
+                if entry.is_some_and(|e| e.is_container()) {
                     text.push(separator);
                     offset += separator.len_utf8();
 

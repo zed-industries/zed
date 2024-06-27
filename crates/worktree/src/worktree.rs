@@ -371,6 +371,15 @@ static EMPTY_PATH: &str = "";
 
 impl EventEmitter<Event> for Worktree {}
 
+// Splits zip path into a path to the .zip file itself + it's suffix.
+fn zip_path(path: &Path) -> Option<(Arc<Path>, Arc<Path>)> {
+    let path_str = path.to_str()?;
+    let (zip, inner) = path_str.split_once(".zip/")?;
+    let zip_path = PathBuf::from(format!("{}.zip", zip));
+    let inner_path = PathBuf::from(inner);
+    Some((Arc::from(zip_path), Arc::from(inner_path)))
+}
+
 impl Worktree {
     pub async fn local(
         path: impl Into<Arc<Path>>,
@@ -380,8 +389,10 @@ impl Worktree {
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
         let abs_path = path.into();
+
+        let zip_path = zip_path(&abs_path);
         let metadata = fs
-            .metadata(&abs_path)
+            .metadata(&zip_path.as_ref().map(|(path, _)| path).unwrap_or(&abs_path))
             .await
             .context("failed to stat worktree path")?;
 
@@ -2236,7 +2247,7 @@ impl Snapshot {
                     None
                 };
             } else {
-                if result[result_ix].is_dir() {
+                if result[result_ix].is_container() {
                     cursor.seek_forward(
                         &TraversalTarget::Path(&result[result_ix].path),
                         Bias::Left,
@@ -2431,7 +2442,7 @@ impl LocalSnapshot {
             }
         }
 
-        if entry.kind == EntryKind::PendingDir {
+        if entry.kind == EntryKind::PendingContainer {
             if let Some(existing_entry) =
                 self.entries_by_path.get(&PathKey(entry.path.clone()), &())
             {
@@ -2503,9 +2514,9 @@ impl LocalSnapshot {
 
     #[cfg(test)]
     pub(crate) fn expanded_entries(&self) -> impl Iterator<Item = &Entry> {
-        self.entries_by_path
-            .cursor::<()>()
-            .filter(|entry| entry.kind == EntryKind::Dir && (entry.is_external || entry.is_ignored))
+        self.entries_by_path.cursor::<()>().filter(|entry| {
+            entry.kind == EntryKind::Container && (entry.is_external || entry.is_ignored)
+        })
     }
 
     #[cfg(test)]
@@ -2689,8 +2700,10 @@ impl BackgroundScannerState {
         };
 
         match parent_entry.kind {
-            EntryKind::PendingDir | EntryKind::UnloadedDir => parent_entry.kind = EntryKind::Dir,
-            EntryKind::Dir => {}
+            EntryKind::PendingContainer | EntryKind::UnloadedContainer => {
+                parent_entry.kind = EntryKind::Container
+            }
+            EntryKind::Container => {}
             _ => return,
         }
 
@@ -3132,9 +3145,9 @@ pub struct Entry {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EntryKind {
-    UnloadedDir,
-    PendingDir,
-    Dir,
+    UnloadedContainer,
+    PendingContainer,
+    Container,
     File(CharBag),
 }
 
@@ -3173,7 +3186,7 @@ impl Entry {
         Self {
             id: ProjectEntryId::new(next_entry_id),
             kind: if metadata.is_dir {
-                EntryKind::PendingDir
+                EntryKind::PendingContainer
             } else {
                 EntryKind::File(char_bag_for_path(root_char_bag, &path))
             },
@@ -3193,8 +3206,8 @@ impl Entry {
         self.mtime.is_some()
     }
 
-    pub fn is_dir(&self) -> bool {
-        self.kind.is_dir()
+    pub fn is_container(&self) -> bool {
+        self.kind.is_container()
     }
 
     pub fn is_file(&self) -> bool {
@@ -3207,15 +3220,15 @@ impl Entry {
 }
 
 impl EntryKind {
-    pub fn is_dir(&self) -> bool {
+    pub fn is_container(&self) -> bool {
         matches!(
             self,
-            EntryKind::Dir | EntryKind::PendingDir | EntryKind::UnloadedDir
+            EntryKind::Container | EntryKind::PendingContainer | EntryKind::UnloadedContainer
         )
     }
 
     pub fn is_unloaded(&self) -> bool {
-        matches!(self, EntryKind::UnloadedDir)
+        matches!(self, EntryKind::UnloadedContainer)
     }
 
     pub fn is_file(&self) -> bool {
@@ -3614,7 +3627,7 @@ impl BackgroundScanner {
                 let parent_dir_is_loaded = relative_path.parent().map_or(true, |parent| {
                     snapshot
                         .entry_for_path(parent)
-                        .map_or(false, |entry| entry.kind == EntryKind::Dir)
+                        .map_or(false, |entry| entry.kind == EntryKind::Container)
                 });
                 if !parent_dir_is_loaded {
                     log::debug!("ignoring event {relative_path:?} within unloaded directory");
@@ -3676,7 +3689,7 @@ impl BackgroundScanner {
             for path in paths {
                 for ancestor in path.ancestors() {
                     if let Some(entry) = state.snapshot.entry_for_path(ancestor) {
-                        if entry.kind == EntryKind::UnloadedDir {
+                        if entry.kind == EntryKind::UnloadedContainer {
                             let abs_path = root_path.join(ancestor);
                             state.enqueue_scan_dir(abs_path.into(), entry, &scan_job_tx);
                             state.paths_to_scan.insert(path.clone());
@@ -3926,7 +3939,7 @@ impl BackgroundScanner {
                 child_entry.canonical_path = Some(canonical_path);
             }
 
-            if child_entry.is_dir() {
+            if child_entry.is_container() {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
 
                 // Avoid recursing until crash in the case of a recursive symlink
@@ -3979,12 +3992,12 @@ impl BackgroundScanner {
         let mut job_ix = 0;
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
-            if entry.is_dir() {
+            if entry.is_container() {
                 if state.should_scan_directory(entry) {
                     job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
-                    entry.kind = EntryKind::UnloadedDir;
+                    entry.kind = EntryKind::UnloadedContainer;
                     new_jobs.remove(job_ix);
                 }
             }
@@ -4074,7 +4087,7 @@ impl BackgroundScanner {
                         },
                     );
 
-                    let is_dir = fs_entry.is_dir();
+                    let is_dir = fs_entry.is_container();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
 
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
@@ -4088,14 +4101,14 @@ impl BackgroundScanner {
                         }
                     }
 
-                    if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_dir()) {
+                    if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_container()) {
                         if state.should_scan_directory(&fs_entry)
                             || (fs_entry.path.as_os_str().is_empty()
                                 && abs_path.file_name() == Some(*DOT_GIT))
                         {
                             state.enqueue_scan_dir(abs_path, &fs_entry, scan_queue_tx);
                         } else {
-                            fs_entry.kind = EntryKind::UnloadedDir;
+                            fs_entry.kind = EntryKind::UnloadedContainer;
                         }
                     }
 
@@ -4237,9 +4250,9 @@ impl BackgroundScanner {
         for mut entry in snapshot.child_entries(path).cloned() {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
-            entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
+            entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_container());
 
-            if entry.is_dir() {
+            if entry.is_container() {
                 let child_ignore_stack = if entry.is_ignored {
                     IgnoreStack::all()
                 } else {
@@ -4269,7 +4282,7 @@ impl BackgroundScanner {
                 let mut path_entry = snapshot.entries_by_id.get(&entry.id, &()).unwrap().clone();
                 path_entry.scan_id = snapshot.scan_id;
                 path_entry.is_ignored = entry.is_ignored;
-                if !entry.is_dir() && !entry.is_ignored && !entry.is_external {
+                if !entry.is_container() && !entry.is_ignored && !entry.is_external {
                     if let Some((ref repo_entry, local_repo)) = repo {
                         if let Ok(repo_path) = repo_entry.relativize(&snapshot, &entry.path) {
                             entry.git_status = local_repo.repo_ptr.status(&repo_path);
@@ -4912,7 +4925,7 @@ impl<'a> Traversal<'a> {
             );
             if let Some(entry) = self.cursor.item() {
                 if (self.include_files || !entry.is_file())
-                    && (self.include_dirs || !entry.is_dir())
+                    && (self.include_dirs || !entry.is_container())
                     && (self.include_ignored || !entry.is_ignored)
                 {
                     return true;
@@ -5027,7 +5040,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
     fn from(entry: &'a Entry) -> Self {
         Self {
             id: entry.id.to_proto(),
-            is_dir: entry.is_dir(),
+            is_dir: entry.is_container(),
             path: entry.path.to_string_lossy().into(),
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
@@ -5044,7 +5057,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
 
     fn try_from((root_char_bag, entry): (&'a CharBag, proto::Entry)) -> Result<Self> {
         let kind = if entry.is_dir {
-            EntryKind::Dir
+            EntryKind::Container
         } else {
             let mut char_bag = *root_char_bag;
             char_bag.extend(entry.path.chars().map(|c| c.to_ascii_lowercase()));

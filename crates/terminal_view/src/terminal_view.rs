@@ -1133,7 +1133,7 @@ fn current_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<P
 
 fn get_path_from_wt(wt: &LocalWorktree) -> Option<PathBuf> {
     wt.root_entry()
-        .filter(|re| re.is_dir())
+        .filter(|re| re.is_container())
         .map(|_| wt.abs_path().to_path_buf())
 }
 

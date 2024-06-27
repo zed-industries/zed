@@ -306,7 +306,9 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         let worktree = worktree.read(cx);
                                         worktree.is_visible()
                                             && worktree.entries(false, 0).any(|e| e.is_file())
-                                            && worktree.root_entry().map_or(false, |e| e.is_dir())
+                                            && worktree
+                                                .root_entry()
+                                                .map_or(false, |e| e.is_container())
                                     })
                                     .choose(rng)
                             });

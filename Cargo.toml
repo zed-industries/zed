@@ -32,7 +32,6 @@ members = [
     "crates/file_finder",
     "crates/file_icons",
     "crates/fs",
-    "crates/fs_zip",
     "crates/fsevent",
     "crates/fuzzy",
     "crates/git",

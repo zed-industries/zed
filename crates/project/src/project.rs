@@ -10954,7 +10954,7 @@ impl Project {
                 let worktree = worktree.read(cx);
                 worktree.is_visible()
                     && worktree.is_local()
-                    && worktree.root_entry().map_or(false, |e| e.is_dir())
+                    && worktree.root_entry().map_or(false, |e| e.is_container())
             })
             .collect::<Vec<_>>();
         let cwd = match available_worktrees.len() {
@@ -11411,7 +11411,7 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.traversal.next().map(|entry| match entry.kind {
-            EntryKind::Dir => fuzzy::PathMatchCandidate {
+            EntryKind::Container => fuzzy::PathMatchCandidate {
                 path: &entry.path,
                 char_bag: CharBag::from_iter(entry.path.to_string_lossy().to_lowercase().chars()),
             },
@@ -11419,7 +11419,7 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
                 path: &entry.path,
                 char_bag,
             },
-            EntryKind::UnloadedDir | EntryKind::PendingDir => unreachable!(),
+            EntryKind::UnloadedContainer | EntryKind::PendingContainer => unreachable!(),
         })
     }
 }
