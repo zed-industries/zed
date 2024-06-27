@@ -74,7 +74,7 @@ use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use paths::{
-    local_launch_file_relative_path, local_settings_file_relative_path,
+    local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
     local_vscode_tasks_file_relative_path,
 };
@@ -1085,12 +1085,14 @@ impl Project {
                 "/Users/remcosmits/Documents/code/symfony_demo".into(),
                 &mut cx,
                 move |event, cx| {
-                    this2.update(cx, |_, cx| {
-                        cx.emit(Event::DebugClientEvent {
-                            client_id: id,
-                            event,
+                    this2
+                        .update(cx, |_, cx| {
+                            cx.emit(Event::DebugClientEvent {
+                                client_id: id,
+                                event,
+                            })
                         })
-                    }).log_err();
+                        .log_err();
                 },
             )
             .await
@@ -8425,28 +8427,24 @@ impl Project {
                         );
                     }
                 })
-            } else if abs_path.ends_with(local_launch_file_relative_path()) {
+            } else if abs_path.ends_with(local_debug_file_relative_path()) {
                 // TODO: handle local launch file (.zed/debug.json)
-                self.debugger_configs().update(cx, |debugger_configs, cx| {
+                self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
-                        debugger_configs.remove_source(&abs_path);
+                        task_inventory.remove_local_static_source(&abs_path);
                     } else {
                         let fs = self.fs.clone();
-                        let debugger_configs_file_rx =
+                        let debug_task_file_rx =
                             watch_config_file(&cx.background_executor(), fs, abs_path.clone());
 
-                        debugger_configs.add_source(
-                            DebuggerConfigSourceKind::Worktree {
-                                id: remote_worktree_id.to_usize(),
+                        task_inventory.add_source(
+                            TaskSourceKind::Worktree {
+                                id: remote_worktree_id,
                                 abs_path,
                                 id_base: "local_debug_File_for_worktree".into(),
                             },
                             |tx, cx| {
-                                debugger_inventory::StaticSource::new(TrackedFile::new(
-                                    debugger_configs_file_rx,
-                                    tx,
-                                    cx,
-                                ))
+                                StaticSource::new(TrackedFile::new(debug_task_file_rx, tx, cx))
                             },
                             cx,
                         );
@@ -11139,6 +11137,7 @@ impl Project {
                         allow_concurrent_runs: proto_template.allow_concurrent_runs,
                         reveal,
                         tags: proto_template.tags,
+                        ..Default::default()
                     };
                     Some((task_source_kind, task_template))
                 })

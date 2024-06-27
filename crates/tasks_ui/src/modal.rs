@@ -9,7 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Project, TaskSourceKind};
-use task::{ResolvedTask, TaskContext, TaskId, TaskTemplate};
+use task::{ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskType};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
@@ -73,6 +73,8 @@ pub(crate) struct TasksModalDelegate {
     prompt: String,
     task_context: TaskContext,
     placeholder_text: Arc<str>,
+    /// If this delegate is responsible for running a scripting task or a debugger
+    task_type: TaskType,
 }
 
 impl TasksModalDelegate {
@@ -80,6 +82,7 @@ impl TasksModalDelegate {
         project: Model<Project>,
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
+        task_type: TaskType,
     ) -> Self {
         Self {
             project,
@@ -92,6 +95,7 @@ impl TasksModalDelegate {
             prompt: String::default(),
             task_context,
             placeholder_text: Arc::from("Find a task, or run a command"),
+            task_type,
         }
     }
 
@@ -143,10 +147,11 @@ impl TasksModal {
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
+        task_type: TaskType,
     ) -> Self {
         let picker = cx.new_view(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(project, task_context, workspace),
+                TasksModalDelegate::new(project, task_context, workspace, task_type),
                 cx,
             )
         });

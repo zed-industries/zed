@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::{borrow::Cow, path::Path};
 
-pub use task_template::{RevealStrategy, TaskTemplate, TaskTemplates};
+pub use task_template::{RevealStrategy, TaskTemplate, TaskTemplates, TaskType};
 pub use vscode_format::VsCodeTaskFile;
 
 /// Task identifier, unique within the application.

@@ -3282,6 +3282,8 @@ dependencies = [
  "project",
  "serde",
  "serde_derive",
+ "task",
+ "tasks_ui",
  "ui",
  "workspace",
 ]

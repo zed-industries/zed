@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{default, path::PathBuf};
 
 use anyhow::{bail, Context};
 use collections::{HashMap, HashSet};
@@ -45,10 +45,24 @@ pub struct TaskTemplate {
     /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
     #[serde(default)]
     pub reveal: RevealStrategy,
+    /// If this task should start a debugger or not
+    #[serde(default)]
+    pub task_type: TaskType,
 
     /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
     #[serde(default)]
     pub tags: Vec<String>,
+}
+
+/// Represents the type of task that is being ran
+#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Copy, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskType {
+    /// Act like a typically task that runs commands
+    #[default]
+    Script,
+    /// This task starts the debugger for a language
+    Debug,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
