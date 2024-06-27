@@ -3,7 +3,6 @@
 //! This module uses the [ashpd] crate
 
 use anyhow::anyhow;
-
 use ashpd::desktop::settings::{ColorScheme, Settings};
 use calloop::channel::Channel;
 use calloop::{EventSource, Poll, PostAction, Readiness, Token, TokenFactory};

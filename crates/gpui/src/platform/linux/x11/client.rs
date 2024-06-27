@@ -1072,6 +1072,8 @@ impl LinuxClient for X11Client {
 
     fn run(&self) {
         loop {
+            let mut sleep = true;
+
             // Send expose events to windows that need refreshing
             let mut windows_to_expose = HashSet::new();
             {
@@ -1083,6 +1085,7 @@ impl LinuxClient for X11Client {
                     }
                 }
             }
+            sleep = windows_to_expose.is_empty();
             let _ = self.send_window_expose_events(windows_to_expose).log_err();
 
             // Read all X11 events and then handle them in a batch
@@ -1101,6 +1104,7 @@ impl LinuxClient for X11Client {
                     }
                 }
 
+                sleep = !sleep && events.is_empty() && windows_to_refresh.is_empty();
                 // We prioritize Expose events so that a lot of input events don't hold up
                 // a render.
                 for window in windows_to_refresh.into_iter() {
@@ -1123,6 +1127,8 @@ impl LinuxClient for X11Client {
 
                     runnable.run();
 
+                    sleep = false;
+
                     if now.elapsed() >= Duration::from_millis(2) {
                         println!("ran runnables for over 2ms");
                         break;
@@ -1137,6 +1143,8 @@ impl LinuxClient for X11Client {
                 let mut state = self.0.borrow_mut();
                 while let Ok(event) = state.xdp_event_source.try_recv() {
                     drop(state);
+
+                    sleep = false;
 
                     match event {
                         XDPEvent::WindowAppearance(appearance) => {
@@ -1155,8 +1163,10 @@ impl LinuxClient for X11Client {
             }
 
             // Sleep for a very short duration to prevent busy-waiting
-            // TODO: Do we need this? Or should we do a busy hint to the CPU?
-            std::thread::sleep(Duration::from_millis(1));
+            // But only if we had nothing to do in this iteration.
+            if sleep {
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
     }
 
