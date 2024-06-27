@@ -341,7 +341,20 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                match task.task_type() {
+                    TaskType::Script => schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        task,
+                        omit_history_entry,
+                        cx,
+                    ),
+                    // TODO: Should create a schedule_resolved_debug_task function
+                    // This would allow users to access to debug history and other issues
+                    TaskType::Debug => workspace.project().update(cx, |project, cx| {
+                        project.start_debug_adapter_client(task, cx)
+                    }),
+                };
             })
             .ok();
         cx.emit(DismissEvent);
@@ -480,9 +493,23 @@ impl PickerDelegate for TasksModalDelegate {
         let Some((task_source_kind, task)) = self.spawn_oneshot() else {
             return;
         };
+
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                match task.task_type() {
+                    TaskType::Script => schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        task,
+                        omit_history_entry,
+                        cx,
+                    ),
+                    // TODO: Should create a schedule_resolved_debug_task function
+                    // This would allow users to access to debug history and other issues
+                    TaskType::Debug => workspace.project().update(cx, |project, cx| {
+                        project.start_debug_adapter_client(task, cx)
+                    }),
+                };
             })
             .ok();
         cx.emit(DismissEvent);
@@ -596,8 +623,8 @@ fn string_match_candidates<'a>(
     task_type: TaskType,
 ) -> Vec<StringMatchCandidate> {
     candidates
-        .filter(|(_, candidate)| candidate.task_type() == task_type)
         .enumerate()
+        .filter(|(_, (_, candidate))| candidate.task_type() == task_type)
         .map(|(index, (_, candidate))| StringMatchCandidate {
             id: index,
             char_bag: candidate.resolved_label.chars().collect(),

@@ -1069,20 +1069,30 @@ impl Project {
         })
     }
 
-    pub fn start_debug_adapter_client(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn start_debug_adapter_client(
+        &mut self,
+        debug_task: task::ResolvedTask,
+        cx: &mut ModelContext<Self>,
+    ) {
         let id = DebugAdapterClientId(1);
+        let debug_template = debug_task.original_task();
+        let command = debug_template.command.clone();
+        let cwd = debug_template
+            .cwd
+            .clone()
+            .expect("Debug tasks need to know what directory to open");
+        let mut args = debug_template.args.clone();
+
+        args.push("--server=8131".to_string().clone());
 
         let task = cx.spawn(|this, mut cx| async move {
             let this2 = this.clone();
             let mut client = DebugAdapterClient::new(
                 TransportType::TCP,
-                "bun",
-                vec![
-                    "/Users/remcosmits/Documents/code/vscode-php-debug/out/phpDebug.js",
-                    "--server=8131",
-                ],
+                &command,
+                args.iter().map(|ele| &ele[..]).collect(),
                 8131,
-                "/Users/remcosmits/Documents/code/symfony_demo".into(),
+                cwd.into(),
                 &mut cx,
                 move |event, cx| {
                     this2
