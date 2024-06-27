@@ -18,7 +18,13 @@ use std::{
 };
 use util::{maybe, ResultExt};
 
-const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
+const SERVER_PATH: &'static [&'static str] = &[
+    "node_modules",
+    "@tailwindcss",
+    "language-server",
+    "bin",
+    "tailwindcss-language-server",
+];
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -94,7 +100,11 @@ impl LspAdapter for TailwindLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
-        let server_path = container_dir.join(SERVER_PATH);
+        //changed this v
+        let mut server_path = container_dir.clone();
+        for p in SERVER_PATH.iter() {
+            server_path = server_path.join(p);
+        }
         let package_name = "@tailwindcss/language-server";
 
         let should_install_language_server = self
@@ -211,7 +221,11 @@ async fn get_cached_server_binary(
             }
         }
         let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-        let server_path = last_version_dir.join(SERVER_PATH);
+        //changed this v
+        let mut server_path = last_version_dir.clone();
+        for p in SERVER_PATH.iter() {
+            server_path = server_path.join(p);
+        }
         if server_path.exists() {
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
