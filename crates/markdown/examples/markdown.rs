@@ -8,78 +8,78 @@ use std::sync::Arc;
 use theme::LoadThemes;
 use ui::prelude::*;
 use ui::{div, WindowContext};
+const MARKDOWN_EXAMPLE: &'static str = r#"Headings are created by adding one or more `#` symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading.symbols before your heading text. The number of you use will determine the size of the heading."#;
+// const MARKDOWN_EXAMPLE: &'static str = r#"
+// # Markdown Example Document2
 
-const MARKDOWN_EXAMPLE: &'static str = r#"
-# Markdown Example Document
+// ## Headings
+// Headings are created by adding one or more `#` symbols before your heading text. The number of `#` you use will determine the size of the heading.
 
-## Headings
-Headings are created by adding one or more `#` symbols before your heading text. The number of `#` you use will determine the size of the heading.
+// ## Emphasis
+// Emphasis can be added with italics or bold. *This text will be italic*. _This will also be italic_
 
-## Emphasis
-Emphasis can be added with italics or bold. *This text will be italic*. _This will also be italic_
+// ## Lists
 
-## Lists
+// ### Unordered Lists
+// Unordered lists use asterisks `*`, plus `+`, or minus `-` as list markers.
 
-### Unordered Lists
-Unordered lists use asterisks `*`, plus `+`, or minus `-` as list markers.
+// * Item 1
+// * Item 2
+//   * Item 2a
+//   * Item 2b
 
-* Item 1
-* Item 2
-  * Item 2a
-  * Item 2b
+// ### Ordered Lists
+// Ordered lists use numbers followed by a period.
 
-### Ordered Lists
-Ordered lists use numbers followed by a period.
+// 1. Item 1
+// 2. Item 2
+// 3. Item 3
+//    1. Item 3a
+//    2. Item 3b
 
-1. Item 1
-2. Item 2
-3. Item 3
-   1. Item 3a
-   2. Item 3b
+// ## Links
+// Links are created using the format [http://zed.dev](https://zed.dev).
+// They can also be detected automatically, for example https://zed.dev/blog.
 
-## Links
-Links are created using the format [http://zed.dev](https://zed.dev).
-They can also be detected automatically, for example https://zed.dev/blog.
+// ## Images
+// Images are like links, but with an exclamation mark `!` in front.
 
-## Images
-Images are like links, but with an exclamation mark `!` in front.
+// ```todo!
+// ![This is an image](/images/logo.png)
+// ```
 
-```todo!
-![This is an image](/images/logo.png)
-```
+// ## Code
+// Inline `code` can be wrapped with backticks `` ` ``.
 
-## Code
-Inline `code` can be wrapped with backticks `` ` ``.
+// ```markdown
+// Inline `code` has `back-ticks around` it.
+// ```
 
-```markdown
-Inline `code` has `back-ticks around` it.
-```
+// Code blocks can be created by indenting lines by four spaces or with triple backticks ```.
 
-Code blocks can be created by indenting lines by four spaces or with triple backticks ```.
+// ```javascript
+// function test() {
+//   console.log("notice the blank line before this function?");
+// }
+// ```
 
-```javascript
-function test() {
-  console.log("notice the blank line before this function?");
-}
-```
+// ## Blockquotes
+// Blockquotes are created with `>`.
 
-## Blockquotes
-Blockquotes are created with `>`.
+// > This is a blockquote.
 
-> This is a blockquote.
+// ## Horizontal Rules
+// Horizontal rules are created using three or more asterisks `***`, dashes `---`, or underscores `___`.
 
-## Horizontal Rules
-Horizontal rules are created using three or more asterisks `***`, dashes `---`, or underscores `___`.
+// ## Line breaks
+// This is a
+// \
+// line break!
 
-## Line breaks
-This is a
-\
-line break!
+// ---
 
----
-
-Remember, markdown processors may have slight differences and extensions, so always refer to the specific documentation or guides relevant to your platform or editor for the best practices and additional features.
-"#;
+// Remember, markdown processors may have slight differences and extensions, so always refer to the specific documentation or guides relevant to your platform or editor for the best practices and additional features.
+// "#;
 
 pub fn main() {
     env_logger::init();
