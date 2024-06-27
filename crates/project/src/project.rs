@@ -8437,7 +8437,7 @@ impl Project {
                         );
                     }
                 })
-            } else if abs_path.ends_with(local_debug_file_relative_path()) {
+            } else if path.ends_with(local_debug_file_relative_path()) {
                 // TODO: handle local launch file (.zed/debug.json)
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
@@ -8460,7 +8460,7 @@ impl Project {
                         );
                     }
                 });
-            } else if abs_path.ends_with(local_vscode_launch_file_relative_path()) {
+            } else if path.ends_with(local_vscode_launch_file_relative_path()) {
                 // TODO: handle vscode launch file (.vscode/launch.json)
             }
         }
