@@ -96,7 +96,7 @@ Here are all the currently available settings.
 
 - Description: The name of a font to use for rendering text in the editor.
 - Setting: `buffer_font_family`
-- Default: `Zed Mono`
+- Default: `Zed Plex Mono`
 
 **Options**
 
@@ -1596,7 +1596,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "soft_wrap": "none",
 
   "buffer_font_size": 18,
-  "buffer_font_family": "Zed Mono",
+  "buffer_font_family": "Zed Plex Mono",
 
   "autosave": "on_focus_change",
   "format_on_save": "off",

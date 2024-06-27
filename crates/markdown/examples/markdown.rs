@@ -109,13 +109,13 @@ pub fn main() {
                     MARKDOWN_EXAMPLE.to_string(),
                     MarkdownStyle {
                         code_block: gpui::TextStyleRefinement {
-                            font_family: Some("Zed Mono".into()),
+                            font_family: Some("Zed Plex Mono".into()),
                             color: Some(cx.theme().colors().editor_foreground),
                             background_color: Some(cx.theme().colors().editor_background),
                             ..Default::default()
                         },
                         inline_code: gpui::TextStyleRefinement {
-                            font_family: Some("Zed Mono".into()),
+                            font_family: Some("Zed Plex Mono".into()),
                             // @nate: Could we add inline-code specific styles to the theme?
                             color: Some(cx.theme().colors().editor_foreground),
                             background_color: Some(cx.theme().colors().editor_background),
