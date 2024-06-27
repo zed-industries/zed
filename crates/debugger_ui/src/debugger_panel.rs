@@ -1,10 +1,13 @@
 use anyhow::Result;
-use dap::requests::StackTrace;
+use dap::requests::{Scopes, StackTrace, Variables};
 use dap::{client::DebugAdapterClient, transport::Events};
-use dap::{StackFrame, StackTraceArguments, ThreadEventReason};
+use dap::{
+    Scope, ScopesArguments, StackFrame, StackTraceArguments, ThreadEventReason, Variable,
+    VariablesArguments,
+};
 use gpui::{
-    actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
-    Subscription, Task, View, ViewContext, WeakView,
+    actions, list, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
+    FocusableView, ListState, Subscription, Task, View, ViewContext, WeakView,
 };
 use std::{collections::HashMap, sync::Arc};
 use ui::{prelude::*, Tooltip};
@@ -17,7 +20,9 @@ actions!(debug, [TogglePanel]);
 
 #[derive(Default)]
 struct ThreadState {
-    pub stack_frames: Option<Vec<StackFrame>>,
+    pub stack_frames: Vec<StackFrame>,
+    pub scopes: HashMap<u64, Vec<Scope>>, // stack_frame_id -> scopes
+    pub variables: HashMap<u64, Vec<Variable>>, // scope.variable_reference -> variables
 }
 
 pub struct DebugPanel {
@@ -27,9 +32,11 @@ pub struct DebugPanel {
     pub focus_handle: FocusHandle,
     pub size: Pixels,
     _subscriptions: Vec<Subscription>,
-    pub thread_id: Option<u64>,
+    pub current_thread_id: Option<u64>,
+    pub current_stack_frame_id: Option<u64>,
     pub workspace: WeakView<Workspace>,
     thread_state: HashMap<u64, ThreadState>,
+    pub stack_frame_list: ListState,
 }
 
 impl DebugPanel {
@@ -62,11 +69,61 @@ impl DebugPanel {
                                             })
                                             .await?;
 
+                                        let mut scopes: HashMap<u64, Vec<Scope>> = HashMap::new();
+                                        let mut variables: HashMap<u64, Vec<Variable>> =
+                                            HashMap::new();
+
+                                        for stack_frame in res.stack_frames.clone().into_iter() {
+                                            let scope_response = client
+                                                .request::<Scopes>(ScopesArguments {
+                                                    frame_id: stack_frame.id,
+                                                })
+                                                .await?;
+
+                                            scopes.insert(
+                                                stack_frame.id,
+                                                scope_response.scopes.clone(),
+                                            );
+
+                                            for scope in scope_response.scopes {
+                                                variables.insert(
+                                                    scope.variables_reference,
+                                                    client
+                                                        .request::<Variables>(VariablesArguments {
+                                                            variables_reference: scope
+                                                                .variables_reference,
+                                                            filter: None,
+                                                            start: None,
+                                                            count: None,
+                                                            format: None,
+                                                        })
+                                                        .await?
+                                                        .variables,
+                                                );
+                                            }
+                                        }
+
                                         this.update(&mut cx, |this, cx| {
                                             if let Some(entry) =
                                                 this.thread_state.get_mut(&thread_id)
                                             {
-                                                entry.stack_frames = Some(res.stack_frames);
+                                                this.current_thread_id = Some(thread_id);
+
+                                                this.current_stack_frame_id =
+                                                    res.stack_frames.clone().first().map(|f| f.id);
+
+                                                let mut stack_frames = Vec::new();
+
+                                                for stack_frame in res.stack_frames.clone() {
+                                                    stack_frames.push(stack_frame);
+                                                }
+
+                                                entry.stack_frames = stack_frames;
+                                                entry.scopes = scopes;
+                                                entry.variables = variables;
+
+                                                this.stack_frame_list
+                                                    .reset(entry.stack_frames.len());
 
                                                 cx.notify();
                                             }
@@ -84,13 +141,20 @@ impl DebugPanel {
                                 if event.reason == ThreadEventReason::Started {
                                     this.thread_state.insert(
                                         event.thread_id,
-                                        ThreadState { stack_frames: None },
+                                        ThreadState {
+                                            ..Default::default()
+                                        },
                                     );
-                                    this.thread_id = Some(event.thread_id);
+                                    this.current_thread_id = Some(event.thread_id);
                                 } else {
-                                    this.thread_id = None;
+                                    if this.current_thread_id == Some(event.thread_id) {
+                                        this.current_thread_id = None;
+                                    }
+                                    this.stack_frame_list.reset(0);
                                     this.thread_state.remove(&event.thread_id);
                                 }
+
+                                cx.notify();
                             }
                             Events::Output(_) => todo!(),
                             Events::Breakpoint(_) => todo!(),
@@ -108,6 +172,18 @@ impl DebugPanel {
                 }
             })];
 
+            let view = cx.view().downgrade();
+            let stack_frame_list =
+                ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
+                    if let Some(view) = view.upgrade() {
+                        view.update(cx, |view, cx| {
+                            view.render_stack_frame(ix, cx).into_any_element()
+                        })
+                    } else {
+                        div().into_any()
+                    }
+                });
+
             Self {
                 position: DockPosition::Bottom,
                 zoomed: false,
@@ -115,9 +191,11 @@ impl DebugPanel {
                 focus_handle: cx.focus_handle(),
                 size: px(300.),
                 _subscriptions,
-                thread_id: Some(1),
+                current_thread_id: None,
+                current_stack_frame_id: None,
                 workspace: workspace.clone(),
                 thread_state: Default::default(),
+                stack_frame_list,
             }
         })
     }
@@ -127,6 +205,17 @@ impl DebugPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move { cx.update(|cx| DebugPanel::new(workspace, cx)) })
+    }
+
+    fn stack_frame_for_index(&self, ix: usize) -> &StackFrame {
+        &self
+            .current_thread_id
+            .and_then(|id| {
+                self.thread_state
+                    .get(&id)
+                    .and_then(|state| state.stack_frames.get(ix))
+            })
+            .unwrap()
     }
 
     fn debug_adapter(&self, cx: &mut ViewContext<Self>) -> Arc<DebugAdapterClient> {
@@ -141,35 +230,25 @@ impl DebugPanel {
             .unwrap()
     }
 
-    fn render_stack_frames(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let Some(thread_state) = self.thread_id.and_then(|t| self.thread_state.get(&t)) else {
-            return div().child("No information for this thread yet").into_any();
-        };
-
-        let Some(stack_frames) = &thread_state.stack_frames else {
-            return div()
-                .child("No stack frames for this thread yet")
-                .into_any();
-        };
-
-        div()
+    fn render_stack_frames(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .w_full()
             .gap_3()
-            .children(
-                stack_frames
-                    .iter()
-                    .map(|frame| self.render_stack_frame(frame, cx)),
-            )
+            .h_full()
+            .flex_grow()
+            .flex_shrink_0()
+            .child(list(self.stack_frame_list.clone()).size_full())
             .into_any()
     }
 
-    fn render_stack_frame(
-        &self,
-        stack_frame: &StackFrame,
-        cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
+    fn render_stack_frame(&self, ix: usize, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let stack_frame = self.stack_frame_for_index(ix);
+
         let source = stack_frame.source.clone();
 
-        div()
+        v_flex()
+            .rounded_md()
+            .group("")
             .id(("stack-frame", stack_frame.id))
             .p_1()
             .hover(|s| s.bg(cx.theme().colors().element_hover).cursor_pointer())
@@ -185,9 +264,91 @@ impl DebugPanel {
                     )),
             )
             .child(
+                h_flex()
+                    .text_ui_xs(cx)
+                    .text_color(cx.theme().colors().text_muted)
+                    .when_some(source.and_then(|s| s.path), |this, path| this.child(path)),
+            )
+            .into_any()
+    }
+
+    fn render_scopes(
+        &self,
+        thread_state: &ThreadState,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let Some(scopes) = self
+            .current_stack_frame_id
+            .and_then(|id| thread_state.scopes.get(&id))
+        else {
+            return div().child("No scopes for this thread yet").into_any();
+        };
+
+        div()
+            .gap_3()
+            .text_ui_sm(cx)
+            .children(
+                scopes
+                    .iter()
+                    .map(|scope| self.render_scope(thread_state, scope, cx)),
+            )
+            .into_any()
+    }
+
+    fn render_scope(
+        &self,
+        thread_state: &ThreadState,
+        scope: &Scope,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(("scope", scope.variables_reference))
+            .p_1()
+            .text_ui_sm(cx)
+            .hover(|s| s.bg(cx.theme().colors().element_hover).cursor_pointer())
+            .child(scope.name.clone())
+            .child(
+                div()
+                    .ml_2()
+                    .child(self.render_variables(thread_state, scope, cx)),
+            )
+            .into_any()
+    }
+
+    fn render_variables(
+        &self,
+        thread_state: &ThreadState,
+        scope: &Scope,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let Some(variables) = thread_state.variables.get(&scope.variables_reference) else {
+            return div().child("No variables for this thread yet").into_any();
+        };
+
+        div()
+            .gap_3()
+            .text_ui_sm(cx)
+            .children(
+                variables
+                    .iter()
+                    .map(|variable| self.render_variable(variable, cx)),
+            )
+            .into_any()
+    }
+
+    fn render_variable(&self, variable: &Variable, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .id(("variable", variable.variables_reference))
+            .p_1()
+            .gap_1()
+            .text_ui_sm(cx)
+            .hover(|s| s.bg(cx.theme().colors().element_hover).cursor_pointer())
+            .child(variable.name.clone())
+            .child(
                 div()
                     .text_ui_xs(cx)
-                    .when_some(source.and_then(|s| s.path), |this, path| this.child(path)),
+                    .text_color(cx.theme().colors().text_muted)
+                    .child(variable.value.clone()),
             )
             .into_any()
     }
@@ -259,7 +420,8 @@ impl Panel for DebugPanel {
 
 impl Render for DebugPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
+        v_flex()
+            .items_start()
             .child(
                 h_flex()
                     .p_2()
@@ -268,7 +430,7 @@ impl Render for DebugPanel {
                         IconButton::new("debug-continue", IconName::DebugContinue)
                             .on_click(cx.listener(|view, _, cx| {
                                 let client = view.debug_adapter(cx);
-                                if let Some(thread_id) = view.thread_id {
+                                if let Some(thread_id) = view.current_thread_id {
                                     cx.background_executor()
                                         .spawn(async move { client.resume(thread_id).await })
                                         .detach();
@@ -278,6 +440,14 @@ impl Render for DebugPanel {
                     )
                     .child(
                         IconButton::new("debug-step-over", IconName::DebugStepOver)
+                            .on_click(cx.listener(|view, _, cx| {
+                                let client = view.debug_adapter(cx);
+                                if let Some(thread_id) = view.current_thread_id {
+                                    cx.background_executor()
+                                        .spawn(async move { client.step_over(thread_id).await })
+                                        .detach();
+                                }
+                            }))
                             .tooltip(move |cx| Tooltip::text("Step over", cx)),
                     )
                     .child(
@@ -285,7 +455,7 @@ impl Render for DebugPanel {
                             .on_click(cx.listener(|view, _, cx| {
                                 let client = view.debug_adapter(cx);
 
-                                if let Some(thread_id) = view.thread_id {
+                                if let Some(thread_id) = view.current_thread_id {
                                     cx.background_executor()
                                         .spawn(async move { client.step_in(thread_id).await })
                                         .detach();
@@ -297,7 +467,7 @@ impl Render for DebugPanel {
                         IconButton::new("debug-go-out", IconName::DebugStepOut)
                             .on_click(cx.listener(|view, _, cx| {
                                 let client = view.debug_adapter(cx);
-                                if let Some(thread_id) = view.thread_id {
+                                if let Some(thread_id) = view.current_thread_id {
                                     cx.background_executor()
                                         .spawn(async move { client.step_out(thread_id).await })
                                         .detach();
@@ -315,10 +485,14 @@ impl Render for DebugPanel {
                     ),
             )
             .child(
-                h_flex()
-                    .gap_4()
-                    .child(self.render_stack_frames(cx))
-                    .child("Here see all the vars"),
+                h_flex().size_full().items_start().p_1().gap_4().when_some(
+                    self.current_thread_id
+                        .and_then(|t| self.thread_state.get(&t)),
+                    |this, thread_state| {
+                        this.child(self.render_stack_frames(cx))
+                            .child(self.render_scopes(thread_state, cx))
+                    },
+                ),
             )
             .into_any()
     }

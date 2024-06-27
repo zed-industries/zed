@@ -9,7 +9,7 @@ use filedescriptor::Pipe;
 use wayland_client::{protocol::wl_data_offer::WlDataOffer, Connection};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
-use crate::{platform::linux::platform::read_fd, WaylandClientStatePtr};
+use crate::{platform::linux::platform::read_fd, ClipboardItem, WaylandClientStatePtr};
 
 pub(crate) const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
 pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
@@ -23,13 +23,13 @@ pub(crate) struct Clipboard {
     self_mime: String,
 
     // Internal clipboard
-    contents: Option<String>,
-    primary_contents: Option<String>,
+    contents: Option<ClipboardItem>,
+    primary_contents: Option<ClipboardItem>,
 
     // External clipboard
-    cached_read: Option<String>,
+    cached_read: Option<ClipboardItem>,
     current_offer: Option<DataOffer<WlDataOffer>>,
-    cached_primary_read: Option<String>,
+    cached_primary_read: Option<ClipboardItem>,
     current_primary_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
 }
 
@@ -89,12 +89,12 @@ impl Clipboard {
         }
     }
 
-    pub fn set(&mut self, text: String) {
-        self.contents = Some(text);
+    pub fn set(&mut self, item: ClipboardItem) {
+        self.contents = Some(item);
     }
 
-    pub fn set_primary(&mut self, text: String) {
-        self.primary_contents = Some(text);
+    pub fn set_primary(&mut self, item: ClipboardItem) {
+        self.primary_contents = Some(item);
     }
 
     pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) {
@@ -113,17 +113,17 @@ impl Clipboard {
 
     pub fn send(&self, _mime_type: String, fd: OwnedFd) {
         if let Some(contents) = &self.contents {
-            self.send_internal(fd, contents.as_bytes().to_owned());
+            self.send_internal(fd, contents.text.as_bytes().to_owned());
         }
     }
 
     pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
         if let Some(primary_contents) = &self.primary_contents {
-            self.send_internal(fd, primary_contents.as_bytes().to_owned());
+            self.send_internal(fd, primary_contents.text.as_bytes().to_owned());
         }
     }
 
-    pub fn read(&mut self) -> Option<String> {
+    pub fn read(&mut self) -> Option<ClipboardItem> {
         let offer = self.current_offer.clone()?;
         if let Some(cached) = self.cached_read.clone() {
             return Some(cached);
@@ -145,8 +145,8 @@ impl Clipboard {
 
         match unsafe { read_fd(fd) } {
             Ok(v) => {
-                self.cached_read = Some(v.clone());
-                Some(v)
+                self.cached_read = Some(ClipboardItem::new(v));
+                self.cached_read.clone()
             }
             Err(err) => {
                 log::error!("error reading clipboard pipe: {err:?}");
@@ -155,7 +155,7 @@ impl Clipboard {
         }
     }
 
-    pub fn read_primary(&mut self) -> Option<String> {
+    pub fn read_primary(&mut self) -> Option<ClipboardItem> {
         let offer = self.current_primary_offer.clone()?;
         if let Some(cached) = self.cached_primary_read.clone() {
             return Some(cached);
@@ -177,8 +177,8 @@ impl Clipboard {
 
         match unsafe { read_fd(fd) } {
             Ok(v) => {
-                self.cached_primary_read = Some(v.clone());
-                Some(v)
+                self.cached_primary_read = Some(ClipboardItem::new(v.clone()));
+                self.cached_primary_read.clone()
             }
             Err(err) => {
                 log::error!("error reading clipboard pipe: {err:?}");

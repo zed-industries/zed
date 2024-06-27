@@ -437,6 +437,57 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_multiple_cursor_removal(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
+        build_editor(buffer, cx)
+    });
+
+    _ = editor.update(cx, |view, cx| {
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 1), false, 1, cx);
+    });
+
+    _ = editor.update(cx, |view, cx| {
+        view.end_selection(cx);
+    });
+
+    _ = editor.update(cx, |view, cx| {
+        view.begin_selection(DisplayPoint::new(DisplayRow(3), 2), true, 1, cx);
+    });
+
+    _ = editor.update(cx, |view, cx| {
+        view.end_selection(cx);
+    });
+
+    assert_eq!(
+        editor
+            .update(cx, |view, cx| view.selections.display_ranges(cx))
+            .unwrap(),
+        [
+            DisplayPoint::new(DisplayRow(2), 1)..DisplayPoint::new(DisplayRow(2), 1),
+            DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 2)
+        ]
+    );
+
+    _ = editor.update(cx, |view, cx| {
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 1), true, 1, cx);
+    });
+
+    _ = editor.update(cx, |view, cx| {
+        view.end_selection(cx);
+    });
+
+    assert_eq!(
+        editor
+            .update(cx, |view, cx| view.selections.display_ranges(cx))
+            .unwrap(),
+        [DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 2)]
+    );
+}
+
+#[gpui::test]
 fn test_canceling_pending_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
