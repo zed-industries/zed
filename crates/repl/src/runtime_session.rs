@@ -12,7 +12,7 @@ use editor::{
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{prelude::*, Entity, Render, Task, View, ViewContext};
 use project::Fs;
-use runtimelib::{ExecuteRequest, JupyterMessage};
+use runtimelib::{ExecuteRequest, JupyterMessage, KernelInfoRequest};
 use settings::Settings as _;
 use std::{ops::Range, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
@@ -54,6 +54,10 @@ impl Session {
                         this.update(&mut cx, |this, cx| {
                             // At this point we can create a new kind of kernel that has the process and our long running background tasks
                             this.kernel = Kernel::RunningKernel(kernel);
+
+                            // todo!(): await the kernel info reply, with a timeout duration
+                            this.send(&KernelInfoRequest {}.into(), cx).ok();
+
                             // todo!(): Clear queue of pending executions
                             this.messaging_task = cx.spawn(|session, mut cx| async move {
                                 while let Some(message) = messages_rx.next().await {
@@ -171,6 +175,18 @@ impl Session {
             None => return,
         };
 
+        match &message.content {
+            runtimelib::JupyterMessageContent::Status(status) => {
+                //
+                self.kernel.set_execution_state(&status.execution_state);
+            }
+            runtimelib::JupyterMessageContent::KernelInfoReply(reply) => {
+                //
+                self.kernel.set_kernel_info(&reply);
+            }
+            _ => {}
+        }
+
         if let Some(block) = self.blocks.get_mut(&parent_message_id) {
             block.execution_view.update(cx, |execution_view, cx| {
                 execution_view.push_message(&message.content, cx);
@@ -186,7 +202,14 @@ impl Session {
                 );
                 editor.replace_blocks(replacements, None, cx);
             });
+            return;
         }
+
+        match message.content {
+            runtimelib::JupyterMessageContent::InterruptReply(_) => {}
+            runtimelib::JupyterMessageContent::KernelInfoReply(_) => {}
+            _ => {}
+        };
     }
 }
 
