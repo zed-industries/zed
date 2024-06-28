@@ -120,7 +120,7 @@ pub struct LocalWorktree {
     next_entry_id: Arc<AtomicUsize>,
     settings: WorktreeSettings,
     share_private_files: bool,
-    zip_tempdir: Option<tempfile::TempDir>,
+    _zip_tempdir: Option<tempfile::TempDir>,
 }
 
 struct ScanRequest {
