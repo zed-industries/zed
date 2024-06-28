@@ -1122,9 +1122,7 @@ impl BufferSearchBar {
                             .as_ref()
                             .clone()
                             .with_replacement(self.replacement(cx));
-                        for m in matches {
-                            searchable_item.replace(m, &query, cx);
-                        }
+                        searchable_item.replace_all(&mut matches.iter(), &query, cx);
                     }
                 }
             }
