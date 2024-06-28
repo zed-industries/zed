@@ -72,19 +72,14 @@ impl DisplayCursor {
     }
 }
 
-pub enum CellContent {
-    Text(gpui::ShapedLine),
-    Block(Arc<BlockProperties>),
-}
-
 struct LayoutCell {
     point: AlacPoint<i32, i32>,
-    content: CellContent,
+    text: gpui::ShapedLine,
 }
 
 impl LayoutCell {
-    fn new(point: AlacPoint<i32, i32>, content: CellContent) -> LayoutCell {
-        LayoutCell { point, content }
+    fn new(point: AlacPoint<i32, i32>, text: gpui::ShapedLine) -> LayoutCell {
+        LayoutCell { point, text }
     }
 
     fn paint(
@@ -103,19 +98,7 @@ impl LayoutCell {
             )
         };
 
-        match &self.content {
-            CellContent::Text(line) => {
-                line.paint(pos, layout.dimensions.line_height, cx).ok();
-            }
-            CellContent::Block(block) => {
-                let mut cx = BlockContext {
-                    context: cx,
-                    dimensions: layout.dimensions,
-                };
-                let render = &block.render;
-                render(&mut cx);
-            }
-        }
+        self.text.paint(pos, layout.dimensions.line_height, cx).ok();
     }
 }
 
@@ -305,7 +288,7 @@ impl TerminalElement {
 
                         cells.push(LayoutCell::new(
                             AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
-                            CellContent::Text(layout_cell),
+                            layout_cell,
                         ))
                     };
                 }
