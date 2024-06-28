@@ -55,11 +55,13 @@
       "up": "editor::MoveUp",
       "ctrl-up": "editor::LineUp",
       "ctrl-down": "editor::LineDown",
-      "pageup": "editor::PageUp",
+      "pageup": "editor::MovePageUp",
+      "alt-pageup": "editor::PageUp",
       "shift-pageup": "editor::SelectPageUp",
       "home": "editor::MoveToBeginningOfLine",
       "down": "editor::MoveDown",
-      "pagedown": "editor::PageDown",
+      "pagedown": "editor::MovePageDown",
+      "alt-pagedown": "editor::PageDown",
       "shift-pagedown": "editor::SelectPageDown",
       "end": "editor::MoveToEndOfLine",
       "left": "editor::MoveLeft",
@@ -657,7 +659,13 @@
       "pagedown": ["terminal::SendKeystroke", "pagedown"],
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
-      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"]
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "shift-pageup": "terminal::ScrollPageUp",
+      "shift-pagedown": "terminal::ScrollPageDown",
+      "shift-up": "terminal::ScrollLineUp",
+      "shift-down": "terminal::ScrollLineDown",
+      "shift-home": "terminal::ScrollToTop",
+      "shift-end": "terminal::ScrollToBottom"
     }
   }
 ]

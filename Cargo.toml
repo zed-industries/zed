@@ -21,6 +21,7 @@ members = [
     "crates/command_palette_hooks",
     "crates/copilot",
     "crates/db",
+    "crates/dev_server_projects",
     "crates/diagnostics",
     "crates/editor",
     "crates/extension",
@@ -77,14 +78,11 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
-    "crates/dev_server_projects",
     "crates/repl",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
     "crates/rustdoc",
-    "crates/task",
-    "crates/tasks_ui",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
@@ -95,17 +93,20 @@ members = [
     "crates/story",
     "crates/storybook",
     "crates/sum_tree",
-    "crates/tab_switcher",
     "crates/supermaven",
     "crates/supermaven_api",
+    "crates/tab_switcher",
+    "crates/task",
+    "crates/tasks_ui",
+    "crates/telemetry_events",
     "crates/terminal",
     "crates/terminal_view",
     "crates/text",
     "crates/theme",
     "crates/theme_importer",
     "crates/theme_selector",
-    "crates/telemetry_events",
     "crates/time_format",
+    "crates/title_bar",
     "crates/ui",
     "crates/ui_text_field",
     "crates/util",
@@ -175,6 +176,7 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
 dashmap = "5.5.3"
 db = { path = "crates/db" }
+dev_server_projects = { path = "crates/dev_server_projects" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
@@ -195,9 +197,9 @@ gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http = { path = "crates/http" }
-install_cli = { path = "crates/install_cli" }
 image_viewer = { path = "crates/image_viewer" }
 inline_completion_button = { path = "crates/inline_completion_button" }
+install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_selector = { path = "crates/language_selector" }
@@ -223,21 +225,17 @@ plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
-proto = { path = "crates/proto" }
-worktree = { path = "crates/worktree" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
+proto = { path = "crates/proto" }
 quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
-dev_server_projects = { path = "crates/dev_server_projects" }
 repl = { path = "crates/repl" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rustdoc = { path = "crates/rustdoc" }
-task = { path = "crates/task" }
-tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
@@ -245,20 +243,23 @@ settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
-supermaven = { path = "crates/supermaven" }
-supermaven_api = { path = "crates/supermaven_api" }
 story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
 sum_tree = { path = "crates/sum_tree" }
+supermaven = { path = "crates/supermaven" }
+supermaven_api = { path = "crates/supermaven_api" }
 tab_switcher = { path = "crates/tab_switcher" }
+task = { path = "crates/task" }
+tasks_ui = { path = "crates/tasks_ui" }
+telemetry_events = { path = "crates/telemetry_events" }
 terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
-telemetry_events = { path = "crates/telemetry_events" }
 time_format = { path = "crates/time_format" }
+title_bar = { path = "crates/title_bar" }
 ui = { path = "crates/ui" }
 ui_text_field = { path = "crates/ui_text_field" }
 util = { path = "crates/util" }
@@ -266,6 +267,7 @@ vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
 welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
+worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 

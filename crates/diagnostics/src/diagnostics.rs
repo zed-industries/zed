@@ -102,6 +102,9 @@ impl Render for ProjectDiagnosticsEditor {
 
         div()
             .track_focus(&self.focus_handle)
+            .when(self.path_states.is_empty(), |el| {
+                el.key_context("EmptyPane")
+            })
             .size_full()
             .on_action(cx.listener(Self::toggle_warnings))
             .child(child)

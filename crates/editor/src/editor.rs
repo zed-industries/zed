@@ -2131,7 +2131,7 @@ impl Editor {
         self.refresh_inline_completion(false, cx);
     }
 
-    pub fn placeholder_text(&self, _cx: &mut WindowContext) -> Option<&str> {
+    pub fn placeholder_text(&self, _cx: &WindowContext) -> Option<&str> {
         self.placeholder_text.as_deref()
     }
 
@@ -6809,6 +6809,16 @@ impl Editor {
 
     pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
+            return;
+        }
+
+        if self
+            .context_menu
+            .write()
+            .as_mut()
+            .map(|menu| menu.select_first(self.project.as_ref(), cx))
+            .unwrap_or(false)
+        {
             return;
         }
 

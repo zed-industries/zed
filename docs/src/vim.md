@@ -114,6 +114,15 @@ For vim-specific shortcuts, you may find the following template a good place to 
       // e.g.
       // "j j": "vim::NormalBefore" // remap jj in insert mode to escape.
     }
+  },
+  {
+    "context": "EmptyPane || SharedScreen",
+    "bindings": {
+      // put key-bindings here (in addition to above) if you want them to
+      // work when no editor exists
+      // e.g.
+      // "space f": "file_finder::Toggle"
+    }
   }
 ]
 ```

@@ -3,6 +3,8 @@ use gpui::{
     InteractiveElement, IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse,
     Render, RenderablePromptHandle, Styled, ViewContext, VisualContext, WindowContext,
 };
+use settings::Settings;
+use theme::ThemeSettings;
 use ui::{
     h_flex, v_flex, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder, LabelSize,
     TintColor,
@@ -56,6 +58,8 @@ impl FallbackPromptRenderer {
 }
 impl Render for FallbackPromptRenderer {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let font_family = settings.ui_font.family.clone();
         let prompt = v_flex()
             .key_context("Prompt")
             .cursor_default()
@@ -67,7 +71,7 @@ impl Render for FallbackPromptRenderer {
             .overflow_hidden()
             .p_4()
             .gap_4()
-            .font_family("Zed Sans")
+            .font_family(font_family)
             .child(
                 div()
                     .w_full()

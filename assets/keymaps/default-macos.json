@@ -61,13 +61,17 @@
       "cmd-shift-z": "editor::Redo",
       "up": "editor::MoveUp",
       "ctrl-up": "editor::MoveToStartOfParagraph",
-      "pageup": "editor::PageUp",
-      "shift-pageup": "editor::MovePageUp",
+      "pageup": "editor::MovePageUp",
+      "shift-pageup": "editor::SelectPageUp",
+      "cmd-pageup": "editor::PageUp",
+      "ctrl-pageup": "editor::LineUp",
       "home": "editor::MoveToBeginningOfLine",
       "down": "editor::MoveDown",
       "ctrl-down": "editor::MoveToEndOfParagraph",
-      "pagedown": "editor::PageDown",
-      "shift-pagedown": "editor::MovePageDown",
+      "pagedown": "editor::MovePageDown",
+      "shift-pagedown": "editor::SelectPageDown",
+      "cmd-pagedown": "editor::PageDown",
+      "ctrl-pagedown": "editor::LineDown",
       "end": "editor::MoveToEndOfLine",
       "left": "editor::MoveLeft",
       "right": "editor::MoveRight",
@@ -699,7 +703,13 @@
       "pagedown": ["terminal::SendKeystroke", "pagedown"],
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
-      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"]
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "shift-pageup": "terminal::ScrollPageUp",
+      "shift-pagedown": "terminal::ScrollPageDown",
+      "shift-up": "terminal::ScrollLineUp",
+      "shift-down": "terminal::ScrollLineDown",
+      "shift-home": "terminal::ScrollToTop",
+      "shift-end": "terminal::ScrollToBottom"
     }
   }
 ]
