@@ -142,6 +142,16 @@ You can also set other OpenType features, like setting `cv01` to `7`:
 
 `integer` values
 
+## Buffer Font Weight
+
+- Description: The default font weight for text in the editor.
+- Setting: `buffer_font_weight`
+- Default: `400`
+
+**Options**
+
+`integer` values between `100` and `900`
+
 ## Confirm Quit
 
 - Description: Whether or not to prompt the user to confirm before closing the application.
