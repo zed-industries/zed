@@ -6873,25 +6873,25 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     };
     handle_signature_help_request(&mut cx, mocked_response).await;
 
-    cx.condition(|editor, _| editor.signature_help_state.is_some())
+    cx.condition(|editor, _| editor.signature_help_state.active())
         .await;
 
     cx.editor(|editor, _| {
-        let signature_help_state = editor.signature_help_state.clone();
-        assert!(signature_help_state.is_some());
+        let signature_help_popover = editor.signature_help_state.signature_help_popover();
+        assert!(signature_help_popover.is_some());
         let ParsedMarkdown {
             text,
             highlights,
             region_ranges,
             ..
-        } = signature_help_state.unwrap().parsed_content;
+        } = signature_help_popover.unwrap().clone().parsed_content;
         assert_eq!(text, "param1: u8, param2: u8");
         assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT)]);
         assert_eq!(region_ranges, vec![0..22]);
     });
 
     cx.update_editor(|editor, cx| {
-        editor.hide_signature_help(cx);
+        editor.hide_signature_help_immediately(cx);
     });
 
     cx.editor(|editor, _| {

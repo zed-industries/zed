@@ -2670,7 +2670,7 @@ impl EditorElement {
         );
 
         let maybe_element = self.editor.update(cx, |editor, cx| {
-            if let Some(popover) = &mut editor.signature_help_state {
+            if let Some(popover) = editor.signature_help_state.signature_help_popover_mut() {
                 let element = popover.render(
                     &self.style,
                     max_size,
