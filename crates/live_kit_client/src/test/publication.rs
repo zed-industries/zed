@@ -16,6 +16,7 @@ pub struct LocalTrackPublication {
 pub struct RemoteTrackPublication {
     pub(crate) sid: TrackSid,
     pub(crate) room: WeakRoom,
+    pub(crate) track: RemoteTrack,
 }
 
 impl TrackPublication {
@@ -72,7 +73,7 @@ impl RemoteTrackPublication {
     }
 
     pub fn track(&self) -> Option<RemoteTrack> {
-        None
+        Some(self.track.clone())
     }
 
     pub fn is_muted(&self) -> bool {

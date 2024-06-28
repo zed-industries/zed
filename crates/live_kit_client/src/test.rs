@@ -112,44 +112,48 @@ impl TestServer {
                 room_name
             ))
         } else {
-            for track in &room.video_tracks {
+            for server_track in &room.video_tracks {
+                let track = RemoteTrack::Video(RemoteVideoTrack {
+                    server_track: server_track.clone(),
+                    _room: client_room.downgrade(),
+                });
                 client_room
                     .0
                     .lock()
                     .updates_tx
                     .blocking_send(RoomEvent::TrackSubscribed {
-                        track: RemoteTrack::Video(RemoteVideoTrack {
-                            server_track: track.clone(),
-                            _room: client_room.downgrade(),
-                        }),
+                        track: track.clone(),
                         publication: RemoteTrackPublication {
-                            sid: track.sid.clone(),
+                            sid: server_track.sid.clone(),
                             room: client_room.downgrade(),
+                            track,
                         },
                         participant: RemoteParticipant {
                             room: client_room.downgrade(),
-                            identity: track.publisher_id.clone(),
+                            identity: server_track.publisher_id.clone(),
                         },
                     })
                     .unwrap();
             }
-            for track in &room.audio_tracks {
+            for server_track in &room.audio_tracks {
+                let track = RemoteTrack::Audio(RemoteAudioTrack {
+                    server_track: server_track.clone(),
+                    room: client_room.downgrade(),
+                });
                 client_room
                     .0
                     .lock()
                     .updates_tx
                     .blocking_send(RoomEvent::TrackSubscribed {
-                        track: RemoteTrack::Audio(RemoteAudioTrack {
-                            server_track: track.clone(),
-                            room: client_room.downgrade(),
-                        }),
+                        track: track.clone(),
                         publication: RemoteTrackPublication {
-                            sid: track.sid.clone(),
+                            sid: server_track.sid.clone(),
                             room: client_room.downgrade(),
+                            track,
                         },
                         participant: RemoteParticipant {
                             room: client_room.downgrade(),
-                            identity: track.publisher_id.clone(),
+                            identity: server_track.publisher_id.clone(),
                         },
                     })
                     .unwrap();
@@ -177,6 +181,34 @@ impl TestServer {
             )
         })?;
         Ok(())
+    }
+
+    fn remote_participants(
+        &self,
+        token: String,
+    ) -> Result<HashMap<ParticipantIdentity, RemoteParticipant>> {
+        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let local_identity = ParticipantIdentity(claims.sub.unwrap().to_string());
+        let room_name = claims.video.room.unwrap().to_string();
+
+        if let Some(server_room) = self.rooms.lock().get(&room_name) {
+            Ok(server_room
+                .client_rooms
+                .iter()
+                .filter(|(identity, _)| *identity != &local_identity)
+                .map(|(identity, room)| {
+                    (
+                        identity.clone(),
+                        RemoteParticipant {
+                            room: room.downgrade(),
+                            identity: identity.clone(),
+                        },
+                    )
+                })
+                .collect())
+        } else {
+            Ok(Default::default())
+        }
     }
 
     async fn remove_participant(
@@ -264,33 +296,36 @@ impl TestServer {
         }
 
         let sid: TrackSid = format!("TR_{}", nanoid::nanoid!(17)).try_into().unwrap();
-        let track = Arc::new(TestServerVideoTrack {
+        let server_track = Arc::new(TestServerVideoTrack {
             sid: sid.clone(),
             publisher_id: identity.clone(),
-            // frames_rx: local_track.frames_rx.clone(),
         });
 
-        room.video_tracks.push(track.clone());
+        room.video_tracks.push(server_track.clone());
 
-        for (id, client_room) in &room.client_rooms {
-            if *id != identity {
-                let _ = client_room
+        for (room_identity, client_room) in &room.client_rooms {
+            if *room_identity != identity {
+                let track = RemoteTrack::Video(RemoteVideoTrack {
+                    server_track: server_track.clone(),
+                    _room: client_room.downgrade(),
+                });
+                let publication = RemoteTrackPublication {
+                    sid: sid.clone(),
+                    room: client_room.downgrade(),
+                    track: track.clone(),
+                };
+                let participant = RemoteParticipant {
+                    identity: identity.clone(),
+                    room: client_room.downgrade(),
+                };
+                client_room
                     .0
                     .lock()
                     .updates_tx
                     .blocking_send(RoomEvent::TrackSubscribed {
-                        track: RemoteTrack::Video(RemoteVideoTrack {
-                            server_track: track.clone(),
-                            _room: client_room.downgrade(),
-                        }),
-                        publication: RemoteTrackPublication {
-                            sid: sid.clone(),
-                            room: client_room.downgrade(),
-                        },
-                        participant: RemoteParticipant {
-                            identity: identity.clone(),
-                            room: client_room.downgrade(),
-                        },
+                        track,
+                        publication,
+                        participant,
                     })
                     .unwrap();
             }
@@ -327,33 +362,37 @@ impl TestServer {
         }
 
         let sid: TrackSid = format!("TR_{}", nanoid::nanoid!(17)).try_into().unwrap();
-        let track = Arc::new(TestServerAudioTrack {
+        let server_track = Arc::new(TestServerAudioTrack {
             sid: sid.clone(),
             publisher_id: identity.clone(),
             muted: AtomicBool::new(false),
         });
 
-        room.audio_tracks.push(track.clone());
+        room.audio_tracks.push(server_track.clone());
 
-        for (id, client_room) in &room.client_rooms {
-            if *id != identity {
-                let _ = client_room
+        for (room_identity, client_room) in &room.client_rooms {
+            if *room_identity != identity {
+                let track = RemoteTrack::Audio(RemoteAudioTrack {
+                    server_track: server_track.clone(),
+                    room: client_room.downgrade(),
+                });
+                let publication = RemoteTrackPublication {
+                    sid: sid.clone(),
+                    room: client_room.downgrade(),
+                    track: track.clone(),
+                };
+                let participant = RemoteParticipant {
+                    identity: identity.clone(),
+                    room: client_room.downgrade(),
+                };
+                client_room
                     .0
                     .lock()
                     .updates_tx
                     .blocking_send(RoomEvent::TrackSubscribed {
-                        track: RemoteTrack::Audio(RemoteAudioTrack {
-                            server_track: track.clone(),
-                            room: client_room.downgrade(),
-                        }),
-                        publication: RemoteTrackPublication {
-                            sid: sid.clone(),
-                            room: client_room.downgrade(),
-                        },
-                        participant: RemoteParticipant {
-                            identity: id.clone(),
-                            room: client_room.downgrade(),
-                        },
+                        track,
+                        publication,
+                        participant,
                     })
                     .unwrap();
             }
@@ -386,9 +425,14 @@ impl TestServer {
                         identity: identity.clone(),
                         room: client_room.downgrade(),
                     });
+                    let track = RemoteTrack::Audio(RemoteAudioTrack {
+                        server_track: track.clone(),
+                        room: client_room.downgrade(),
+                    });
                     let publication = TrackPublication::Remote(RemoteTrackPublication {
                         sid: track_sid.clone(),
                         room: client_room.downgrade(),
+                        track,
                     });
 
                     let event = if muted {
@@ -430,7 +474,7 @@ impl TestServer {
         })
     }
 
-    fn video_tracks(&self, token: String) -> Result<Vec<Arc<RemoteVideoTrack>>> {
+    fn video_tracks(&self, token: String) -> Result<Vec<RemoteVideoTrack>> {
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
@@ -446,16 +490,14 @@ impl TestServer {
         Ok(room
             .video_tracks
             .iter()
-            .map(|track| {
-                Arc::new(RemoteVideoTrack {
-                    server_track: track.clone(),
-                    _room: client_room.downgrade(),
-                })
+            .map(|track| RemoteVideoTrack {
+                server_track: track.clone(),
+                _room: client_room.downgrade(),
             })
             .collect())
     }
 
-    fn audio_tracks(&self, token: String) -> Result<Vec<Arc<RemoteAudioTrack>>> {
+    fn audio_tracks(&self, token: String) -> Result<Vec<RemoteAudioTrack>> {
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
@@ -471,11 +513,9 @@ impl TestServer {
         Ok(room
             .audio_tracks
             .iter()
-            .map(|track| {
-                Arc::new(RemoteAudioTrack {
-                    server_track: track.clone(),
-                    room: client_room.downgrade(),
-                })
+            .map(|track| RemoteAudioTrack {
+                server_track: track.clone(),
+                room: client_room.downgrade(),
             })
             .collect())
     }
@@ -708,23 +748,9 @@ impl Room {
     }
 
     pub fn remote_participants(&self) -> HashMap<ParticipantIdentity, RemoteParticipant> {
-        if let Some(server_room) = self.test_server().rooms.lock().get(&self.token()) {
-            server_room
-                .client_rooms
-                .iter()
-                .map(|(identity, room)| {
-                    (
-                        identity.clone(),
-                        RemoteParticipant {
-                            room: room.downgrade(),
-                            identity: identity.clone(),
-                        },
-                    )
-                })
-                .collect()
-        } else {
-            Default::default()
-        }
+        self.test_server()
+            .remote_participants(self.0.lock().token.clone())
+            .unwrap()
     }
 
     fn test_server(&self) -> Arc<TestServer> {

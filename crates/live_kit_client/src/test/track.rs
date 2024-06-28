@@ -39,7 +39,8 @@ pub enum RtcTrack {
 }
 
 pub struct RtcAudioTrack {
-    pub(super) _server_track: Arc<TestServerAudioTrack>,
+    pub(super) server_track: Arc<TestServerAudioTrack>,
+    pub(super) room: WeakRoom,
 }
 
 pub struct RtcVideoTrack {
@@ -110,7 +111,8 @@ impl RemoteAudioTrack {
 
     pub fn rtc_track(&self) -> RtcAudioTrack {
         RtcAudioTrack {
-            _server_track: self.server_track.clone(),
+            server_track: self.server_track.clone(),
+            room: self.room.clone(),
         }
     }
 }
@@ -139,12 +141,32 @@ impl RtcTrack {
         }
     }
 
-    pub fn set_enabled(&self, _enabled: bool) {}
+    pub fn set_enabled(&self, enabled: bool) {
+        match self {
+            RtcTrack::Audio(track) => track.set_enabled(enabled),
+            RtcTrack::Video(_) => {}
+        }
+    }
 }
 
 impl RtcAudioTrack {
+    pub fn set_enabled(&self, enabled: bool) {
+        if let Some(room) = self.room.upgrade() {
+            let paused_audio_tracks = &mut room.0.lock().paused_audio_tracks;
+            if enabled {
+                paused_audio_tracks.remove(&self.server_track.sid);
+            } else {
+                paused_audio_tracks.insert(self.server_track.sid.clone());
+            }
+        }
+    }
+
     pub fn enabled(&self) -> bool {
-        true
+        if let Some(room) = self.room.upgrade() {
+            !(&room.0.lock().paused_audio_tracks).contains(&self.server_track.sid)
+        } else {
+            false
+        }
     }
 }
 

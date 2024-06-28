@@ -75,6 +75,7 @@ impl RemoteParticipant {
                         RemoteTrackPublication {
                             sid: track.sid(),
                             room: self.room.clone(),
+                            track: RemoteTrack::Audio(track),
                         },
                     )
                 });
@@ -89,6 +90,7 @@ impl RemoteParticipant {
                         RemoteTrackPublication {
                             sid: track.sid(),
                             room: self.room.clone(),
+                            track: RemoteTrack::Video(track),
                         },
                     )
                 });
