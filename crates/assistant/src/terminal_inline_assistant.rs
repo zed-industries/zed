@@ -208,12 +208,6 @@ impl TerminalInlineAssistant {
     ) -> Result<LanguageModelRequest> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
-        let working_directory = assist
-            .terminal
-            .update(cx, |terminal, cx| {
-                terminal.terminal().read(cx).working_directory()
-            })
-            .ok();
         let model = CompletionProvider::global(cx).model();
 
         let prompt = generate_terminal_assistant_prompt(
