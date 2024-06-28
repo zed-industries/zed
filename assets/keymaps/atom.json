@@ -70,7 +70,6 @@
   {
     "context": "ProjectPanel",
     "bindings": {
-      "a": "project_panel::NewFile",
       "shift-a": "project_panel::NewDirectory",
       "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
