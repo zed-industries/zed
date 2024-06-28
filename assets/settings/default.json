@@ -1,19 +1,15 @@
 {
   // The name of the Zed theme to use for the UI.
   //
-  // The theme can also be set to follow system preferences:
-  //
-  // "theme": {
-  //   "mode": "system",
-  //   "light": "One Light",
-  //   "dark": "One Dark"
-  // }
-  //
-  // Where `mode` is one of:
+  // `mode` is one of:
   // - "system": Use the theme that corresponds to the system's appearance
   // - "light": Use the theme indicated by the "light" field
   // - "dark": Use the theme indicated by the "dark" field
-  "theme": "One Dark",
+  "theme": {
+    "mode": "system",
+    "light": "One Light",
+    "dark": "One Dark",
+  },
   // The name of a base set of key bindings to use.
   // This setting can take four values, each named after another
   // text editor:
