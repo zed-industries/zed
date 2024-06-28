@@ -9,12 +9,12 @@ use fs::Fs;
 use futures::channel::mpsc;
 use futures::SinkExt;
 use futures::StreamExt;
+use gpui::Context;
+use gpui::ModelContext;
 use gpui::{
     AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global, Model,
     Subscription, Task, TextStyle, UpdateGlobal, View, WeakView, WhiteSpace,
 };
-use gpui::{Context, Keystroke};
-use gpui::{ModelContext, Modifiers};
 use language::Buffer;
 use settings::update_settings_file;
 use settings::Settings;
@@ -263,11 +263,13 @@ impl TerminalInlineAssistant {
         let Some(assist) = self.assists.get_mut(&assist_id) else {
             return false;
         };
-        let Some(terminal) = assist.terminal.upgrade() else {
-            return false;
-        };
-
-        true
+        assist
+            .terminal
+            .update(cx, |this, cx| {
+                this.clear_prompt(cx);
+                this.focus_handle(cx).focus(cx);
+            })
+            .is_ok()
     }
 
     fn insert_prompt_editor_into_terminal(
