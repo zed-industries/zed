@@ -254,7 +254,7 @@ jobs:
             target/aarch64-apple-darwin/release/Zed-aarch64.dmg
             target/x86_64-apple-darwin/release/Zed-x86_64.dmg
             target/release/Zed.dmg
-          body_file: target/release-notes.md
+          body_path: target/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
