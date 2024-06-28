@@ -1,17 +1,19 @@
 use gpui::{
-    actions, bounds, div, point, prelude::IntoElement, px, rgb, size, AsyncAppContext, Bounds,
-    InteractiveElement, KeyBinding, Menu, MenuItem, ParentElement, Pixels, Render,
-    ScreenCaptureStream, SharedString, StatefulInteractiveElement as _, Styled, Task, View,
-    ViewContext, VisualContext, WindowBounds, WindowHandle, WindowOptions,
+    actions, bounds, div, point,
+    prelude::{FluentBuilder as _, IntoElement},
+    px, rgb, size, AsyncAppContext, Bounds, InteractiveElement, KeyBinding, Menu, MenuItem,
+    ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
+    StatefulInteractiveElement as _, Styled, Task, View, ViewContext, VisualContext, WindowBounds,
+    WindowHandle, WindowOptions,
 };
 use live_kit_client::{
     capture_local_audio_track, capture_local_video_track,
-    id::{ParticipantIdentity, TrackSid},
+    id::ParticipantIdentity,
     options::{TrackPublishOptions, VideoCodec},
     participant::{Participant, RemoteParticipant},
     play_remote_audio_track,
     publication::LocalTrackPublication,
-    track::{LocalTrack, RemoteTrack, TrackSource},
+    track::{LocalTrack, RemoteAudioTrack, RemoteTrack, RemoteVideoTrack, TrackSource},
     AudioStream, RemoteVideoTrackView, Room, RoomEvent, RoomOptions,
 };
 use live_kit_server::token::{self, VideoGrant};
@@ -89,9 +91,9 @@ struct LivekitWindow {
 
 #[derive(Default)]
 struct ParticipantState {
-    audio_output_stream: Option<(TrackSid, AudioStream)>,
+    audio_output_stream: Option<(RemoteAudioTrack, AudioStream)>,
     muted: bool,
-    screen_share_output_view: Option<(TrackSid, View<RemoteVideoTrackView>)>,
+    screen_share_output_view: Option<(RemoteVideoTrack, View<RemoteVideoTrackView>)>,
     speaking: bool,
 }
 
@@ -153,14 +155,14 @@ impl LivekitWindow {
                 if output
                     .audio_output_stream
                     .as_ref()
-                    .map_or(false, |(sid, _)| *sid == unpublish_sid)
+                    .map_or(false, |(track, _)| track.sid() == unpublish_sid)
                 {
                     output.audio_output_stream.take();
                 }
                 if output
                     .screen_share_output_view
                     .as_ref()
-                    .map_or(false, |(sid, _)| *sid == unpublish_sid)
+                    .map_or(false, |(track, _)| track.sid() == unpublish_sid)
                 {
                     output.screen_share_output_view.take();
                 }
@@ -174,11 +176,11 @@ impl LivekitWindow {
                 match track {
                     RemoteTrack::Audio(track) => {
                         output.audio_output_stream =
-                            Some((track.sid(), play_remote_audio_track(&track, cx)));
+                            Some((track.clone(), play_remote_audio_track(&track, cx)));
                     }
                     RemoteTrack::Video(track) => {
                         output.screen_share_output_view = Some((
-                            track.sid(),
+                            track.clone(),
                             cx.new_view(|cx| RemoteVideoTrackView::new(track, cx)),
                         ));
                     }
@@ -302,6 +304,24 @@ impl LivekitWindow {
             .detach();
         }
     }
+
+    fn toggle_remote_audio_for_participant(
+        &mut self,
+        identity: &ParticipantIdentity,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<()> {
+        let participant = self.remote_participants.iter().find_map(|(id, state)| {
+            if id == identity {
+                Some(state)
+            } else {
+                None
+            }
+        })?;
+        let track = participant.audio_output_stream.as_ref()?.0.rtc_track();
+        track.set_enabled(!track.enabled());
+        cx.notify();
+        Some(())
+    }
 }
 
 impl Render for LivekitWindow {
@@ -366,13 +386,26 @@ impl Render for LivekitWindow {
                             } else {
                                 identity.0.clone()
                             }))
-                            .children(state.screen_share_output_view.as_ref().map(|e| {
-                                div()
-                                    .flex()
-                                    .flex_grow()
-                                    .bg(rgb(0xff0000))
-                                    .child(e.1.clone())
-                            }))
+                            .when_some(state.audio_output_stream.as_ref(), |el, state| {
+                                el.child(
+                                    button()
+                                        .id(SharedString::from(identity.0.clone()))
+                                        .child(if state.0.rtc_track().enabled() {
+                                            "Deafen"
+                                        } else {
+                                            "Undeafen"
+                                        })
+                                        .on_click(cx.listener({
+                                            let identity = identity.clone();
+                                            move |this, _, cx| {
+                                                this.toggle_remote_audio_for_participant(
+                                                    &identity, cx,
+                                                );
+                                            }
+                                        })),
+                                )
+                            })
+                            .children(state.screen_share_output_view.as_ref().map(|e| e.1.clone()))
                     })),
             )
     }
