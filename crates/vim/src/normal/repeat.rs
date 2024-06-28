@@ -499,4 +499,15 @@ mod test {
         cx.simulate_shared_keystrokes(".").await;
         cx.shared_state().await.assert_eq("ˇx hello\n");
     }
+
+    #[gpui::test]
+    async fn test_undo_repeated_insert(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("hellˇo").await;
+        cx.simulate_shared_keystrokes("3 a . escape").await;
+        cx.shared_state().await.assert_eq("hello..ˇ.");
+        cx.simulate_shared_keystrokes("u").await;
+        cx.shared_state().await.assert_eq("hellˇo");
+    }
 }

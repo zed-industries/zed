@@ -418,8 +418,10 @@ impl Vim {
             state.last_mode = last_mode;
             state.mode = mode;
             state.operator_stack.clear();
-            state.current_tx.take();
-            state.current_anchor.take();
+            if mode == Mode::Normal || mode != last_mode {
+                state.current_tx.take();
+                state.current_anchor.take();
+            }
         });
         if mode != Mode::Insert && mode != Mode::Replace {
             self.take_count(cx);
@@ -744,33 +746,48 @@ impl Vim {
     }
 
     fn transaction_undone(&mut self, transaction_id: &TransactionId, cx: &mut WindowContext) {
-        if !self.state().mode.is_visual() {
-            return;
-        };
-        self.update_active_editor(cx, |vim, editor, cx| {
-            let original_mode = vim.state().undo_modes.get(transaction_id);
-            editor.change_selections(None, cx, |s| match original_mode {
-                Some(Mode::VisualLine) => {
-                    s.move_with(|map, selection| {
-                        selection.collapse_to(
-                            map.prev_line_boundary(selection.start.to_point(map)).1,
-                            SelectionGoal::None,
-                        )
+        match self.state().mode {
+            Mode::VisualLine | Mode::VisualBlock | Mode::Visual => {
+                self.update_active_editor(cx, |vim, editor, cx| {
+                    let original_mode = vim.state().undo_modes.get(transaction_id);
+                    editor.change_selections(None, cx, |s| match original_mode {
+                        Some(Mode::VisualLine) => {
+                            s.move_with(|map, selection| {
+                                selection.collapse_to(
+                                    map.prev_line_boundary(selection.start.to_point(map)).1,
+                                    SelectionGoal::None,
+                                )
+                            });
+                        }
+                        Some(Mode::VisualBlock) => {
+                            let mut first = s.first_anchor();
+                            first.collapse_to(first.start, first.goal);
+                            s.select_anchors(vec![first]);
+                        }
+                        _ => {
+                            s.move_with(|map, selection| {
+                                selection.collapse_to(
+                                    map.clip_at_line_end(selection.start),
+                                    selection.goal,
+                                );
+                            });
+                        }
                     });
-                }
-                Some(Mode::VisualBlock) => {
-                    let mut first = s.first_anchor();
-                    first.collapse_to(first.start, first.goal);
-                    s.select_anchors(vec![first]);
-                }
-                _ => {
-                    s.move_with(|_, selection| {
-                        selection.collapse_to(selection.start, selection.goal);
-                    });
-                }
-            });
-        });
-        self.switch_mode(Mode::Normal, true, cx)
+                });
+                self.switch_mode(Mode::Normal, true, cx)
+            }
+            Mode::Normal => {
+                self.update_active_editor(cx, |_, editor, cx| {
+                    editor.change_selections(None, cx, |s| {
+                        s.move_with(|map, selection| {
+                            selection
+                                .collapse_to(map.clip_at_line_end(selection.end), selection.goal)
+                        })
+                    })
+                });
+            }
+            Mode::Insert | Mode::Replace => {}
+        }
     }
 
     fn transaction_ended(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
