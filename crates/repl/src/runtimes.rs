@@ -7,7 +7,9 @@ use futures::{
 };
 use gpui::{AppContext, EntityId, Task};
 use project::Fs;
-use runtimelib::{dirs, ConnectionInfo, JupyterKernelspec, JupyterMessage};
+use runtimelib::{
+    dirs, ConnectionInfo, ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply,
+};
 use smol::{net::TcpListener, process::Command};
 use std::{
     fmt::Debug,
@@ -82,6 +84,30 @@ pub enum Kernel {
     ErroredLaunch(String),
 }
 
+impl Kernel {
+    pub fn set_execution_state(&mut self, status: &ExecutionState) {
+        match self {
+            Kernel::RunningKernel(running_kernel) => {
+                running_kernel.execution_state = status.clone();
+            }
+            Kernel::StartingKernel(task) => {
+                //
+            }
+            Kernel::ErroredLaunch(_) => {}
+        }
+    }
+
+    pub fn set_kernel_info(&mut self, kernel_info: &KernelInfoReply) {
+        match self {
+            Kernel::RunningKernel(running_kernel) => {
+                running_kernel.kernel_info = Some(kernel_info.clone());
+            }
+            Kernel::StartingKernel(_) => {}
+            Kernel::ErroredLaunch(_) => {}
+        }
+    }
+}
+
 pub struct RunningKernel {
     #[allow(unused)]
     pub process: smol::process::Child,
@@ -90,6 +116,8 @@ pub struct RunningKernel {
     #[allow(unused)]
     iopub_task: Task<anyhow::Result<()>>,
     pub request_tx: mpsc::Sender<JupyterMessage>,
+    pub execution_state: ExecutionState,
+    pub kernel_info: Option<KernelInfoReply>,
 }
 
 type JupyterMessageChannel =
@@ -179,6 +207,9 @@ impl RunningKernel {
                     request_tx,
                     shell_task,
                     iopub_task,
+                    // Technically a third secret thing -- unknown
+                    execution_state: ExecutionState::Busy,
+                    kernel_info: None,
                 },
                 messages_rx,
             ))
