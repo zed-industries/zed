@@ -117,16 +117,15 @@ pub fn generate_terminal_assistant_prompt(
 ) -> String {
     let mut prompt = String::new();
     writeln!(&mut prompt, "You are an expert terminal user.").unwrap();
-    writeln!(&mut prompt, "You are helping me with my terminal commands.").unwrap();
-    writeln!(&mut prompt, "I will give you a description of a command and you need to respond with a command that matches the description.").unwrap();
+    writeln!(&mut prompt, "You will be given a description of a command and you need to respond with a command that matches the description.").unwrap();
     writeln!(&mut prompt, "Do not include markdown blocks or any other text formatting in your response, always respond with a single command that can be executed in the given shell.").unwrap();
     if let Some(shell) = shell {
-        writeln!(&mut prompt, "Current shell is '{shell}'").unwrap();
+        writeln!(&mut prompt, "Current shell is '{shell}'.").unwrap();
     }
     if let Some(working_directory) = working_directory {
         writeln!(
             &mut prompt,
-            "Current working directory is '{working_directory}'"
+            "Current working directory is '{working_directory}'."
         )
         .unwrap();
     }
