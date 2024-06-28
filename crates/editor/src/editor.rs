@@ -6812,6 +6812,16 @@ impl Editor {
             return;
         }
 
+        if self
+            .context_menu
+            .write()
+            .as_mut()
+            .map(|menu| menu.select_first(self.project.as_ref(), cx))
+            .unwrap_or(false)
+        {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
             return;
