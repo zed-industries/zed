@@ -659,6 +659,13 @@ fn handle_calc_client_size(
     requested_client_rect[0].left += frame_x + padding;
     requested_client_rect[0].bottom -= frame_y + padding;
 
+    if state_ptr.state.borrow().is_maximized() {
+        requested_client_rect[0].top += frame_y + padding;
+    } else {
+        // Extra pixel from the top border
+        requested_client_rect[0].top += 1;
+    }
+
     Some(0)
 }
 
@@ -828,7 +835,10 @@ fn handle_hit_test_msg(
         y: lparam.signed_hiword().into(),
     };
     unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-    if cursor_point.y > 0 && cursor_point.y < frame_y + padding {
+    if !state_ptr.state.borrow().is_maximized()
+        && cursor_point.y > 0
+        && cursor_point.y < frame_y + padding
+    {
         return Some(HTTOP as _);
     }
 
