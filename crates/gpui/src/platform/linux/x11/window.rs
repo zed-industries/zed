@@ -752,6 +752,18 @@ impl X11WindowStatePtr {
         }
     }
 
+    pub fn last_refresh_at(&self) -> Option<Instant> {
+        let state = self.state.borrow();
+        state.last_refresh_at.clone()
+    }
+
+    pub fn refresh_queued(&self) -> bool {
+        self.state.borrow().refresh_queued
+    }
+    pub fn refresh_rate(&self) -> Duration {
+        self.state.borrow().refresh_rate
+    }
+
     pub fn needs_refresh(&self) -> bool {
         let state = self.state.borrow();
 
@@ -760,7 +772,7 @@ impl X11WindowStatePtr {
         }
 
         let refresh_rate = state.refresh_rate;
-        state.last_refresh_at.map_or(false, |last_refresh_at| {
+        state.last_refresh_at.map_or(true, |last_refresh_at| {
             last_refresh_at.elapsed() >= refresh_rate
         })
     }
