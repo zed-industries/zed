@@ -11,6 +11,7 @@ path = "src/miner.rs"
 
 [dependencies]
 anyhow.workspace = true
+clap.workspace = true
 futures.workspace = true
 heed.workspace = true
 ignore.workspace = true

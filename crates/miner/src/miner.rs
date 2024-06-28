@@ -2,6 +2,7 @@ mod huggingface;
 mod ollama;
 
 use anyhow::{anyhow, Result};
+use clap::Parser;
 use heed::{
     types::{SerdeJson, Str},
     Database as HeedDatabase, EnvOpenOptions, RwTxn,
@@ -12,28 +13,73 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::{Path, PathBuf},
-    process::Command,
     sync::Arc,
     time::SystemTime,
 };
-use tokenizers::tokenizer::Tokenizer;
-use tokenizers::FromPretrainedParameters;
-use tokio::sync::mpsc;
-use tokio::sync::Mutex;
+use tokenizers::{tokenizer::Tokenizer, FromPretrainedParameters};
+use tokio::sync::{mpsc, Mutex};
 
 const CHUNK_SIZE: usize = 5000;
 const OVERLAP: usize = 2_000;
 
-#[derive(Debug)]
-enum Entry {
-    File(PathBuf),
-    Directory(PathBuf),
+const HUGGINGFACE_ENDPOINT_URL: &str =
+    "https://riz4p7andt1wt75l.us-east-1.aws.endpoints.huggingface.cloud";
+
+#[derive(Parser)]
+#[command(name = "Project Summarizer")]
+#[command(author = "Your Name")]
+#[command(version = "1.0")]
+#[command(about = "Summarizes a project directory", long_about = None)]
+struct Cli {
+    /// The path to the project directory
+    project_path: PathBuf,
+
+    /// The path to the database
+    #[arg(short = 'd', long = "db-path")]
+    db_path: Option<PathBuf>,
+
+    /// Number of worker threads
+    #[arg(short = 'w', long = "workers", default_value = "8")]
+    num_workers: usize,
+
+    /// Path to read summaries from
+    #[arg(long)]
+    read: Option<PathBuf>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct CachedSummary {
-    summary: String,
-    mtime: SystemTime,
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    let project_path = &cli.project_path;
+    if !project_path.exists() || !project_path.is_dir() {
+        eprintln!("Error: The provided project path does not exist or is not a directory.");
+        std::process::exit(1);
+    }
+
+    let db_path = cli
+        .db_path
+        .unwrap_or_else(|| std::env::current_dir().unwrap().join("project_summaries"));
+
+    println!("Summarizing project at: {}", project_path.display());
+    println!("Using database at: {}", db_path.display());
+    println!("Number of workers: {}", cli.num_workers);
+
+    let miner = Miner::new(db_path, project_path.to_path_buf(), cli.num_workers).await?;
+    miner.summarize_project().await?;
+
+    println!("Finished summarization");
+
+    if let Some(read_path) = cli.read {
+        let full_path = project_path.join(&read_path);
+        if let Some(summary) = miner.summary_for_path(&full_path).await? {
+            println!("<path>{}</path>", full_path.to_string_lossy());
+            println!("<summary>{}</summary>", summary);
+            println!();
+        }
+    }
+
+    Ok(())
 }
 
 pub struct Miner {
@@ -49,9 +95,6 @@ pub struct Miner {
     summaries: Arc<Mutex<BTreeMap<PathBuf, String>>>,
     paths_loaded_from_cache: Arc<Mutex<BTreeMap<PathBuf, bool>>>,
 }
-
-const HUGGINGFACE_ENDPOINT_URL: &str =
-    "https://riz4p7andt1wt75l.us-east-1.aws.endpoints.huggingface.cloud";
 
 impl Miner {
     pub async fn new(db_path: PathBuf, root: PathBuf, num_workers: usize) -> Result<Arc<Self>> {
@@ -258,9 +301,19 @@ impl Miner {
             self.summarize_rust_file(content)
         } else {
             let token_count = self.count_tokens(content);
+
+            println!("Token count for file {}: {}", path.display(), token_count);
+
             if token_count > CHUNK_SIZE {
                 let chunks = self.split_into_chunks(content);
+                println!("Chunking file: {}", path.display());
+                println!("Tokenized chunk lengths:");
+                for (i, chunk) in chunks.iter().enumerate() {
+                    let token_count = self.count_tokens(chunk);
+                    println!("  Chunk {}: {} tokens", i + 1, token_count);
+                }
                 let chunk_summaries = Box::pin(self.summarize_chunks(path, &chunks)).await?;
+                println!("Chunk summaries: {:?}", chunk_summaries);
 
                 let combined_content = chunk_summaries.join("\n## Summary\n");
                 let messages = vec![
@@ -386,36 +439,38 @@ impl Miner {
         let mut chunks = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
         let mut current_chunk = String::new();
-        let mut current_tokens = 0;
+        let mut current_chunk_token_count = 0;
 
         for line in lines {
-            let line_tokens = self.tokenizer.encode(line, false).unwrap().get_ids().len();
-            if current_tokens + line_tokens > CHUNK_SIZE {
+            let encoded = self.tokenizer.encode(line, false).unwrap();
+            let line_tokens = encoded.get_ids();
+            let line_token_count = line_tokens.len();
+
+            if current_chunk_token_count + line_token_count > CHUNK_SIZE {
+                // Flush the current chunk
                 chunks.push(current_chunk.clone());
                 current_chunk.clear();
-                current_tokens = 0;
+                current_chunk_token_count = 0;
             }
-            current_chunk.push_str(line);
-            current_chunk.push('\n');
-            current_tokens += line_tokens;
+
+            if line_token_count > CHUNK_SIZE {
+                // Truncate the line and append it
+                for token in encoded.get_tokens().into_iter().take(CHUNK_SIZE) {
+                    current_chunk.push_str(token);
+                }
+                chunks.push(current_chunk.clone());
+                current_chunk.clear();
+                current_chunk_token_count = 0;
+            } else {
+                // Add the line to the current chunk
+                current_chunk.push_str(line);
+                current_chunk.push('\n');
+                current_chunk_token_count += line_token_count;
+            }
         }
 
         if !current_chunk.is_empty() {
             chunks.push(current_chunk);
-        }
-
-        // Add overlap
-        for i in 1..chunks.len() {
-            let overlap_text = chunks[i - 1]
-                .lines()
-                .rev()
-                .take(OVERLAP)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join("\n");
-            chunks[i] = format!("{}\n{}", overlap_text, chunks[i]);
         }
 
         chunks
@@ -425,6 +480,8 @@ impl Miner {
         let mut chunk_summaries = Vec::new();
 
         for chunk in chunks {
+            let token_count = self.count_tokens(chunk);
+            println!("Tokenized length of chunk: {}", token_count);
             let summary = self.summarize_file(path, chunk).await?;
             chunk_summaries.push(summary);
         }
@@ -518,6 +575,7 @@ impl Miner {
                 while let Some(content) = receiver.recv().await {
                     combined_summary.push_str(&content);
                 }
+
                 let cached_summary = CachedSummary {
                     summary: combined_summary.clone(),
                     mtime,
@@ -544,61 +602,36 @@ impl Miner {
 
         Ok(())
     }
+
+    async fn summary_for_path(&self, path: &Path) -> Result<Option<String>> {
+        let key = path.to_string_lossy().to_string();
+        let cached_summary = self
+            .database
+            .transact(move |db, txn| Ok(db.get(&txn, &key)?))
+            .await?;
+
+        if let Some(cached) = cached_summary {
+            return Ok(Some(cached.summary));
+        }
+
+        if let Some(summary) = self.summaries.lock().await.get(path) {
+            return Ok(Some(summary.clone()));
+        }
+
+        Ok(None)
+    }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
+#[derive(Debug)]
+enum Entry {
+    File(PathBuf),
+    Directory(PathBuf),
+}
 
-    if args.len() < 2 {
-        eprintln!(
-            "Usage: {} <project_path> [db_path] [num_workers] [--read=path]",
-            args[0]
-        );
-        std::process::exit(1);
-    }
-
-    let project_path = Path::new(&args[1]);
-    if !project_path.exists() || !project_path.is_dir() {
-        eprintln!("Error: The provided project path does not exist or is not a directory.");
-        std::process::exit(1);
-    }
-
-    let db_path = if args.len() >= 3 && !args[2].starts_with("--") {
-        PathBuf::from(&args[2])
-    } else {
-        std::env::current_dir()?.join("project_summaries")
-    };
-
-    let num_workers = if args.len() >= 4 && !args[3].starts_with("--") {
-        args[3].parse().unwrap_or(8)
-    } else {
-        8
-    };
-
-    println!("Summarizing project at: {}", project_path.display());
-    println!("Using database at: {}", db_path.display());
-    println!("Number of workers: {}", num_workers);
-
-    let miner = Miner::new(db_path, project_path.to_path_buf(), num_workers).await?;
-    miner.summarize_project().await?;
-
-    println!("Finished summarization");
-
-    // Check if --read flag is provided
-    if let Some(read_path) = args.iter().find(|arg| arg.starts_with("--read=")) {
-        let path = Path::new(&read_path[7..]);
-        let full_path = project_path.join(path);
-        for (child_path, summary) in miner.summaries.lock().await.iter() {
-            if child_path.parent() == Some(&full_path) {
-                println!("<path>{}</path>", child_path.to_string_lossy());
-                println!("<summary>{}</summary>", summary);
-                println!();
-            }
-        }
-    }
-
-    Ok(())
+#[derive(Debug, Serialize, Deserialize)]
+struct CachedSummary {
+    summary: String,
+    mtime: SystemTime,
 }
 
 #[derive(Debug, Serialize)]

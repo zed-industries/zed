@@ -6674,6 +6674,7 @@ name = "miner"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap 4.4.4",
  "futures 0.3.28",
  "heed",
  "ignore",
