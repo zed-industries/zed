@@ -49,7 +49,7 @@ use std::{
     future::Future,
     mem,
     ops::{AddAssign, Deref, DerefMut, Sub},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -1766,10 +1766,13 @@ impl LocalWorktree {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
             let new_entry = this.update(&mut cx, |this, _| {
-                this.entry_for_path(path)
+                let ret = this
+                    .entry_for_path(path)
                     .cloned()
-                    .ok_or_else(|| anyhow!("failed to read path after update"))
+                    .ok_or_else(|| anyhow!("failed to read path after update"));
+                ret
             })??;
+
             Ok(Some(new_entry))
         })
     }
@@ -2787,7 +2790,9 @@ impl BackgroundScannerState {
                 let removed_entry_id = self.removed_entry_ids.entry(key).or_insert(entry.id);
                 *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
             }
-            entries_by_id_edits.push(Edit::Remove(entry.id));
+            if entry.data.inode().is_some() {
+                entries_by_id_edits.push(Edit::Remove(entry.id));
+            }
         }
         self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
 
@@ -3539,6 +3544,7 @@ impl BackgroundScanner {
                     root_entry.is_ignored = true;
                     state.insert_entry(root_entry.clone(), self.fs.as_ref());
                 }
+                dbg!("Enqueue scan", &root_abs_path);
                 state.enqueue_scan_dir(root_abs_path, &root_entry, &scan_job_tx);
             }
         };
@@ -3766,6 +3772,7 @@ impl BackgroundScanner {
         {
             let mut state = self.state.lock();
             let root_path = state.snapshot.abs_path.clone();
+            dbg!(&root_path);
             for path in paths {
                 for ancestor in path.ancestors() {
                     if let Some(entry) = state.snapshot.entry_for_path(ancestor) {
@@ -3882,24 +3889,38 @@ impl BackgroundScanner {
     }
 
     async fn scan_zip(&self, _job: &ScanJob) -> Result<()> {
-        let file_contents = self.fs.load_bytes(&_job.abs_path).await?;
-        let zip = async_zip::base::read::mem::ZipFileReader::new(file_contents).await?; //._job.abs_path
+        dbg!(&_job.abs_path);
+        let abs_path = _job.abs_path.canonicalize()?;
+        let file_contents = self.fs.load_bytes(&abs_path).await.unwrap();
+        let zip = async_zip::base::read::mem::ZipFileReader::new(file_contents)
+            .await
+            .unwrap();
 
         let mut new_entries = Vec::new();
+        let root_char_bag = { self.state.lock().snapshot.root_char_bag };
         for i in 0..zip.file().entries().len() {
             let Ok(mut entry) = zip.reader_with_entry(i).await else {
                 continue;
             };
-            let path: PathBuf = entry.entry().filename().as_str()?.into();
+            let path: PathBuf = entry.entry().filename().as_str().unwrap().into();
+            let path: Arc<Path> = path.into();
+            let kind = if entry.entry().dir().unwrap_or(false) {
+                EntryKind::Container
+            } else {
+                EntryKind::File(char_bag_for_path(root_char_bag, &path))
+            };
+
             let mut buf = String::with_capacity(entry.entry().uncompressed_size() as usize);
             entry.read_to_string_checked(&mut buf).await?;
-            let entry = Entry::new(
-                path.into(),
+
+            let mut entry = Entry::new(
+                path,
                 EntryArg::Contents(buf.into()),
                 self.next_entry_id.as_ref(),
                 self.state.lock().snapshot.root_char_bag,
                 None,
             );
+            entry.kind = kind;
             new_entries.push(entry);
         }
         let root_path: Arc<Path> = Arc::from(Path::new(""));
@@ -3930,12 +3951,14 @@ impl BackgroundScanner {
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
         let dir_contents = self.fs.read_dir(&job.abs_path).await;
-        if job
-            .abs_path
-            .as_os_str()
-            .as_encoded_bytes()
-            .ends_with(".zip".as_bytes())
-            && dir_contents.is_err()
+        if dir_contents.is_err()
+            && job.abs_path.components().last().map_or(false, |component| {
+                if let Component::Normal(last) = component {
+                    Path::new(last).extension() == Some(OsStr::new("zip"))
+                } else {
+                    false
+                }
+            })
         {
             return self.scan_zip(&job).await;
         }
