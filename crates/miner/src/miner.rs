@@ -49,12 +49,15 @@ pub struct Miner {
     paths_loaded_from_cache: Arc<Mutex<BTreeMap<PathBuf, bool>>>,
 }
 
+const HUGGINGFACE_ENDPOINT_URL: &str =
+    "https://riz4p7andt1wt75l.us-east-1.aws.endpoints.huggingface.cloud";
+
 impl Miner {
     pub async fn new(db_path: PathBuf, root: PathBuf, num_workers: usize) -> Result<Arc<Self>> {
         let database = Database::new(&db_path, &root).await?;
 
         let tokenizer = Tokenizer::from_pretrained(
-            "mistralai/Mistral-7B-Instruct-v0.1",
+            "Qwen/Qwen2-7B-Instruct",
             Some(FromPretrainedParameters {
                 revision: "main".into(),
                 user_agent: HashMap::default(),
@@ -66,8 +69,7 @@ impl Miner {
         .unwrap();
 
         let client = Arc::new(HuggingFaceClient::new(
-            "https://c0es55wrh8muqy3g.us-east-1.aws.endpoints.huggingface.cloud/v1/chat/completions"
-                .into(),
+            HUGGINGFACE_ENDPOINT_URL.to_string(),
             std::env::var("HUGGINGFACE_API_KEY").expect("HUGGINGFACE_API_KEY not set"),
         ));
 
@@ -634,9 +636,16 @@ impl HuggingFaceClient {
     ) -> Result<mpsc::Receiver<String>> {
         let (tx, rx) = mpsc::channel(100);
 
+        let mut inputs = messages
+            .iter()
+            .map(|msg| format!("<|im_start|>{}\n{}<|im_end|>", msg.role, msg.content))
+            .collect::<Vec<String>>()
+            .join("\n");
+        inputs.push_str("<|im_end|>");
+        inputs.push_str("<|im_start|>assistant\n");
+
         let request = serde_json::json!({
-            "model": model,
-            "messages": messages,
+            "inputs": inputs,
             "stream": true,
             "max_tokens": 2048
         });
