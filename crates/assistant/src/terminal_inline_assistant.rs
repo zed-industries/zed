@@ -61,7 +61,6 @@ impl TerminalInlineAssistId {
 pub struct TerminalInlineAssistant {
     next_assist_id: TerminalInlineAssistId,
     assists: HashMap<TerminalInlineAssistId, TerminalInlineAssist>,
-    assists_by_editor: HashMap<WeakView<TerminalView>, TerminalInlineAssistId>,
     prompt_history: VecDeque<String>,
     telemetry: Option<Arc<Telemetry>>,
     fs: Arc<dyn Fs>,
@@ -74,7 +73,6 @@ impl TerminalInlineAssistant {
         Self {
             next_assist_id: TerminalInlineAssistId::default(),
             assists: HashMap::default(),
-            assists_by_editor: HashMap::default(),
             prompt_history: VecDeque::default(),
             telemetry: Some(telemetry),
             fs,
