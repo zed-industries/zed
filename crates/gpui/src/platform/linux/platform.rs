@@ -3,6 +3,7 @@
 use std::any::{type_name, Any};
 use std::cell::{self, RefCell};
 use std::env;
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::Read;
 use std::ops::{Deref, DerefMut};
@@ -506,6 +507,27 @@ pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
     let diff = a - b;
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
+}
+
+pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::State> {
+    let mut locales = Vec::default();
+    if let Some(locale) = std::env::var_os("LC_CTYPE") {
+        locales.push(locale);
+    }
+    locales.push(OsString::from("C"));
+    let mut state: Option<xkb::compose::State> = None;
+    for locale in locales {
+        if let Ok(table) =
+            xkb::compose::Table::new_from_locale(&cx, &locale, xkb::compose::COMPILE_NO_FLAGS)
+        {
+            state = Some(xkb::compose::State::new(
+                &table,
+                xkb::compose::STATE_NO_FLAGS,
+            ));
+            break;
+        }
+    }
+    state
 }
 
 pub(super) unsafe fn read_fd(mut fd: FileDescriptor) -> Result<String> {

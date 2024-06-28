@@ -105,10 +105,10 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
-        window_min_size: gpui::Size {
+        window_min_size: Some(gpui::Size {
             width: px(360.0),
             height: px(240.0),
-        },
+        }),
     }
 }
 
@@ -3111,11 +3111,11 @@ mod tests {
         cx.text_system()
             .add_fonts(vec![
                 Assets
-                    .load("fonts/zed-sans/zed-sans-extended.ttf")
+                    .load("fonts/plex-mono/ZedPlexMono-Regular.ttf")
                     .unwrap()
                     .unwrap(),
                 Assets
-                    .load("fonts/zed-mono/zed-mono-extended.ttf")
+                    .load("fonts/plex-sans/ZedPlexSans-Regular.ttf")
                     .unwrap()
                     .unwrap(),
             ])

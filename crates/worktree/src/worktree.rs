@@ -3826,7 +3826,8 @@ impl BackgroundScanner {
             .await;
 
         // Ensure that .git and .gitignore are processed first.
-        child_paths.sort_unstable();
+        swap_to_front(&mut child_paths, *GITIGNORE);
+        swap_to_front(&mut child_paths, *DOT_GIT);
 
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
@@ -4617,6 +4618,16 @@ impl BackgroundScanner {
 
     fn is_path_private(&self, path: &Path) -> bool {
         !self.share_private_files && self.settings.is_path_private(path)
+    }
+}
+
+fn swap_to_front(child_paths: &mut Vec<PathBuf>, file: &OsStr) {
+    let position = child_paths
+        .iter()
+        .position(|path| path.file_name().unwrap() == file);
+    if let Some(position) = position {
+        let temp = child_paths.remove(position);
+        child_paths.insert(0, temp);
     }
 }
 

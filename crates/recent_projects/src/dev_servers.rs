@@ -116,7 +116,7 @@ impl DevServerProjects {
 
         let markdown_style = MarkdownStyle {
             code_block: gpui::TextStyleRefinement {
-                font_family: Some("Zed Mono".into()),
+                font_family: Some("Zed Plex Mono".into()),
                 color: Some(cx.theme().colors().editor_foreground),
                 background_color: Some(cx.theme().colors().editor_background),
                 ..Default::default()
