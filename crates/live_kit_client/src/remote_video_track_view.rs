@@ -12,6 +12,7 @@ pub struct RemoteVideoTrackView {
     _maintain_frame: Task<Result<()>>,
 }
 
+#[derive(Debug)]
 pub enum RemoteVideoTrackViewEvent {
     Close,
 }

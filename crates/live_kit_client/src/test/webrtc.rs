@@ -27,7 +27,7 @@ pub mod video_stream {
             type Item = BoxVideoFrame;
 
             fn poll_next(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<Self::Item>> {
-                Poll::Ready(None)
+                Poll::Pending
             }
         }
     }
@@ -54,7 +54,7 @@ pub mod audio_stream {
             type Item = AudioFrame<'static>;
 
             fn poll_next(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<Self::Item>> {
-                Poll::Ready(None)
+                Poll::Pending
             }
         }
     }
