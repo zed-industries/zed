@@ -236,22 +236,15 @@ impl TerminalInlineAssistant {
                 .update(cx, |this, cx| {
                     this.clear_prompt(cx);
                     this.focus_handle(cx).focus(cx);
-                    this.model().update(cx, |model, cx| {
-                        model.try_keystroke(
-                            &Keystroke {
-                                modifiers: Modifiers::none(),
-                                key: "enter".into(),
-                                ime_key: None,
-                            },
-                            false,
-                        );
-                    });
                 })
                 .log_err();
-
-            // if undo {
-            //     assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
-            // }
+            assist.codegen.update(cx, |codegen, cx| {
+                if undo {
+                    codegen.undo(cx);
+                } else {
+                    codegen.complete(cx);
+                }
+            });
         }
     }
 
@@ -462,7 +455,8 @@ impl Render for PromptEditor {
                         PopoverMenu::new("model-switcher")
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |mut menu, cx| {
-                                    for model in CompletionProvider::global(cx).available_models() {
+                                    for model in CompletionProvider::global(cx).available_models(cx)
+                                    {
                                         menu = menu.custom_entry(
                                             {
                                                 let model = model.clone();
@@ -869,16 +863,40 @@ impl PromptEditor {
 #[derive(Debug)]
 pub enum CodegenEvent {
     Finished,
-    Undone,
 }
 
 impl EventEmitter<CodegenEvent> for Codegen {}
+
+struct TerminalTransaction {
+    terminal: Model<Terminal>,
+}
+
+impl TerminalTransaction {
+    pub fn start(terminal: Model<Terminal>) -> Self {
+        Self { terminal }
+    }
+
+    pub fn push(&mut self, hunk: String, cx: &mut AppContext) {
+        self.terminal.update(cx, |terminal, _| terminal.input(hunk));
+    }
+
+    pub fn undo(&self, cx: &mut AppContext) {
+        self.terminal
+            .update(cx, |terminal, _| terminal.clear_input());
+    }
+
+    pub fn complete(&self, cx: &mut AppContext) {
+        self.terminal
+            .update(cx, |terminal, _| terminal.execute_input());
+    }
+}
 
 pub struct Codegen {
     status: CodegenStatus,
     telemetry: Option<Arc<Telemetry>>,
     terminal: Model<Terminal>,
     generation: Task<()>,
+    transaction: Option<TerminalTransaction>,
 }
 
 impl Codegen {
@@ -888,11 +906,13 @@ impl Codegen {
             telemetry,
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
+            transaction: None,
         }
     }
 
     pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
         self.status = CodegenStatus::Pending;
+        self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
 
         let telemetry = self.telemetry.clone();
         let model_telemetry_id = prompt.model.telemetry_id();
@@ -937,8 +957,10 @@ impl Codegen {
 
                 while let Some(hunk) = hunks_rx.next().await {
                     this.update(&mut cx, |this, cx| {
-                        this.terminal.update(cx, |terminal, _| terminal.input(hunk));
-                        cx.notify();
+                        if let Some(transaction) = &mut this.transaction {
+                            transaction.push(hunk, cx);
+                            cx.notify();
+                        }
                     })?;
                 }
 
@@ -969,12 +991,16 @@ impl Codegen {
         cx.notify();
     }
 
+    pub fn complete(&mut self, cx: &mut ModelContext<Self>) {
+        if let Some(transaction) = self.transaction.take() {
+            transaction.complete(cx);
+        }
+    }
+
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
-        //TODO
-        // if let Some(transaction_id) = self.transaction_id.take() {
-        //     self.buffer
-        //         .update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
-        // }
+        if let Some(transaction) = self.transaction.take() {
+            transaction.undo(cx);
+        }
     }
 }
 
