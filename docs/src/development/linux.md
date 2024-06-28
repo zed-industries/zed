@@ -35,7 +35,7 @@ Alternatively, if you have [Docker](https://www.docker.com/) installed you can b
 ```sh
 docker compose up -d
 ```
- (for arch based users install both docker and docker-compose using command pacman -S docker docker-compose)
+ ( for arch based users install both docker and docker-compose using command 'pacman -S docker docker-compose' and start docker service 'sudo systemctl start docker.service' )
 
 ## Building from source
 
