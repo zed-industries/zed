@@ -393,7 +393,7 @@ impl Worktree {
             .metadata(&abs_path)
             .await
             .context("failed to stat worktree path");
-        let mut zip_tempdir = None;
+        let mut _zip_tempdir = None;
         let mut canonical_path = None;
         if metadata.is_err() {
             if let Some((base_zip_path, _)) = zip_path(&abs_path) {
@@ -407,7 +407,7 @@ impl Worktree {
                     .metadata(&dir.path())
                     .await
                     .context("failed to stat worktree path");
-                zip_tempdir = Some(dir);
+                _zip_tempdir = Some(dir);
             }
         }
         let metadata = metadata?;
@@ -480,7 +480,7 @@ impl Worktree {
                 fs_case_sensitive,
                 visible,
                 settings,
-                zip_tempdir,
+                _zip_tempdir,
             };
             worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
             Worktree::Local(worktree)
