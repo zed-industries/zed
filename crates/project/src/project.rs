@@ -2141,12 +2141,14 @@ impl Project {
     /// LanguageServerName is owned, because it is inserted into a map
     pub fn open_local_buffer_via_lsp(
         &mut self,
-        abs_path: lsp::Url,
+        mut abs_path: lsp::Url,
         language_server_id: LanguageServerId,
         language_server_name: LanguageServerName,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
         cx.spawn(move |this, mut cx| async move {
+            // Escape percent-encoded string.
+            let _ = abs_path.set_scheme("file");
             let abs_path = abs_path
                 .to_file_path()
                 .map_err(|_| anyhow!("can't convert URI to path"))?;
@@ -2167,9 +2169,10 @@ impl Project {
                     );
                 })
                 .ok();
-                (worktree, PathBuf::new())
-            };
 
+                let worktree_root = worktree.update(&mut cx, |this, _| this.abs_path())?;
+                (worktree, abs_path.strip_prefix(worktree_root)?.into())
+            };
             let project_path = ProjectPath {
                 worktree_id: worktree.update(&mut cx, |worktree, _| worktree.id())?,
                 path: relative_path.into(),

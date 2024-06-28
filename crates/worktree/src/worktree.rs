@@ -120,6 +120,7 @@ pub struct LocalWorktree {
     next_entry_id: Arc<AtomicUsize>,
     settings: WorktreeSettings,
     share_private_files: bool,
+    zip_tempdir: Option<tempfile::TempDir>,
 }
 
 struct ScanRequest {
@@ -371,6 +372,14 @@ static EMPTY_PATH: &str = "";
 
 impl EventEmitter<Event> for Worktree {}
 
+fn zip_path(path: &Path) -> Option<(Arc<Path>, Arc<Path>)> {
+    let path_str = path.to_str()?;
+    let (zip, inner) = path_str.split_once(".zip/")?;
+    let zip_path = PathBuf::from(format!("{}.zip", zip));
+    let inner_path = PathBuf::from(inner);
+    Some((Arc::from(zip_path), Arc::from(inner_path)))
+}
+
 impl Worktree {
     pub async fn local(
         path: impl Into<Arc<Path>>,
@@ -379,12 +388,29 @@ impl Worktree {
         next_entry_id: Arc<AtomicUsize>,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
-        let abs_path = path.into();
-        let metadata = fs
+        let mut abs_path = path.into();
+        let mut metadata = fs
             .metadata(&abs_path)
             .await
-            .context("failed to stat worktree path")?;
-
+            .context("failed to stat worktree path");
+        let mut zip_tempdir = None;
+        let mut canonical_path = None;
+        if metadata.is_err() {
+            if let Some((base_zip_path, _)) = zip_path(&abs_path) {
+                // Treat this path as a zip container.
+                let dir = tempfile::tempdir()?;
+                let contents = fs.load_bytes(&base_zip_path).await?;
+                node_runtime::extract_zip(dir.path(), futures::io::Cursor::new(contents)).await?;
+                canonical_path = Some(dir.path().to_owned());
+                abs_path = base_zip_path;
+                metadata = fs
+                    .metadata(&dir.path())
+                    .await
+                    .context("failed to stat worktree path");
+                zip_tempdir = Some(dir);
+            }
+        }
+        let metadata = metadata?;
         let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
             log::error!(
                 "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
@@ -424,16 +450,19 @@ impl Worktree {
             };
 
             if let Some(metadata) = metadata {
-                snapshot.insert_entry(
-                    Entry::new(
-                        Arc::from(Path::new("")),
-                        &metadata,
-                        &next_entry_id,
-                        snapshot.root_char_bag,
-                        None,
-                    ),
-                    fs.as_ref(),
+                let mut entry = Entry::new(
+                    Arc::from(Path::new("")),
+                    &metadata,
+                    &next_entry_id,
+                    snapshot.root_char_bag,
+                    None,
                 );
+                if canonical_path.is_some() {
+                    entry.is_symlink = true;
+                    entry.kind = EntryKind::PendingDir;
+                    entry.canonical_path = canonical_path;
+                }
+                snapshot.insert_entry(entry, fs.as_ref());
             }
 
             let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
@@ -451,6 +480,7 @@ impl Worktree {
                 fs_case_sensitive,
                 visible,
                 settings,
+                zip_tempdir,
             };
             worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
             Worktree::Local(worktree)
@@ -1931,10 +1961,20 @@ impl Snapshot {
         {
             return Err(anyhow!("invalid path"));
         }
+        let root_path: Arc<Path> = {
+            if let Some(canonical_path) = self
+                .root_entry()
+                .and_then(|entry| entry.canonical_path.as_deref().map(Arc::<Path>::from))
+            {
+                canonical_path.clone()
+            } else {
+                self.abs_path.clone()
+            }
+        };
         if path.file_name().is_some() {
-            Ok(self.abs_path.join(path))
+            Ok(root_path.join(path))
         } else {
-            Ok(self.abs_path.to_path_buf())
+            Ok(root_path.to_path_buf())
         }
     }
 
@@ -3522,7 +3562,18 @@ impl BackgroundScanner {
         request.relative_paths.sort_unstable();
         self.forcibly_load_paths(&request.relative_paths).await;
 
-        let root_path = self.state.lock().snapshot.abs_path.clone();
+        let root_path = {
+            let state = self.state.lock();
+            if let Some(canonical_path) = state
+                .snapshot
+                .root_entry()
+                .and_then(|entry| entry.canonical_path.as_deref().map(Arc::from))
+            {
+                canonical_path
+            } else {
+                state.snapshot.abs_path.clone()
+            }
+        };
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
             Err(err) => {
@@ -3564,7 +3615,18 @@ impl BackgroundScanner {
     }
 
     async fn process_events(&mut self, mut abs_paths: Vec<PathBuf>) {
-        let root_path = self.state.lock().snapshot.abs_path.clone();
+        let root_path = {
+            let state = self.state.lock();
+            if let Some(canonical_path) = state
+                .snapshot
+                .root_entry()
+                .and_then(|entry| entry.canonical_path.as_deref().map(Arc::from))
+            {
+                canonical_path
+            } else {
+                state.snapshot.abs_path.clone()
+            }
+        };
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
             Err(err) => {
