@@ -132,7 +132,7 @@ impl Room {
                         while let Some(event) = events.recv().await {
                             if this
                                 .update(&mut cx, |this, cx| {
-                                    this.live_kit_room_updated(event, cx).log_err();
+                                    this.live_kit_room_updated(event, cx).warn_on_err();
                                 })
                                 .is_err()
                             {
@@ -691,6 +691,12 @@ impl Room {
         mut room: proto::Room,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        log::trace!(
+            "client {:?}. room update: {:?}",
+            self.client.user_id(),
+            &room
+        );
+
         // Filter ourselves out from the room's participants.
         let local_participant_ix = room
             .participants
@@ -865,7 +871,7 @@ impl Room {
                                                 },
                                                 cx,
                                             )
-                                            .log_err();
+                                            .warn_on_err();
                                         }
                                     }
                                 }
@@ -957,16 +963,26 @@ impl Room {
         event: RoomEvent,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        log::trace!(
+            "client {:?}. livekit event: {:?}",
+            self.client.user_id(),
+            &event
+        );
+
         match event {
             RoomEvent::TrackSubscribed {
-                track, participant, ..
+                track,
+                participant,
+                publication,
             } => {
                 let user_id = participant.identity().0.parse()?;
                 let track_id = track.sid();
-                let participant = self
-                    .remote_participants
-                    .get_mut(&user_id)
-                    .ok_or_else(|| anyhow!("subscribed to track by unknown participant"))?;
+                let participant = self.remote_participants.get_mut(&user_id).ok_or_else(|| {
+                    anyhow!(
+                        "{:?} subscribed to track by unknown participant {user_id}",
+                        self.client.user_id()
+                    )
+                })?;
                 match track {
                     livekit::track::RemoteTrack::Audio(track) => {
                         cx.emit(Event::RemoteAudioTracksChanged {
@@ -974,6 +990,7 @@ impl Room {
                         });
                         let stream = play_remote_audio_track(&track, cx);
                         participant.audio_tracks.insert(track_id, (track, stream));
+                        participant.muted = publication.is_muted();
                     }
                     livekit::track::RemoteTrack::Video(track) => {
                         cx.emit(Event::RemoteVideoTracksChanged {
@@ -988,13 +1005,16 @@ impl Room {
                 track, participant, ..
             } => {
                 let user_id = participant.identity().0.parse()?;
-                let participant = self
-                    .remote_participants
-                    .get_mut(&user_id)
-                    .ok_or_else(|| anyhow!("unsubscribed from track by unknown participant"))?;
+                let participant = self.remote_participants.get_mut(&user_id).ok_or_else(|| {
+                    anyhow!(
+                        "{:?}, unsubscribed from track by unknown participant {user_id}",
+                        self.client.user_id()
+                    )
+                })?;
                 match track {
                     livekit::track::RemoteTrack::Audio(track) => {
                         participant.audio_tracks.remove(&track.sid());
+                        participant.muted = true;
                         cx.emit(Event::RemoteAudioTracksChanged {
                             participant_id: participant.peer_id,
                         });
