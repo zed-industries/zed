@@ -129,7 +129,7 @@
       "ctrl-'": "editor::ToggleHunkDiff",
       "ctrl-\"": "editor::ExpandAllHunkDiffs",
       "ctrl-alt-g b": "editor::ToggleGitBlame",
-      "cmd-i": "editor::ShowSignatureHelp"
+      "ctrl-i": "editor::ShowSignatureHelp"
     }
   },
   {
