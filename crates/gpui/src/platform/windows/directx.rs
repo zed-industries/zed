@@ -9,17 +9,19 @@ use windows::{
         Graphics::{
             Direct3D::{
                 Fxc::{D3DCompileFromFile, D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION},
-                ID3DBlob, D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
+                ID3DBlob, D3D11_SRV_DIMENSION_BUFFER, D3D_DRIVER_TYPE_UNKNOWN,
+                D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
             },
             Direct3D11::{
                 D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext,
                 ID3D11InputLayout, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11Texture2D,
                 ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_FLAG,
-                D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC, D3D11_CPU_ACCESS_WRITE,
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_DEBUG,
-                D3D11_INPUT_ELEMENT_DESC, D3D11_INPUT_PER_VERTEX_DATA, D3D11_MAP_WRITE_DISCARD,
-                D3D11_SDK_VERSION, D3D11_SUBRESOURCE_DATA, D3D11_USAGE_DYNAMIC,
-                D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT,
+                D3D11_BIND_SHADER_RESOURCE, D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC,
+                D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                D3D11_CREATE_DEVICE_DEBUG, D3D11_INPUT_ELEMENT_DESC, D3D11_INPUT_PER_VERTEX_DATA,
+                D3D11_MAP_WRITE_DISCARD, D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, D3D11_SDK_VERSION,
+                D3D11_SHADER_RESOURCE_VIEW_DESC, D3D11_SHADER_RESOURCE_VIEW_DESC_0,
+                D3D11_SUBRESOURCE_DATA, D3D11_USAGE_DYNAMIC, D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT,
             },
             DirectComposition::{
                 DCompositionCreateDevice, DCompositionCreateDevice2, IDCompositionDesktopDevice,
@@ -219,6 +221,7 @@ impl DirectXRenderer {
         if quads.is_empty() {
             return true;
         }
+        // println!("{quads:#?}");
         unsafe {
             self.context
                 .context
@@ -236,10 +239,54 @@ impl DirectXRenderer {
                 Some(&(2 * 4)),
                 Some(&0),
             );
-            // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
             self.context
                 .context
                 .VSSetConstantBuffers(0, Some(&[Some(self.render.global_params_buffer.clone())]));
+            // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
+            self.context
+                .context
+                .PSSetConstantBuffers(0, Some(&[Some(self.render.global_params_buffer.clone())]));
+
+            {
+                let mut resource = std::mem::zeroed();
+                self.context
+                    .context
+                    .Map(
+                        &self.render.quad_pipeline.buffer,
+                        0,
+                        D3D11_MAP_WRITE_DISCARD,
+                        0,
+                        Some(&mut resource),
+                    )
+                    .unwrap();
+                std::ptr::copy_nonoverlapping(
+                    quads.as_ptr(),
+                    resource.pData as *mut Quad,
+                    quads.len(),
+                );
+                self.context
+                    .context
+                    .Unmap(&self.render.quad_pipeline.buffer, 0);
+                let mut view = None;
+                let mut desc = D3D11_SHADER_RESOURCE_VIEW_DESC::default();
+                desc.Format = DXGI_FORMAT_UNKNOWN;
+                desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+                desc.Anonymous.Buffer.Anonymous1.FirstElement = 0;
+                desc.Anonymous.Buffer.Anonymous2.NumElements = quads.len() as u32;
+                self.context
+                    .device
+                    .CreateShaderResourceView(
+                        &self.render.quad_pipeline.buffer,
+                        Some(&desc),
+                        Some(&mut view),
+                    )
+                    .unwrap();
+                self.context
+                    .context
+                    .VSSetShaderResources(0, Some(&[view.clone()]));
+                self.context.context.PSSetShaderResources(0, Some(&[view]));
+            }
+
             self.context
                 .context
                 .DrawInstanced(6, quads.len() as u32, 0, 0);
@@ -439,10 +486,25 @@ impl DirectXRenderContext {
             let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
             let fragment_shader_blob = build_shader_blob("shadow_fragment", "ps_5_0").unwrap();
             let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
+            let buffer = {
+                let desc = D3D11_BUFFER_DESC {
+                    // ByteWidth: BUFFER_SIZE as u32,
+                    ByteWidth: std::mem::size_of::<Shadow>() as u32 * 256,
+                    Usage: D3D11_USAGE_DYNAMIC,
+                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
+                    StructureByteStride: std::mem::size_of::<Shadow>() as u32,
+                };
+                let mut buffer = None;
+                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
+                buffer.unwrap()
+            };
             PipelineState {
                 layout,
                 vertex,
                 fragment,
+                buffer,
             }
         };
 
@@ -474,10 +536,25 @@ impl DirectXRenderContext {
             let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
             let fragment_shader_blob = build_shader_blob("quad_fragment", "ps_5_0").unwrap();
             let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
+            let buffer = {
+                let desc = D3D11_BUFFER_DESC {
+                    // ByteWidth: BUFFER_SIZE as u32,
+                    ByteWidth: std::mem::size_of::<Quad>() as u32 * 256,
+                    Usage: D3D11_USAGE_DYNAMIC,
+                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
+                    StructureByteStride: std::mem::size_of::<Quad>() as u32,
+                };
+                let mut buffer = None;
+                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
+                buffer.unwrap()
+            };
             PipelineState {
                 layout,
                 vertex,
                 fragment,
+                buffer,
             }
         };
 
@@ -502,6 +579,7 @@ struct PipelineState {
     layout: ID3D11InputLayout,
     vertex: ID3D11VertexShader,
     fragment: ID3D11PixelShader,
+    buffer: ID3D11Buffer,
 }
 
 fn get_dxgi_factory() -> Result<IDXGIFactory6> {
@@ -689,3 +767,4 @@ fn create_fragment_shader(device: &ID3D11Device, blob: &ID3DBlob) -> Result<ID3D
 }
 
 const BUFFER_COUNT: usize = 3;
+const BUFFER_SIZE: usize = 2 * 1024 * 1024;

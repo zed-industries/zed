@@ -231,7 +231,8 @@ float4 shadow_fragment(ShadowVertexOutput input): SV_TARGET {
         y += step;
     }
 
-    return input.color * float4(1., 1., 1., alpha);
+    // return input.color * float4(1., 1., 1., alpha);
+    return float4(1., 1., 1., 1.);
 }
 
 /*
@@ -259,7 +260,7 @@ struct QuadVertexOutput {
     // float4 clip_distance: SV_CLIPDISTANCE;
 };
 
-StructuredBuffer<Quad> quads : register(t0);
+StructuredBuffer<Quad> quads : register(t1);
 
 QuadVertexOutput quad_vertex(float2 unit_vertex: POSITION, uint quad_id: SV_InstanceID) {
     Quad quad = quads[quad_id];
