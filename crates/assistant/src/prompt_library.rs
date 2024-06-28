@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandRegistry;
 use chrono::{DateTime, Utc};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use futures::{
     future::{self, BoxFuture, Shared},
@@ -577,8 +577,30 @@ impl PromptLibrary {
 
     pub fn duplicate_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
         if let Some(prompt) = self.prompt_editors.get(&prompt_id) {
+            const DUPLICATE_SUFFIX: &str = " copy";
+            let title_to_duplicate = prompt.title_editor.read(cx).text(cx);
+            let existing_titles = self
+                .prompt_editors
+                .iter()
+                .filter(|&(&id, _)| id != prompt_id)
+                .map(|(_, prompt_editor)| prompt_editor.title_editor.read(cx).text(cx))
+                .filter(|title| title.starts_with(&title_to_duplicate))
+                .collect::<HashSet<_>>();
+
+            let title = if existing_titles.is_empty() {
+                title_to_duplicate + DUPLICATE_SUFFIX
+            } else {
+                let mut i = 1;
+                loop {
+                    let new_title = format!("{title_to_duplicate}{DUPLICATE_SUFFIX} {i}");
+                    if !existing_titles.contains(&new_title) {
+                        break new_title;
+                    }
+                    i += 1;
+                }
+            };
+
             let new_id = PromptId::new();
-            let title = prompt.title_editor.read(cx).text(cx);
             let body = prompt.body_editor.read(cx).text(cx);
             let save = self
                 .store
