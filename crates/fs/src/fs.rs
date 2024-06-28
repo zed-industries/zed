@@ -1441,7 +1441,7 @@ impl Fs for FakeFs {
         Ok(String::from_utf8(content.clone())?)
     }
 
-    async fn load_bytes(&self, path: &Path) -> Result<String> {
+    async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
         self.load_internal(path).await
     }
 
