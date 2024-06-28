@@ -46,7 +46,7 @@ pub struct LayoutState {
     hyperlink_tooltip: Option<AnyElement>,
     gutter: Pixels,
     last_hovered_word: Option<HoveredWord>,
-    prompt_element: Option<AnyElement>,
+    block_below_cursor_element: Option<AnyElement>,
 }
 
 /// Helper struct for converting data between Alacritty's cursor points, and displayed cursor points.
@@ -171,7 +171,7 @@ pub struct TerminalElement {
     cursor_visible: bool,
     can_navigate_to_selected_word: bool,
     interactivity: Interactivity,
-    prompt_below_cursor: Option<Arc<BlockProperties>>,
+    block_below_cursor: Option<Arc<BlockProperties>>,
 }
 
 impl InteractiveElement for TerminalElement {
@@ -190,7 +190,7 @@ impl TerminalElement {
         focused: bool,
         cursor_visible: bool,
         can_navigate_to_selected_word: bool,
-        prompt_below_cursor: Option<Arc<BlockProperties>>,
+        block_below_cursor: Option<Arc<BlockProperties>>,
     ) -> TerminalElement {
         TerminalElement {
             terminal,
@@ -199,7 +199,7 @@ impl TerminalElement {
             focus: focus.clone(),
             cursor_visible,
             can_navigate_to_selected_word,
-            prompt_below_cursor,
+            block_below_cursor,
             interactivity: Default::default(),
         }
         .track_focus(&focus)
@@ -792,9 +792,9 @@ impl Element for TerminalElement {
                     )
                 };
 
-                let prompt_element = if let Some(prompt) = &self.prompt_below_cursor {
+                let block_below_cursor_element = if let Some(block) = &self.block_below_cursor {
                     let target_line = self.terminal.read(cx).last_content.cursor.point.line.0 + 1;
-                    let render = &prompt.render;
+                    let render = &block.render;
                     let mut block_cx = BlockContext {
                         context: cx,
                         dimensions,
@@ -803,7 +803,7 @@ impl Element for TerminalElement {
                     let mut element = div().child(element).into_any_element();
                     let available_space = size(
                         AvailableSpace::Definite(dimensions.width() + gutter),
-                        AvailableSpace::Definite(prompt.height as f32 * dimensions.line_height()),
+                        AvailableSpace::Definite(block.height as f32 * dimensions.line_height()),
                     );
                     let origin = bounds.origin
                         + Point::new(px(0.), target_line as f32 * dimensions.line_height());
@@ -826,7 +826,7 @@ impl Element for TerminalElement {
                     hyperlink_tooltip,
                     gutter,
                     last_hovered_word,
-                    prompt_element,
+                    block_below_cursor_element,
                 }
             })
     }
@@ -860,7 +860,7 @@ impl Element for TerminalElement {
 
         let cursor = layout.cursor.take();
         let hyperlink_tooltip = layout.hyperlink_tooltip.take();
-        let prompt_element = layout.prompt_element.take();
+        let block_below_cursor_element = layout.block_below_cursor_element.take();
         self.interactivity
             .paint(global_id, bounds, Some(&layout.hitbox), cx, |_, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
@@ -912,7 +912,7 @@ impl Element for TerminalElement {
                     }
                 }
 
-                if let Some(mut element) = prompt_element {
+                if let Some(mut element) = block_below_cursor_element {
                     element.paint(cx);
                 }
 

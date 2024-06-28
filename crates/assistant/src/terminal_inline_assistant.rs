@@ -112,7 +112,7 @@ impl TerminalInlineAssistant {
             render: Box::new(move |_| prompt_editor_render.clone().into_any_element()),
         };
         terminal_view.update(cx, |terminal_view, cx| {
-            terminal_view.set_prompt(block, cx);
+            terminal_view.set_block_below_cursor(block, cx);
         });
 
         let terminal_assistant = TerminalInlineAssist::new(
@@ -241,7 +241,7 @@ impl TerminalInlineAssistant {
             assist
                 .terminal
                 .update(cx, |this, cx| {
-                    this.clear_prompt(cx);
+                    this.clear_block_below_cursor(cx);
                     this.focus_handle(cx).focus(cx);
                 })
                 .log_err();
@@ -266,7 +266,7 @@ impl TerminalInlineAssistant {
         assist
             .terminal
             .update(cx, |this, cx| {
-                this.clear_prompt(cx);
+                this.clear_block_below_cursor(cx);
                 this.focus_handle(cx).focus(cx);
             })
             .is_ok()
@@ -283,12 +283,12 @@ impl TerminalInlineAssistant {
             assist
                 .terminal
                 .update(cx, |terminal, cx| {
-                    terminal.clear_prompt(cx);
+                    terminal.clear_block_below_cursor(cx);
                     let block = terminal_view::BlockProperties {
                         height,
                         render: Box::new(move |_| prompt_editor.clone().into_any_element()),
                     };
-                    terminal.set_prompt(block, cx);
+                    terminal.set_block_below_cursor(block, cx);
                 })
                 .log_err();
         }

@@ -104,7 +104,7 @@ pub struct TerminalView {
     can_navigate_to_selected_word: bool,
     workspace_id: Option<WorkspaceId>,
     show_title: bool,
-    prompt_below_cursor: Option<Arc<BlockProperties>>,
+    block_below_cursor: Option<Arc<BlockProperties>>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -181,7 +181,7 @@ impl TerminalView {
             can_navigate_to_selected_word: false,
             workspace_id,
             show_title: TerminalSettings::get_global(cx).toolbar.title,
-            prompt_below_cursor: None,
+            block_below_cursor: None,
             _subscriptions: vec![
                 focus_in,
                 focus_out,
@@ -319,13 +319,13 @@ impl TerminalView {
         &self.terminal
     }
 
-    pub fn set_prompt(&mut self, block: BlockProperties, cx: &mut ViewContext<Self>) {
-        self.prompt_below_cursor = Some(Arc::new(block));
+    pub fn set_block_below_cursor(&mut self, block: BlockProperties, cx: &mut ViewContext<Self>) {
+        self.block_below_cursor = Some(Arc::new(block));
         cx.notify();
     }
 
-    pub fn clear_prompt(&mut self, cx: &mut ViewContext<Self>) {
-        self.prompt_below_cursor = None;
+    pub fn clear_block_below_cursor(&mut self, cx: &mut ViewContext<Self>) {
+        self.block_below_cursor = None;
         cx.notify();
     }
 
@@ -787,7 +787,7 @@ impl Render for TerminalView {
                     focused,
                     self.should_show_cursor(focused, cx),
                     self.can_navigate_to_selected_word,
-                    self.prompt_below_cursor.clone(),
+                    self.block_below_cursor.clone(),
                 )),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
