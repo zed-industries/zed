@@ -14,12 +14,13 @@ use windows::{
             },
             Direct3D11::{
                 D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext,
-                ID3D11InputLayout, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11Texture2D,
-                ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_FLAG,
-                D3D11_BIND_SHADER_RESOURCE, D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC,
-                D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                D3D11_CREATE_DEVICE_DEBUG, D3D11_INPUT_ELEMENT_DESC, D3D11_INPUT_PER_VERTEX_DATA,
-                D3D11_MAP_WRITE_DISCARD, D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, D3D11_SDK_VERSION,
+                ID3D11InputLayout, ID3D11PixelShader, ID3D11RenderTargetView,
+                ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
+                D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_FLAG, D3D11_BIND_SHADER_RESOURCE,
+                D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC, D3D11_CPU_ACCESS_WRITE,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_DEBUG,
+                D3D11_INPUT_ELEMENT_DESC, D3D11_INPUT_PER_VERTEX_DATA, D3D11_MAP_WRITE_DISCARD,
+                D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, D3D11_SDK_VERSION,
                 D3D11_SHADER_RESOURCE_VIEW_DESC, D3D11_SHADER_RESOURCE_VIEW_DESC_0,
                 D3D11_SUBRESOURCE_DATA, D3D11_USAGE_DYNAMIC, D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT,
             },
@@ -30,8 +31,9 @@ use windows::{
             },
             Dxgi::{
                 Common::{
-                    DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM,
-                    DXGI_FORMAT_R32G32_FLOAT, DXGI_FORMAT_UNKNOWN, DXGI_SAMPLE_DESC,
+                    DXGI_ALPHA_MODE_IGNORE, DXGI_ALPHA_MODE_PREMULTIPLIED,
+                    DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R32G32_FLOAT, DXGI_FORMAT_UNKNOWN,
+                    DXGI_SAMPLE_DESC,
                 },
                 CreateDXGIFactory2, IDXGIAdapter1, IDXGIDevice, IDXGIFactory6, IDXGISwapChain1,
                 DXGI_CREATE_FACTORY_DEBUG, DXGI_GPU_PREFERENCE_MINIMUM_POWER,
@@ -60,15 +62,13 @@ struct DirectXContext {
     context: ID3D11DeviceContext,
     swap_chain: IDXGISwapChain1,
     back_buffer: Option<ID3D11RenderTargetView>,
-
-    comp_device: IDCompositionDevice,
-    comp_target: IDCompositionTarget,
-    comp_visual: IDCompositionVisual,
+    // comp_device: IDCompositionDevice,
+    // comp_target: IDCompositionTarget,
+    // comp_visual: IDCompositionVisual,
 }
 
 struct DirectXRenderContext {
-    uint_vertices_buffer: ID3D11Buffer,
-    global_params_buffer: ID3D11Buffer,
+    global_params_buffer: [Option<ID3D11Buffer>; 1],
     shadow_pipeline: PipelineState,
     quad_pipeline: PipelineState,
 }
@@ -191,26 +191,19 @@ impl DirectXRenderer {
         // self.context.context.PSGetShaderResources(startslot, ppshaderresourceviews)
         unsafe {
             // self.render.shadow_pipeline;
-            self.context
-                .context
-                .IASetInputLayout(&self.render.shadow_pipeline.layout);
+            // self.context
+            //     .context
+            //     .IASetInputLayout(&self.render.shadow_pipeline.layout);
             self.context
                 .context
                 .VSSetShader(&self.render.shadow_pipeline.vertex, None);
             self.context
                 .context
                 .PSSetShader(&self.render.shadow_pipeline.fragment, None);
-            self.context.context.IASetVertexBuffers(
-                0,
-                1,
-                Some(&Some(self.render.uint_vertices_buffer.clone())),
-                Some(&(2 * 4)),
-                None,
-            );
             // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
             self.context
                 .context
-                .VSSetConstantBuffers(0, Some(&[Some(self.render.global_params_buffer.clone())]));
+                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
             self.context.context.DrawInstanced(2, 5, 0, 0);
         }
         true
@@ -223,29 +216,22 @@ impl DirectXRenderer {
         }
         // println!("{quads:#?}");
         unsafe {
-            self.context
-                .context
-                .IASetInputLayout(&self.render.quad_pipeline.layout);
+            // self.context
+            //     .context
+            //     .IASetInputLayout(&self.render.quad_pipeline.layout);
             self.context
                 .context
                 .VSSetShader(&self.render.quad_pipeline.vertex, None);
             self.context
                 .context
                 .PSSetShader(&self.render.quad_pipeline.fragment, None);
-            self.context.context.IASetVertexBuffers(
-                0,
-                1,
-                Some(&Some(self.render.uint_vertices_buffer.clone())),
-                Some(&(2 * 4)),
-                Some(&0),
-            );
             self.context
                 .context
-                .VSSetConstantBuffers(0, Some(&[Some(self.render.global_params_buffer.clone())]));
+                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
             // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
             self.context
                 .context
-                .PSSetConstantBuffers(0, Some(&[Some(self.render.global_params_buffer.clone())]));
+                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
 
             {
                 let mut resource = std::mem::zeroed();
@@ -267,24 +253,12 @@ impl DirectXRenderer {
                 self.context
                     .context
                     .Unmap(&self.render.quad_pipeline.buffer, 0);
-                let mut view = None;
-                let mut desc = D3D11_SHADER_RESOURCE_VIEW_DESC::default();
-                desc.Format = DXGI_FORMAT_UNKNOWN;
-                desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-                desc.Anonymous.Buffer.Anonymous1.FirstElement = 0;
-                desc.Anonymous.Buffer.Anonymous2.NumElements = quads.len() as u32;
-                self.context
-                    .device
-                    .CreateShaderResourceView(
-                        &self.render.quad_pipeline.buffer,
-                        Some(&desc),
-                        Some(&mut view),
-                    )
-                    .unwrap();
                 self.context
                     .context
-                    .VSSetShaderResources(0, Some(&[view.clone()]));
-                self.context.context.PSSetShaderResources(0, Some(&[view]));
+                    .VSSetShaderResources(0, Some(&[Some(self.render.quad_pipeline.view.clone())]));
+                self.context
+                    .context
+                    .PSSetShaderResources(0, Some(&[Some(self.render.quad_pipeline.view.clone())]));
             }
 
             self.context
@@ -344,20 +318,15 @@ impl DirectXRenderer {
 
     fn update_buffers(&self) -> Result<()> {
         unsafe {
+            let buffer = self.render.global_params_buffer[0].as_ref().unwrap();
             let mut resource = std::mem::zeroed();
-            self.context.context.Map(
-                &self.render.global_params_buffer,
-                0,
-                D3D11_MAP_WRITE_DISCARD,
-                0,
-                Some(&mut resource),
-            )?;
+            self.context
+                .context
+                .Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut resource))?;
             let globals = resource.pData as *mut GlobalParams;
             (*globals).viewport_size = [self.size.width.0 as f32, self.size.height.0 as f32];
             (*globals).premultiplied_alpha = 1;
-            self.context
-                .context
-                .Unmap(&self.render.global_params_buffer, 0);
+            self.context.context.Unmap(buffer, 0);
         }
         Ok(())
     }
@@ -374,14 +343,15 @@ impl DirectXContext {
             (device.unwrap(), context.unwrap())
         };
         let dxgi_device: IDXGIDevice = device.cast().unwrap();
-        let comp_device = get_comp_device(&dxgi_device)?;
-        let swap_chain = get_swap_chain(&dxgi_factory, &device)?;
-        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        let comp_visual = unsafe { comp_device.CreateVisual() }?;
+        // let comp_device = get_comp_device(&dxgi_device)?;
+        // let swap_chain = get_swap_chain(&dxgi_factory, &device)?;
+        let swap_chain = get_swap_chain(&dxgi_factory, &device, hwnd)?;
+        // let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        // let comp_visual = unsafe { comp_device.CreateVisual() }?;
         unsafe {
-            comp_visual.SetContent(&swap_chain)?;
-            comp_target.SetRoot(&comp_visual)?;
-            comp_device.Commit()?;
+            // comp_visual.SetContent(&swap_chain)?;
+            // comp_target.SetRoot(&comp_visual)?;
+            // comp_device.Commit()?;
             dxgi_factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER)?;
         }
         let back_buffer = Some(set_render_target_view(&swap_chain, &device, &context)?);
@@ -394,95 +364,54 @@ impl DirectXContext {
             context,
             swap_chain,
             back_buffer,
-            comp_device,
-            comp_target,
-            comp_visual,
+            // comp_device,
+            // comp_target,
+            // comp_visual,
         })
     }
 }
 
 impl DirectXRenderContext {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
-        fn to_float2_bits(point: Point<f32>) -> u64 {
-            let mut output = point.y.to_bits() as u64;
-            output <<= 32;
-            output |= point.x.to_bits() as u64;
-            output
-        }
-        let unit_vertices = [
-            to_float2_bits(point(0., 0.)),
-            to_float2_bits(point(1., 0.)),
-            to_float2_bits(point(0., 1.)),
-            to_float2_bits(point(0., 1.)),
-            to_float2_bits(point(1., 0.)),
-            to_float2_bits(point(1., 1.)),
-        ];
-        let uint_vertices_buffer = unsafe {
-            let desc = D3D11_BUFFER_DESC {
-                // ByteWidth must be a multiple of 16, per the docs
-                ByteWidth: std::mem::size_of_val(&unit_vertices) as u32,
-                Usage: D3D11_USAGE_IMMUTABLE,
-                BindFlags: D3D11_BIND_VERTEX_BUFFER.0 as u32,
-                CPUAccessFlags: 0,
-                MiscFlags: 0,
-                StructureByteStride: 8,
-            };
-            let data = D3D11_SUBRESOURCE_DATA {
-                pSysMem: unit_vertices.as_ptr() as _,
-                SysMemPitch: 0,
-                SysMemSlicePitch: 0,
-            };
-            let mut buffer = None;
-            device.CreateBuffer(&desc, Some(&data), Some(&mut buffer))?;
-            buffer.unwrap()
-        };
-
-        let global_params = GlobalParams::default();
         let global_params_buffer = unsafe {
             let desc = D3D11_BUFFER_DESC {
                 // ByteWidth must be a multiple of 16, per the docs
-                ByteWidth: std::mem::size_of_val(&global_params) as u32,
+                ByteWidth: std::mem::size_of::<GlobalParams>() as u32,
                 Usage: D3D11_USAGE_DYNAMIC,
                 BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
                 CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                MiscFlags: 0,
-                StructureByteStride: 8,
-            };
-            let data = D3D11_SUBRESOURCE_DATA {
-                pSysMem: &global_params as *const _ as _,
-                SysMemPitch: 0,
-                SysMemSlicePitch: 0,
+                ..Default::default()
             };
             let mut buffer = None;
-            device.CreateBuffer(&desc, Some(&data), Some(&mut buffer))?;
-            buffer.unwrap()
+            device.CreateBuffer(&desc, None, Some(&mut buffer))?;
+            [buffer]
         };
 
         let shadow_pipeline = unsafe {
             let vertex_shader_blob = build_shader_blob("shadow_vertex", "vs_5_0").unwrap();
-            let layout = {
-                let desc = D3D11_INPUT_ELEMENT_DESC {
-                    SemanticName: windows::core::s!("POSITION"),
-                    SemanticIndex: 0,
-                    Format: DXGI_FORMAT_R32G32_FLOAT,
-                    InputSlot: 0,
-                    AlignedByteOffset: 0,
-                    InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-                    InstanceDataStepRate: 0,
-                };
-                let mut input_layout = None;
-                device
-                    .CreateInputLayout(
-                        &[desc],
-                        std::slice::from_raw_parts(
-                            vertex_shader_blob.GetBufferPointer() as *mut u8,
-                            vertex_shader_blob.GetBufferSize(),
-                        ),
-                        Some(&mut input_layout),
-                    )
-                    .unwrap();
-                input_layout.unwrap()
-            };
+            // let layout = {
+            //     let desc = D3D11_INPUT_ELEMENT_DESC {
+            //         SemanticName: windows::core::s!("POSITION"),
+            //         SemanticIndex: 0,
+            //         Format: DXGI_FORMAT_R32G32_FLOAT,
+            //         InputSlot: 0,
+            //         AlignedByteOffset: 0,
+            //         InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+            //         InstanceDataStepRate: 0,
+            //     };
+            //     let mut input_layout = None;
+            //     device
+            //         .CreateInputLayout(
+            //             &[desc],
+            //             std::slice::from_raw_parts(
+            //                 vertex_shader_blob.GetBufferPointer() as *mut u8,
+            //                 vertex_shader_blob.GetBufferSize(),
+            //             ),
+            //             Some(&mut input_layout),
+            //         )
+            //         .unwrap();
+            //     input_layout.unwrap()
+            // };
             let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
             let fragment_shader_blob = build_shader_blob("shadow_fragment", "ps_5_0").unwrap();
             let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
@@ -500,39 +429,47 @@ impl DirectXRenderContext {
                 device.CreateBuffer(&desc, None, Some(&mut buffer))?;
                 buffer.unwrap()
             };
+            let view = {
+                let mut view = None;
+                device
+                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
+                    .unwrap();
+                view.unwrap()
+            };
             PipelineState {
-                layout,
+                // layout,
                 vertex,
                 fragment,
                 buffer,
+                view,
             }
         };
 
         let quad_pipeline = unsafe {
             let vertex_shader_blob = build_shader_blob("quad_vertex", "vs_5_0").unwrap();
-            let layout = {
-                let desc = D3D11_INPUT_ELEMENT_DESC {
-                    SemanticName: windows::core::s!("POSITION"),
-                    SemanticIndex: 0,
-                    Format: DXGI_FORMAT_R32G32_FLOAT,
-                    InputSlot: 0,
-                    AlignedByteOffset: 0,
-                    InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-                    InstanceDataStepRate: 0,
-                };
-                let mut input_layout = None;
-                device
-                    .CreateInputLayout(
-                        &[desc],
-                        std::slice::from_raw_parts(
-                            vertex_shader_blob.GetBufferPointer() as *mut u8,
-                            vertex_shader_blob.GetBufferSize(),
-                        ),
-                        Some(&mut input_layout),
-                    )
-                    .unwrap();
-                input_layout.unwrap()
-            };
+            // let layout = {
+            //     let desc = D3D11_INPUT_ELEMENT_DESC {
+            //         SemanticName: windows::core::s!("POSITION"),
+            //         SemanticIndex: 0,
+            //         Format: DXGI_FORMAT_R32G32_FLOAT,
+            //         InputSlot: 0,
+            //         AlignedByteOffset: 0,
+            //         InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+            //         InstanceDataStepRate: 0,
+            //     };
+            //     let mut input_layout = None;
+            //     device
+            //         .CreateInputLayout(
+            //             &[desc],
+            //             std::slice::from_raw_parts(
+            //                 vertex_shader_blob.GetBufferPointer() as *mut u8,
+            //                 vertex_shader_blob.GetBufferSize(),
+            //             ),
+            //             Some(&mut input_layout),
+            //         )
+            //         .unwrap();
+            //     input_layout.unwrap()
+            // };
             let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
             let fragment_shader_blob = build_shader_blob("quad_fragment", "ps_5_0").unwrap();
             let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
@@ -550,16 +487,23 @@ impl DirectXRenderContext {
                 device.CreateBuffer(&desc, None, Some(&mut buffer))?;
                 buffer.unwrap()
             };
+            let view = {
+                let mut view = None;
+                device
+                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
+                    .unwrap();
+                view.unwrap()
+            };
             PipelineState {
-                layout,
+                // layout,
                 vertex,
                 fragment,
                 buffer,
+                view,
             }
         };
 
         Ok(Self {
-            uint_vertices_buffer,
             global_params_buffer,
             shadow_pipeline,
             quad_pipeline,
@@ -576,10 +520,11 @@ struct GlobalParams {
 }
 
 struct PipelineState {
-    layout: ID3D11InputLayout,
+    // layout: ID3D11InputLayout,
     vertex: ID3D11VertexShader,
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
+    view: ID3D11ShaderResourceView,
 }
 
 fn get_dxgi_factory() -> Result<IDXGIFactory6> {
@@ -642,7 +587,33 @@ fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
     Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
 }
 
-fn get_swap_chain(dxgi_factory: &IDXGIFactory6, device: &ID3D11Device) -> Result<IDXGISwapChain1> {
+// fn get_swap_chain(dxgi_factory: &IDXGIFactory6, device: &ID3D11Device) -> Result<IDXGISwapChain1> {
+//     let desc = DXGI_SWAP_CHAIN_DESC1 {
+//         Width: 1,
+//         Height: 1,
+//         Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+//         Stereo: false.into(),
+//         SampleDesc: DXGI_SAMPLE_DESC {
+//             Count: 1,
+//             Quality: 0,
+//         },
+//         BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+//         BufferCount: BUFFER_COUNT as u32,
+//         // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
+//         Scaling: DXGI_SCALING_STRETCH,
+//         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+//         // Premultiplied alpha is the only supported format by composition swapchain.
+//         AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
+//         Flags: 0,
+//     };
+//     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
+// }
+
+fn get_swap_chain(
+    dxgi_factory: &IDXGIFactory6,
+    device: &ID3D11Device,
+    hwnd: HWND,
+) -> Result<IDXGISwapChain1> {
     let desc = DXGI_SWAP_CHAIN_DESC1 {
         Width: 1,
         Height: 1,
@@ -658,10 +629,12 @@ fn get_swap_chain(dxgi_factory: &IDXGIFactory6, device: &ID3D11Device) -> Result
         Scaling: DXGI_SCALING_STRETCH,
         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
         // Premultiplied alpha is the only supported format by composition swapchain.
-        AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
+        // AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
+        AlphaMode: DXGI_ALPHA_MODE_IGNORE,
         Flags: 0,
     };
-    Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
+    let x = unsafe { dxgi_factory.CreateSwapChainForHwnd(device, hwnd, &desc, None, None) }?;
+    Ok(x)
 }
 
 fn set_render_target_view(

@@ -172,7 +172,8 @@ struct Shadow {
 
 StructuredBuffer<Shadow> shadows : register(t0);
 
-ShadowVertexOutput shadow_vertex(float2 uint_vertex: POSITION, uint shadow_id: SV_InstanceID) {
+ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint shadow_id: SV_InstanceID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     Shadow shadow = shadows[shadow_id];
 
     float margin = 3.0 * shadow.blur_radius;
@@ -180,8 +181,8 @@ ShadowVertexOutput shadow_vertex(float2 uint_vertex: POSITION, uint shadow_id: S
     bounds.origin -= margin;
     bounds.size += 2.0 * margin;
 
-    float4 device_position = to_device_position(uint_vertex, bounds);
-    // float4 clip_distance = distance_from_clip_rect(uint_vertex, bounds, shadow.content_mask);
+    float4 device_position = to_device_position(unit_vertex, bounds);
+    // float4 clip_distance = distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask);
     float4 color = hsla_to_rgba(shadow.color);
 
     ShadowVertexOutput output;
@@ -262,7 +263,8 @@ struct QuadVertexOutput {
 
 StructuredBuffer<Quad> quads : register(t1);
 
-QuadVertexOutput quad_vertex(float2 unit_vertex: POSITION, uint quad_id: SV_InstanceID) {
+QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint quad_id: SV_InstanceID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     Quad quad = quads[quad_id];
     float4 device_position = to_device_position(unit_vertex, quad.bounds);
     float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
@@ -340,5 +342,6 @@ float4 quad_fragment(QuadVertexOutput input): SV_TARGET {
                     saturate(0.5 - inset_distance));
     }
 
-    return color * float4(1., 1., 1., saturate(0.5 - distance));
+    // return color * float4(1., 1., 1., saturate(0.5 - distance));
+    return float4(1., 1., 1., 1.);
 }
