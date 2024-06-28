@@ -232,7 +232,9 @@ impl RuntimePanel {
             .ok_or_else(|| anyhow::anyhow!("No kernel found for language: {}", language_name))?;
 
         let session = self.sessions.entry(entity_id).or_insert_with(|| {
-            cx.new_view(|cx| Session::new(editor, fs, runtime_specification, cx))
+            let view = cx.new_view(|cx| Session::new(editor, fs, runtime_specification, cx));
+            cx.notify();
+            view
         });
 
         // todo!(): Check if session uses the same language as the snippet
@@ -251,15 +253,15 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
         return;
     }
 
-    let fs = workspace.app_state().fs.clone();
-
     let editor = workspace
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx));
 
     if let (Some(editor), Some(runtime_panel)) = (editor, workspace.panel::<RuntimePanel>(cx)) {
         runtime_panel.update(cx, |runtime_panel, cx| {
-            runtime_panel.run(editor, fs, cx).ok();
+            runtime_panel
+                .run(editor, workspace.app_state().fs.clone(), cx)
+                .ok();
         });
     }
 }
@@ -320,26 +322,23 @@ impl FocusableView for RuntimePanel {
 
 impl Render for RuntimePanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let runtime_manager = self.runtime_manager.read(cx);
+        // let runtime_manager = self.runtime_manager.read(cx);
 
         v_flex()
-            .child(Label::new("Runtime Panel"))
+            .p_4()
+            // .child(Label::new("Runtime Panel"))
+            // .children(
+            //     runtime_manager
+            //         .runtime_specifications
+            //         .iter()
+            //         .map(|spec| div().child(spec.name.clone())),
+            // )
+            .child(Label::new("Runtime Sessions").size(LabelSize::Large))
             .children(
-                runtime_manager
-                    .runtime_specifications
+                self.sessions
                     .iter()
-                    .map(|spec| div().child(spec.name.clone())),
+                    .map(|(_entity_id, session)| session.clone().into_any_element()),
             )
-            .child(Label::new("Sessions"))
-            .children(self.sessions.iter().map(|(entity_id, session)| {
-                let entity_id = *entity_id;
-
-                let session = session.clone();
-
-                div()
-                    .child(format!("Entity: {}", entity_id))
-                    .child(session.into_any_element())
-            }))
             .into_any_element()
     }
 }

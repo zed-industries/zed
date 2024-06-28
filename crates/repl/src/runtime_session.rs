@@ -10,19 +10,20 @@ use editor::{
     Anchor, AnchorRangeExt as _, Editor,
 };
 use futures::{FutureExt as _, StreamExt as _};
-use gpui::{prelude::*, Entity, Render, Task, View, ViewContext};
+use gpui::{div, prelude::*, Entity, Render, Task, View, ViewContext};
 use project::Fs;
-use runtimelib::{ExecuteRequest, JupyterMessage, KernelInfoRequest};
+use runtimelib::{ExecuteRequest, ExecutionState, JupyterMessage, KernelInfoRequest};
 use settings::Settings as _;
 use std::{ops::Range, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
-use ui::{div, h_flex, v_flex};
+use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, Indicator, Label};
 
 pub struct Session {
     editor: View<Editor>,
     kernel: Kernel,
     blocks: HashMap<String, EditorBlock>,
     messaging_task: Task<()>,
+    runtime_specification: RuntimeSpecification,
 }
 
 #[derive(Debug)]
@@ -40,7 +41,7 @@ impl Session {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let entity_id = editor.entity_id();
-        let kernel = RunningKernel::new(runtime_specification, entity_id, fs.clone(), cx);
+        let kernel = RunningKernel::new(runtime_specification.clone(), entity_id, fs.clone(), cx);
 
         // todo!(): Add in a kernel info request on startup until ready with a duration check
 
@@ -86,6 +87,7 @@ impl Session {
             kernel: Kernel::StartingKernel(pending_kernel),
             messaging_task: Task::ready(()),
             blocks: HashMap::default(),
+            runtime_specification,
         };
     }
 
@@ -177,12 +179,12 @@ impl Session {
 
         match &message.content {
             runtimelib::JupyterMessageContent::Status(status) => {
-                //
                 self.kernel.set_execution_state(&status.execution_state);
+                cx.notify();
             }
             runtimelib::JupyterMessageContent::KernelInfoReply(reply) => {
-                //
                 self.kernel.set_kernel_info(&reply);
+                cx.notify();
             }
             _ => {}
         }
@@ -204,27 +206,113 @@ impl Session {
             });
             return;
         }
+    }
+}
 
-        match message.content {
-            runtimelib::JupyterMessageContent::InterruptReply(_) => {}
-            runtimelib::JupyterMessageContent::KernelInfoReply(_) => {}
-            _ => {}
-        };
+impl Session {
+    fn render_running_kernel(
+        &self,
+        kernel: &RunningKernel,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(match kernel.execution_state {
+                        ExecutionState::Idle => Indicator::dot().color(Color::Success),
+                        ExecutionState::Busy => Indicator::dot().color(Color::Modified),
+                    })
+                    .children(kernel.kernel_info.as_ref().and_then(|info| {
+                        Some(Label::new(format!(
+                            "{} ({})",
+                            self.runtime_specification.name, info.language_info.name
+                        )))
+                    })),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        ButtonLike::new("shutdown")
+                            .child(Label::new("Shutdown"))
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(move |_this, _, _cx| {
+                                // todo!(): Implement shutdown
+                                dbg!("Shutdown");
+                            })),
+                    )
+                    .child(
+                        ButtonLike::new("interrupt")
+                            .child(Label::new("Interrupt"))
+                            .on_click(cx.listener(move |_this, _, _cx| {
+                                // todo!(): Implement interrupt
+                            })),
+                    ),
+            )
+    }
+
+    fn render_starting_kernel(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(Indicator::dot().color(Color::Disabled))
+                    .child(Label::new(format!(
+                        "{} (Starting)",
+                        self.runtime_specification.name
+                    ))),
+            )
+            .child(
+                h_flex().gap_2().child(
+                    ButtonLike::new("shutdown")
+                        .child(Label::new("Shutdown"))
+                        .style(ButtonStyle::Subtle)
+                        .on_click(cx.listener(move |_this, _, _cx| {
+                            // todo!(): Implement shutdown
+                            dbg!("Shutdown");
+                        })),
+                ),
+            )
+    }
+
+    fn render_errored_kernel(&self, err: &str, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(Indicator::dot().color(Color::Error))
+                    .child(Label::new(format!(
+                        "{} (Error: {})",
+                        self.runtime_specification.name, err
+                    ))),
+            )
+            .child(
+                h_flex().gap_2().child(
+                    ButtonLike::new("shutdown")
+                        .child(Label::new("Shutdown"))
+                        .style(ButtonStyle::Subtle)
+                        .on_click(cx.listener(move |_this, _, _cx| {
+                            // todo!(): Implement shutdown
+                            dbg!("Shutdown");
+                        })),
+                ),
+            )
     }
 }
 
 impl Render for Session {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl ui::IntoElement {
-        let kernel_text = match &self.kernel {
-            Kernel::RunningKernel(_) => "Running".to_string(),
-            Kernel::StartingKernel(_) => "Starting".to_string(),
-            Kernel::ErroredLaunch(error) => format!("Error: {}", error),
-        };
-
-        v_flex()
-            .child("Session")
-            .child(kernel_text)
-            .into_any_element()
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        match &self.kernel {
+            Kernel::RunningKernel(kernel) => {
+                self.render_running_kernel(kernel, cx).into_any_element()
+            }
+            Kernel::StartingKernel(_) => self.render_starting_kernel(cx).into_any_element(),
+            Kernel::ErroredLaunch(err) => self.render_errored_kernel(err, cx).into_any_element(),
+        }
     }
 }
 
