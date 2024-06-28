@@ -32,7 +32,6 @@ use ui::Tooltip;
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::assistant_settings::AssistantSettings;
 use crate::humanize_token_count;
 use crate::AssistantPanel;
 use crate::AssistantPanelEvent;
@@ -40,6 +39,7 @@ use crate::CompletionProvider;
 use crate::LanguageModelRequest;
 use crate::LanguageModelRequestMessage;
 use crate::Role;
+use crate::{assistant_settings::AssistantSettings, prompts::generate_terminal_assistant_prompt};
 
 pub fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
     cx.set_global(TerminalInlineAssistant::new(fs, telemetry));
@@ -208,10 +208,23 @@ impl TerminalInlineAssistant {
     ) -> Result<LanguageModelRequest> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
+        let working_directory = assist
+            .terminal
+            .update(cx, |terminal, cx| {
+                terminal.terminal().read(cx).working_directory()
+            })
+            .ok();
         let model = CompletionProvider::global(cx).model();
+
+        let prompt = generate_terminal_assistant_prompt(
+            &assist.prompt_editor.read(cx).prompt(cx),
+            std::env::var("SHELL").ok().as_deref(),
+            None,
+        );
+
         let messages = vec![LanguageModelRequestMessage {
             role: Role::User,
-            content: assist.prompt_editor.read(cx).prompt(cx),
+            content: prompt,
         }];
 
         Ok(LanguageModelRequest {
