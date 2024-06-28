@@ -1093,16 +1093,6 @@ impl Terminal {
         }
     }
 
-    pub fn visible_line_range(&self) -> Range<usize> {
-        let term = self.term.clone();
-        let terminal = term.lock_unfair();
-        let grid = terminal.grid();
-
-        let start_line = grid.topmost_line().0.abs() as usize - grid.display_offset();
-        let end_line = start_line + grid.screen_lines() + 1;
-        start_line..end_line
-    }
-
     pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
         let term = self.term.clone();
         let terminal = term.lock_unfair();
