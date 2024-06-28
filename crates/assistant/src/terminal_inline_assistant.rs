@@ -208,10 +208,23 @@ impl TerminalInlineAssistant {
 
         let model = CompletionProvider::global(cx).model();
 
+        let shell = std::env::var("SHELL").ok();
+        let working_directory = assist
+            .terminal
+            .update(cx, |terminal, cx| {
+                terminal
+                    .model()
+                    .read(cx)
+                    .working_directory()
+                    .map(|path| path.to_string_lossy().to_string())
+            })
+            .ok()
+            .flatten();
+
         let prompt = generate_terminal_assistant_prompt(
             &assist.prompt_editor.read(cx).prompt(cx),
-            std::env::var("SHELL").ok().as_deref(),
-            None,
+            shell.as_deref(),
+            working_directory.as_deref(),
         );
 
         let messages = vec![LanguageModelRequestMessage {

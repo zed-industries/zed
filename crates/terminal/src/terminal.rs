@@ -1446,6 +1446,13 @@ impl Terminal {
         })
     }
 
+    pub fn working_directory(&self) -> Option<PathBuf> {
+        self.pty_info
+            .current
+            .as_ref()
+            .map(|process| process.cwd.clone())
+    }
+
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
         match &self.task {
