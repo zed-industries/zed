@@ -399,7 +399,7 @@ impl TestServer {
                         publication,
                         participant,
                     })
-                    .unwrap();
+                    .ok();
             }
         }
 
