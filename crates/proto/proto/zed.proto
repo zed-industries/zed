@@ -201,6 +201,8 @@ message Envelope {
 
         JoinHostedProject join_hosted_project = 164;
 
+        GetAvailableLanguageModels get_available_language_models = 211;
+        GetAvailableLanguageModelsResponse get_available_language_models_response = 212; // current max
         CompleteWithLanguageModel complete_with_language_model = 166;
         LanguageModelResponse language_model_response = 167;
         CountTokensWithLanguageModel count_tokens_with_language_model = 168;
@@ -255,7 +257,7 @@ message Envelope {
         TaskTemplates task_templates = 206;
 
         LinkedEditingRange linked_editing_range = 209;
-        LinkedEditingRangeResponse linked_editing_range_response = 210; // current max
+        LinkedEditingRangeResponse linked_editing_range_response = 210;
     }
 
     reserved 158 to 161;
@@ -1957,6 +1959,19 @@ message SetRoomParticipantRole {
     uint64 room_id = 1;
     uint64 user_id = 2;
     ChannelRole role = 3;
+}
+
+message GetAvailableLanguageModels {}
+
+message GetAvailableLanguageModelsResponse {
+    repeated LanguageModelInfo models = 1;
+}
+
+message LanguageModelInfo {
+    string id = 1;         // Unique identifier for the model
+    string name = 2;       // Human-readable name of the model
+    string description = 3; // Brief description of the model's capabilities
+    uint32 max_tokens = 4;  // Maximum number of tokens the model can process
 }
 
 message CompleteWithLanguageModel {

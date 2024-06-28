@@ -179,6 +179,7 @@ messages!(
     (FormatBuffers, Foreground),
     (FormatBuffersResponse, Foreground),
     (FuzzySearchUsers, Foreground),
+    (GetAvailableLanguageModels, Background),
     (GetCachedEmbeddings, Background),
     (GetCachedEmbeddingsResponse, Background),
     (GetChannelMembers, Foreground),

@@ -5833,6 +5833,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_model"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "futures 0.3.28",
+ "gpui",
+ "proto",
+ "schemars",
+ "util",
+]
+
+[[package]]
 name = "language_selector"
 version = "0.1.0"
 dependencies = [
@@ -6426,6 +6440,18 @@ name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
+
+[[package]]
+name = "miner"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "gpui",
+ "project",
+ "schemars",
+ "worktree",
+]
 
 [[package]]
 name = "minimal-lexical"

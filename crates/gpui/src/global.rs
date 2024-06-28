@@ -1,4 +1,4 @@
-use crate::{AppContext, BorrowAppContext};
+use crate::{AppContext, BorrowAppContext, Model};
 
 /// A marker trait for types that can be stored in GPUI's global state.
 ///
@@ -72,3 +72,5 @@ impl<T: Global> UpdateGlobal for T {
         cx.set_global(global)
     }
 }
+
+impl<T: Global> Global for Model<T> {}

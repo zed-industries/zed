@@ -1,0 +1,20 @@
+[package]
+name = "language_model"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/language_model.rs"
+
+[dependencies]
+anyhow.workspace = true
+client.workspace = true
+collections.workspace = true
+futures.workspace = true
+gpui.workspace = true
+proto.workspace = true
+schemars.workspace = true
+util.workspace = true
+
+[lints]
+workspace = true

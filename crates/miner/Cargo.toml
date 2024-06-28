@@ -11,3 +11,8 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+futures.workspace = true
+gpui.workspace = true
+project.workspace = true
+schemars.workspace = true
+worktree.workspace = true
