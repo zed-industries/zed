@@ -163,7 +163,11 @@ impl RtcAudioTrack {
 
     pub fn enabled(&self) -> bool {
         if let Some(room) = self.room.upgrade() {
-            !(&room.0.lock().paused_audio_tracks).contains(&self.server_track.sid)
+            !room
+                .0
+                .lock()
+                .paused_audio_tracks
+                .contains(&self.server_track.sid)
         } else {
             false
         }

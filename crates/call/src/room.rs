@@ -983,6 +983,9 @@ impl Room {
                         self.client.user_id()
                     )
                 })?;
+                if self.live_kit.as_ref().map_or(true, |kit| kit.deafened) {
+                    track.rtc_track().set_enabled(false);
+                }
                 match track {
                     livekit::track::RemoteTrack::Audio(track) => {
                         cx.emit(Event::RemoteAudioTracksChanged {

@@ -192,15 +192,20 @@ impl TestServer {
         let room_name = claims.video.room.unwrap().to_string();
 
         if let Some(server_room) = self.rooms.lock().get(&room_name) {
+            let room = server_room
+                .client_rooms
+                .get(&local_identity)
+                .unwrap()
+                .downgrade();
             Ok(server_room
                 .client_rooms
                 .iter()
                 .filter(|(identity, _)| *identity != &local_identity)
-                .map(|(identity, room)| {
+                .map(|(identity, _)| {
                     (
                         identity.clone(),
                         RemoteParticipant {
-                            room: room.downgrade(),
+                            room: room.clone(),
                             identity: identity.clone(),
                         },
                     )
@@ -521,7 +526,7 @@ impl TestServer {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct TestServerRoom {
     client_rooms: HashMap<ParticipantIdentity, Room>,
     video_tracks: Vec<Arc<TestServerVideoTrack>>,
@@ -697,7 +702,13 @@ pub(crate) struct WeakRoom(Weak<Mutex<RoomState>>);
 
 impl std::fmt::Debug for RoomState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Room").finish()
+        f.debug_struct("Room")
+            .field("url", &self.url)
+            .field("token", &self.token)
+            .field("local_identity", &self.local_identity)
+            .field("connection_state", &self.connection_state)
+            .field("paused_audio_tracks", &self.paused_audio_tracks)
+            .finish()
     }
 }
 
