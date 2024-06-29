@@ -4070,7 +4070,7 @@ impl Editor {
 
         self.signature_help_task = Some(cx.spawn(move |editor, mut cx| async move {
             let markdown_task_result = editor.update(&mut cx, |editor, cx| {
-                let maybe_language = editor.language_at(0, cx);
+                let maybe_language = editor.language_at(position, cx);
                 let project = editor.project.clone()?;
                 let (maybe_markdown, language_registry) = project.update(cx, |project, mut cx| {
                     let language_registry = project.languages().clone();
