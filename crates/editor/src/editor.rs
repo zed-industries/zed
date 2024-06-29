@@ -504,6 +504,7 @@ pub struct Editor {
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     signature_help_task: Option<Task<()>>,
     signature_help_state: Option<SignatureHelpPopover>,
+    bracket_content: Option<String>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
@@ -1825,6 +1826,7 @@ impl Editor {
             completion_tasks: Default::default(),
             signature_help_task: None,
             signature_help_state: None,
+            bracket_content: None,
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
             completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
@@ -2413,7 +2415,9 @@ impl Editor {
             }
             self.selections_did_change(true, &old_cursor_position, request_completions, cx);
 
-            if self.signature_help_state.is_some() {
+            if self.should_open_signature_help_automatically(cx)
+                || self.signature_help_state.is_some()
+            {
                 self.show_signature_help(&ShowSignatureHelp, cx);
             }
         }
@@ -4007,6 +4011,52 @@ impl Editor {
         }
     }
 
+    fn should_open_signature_help_automatically(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        // TODO: Make it possible to specify whether to show or hide automatically from the settings.
+        // if !EditorSettings::get_global(cx).show_signature_help_automatically {
+        //     return false;
+        // }
+
+        let newest_selection = self.selections.newest::<usize>(cx);
+        if !newest_selection.is_empty() {
+            return false;
+        }
+
+        let head = newest_selection.head();
+
+        let (from, until) = if self.bracket_content.is_some() {
+            if head > 0 {
+                (head - 1, head + 1)
+            } else {
+                (head, head + 1)
+            }
+        } else {
+            (head, head)
+        };
+
+        let snapshot = self.snapshot(cx);
+
+        if let Some((opening_range, closing_range)) = snapshot
+            .buffer_snapshot
+            .innermost_enclosing_bracket_ranges(from..until, None)
+        {
+            let string = snapshot.text();
+            let string = string.get(opening_range.start..closing_range.end);
+
+            if self.bracket_content.as_ref().map(|n| n.as_str()) == string {
+                false
+            } else {
+                self.bracket_content = string.map(Into::into);
+                true
+            }
+        } else if self.bracket_content.is_some() {
+            self.bracket_content = None;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn show_signature_help(&mut self, _: &ShowSignatureHelp, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
@@ -4053,11 +4103,12 @@ impl Editor {
                 } else {
                     None
                 };
-            editor.update(&mut cx, |editor, cx| {
-                editor.signature_help_state = maybe_signature_help_popover;
-                cx.notify();
-            })
-            .ok();
+            editor
+                .update(&mut cx, |editor, cx| {
+                    editor.signature_help_state = maybe_signature_help_popover;
+                    cx.notify();
+                })
+                .ok();
         }));
     }
 
