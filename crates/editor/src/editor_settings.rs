@@ -26,7 +26,7 @@ pub struct EditorSettings {
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
     /// Configuration for automatic `ShowSignatureHelp` calling
-    pub auto_signature_help: bool
+    pub auto_signature_help: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

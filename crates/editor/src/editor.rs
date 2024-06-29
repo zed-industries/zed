@@ -4040,7 +4040,7 @@ impl Editor {
             let string = snapshot.text();
             let string = string.get(opening_range.start..closing_range.end);
 
-            if self.bracket_content.as_ref().map(|n| n.as_str()) == string {
+            if self.bracket_content.as_deref() == string {
                 false
             } else {
                 self.bracket_content = string.map(Into::into);
