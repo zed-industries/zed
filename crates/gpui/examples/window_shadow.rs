@@ -136,7 +136,6 @@ impl Render for WindowShadow {
                     .child(
                         div().w_full().flex().flex_row().justify_around().child(
                             div()
-                                .id("hello")
                                 .flex()
                                 .bg(white())
                                 .size(Length::Definite(Pixels(300.0).into()))
@@ -147,24 +146,38 @@ impl Render for WindowShadow {
                                 .border_color(rgb(0x0000ff))
                                 .text_xl()
                                 .text_color(rgb(0xffffff))
-                                .child(div().w(px(100.0)).h(px(50.0)).bg(green()).shadow(
-                                    smallvec::smallvec![gpui::BoxShadow {
-                                        color: Hsla {
-                                            h: 0.,
-                                            s: 0.,
-                                            l: 0.,
-                                            a: 1.0,
-                                        },
-                                        blur_radius: px(20.0),
-                                        spread_radius: px(0.0),
-                                        offset: point(px(0.0), px(0.0)),
-                                    }],
-                                ))
-                                .on_mouse_move(|e, cx| {
-                                    if e.dragging() {
-                                        cx.start_window_move();
-                                    }
-                                }),
+                                .child(
+                                    div()
+                                        .id("hello")
+                                        .w(px(200.0))
+                                        .h(px(100.0))
+                                        .bg(green())
+                                        .shadow(smallvec::smallvec![gpui::BoxShadow {
+                                            color: Hsla {
+                                                h: 0.,
+                                                s: 0.,
+                                                l: 0.,
+                                                a: 1.0,
+                                            },
+                                            blur_radius: px(20.0),
+                                            spread_radius: px(0.0),
+                                            offset: point(px(0.0), px(0.0)),
+                                        }])
+                                        .map(|div| match decorations {
+                                            Decorations::Server => div,
+                                            Decorations::Client { .. } => div
+                                                .on_mouse_down(MouseButton::Left, |e, cx| {
+                                                    cx.start_window_move();
+                                                })
+                                                .on_click(|e, cx| {
+                                                    if e.down.button == MouseButton::Right {
+                                                        cx.show_window_menu(e.up.position);
+                                                    }
+                                                })
+                                                .text_color(black())
+                                                .child("this is the custom titlebar"),
+                                        }),
+                                ),
                         ),
                     ),
             )

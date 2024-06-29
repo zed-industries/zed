@@ -656,7 +656,6 @@ impl Window {
                 focus,
                 show,
                 display_id,
-                window_background,
                 window_min_size,
             },
         )?;
@@ -676,6 +675,7 @@ impl Window {
 
         platform_window
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
+        platform_window.set_background_appearance(window_background);
 
         if let Some(ref window_open_state) = window_bounds {
             match window_open_state {

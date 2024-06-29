@@ -695,8 +695,6 @@ pub(crate) struct WindowParams {
 
     pub display_id: Option<DisplayId>,
 
-    pub window_background: WindowBackgroundAppearance,
-
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub window_min_size: Option<Size<Pixels>>,
 }
