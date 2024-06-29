@@ -196,12 +196,7 @@ impl DirectXRenderer {
         if shadows.is_empty() {
             return true;
         }
-        // self.context.context.PSGetShaderResources(startslot, ppshaderresourceviews)
         unsafe {
-            // self.render.shadow_pipeline;
-            // self.context
-            //     .context
-            //     .IASetInputLayout(&self.render.shadow_pipeline.layout);
             self.context
                 .context
                 .VSSetShader(&self.render.shadow_pipeline.vertex, None);
@@ -222,31 +217,7 @@ impl DirectXRenderer {
         if quads.is_empty() {
             return true;
         }
-        // println!("{quads:#?}");
         unsafe {
-            // self.context
-            //     .context
-            //     .IASetInputLayout(&self.render.quad_pipeline.layout);
-            self.context
-                .context
-                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            self.context
-                .context
-                .RSSetViewports(Some(&self.context.viewport));
-            self.context
-                .context
-                .VSSetShader(&self.render.quad_pipeline.vertex, None);
-            self.context
-                .context
-                .PSSetShader(&self.render.quad_pipeline.fragment, None);
-            self.context
-                .context
-                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
-            self.context
-                .context
-                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-
             {
                 let mut resource = std::mem::zeroed();
                 self.context
@@ -269,11 +240,30 @@ impl DirectXRenderer {
                     .Unmap(&self.render.quad_pipeline.buffer, 0);
                 self.context
                     .context
-                    .VSSetShaderResources(0, Some(&[Some(self.render.quad_pipeline.view.clone())]));
+                    .VSSetShaderResources(1, Some(&self.render.quad_pipeline.view));
                 self.context
                     .context
-                    .PSSetShaderResources(0, Some(&[Some(self.render.quad_pipeline.view.clone())]));
+                    .PSSetShaderResources(1, Some(&self.render.quad_pipeline.view));
             }
+            self.context
+                .context
+                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            self.context
+                .context
+                .RSSetViewports(Some(&self.context.viewport));
+            self.context
+                .context
+                .VSSetShader(&self.render.quad_pipeline.vertex, None);
+            self.context
+                .context
+                .PSSetShader(&self.render.quad_pipeline.fragment, None);
+            self.context
+                .context
+                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+            // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
+            self.context
+                .context
+                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
 
             self.context
                 .context
@@ -415,29 +405,6 @@ impl DirectXRenderContext {
 
         let shadow_pipeline = unsafe {
             let vertex_shader_blob = build_shader_blob("shadow_vertex", "vs_5_0").unwrap();
-            // let layout = {
-            //     let desc = D3D11_INPUT_ELEMENT_DESC {
-            //         SemanticName: windows::core::s!("POSITION"),
-            //         SemanticIndex: 0,
-            //         Format: DXGI_FORMAT_R32G32_FLOAT,
-            //         InputSlot: 0,
-            //         AlignedByteOffset: 0,
-            //         InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-            //         InstanceDataStepRate: 0,
-            //     };
-            //     let mut input_layout = None;
-            //     device
-            //         .CreateInputLayout(
-            //             &[desc],
-            //             std::slice::from_raw_parts(
-            //                 vertex_shader_blob.GetBufferPointer() as *mut u8,
-            //                 vertex_shader_blob.GetBufferSize(),
-            //             ),
-            //             Some(&mut input_layout),
-            //         )
-            //         .unwrap();
-            //     input_layout.unwrap()
-            // };
             let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
             let fragment_shader_blob = build_shader_blob("shadow_fragment", "ps_5_0").unwrap();
             let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
@@ -460,7 +427,7 @@ impl DirectXRenderContext {
                 device
                     .CreateShaderResourceView(&buffer, None, Some(&mut view))
                     .unwrap();
-                view.unwrap()
+                [view]
             };
             PipelineState {
                 // layout,
@@ -473,29 +440,6 @@ impl DirectXRenderContext {
 
         let quad_pipeline = unsafe {
             let vertex_shader_blob = build_shader_blob("quad_vertex", "vs_5_0").unwrap();
-            // let layout = {
-            //     let desc = D3D11_INPUT_ELEMENT_DESC {
-            //         SemanticName: windows::core::s!("POSITION"),
-            //         SemanticIndex: 0,
-            //         Format: DXGI_FORMAT_R32G32_FLOAT,
-            //         InputSlot: 0,
-            //         AlignedByteOffset: 0,
-            //         InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-            //         InstanceDataStepRate: 0,
-            //     };
-            //     let mut input_layout = None;
-            //     device
-            //         .CreateInputLayout(
-            //             &[desc],
-            //             std::slice::from_raw_parts(
-            //                 vertex_shader_blob.GetBufferPointer() as *mut u8,
-            //                 vertex_shader_blob.GetBufferSize(),
-            //             ),
-            //             Some(&mut input_layout),
-            //         )
-            //         .unwrap();
-            //     input_layout.unwrap()
-            // };
             let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
             let fragment_shader_blob = build_shader_blob("quad_fragment", "ps_5_0").unwrap();
             let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
@@ -518,7 +462,7 @@ impl DirectXRenderContext {
                 device
                     .CreateShaderResourceView(&buffer, None, Some(&mut view))
                     .unwrap();
-                view.unwrap()
+                [view]
             };
             PipelineState {
                 // layout,
@@ -550,7 +494,7 @@ struct PipelineState {
     vertex: ID3D11VertexShader,
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
-    view: ID3D11ShaderResourceView,
+    view: [Option<ID3D11ShaderResourceView>; 1],
 }
 
 fn get_dxgi_factory() -> Result<IDXGIFactory6> {
