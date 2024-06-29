@@ -11,6 +11,7 @@ use windows::{
                 Fxc::{D3DCompileFromFile, D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION},
                 ID3DBlob, D3D11_SRV_DIMENSION_BUFFER, D3D_DRIVER_TYPE_UNKNOWN,
                 D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
+                D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             },
             Direct3D11::{
                 D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext,
@@ -61,7 +62,8 @@ struct DirectXContext {
     dxgi_device: IDXGIDevice,
     context: ID3D11DeviceContext,
     swap_chain: IDXGISwapChain1,
-    back_buffer: Option<ID3D11RenderTargetView>,
+    back_buffer: [Option<ID3D11RenderTargetView>; 1],
+    viewport: [D3D11_VIEWPORT; 1],
     // comp_device: IDCompositionDevice,
     // comp_target: IDCompositionTarget,
     // comp_visual: IDCompositionVisual,
@@ -93,13 +95,19 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn draw(&mut self, scene: &Scene) {
+        self.update_buffers().log_err();
         unsafe {
+            self.context
+                .context
+                .RSSetViewports(Some(&self.context.viewport));
+            self.context
+                .context
+                .OMSetRenderTargets(Some(&self.context.back_buffer), None);
             self.context.context.ClearRenderTargetView(
-                self.context.back_buffer.as_ref().unwrap(),
+                self.context.back_buffer[0].as_ref().unwrap(),
                 &[0.0, 0.2, 0.4, 0.6],
             );
         }
-        self.update_buffers().log_err();
         self.draw_primitives(scene);
         unsafe { self.context.swap_chain.Present(0, 0).ok().log_err() };
     }
@@ -109,7 +117,7 @@ impl DirectXRenderer {
         unsafe {
             self.size = new_size;
             self.context.context.OMSetRenderTargets(None, None);
-            drop(self.context.back_buffer.take().unwrap());
+            drop(self.context.back_buffer[0].take().unwrap());
             self.context
                 .swap_chain
                 .ResizeBuffers(
@@ -126,8 +134,8 @@ impl DirectXRenderer {
                 &self.context.context,
             )
             .unwrap();
-            self.context.back_buffer = Some(backbuffer);
-            set_viewport(
+            self.context.back_buffer[0] = Some(backbuffer);
+            self.context.viewport = set_viewport(
                 &self.context.context,
                 new_size.width.0 as f32,
                 new_size.height.0 as f32,
@@ -221,6 +229,12 @@ impl DirectXRenderer {
             //     .IASetInputLayout(&self.render.quad_pipeline.layout);
             self.context
                 .context
+                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            self.context
+                .context
+                .RSSetViewports(Some(&self.context.viewport));
+            self.context
+                .context
                 .VSSetShader(&self.render.quad_pipeline.vertex, None);
             self.context
                 .context
@@ -263,7 +277,14 @@ impl DirectXRenderer {
 
             self.context
                 .context
-                .DrawInstanced(6, quads.len() as u32, 0, 0);
+                // .DrawIndexedInstanced(
+                //     indexcountperinstance,
+                //     instancecount,
+                //     startindexlocation,
+                //     basevertexlocation,
+                //     startinstancelocation,
+                // )
+                .DrawInstanced(4, quads.len() as u32, 0, 0);
         }
         true
     }
@@ -354,8 +375,12 @@ impl DirectXContext {
             // comp_device.Commit()?;
             dxgi_factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER)?;
         }
-        let back_buffer = Some(set_render_target_view(&swap_chain, &device, &context)?);
-        set_viewport(&context, 1.0, 1.0);
+        let back_buffer = [Some(set_render_target_view(
+            &swap_chain,
+            &device,
+            &context,
+        )?)];
+        let viewport = set_viewport(&context, 1.0, 1.0);
 
         Ok(Self {
             dxgi_factory,
@@ -364,6 +389,7 @@ impl DirectXContext {
             context,
             swap_chain,
             back_buffer,
+            viewport,
             // comp_device,
             // comp_target,
             // comp_visual,
@@ -654,16 +680,21 @@ fn set_render_target_view(
     Ok(back_buffer)
 }
 
-fn set_viewport(device_context: &ID3D11DeviceContext, width: f32, height: f32) {
-    let viewport = D3D11_VIEWPORT {
+fn set_viewport(
+    device_context: &ID3D11DeviceContext,
+    width: f32,
+    height: f32,
+) -> [D3D11_VIEWPORT; 1] {
+    let viewport = [D3D11_VIEWPORT {
         TopLeftX: 0.0,
         TopLeftY: 0.0,
         Width: width,
         Height: height,
         MinDepth: 0.0,
         MaxDepth: 1.0,
-    };
-    unsafe { device_context.RSSetViewports(Some(&[viewport])) };
+    }];
+    unsafe { device_context.RSSetViewports(Some(&viewport)) };
+    viewport
 }
 
 fn build_shader_blob(entry: &str, target: &str) -> Result<ID3DBlob> {
