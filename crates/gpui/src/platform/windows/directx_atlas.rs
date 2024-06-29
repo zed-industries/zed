@@ -5,7 +5,7 @@ use windows::Win32::Graphics::{
     Direct3D11::{
         ID3D11Device, ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11Texture2D,
         D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CPU_ACCESS_WRITE,
-        D3D11_MAP_WRITE_DISCARD, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DYNAMIC,
+        D3D11_MAP_WRITE_DISCARD, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_USAGE_DYNAMIC,
     },
     Dxgi::Common::{
         DXGI_FORMAT_A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16_FLOAT, DXGI_SAMPLE_DESC,
@@ -153,21 +153,25 @@ impl DirectXAtlasState {
         let pixel_format;
         let bind_flag;
         let bytes_per_pixel;
+        let usage;
         match kind {
             AtlasTextureKind::Monochrome => {
                 pixel_format = DXGI_FORMAT_A8_UNORM;
                 bind_flag = D3D11_BIND_SHADER_RESOURCE;
                 bytes_per_pixel = 1;
+                usage = D3D11_USAGE_DYNAMIC;
             }
             AtlasTextureKind::Polychrome => {
                 pixel_format = DXGI_FORMAT_B8G8R8A8_UNORM;
                 bind_flag = D3D11_BIND_SHADER_RESOURCE;
                 bytes_per_pixel = 4;
+                usage = D3D11_USAGE_DYNAMIC;
             }
             AtlasTextureKind::Path => {
                 pixel_format = DXGI_FORMAT_R16_FLOAT;
                 bind_flag = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
                 bytes_per_pixel = 2;
+                usage = D3D11_USAGE_DEFAULT;
             }
         }
         let texture_desc = D3D11_TEXTURE2D_DESC {
@@ -180,7 +184,7 @@ impl DirectXAtlasState {
                 Count: 1,
                 Quality: 0,
             },
-            Usage: D3D11_USAGE_DYNAMIC,
+            Usage: usage,
             BindFlags: bind_flag.0 as u32,
             CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
             MiscFlags: 0,

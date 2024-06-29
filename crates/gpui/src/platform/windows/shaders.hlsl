@@ -153,17 +153,17 @@ float4 over(float4 below, float4 above) {
 */
 
 struct ShadowVertexOutput {
-    float4 position: SV_POSITION;
+    float4 position: SV_Position;
     float4 color: COLOR;
     uint shadow_id: FLAT;
-    // float4 clip_distance: SV_CLIPDISTANCE;
+    float4 clip_distance: SV_ClipDistance;
 };
 
-// struct ShadowFragmentInput {
-//   float4 position: SV_POSITION;
-//   float4 color: COLOR;
-//   uint shadow_id: ID;
-// };
+struct ShadowFragmentInput {
+  float4 position: SV_Position;
+  float4 color: COLOR;
+  uint shadow_id: FLAT;
+};
 
 struct Shadow {
     uint order;
@@ -186,19 +186,19 @@ ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint shadow_id: SV
     bounds.size += 2.0 * margin;
 
     float4 device_position = to_device_position(unit_vertex, bounds);
-    // float4 clip_distance = distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask);
+    float4 clip_distance = distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask);
     float4 color = hsla_to_rgba(shadow.color);
 
     ShadowVertexOutput output;
     output.position = device_position;
     output.color = color;
     output.shadow_id = shadow_id;
-    // output.clip_distance = clip_distance;
+    output.clip_distance = clip_distance;
     
     return output;
 }
 
-float4 shadow_fragment(ShadowVertexOutput input): SV_TARGET {
+float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
     Shadow shadow = shadows[input.shadow_id];
 
     float2 half_size = shadow.bounds.size / 2.;
@@ -236,8 +236,7 @@ float4 shadow_fragment(ShadowVertexOutput input): SV_TARGET {
         y += step;
     }
 
-    // return input.color * float4(1., 1., 1., alpha);
-    return float4(1., 1., 1., 1.);
+    return input.color * float4(1., 1., 1., alpha);
 }
 
 /*
@@ -258,11 +257,18 @@ struct Quad {
 };
 
 struct QuadVertexOutput {
-    float4 position: SV_POSITION;
+    float4 position: SV_Position;
     float4 background_color: COLOR0;
     float4 border_color: COLOR1;
     uint quad_id: FLAT;
-    // float4 clip_distance: SV_CLIPDISTANCE;
+    float4 clip_distance: SV_ClipDistance;
+};
+
+struct QuadFragmentInput {
+    float4 position: SV_Position;
+    float4 background_color: COLOR0;
+    float4 border_color: COLOR1;
+    uint quad_id: FLAT;
 };
 
 StructuredBuffer<Quad> quads : register(t1);
@@ -280,10 +286,11 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint quad_id: SV_Insta
     output.background_color = background_color;
     output.border_color = border_color;
     output.quad_id = quad_id;
+    output.clip_distance = clip_distance;
     return output;
 }
 
-float4 quad_fragment(QuadVertexOutput input): SV_TARGET {
+float4 quad_fragment(QuadFragmentInput input): SV_TARGET {
     Quad quad = quads[input.quad_id];
 
     // Fast path when the quad is not rounded and doesn't have any border.
@@ -364,19 +371,30 @@ struct PathVertex {
 struct PathRasterizationOutput {
     float4 position: SV_Position;
     float2 st_position: TEXCOORD0;
-    // float4 clip_distances: SV_ClipDistance;
+    float4 clip_distances: SV_ClipDistance;
 };
 
-PathRasterizationOutput path_rasterization_vertex(PathVertex vertex: POSITION) {
+struct PathRasterizationInput {
+    float4 position: SV_Position;
+    float2 st_position: TEXCOORD0;
+};
+
+StructuredBuffer<PathVertex> path_vertices : register(t2);
+
+PathRasterizationOutput path_rasterization_vertex(uint vertex_id: SV_VertexID) {
+    PathVertex vertex = path_vertices[vertex_id];
     PathRasterizationOutput output;
     float2 device_position = vertex.xy_position / global_viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
+    float2 tl = vertex.xy_position - vertex.content_mask.origin;
+    float2 br = vertex.content_mask.origin + vertex.content_mask.size - vertex.xy_position;
+    
     output.position = float4(device_position, 0.0, 1.0);
     output.st_position = vertex.st_position;
-    // out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
+    output.clip_distances = float4(tl.x, br.x, tl.y, br.y);
     return output;
 }
 
-float4 path_rasterization_fragment(PathRasterizationOutput input): SV_Target {
+float4 path_rasterization_fragment(PathRasterizationInput input): SV_Target {
     float2 dx = ddx(input.st_position);
     float2 dy = ddy(input.st_position);
     float2 gradient = float2((2. * input.st_position.x) * dx.x - dx.y,
