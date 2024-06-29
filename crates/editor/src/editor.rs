@@ -1093,7 +1093,6 @@ impl CompletionsMenu {
             move |_editor, range, cx| {
                 let start_ix = range.start;
                 let completions_guard = completions.read();
-
                 matches[range]
                     .iter()
                     .enumerate()
@@ -1131,17 +1130,26 @@ impl CompletionsMenu {
 
                         let completion_label = div()
                                     .flex()
+                                    .flex_grow()
                                     .items_start()
                                     .child(
                                         StyledText::new(completion.label.text.clone())
                                     ).when_some(completion.lsp_completion.label_details.as_ref(), |this, ld| {
                                             this.when_some(ld.detail.as_ref(), |this2, d| {
-                                                    this2.items_start()
-                                                        .child(Label::new(d.clone()).color(Color::Hidden))
+                                                    this2.child(div()
+                                                        .flex_grow()
+                                                        .child(Label::new(d.clone()).color(Color::Hidden)))
                                                     }
-                                                ).when_some(ld.description.as_ref(), |this2, d| {
-                                                    this2.items_end()
-                                                        .child(Label::new(d.clone()).color(Color::Default))
+                                                )
+                                        }
+                                    );
+
+                        let completion_desciption = div()
+                                    .when_some(completion.lsp_completion.label_details.as_ref(), |this, ld| {
+                                            this.when_some(ld.description.as_ref(), |this2, d| {
+                                                    this2.child(div()
+                                                        .items_end()
+                                                        .child(Label::new(d.clone()).color(Color::Default)))
                                                     }
                                                 )
                                         }
@@ -1179,7 +1187,8 @@ impl CompletionsMenu {
                                         task.detach_and_log_err(cx)
                                     }
                                 }))
-                                .child(h_flex().overflow_hidden().child(completion_label))
+                                .child(h_flex().flex_grow().overflow_hidden().child(completion_label))
+                                .child(h_flex().child(completion_desciption))
                                 .end_slot::<Div>(documentation_label),
                         )
                     })
