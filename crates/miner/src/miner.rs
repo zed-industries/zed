@@ -11,7 +11,7 @@ use huggingface::HuggingFaceClient;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
     time::SystemTime,
@@ -110,6 +110,8 @@ pub struct Miner {
     progress_sender: mpsc::UnboundedSender<()>,
     total_chunks: Arc<AtomicUsize>,
     total_symbols: Arc<AtomicUsize>,
+    processed_chunks: Arc<Mutex<HashMap<(PathBuf, usize), bool>>>,
+    processed_files: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
 impl Miner {
@@ -168,6 +170,8 @@ impl Miner {
 
         let (progress_sender, mut progress_receiver) = mpsc::unbounded_channel();
 
+        let processed_chunks = Arc::new(Mutex::new(HashMap::new()));
+
         let miner = Arc::new(Self {
             root,
             num_workers,
@@ -188,6 +192,8 @@ impl Miner {
             progress_sender,
             total_chunks,
             total_symbols,
+            processed_chunks,
+            processed_files: Arc::new(Mutex::new(HashSet::new())),
         });
 
         let miner_clone = Arc::clone(&miner);
@@ -201,6 +207,7 @@ impl Miner {
     }
 
     pub async fn summarize_project(self: &Arc<Self>) -> Result<()> {
+        println!("Starting project summarization");
         // Populate the queue with files and directories
         let mut walker = ignore::WalkBuilder::new(&self.root)
             .hidden(true)
@@ -210,11 +217,13 @@ impl Miner {
             if let Ok(entry) = entry {
                 let path = entry.path().to_owned();
                 if entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                    println!("Enqueueing directory: {:?}", path);
                     self.queue
                         .lock()
                         .await
                         .push_back(Entry::Directory(path.clone()));
                 } else {
+                    println!("Enqueueing file: {:?}", path);
                     self.queue.lock().await.push_back(Entry::File(path.clone()));
                 }
                 self.file_progress_map.lock().await.insert(
@@ -229,21 +238,30 @@ impl Miner {
         }
 
         self.update_progress();
+        println!("Initial queue population complete");
 
         let workers: Vec<_> = (0..self.num_workers)
-            .map(|_| {
+            .map(|worker_id| {
                 let this = self.clone();
-                tokio::spawn(async move { this.worker().await })
+                tokio::spawn(async move {
+                    println!("Worker {} starting", worker_id);
+                    let result = this.worker().await;
+                    println!("Worker {} finished", worker_id);
+                    result
+                })
             })
             .collect();
 
-        for worker in workers {
+        for (worker_id, worker) in workers.into_iter().enumerate() {
             worker.await??;
+            println!("Worker {} completed successfully", worker_id);
         }
 
         self.update_progress();
+        println!("All workers have completed");
 
         // Remove deleted entries from the database
+        println!("Removing deleted entries from the database");
         self.database
             .transact(|db, mut txn| {
                 let mut paths_to_delete = Vec::new();
@@ -251,11 +269,13 @@ impl Miner {
                     let (path, _) = item?;
                     let path = PathBuf::from(path);
                     if !path.exists() {
+                        println!("Marking for deletion: {:?}", path);
                         paths_to_delete.push(path);
                     }
                 }
 
                 for path in paths_to_delete {
+                    println!("Deleting from database: {:?}", path);
                     db.delete(&mut txn, &path.to_string_lossy())?;
                 }
                 Ok(())
@@ -270,6 +290,7 @@ impl Miner {
             .finish_with_message("Rust symbol processing complete");
         self.overall_progress
             .finish_with_message("Project summarization finished");
+        println!("Project summarization completed successfully");
         Ok(())
     }
 
@@ -282,19 +303,40 @@ impl Miner {
 
             match entry {
                 Some(Entry::File(path)) => {
+                    println!("Worker processing file: {:?}", path);
                     let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
-                    self.scan_file(path, content).await?;
+                    if let Err(e) = self.scan_file(path.clone(), content).await {
+                        eprintln!("Error processing file {:?}: {}", path, e);
+                    }
                 }
                 Some(Entry::Directory(path)) => {
-                    self.scan_directory(path).await?;
+                    println!("Worker processing directory: {:?}", path);
+                    if let Err(e) = self.scan_directory(path.clone()).await {
+                        eprintln!("Error processing directory {:?}: {}", path, e);
+                    }
                 }
                 Some(Entry::Chunk(path, content, index)) => {
-                    self.process_chunk(path, content, index).await?;
+                    println!("Worker processing chunk {} of file {:?}", index, path);
+                    if let Err(e) = self.process_chunk(path.clone(), content, index).await {
+                        eprintln!("Error processing chunk {} of file {:?}: {}", index, path, e);
+                    }
                 }
                 Some(Entry::RustSymbol(path, name, content)) => {
-                    self.process_rust_symbol(path, name, content).await?;
+                    println!("Worker processing Rust symbol {} in file {:?}", name, path);
+                    if let Err(e) = self
+                        .process_rust_symbol(path.clone(), name.clone(), content)
+                        .await
+                    {
+                        eprintln!(
+                            "Error processing Rust symbol {} in file {:?}: {}",
+                            name, path, e
+                        );
+                    }
                 }
-                None => break,
+                None => {
+                    println!("Worker queue empty, exiting");
+                    break;
+                }
             }
             self.update_progress();
         }
@@ -303,8 +345,19 @@ impl Miner {
     }
 
     async fn scan_file(&self, path: PathBuf, content: String) -> Result<()> {
+        println!("Scanning file: {:?}", path);
+
+        // Check if the file has already been processed
+        let mut processed_files = self.processed_files.lock().await;
+        if processed_files.contains(&path) {
+            println!("File already processed: {:?}", path);
+            return Ok(());
+        }
+        processed_files.insert(path.clone());
+        drop(processed_files);
+
         let mtime = tokio::fs::metadata(&path).await?.modified()?;
-        let key = path.to_string_lossy().to_string();
+        let key = format!("path:{}", path.to_string_lossy());
 
         let cached = self
             .database
@@ -315,6 +368,7 @@ impl Miner {
             .await?;
         if let Some(cached) = cached {
             if cached.mtime == mtime {
+                println!("Loading cached summary for: {:?}", path);
                 self.paths_loaded_from_cache
                     .lock()
                     .await
@@ -339,19 +393,13 @@ impl Miner {
             .set_message(format!("Summarizing {}", path.display()));
 
         if path.extension().map_or(false, |ext| ext == "rs") {
+            println!("Parsing Rust symbols for: {:?}", path);
             match self
                 .parse_and_enqueue_rust_symbols(path.clone(), &content)
                 .await
             {
-                Ok(symbol_count) => {
-                    self.file_progress_map
-                        .lock()
-                        .await
-                        .get_mut(&path)
-                        .map(|progress| {
-                            progress.outstanding_symbols = symbol_count;
-                        });
-                    self.update_progress();
+                Ok(_) => {
+                    println!("Successfully parsed Rust symbols for: {:?}", path);
                     return Ok(());
                 }
                 Err(e) => {
@@ -365,6 +413,7 @@ impl Miner {
         }
 
         if self.count_tokens(&content) > CHUNK_SIZE {
+            println!("Splitting file into chunks: {:?}", path);
             let chunk_count = self.split_and_enqueue_chunks(path.clone(), content).await?;
             self.file_progress_map
                 .lock()
@@ -373,7 +422,9 @@ impl Miner {
                 .map(|progress| {
                     progress.outstanding_chunks = chunk_count;
                 });
+            println!("File split into {} chunks: {:?}", chunk_count, path);
         } else {
+            println!("Summarizing file directly: {:?}", path);
             let summary = self.summarize_file(&path, &content).await?;
             let cached_summary = CachedSummary {
                 summary: summary.clone(),
@@ -393,13 +444,15 @@ impl Miner {
                 .map(|progress| {
                     progress.is_complete = true;
                 });
+            println!("File summarized directly: {:?}", path);
         }
 
         self.update_progress();
+        println!("Finished scanning file: {:?}", path);
         Ok(())
     }
 
-    async fn parse_and_enqueue_rust_symbols(&self, path: PathBuf, content: &str) -> Result<usize> {
+    async fn parse_and_enqueue_rust_symbols(&self, path: PathBuf, content: &str) -> Result<()> {
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&tree_sitter_rust::language())?;
         let tree = parser
@@ -422,23 +475,52 @@ impl Miner {
                 symbols.push((symbol_name, symbol_content));
             }
         }
-        let mut queue = self.queue.lock().await;
-        let symbol_count = symbols.len();
-        for (symbol_name, symbol_content) in symbols {
-            queue.push_back(Entry::RustSymbol(path.clone(), symbol_name, symbol_content));
-        }
 
+        // Update progress before enqueueing
+        let symbol_count = symbols.len();
+        {
+            let mut file_progress = self.file_progress_map.lock().await;
+            if let Some(progress) = file_progress.get_mut(&path) {
+                progress.outstanding_symbols = symbol_count;
+            } else {
+                eprintln!(
+                    "Warning: No progress entry found for path: {}",
+                    path.display()
+                );
+            }
+        }
         self.outstanding_symbols
             .fetch_add(symbol_count, std::sync::atomic::Ordering::SeqCst);
         self.total_symbols
             .fetch_add(symbol_count, std::sync::atomic::Ordering::SeqCst);
+
+        let mut queue = self.queue.lock().await;
+        for (symbol_name, symbol_content) in symbols {
+            queue.push_back(Entry::RustSymbol(path.clone(), symbol_name, symbol_content));
+        }
+
         self.update_progress();
-        Ok(symbol_count)
+        Ok(())
     }
 
     async fn process_chunk(&self, path: PathBuf, content: String, index: usize) -> Result<()> {
+        let chunk_id = (path.clone(), index);
+
+        // Check if the chunk has already been processed
+        let mut processed_chunks = self.processed_chunks.lock().await;
+        if processed_chunks.contains_key(&chunk_id) {
+            println!("Chunk already processed: {:?}", chunk_id);
+            return Ok(());
+        }
+
+        // Mark the chunk as being processed
+        processed_chunks.insert(chunk_id.clone(), true);
+        drop(processed_chunks);
+
+        println!("Processing chunk: {:?}", chunk_id);
+
         let summary = self.summarize_file(&path, &content).await?;
-        let key = format!("{}_{}", path.to_string_lossy(), index);
+        let key = format!("chunk:{}_{}", path.to_string_lossy(), index);
         let mtime = tokio::fs::metadata(&path).await?.modified()?;
         let cached_summary = CachedSummary {
             summary: summary.clone(),
@@ -459,7 +541,22 @@ impl Miner {
 
         let mut file_progress = self.file_progress_map.lock().await;
         if let Some(progress) = file_progress.get_mut(&path) {
-            progress.outstanding_chunks -= 1;
+            println!(
+                "Debug: Processing chunk {} for path {}",
+                index,
+                path.display()
+            );
+            println!(
+                "Debug: Before decrement - outstanding_chunks: {}",
+                progress.outstanding_chunks
+            );
+
+            progress.outstanding_chunks = progress.outstanding_chunks.saturating_sub(1);
+
+            println!(
+                "Debug: After decrement - outstanding_chunks: {}",
+                progress.outstanding_chunks
+            );
 
             if progress.outstanding_chunks == 0 && progress.outstanding_symbols == 0 {
                 progress.is_complete = true;
@@ -468,13 +565,18 @@ impl Miner {
         drop(file_progress);
         self.update_progress();
 
+        println!("Finished processing chunk: {:?}", chunk_id);
+
         Ok(())
     }
 
     async fn split_and_enqueue_chunks(&self, path: PathBuf, content: String) -> Result<usize> {
         let chunks = self.split_into_chunks(&content);
         let chunk_count = chunks.len();
+        println!("Splitting file {:?} into {} chunks", path, chunk_count);
+
         for (index, chunk) in chunks.into_iter().enumerate() {
+            println!("Enqueueing chunk {} for file {:?}", index, path);
             self.queue
                 .lock()
                 .await
@@ -484,6 +586,13 @@ impl Miner {
             .fetch_add(chunk_count, std::sync::atomic::Ordering::SeqCst);
         self.total_chunks
             .fetch_add(chunk_count, std::sync::atomic::Ordering::SeqCst);
+
+        println!(
+            "Total outstanding chunks after enqueueing: {}",
+            self.outstanding_chunks
+                .load(std::sync::atomic::Ordering::SeqCst)
+        );
+
         self.update_progress();
         Ok(chunk_count)
     }
@@ -497,7 +606,7 @@ impl Miner {
         let summary = self.summarize_rust_symbol(&name, &content).await?;
 
         // Save the symbol summary
-        let key = format!("{}_symbol_{}", path.to_string_lossy(), name);
+        let key = format!("symbol:{}::{}", path.to_string_lossy(), name);
         let mtime = tokio::fs::metadata(&path).await?.modified()?;
         let cached_summary = CachedSummary {
             summary: summary.clone(),
@@ -515,7 +624,14 @@ impl Miner {
             .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         let mut file_progress = self.file_progress_map.lock().await;
         if let Some(progress) = file_progress.get_mut(&path) {
-            progress.outstanding_symbols -= 1;
+            if progress.outstanding_symbols == 0 {
+                println!(
+                    "Debug: Warning - Outstanding symbols is already zero for path: {}",
+                    path.display()
+                );
+            }
+
+            progress.outstanding_symbols = progress.outstanding_symbols.saturating_sub(1);
             if progress.outstanding_symbols == 0 && progress.outstanding_chunks == 0 {
                 progress.is_complete = true;
 
@@ -527,7 +643,7 @@ impl Miner {
                     .get(&path)
                     .cloned()
                     .unwrap_or_default();
-                let complete_key = path.to_string_lossy().to_string();
+                let complete_key = format!("path:{}", path.to_string_lossy());
                 let complete_cached_summary = CachedSummary {
                     summary: complete_summary,
                     mtime,
@@ -644,6 +760,7 @@ impl Miner {
     }
 
     async fn scan_directory(&self, path: PathBuf) -> Result<()> {
+        println!("Scanning directory: {:?}", path);
         let dir_walker = ignore::WalkBuilder::new(&path)
             .hidden(true)
             .ignore(true)
@@ -655,22 +772,25 @@ impl Miner {
                 if entry.path() != path {
                     let entry_path = entry.path().to_path_buf();
                     if entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                        println!("Enqueueing directory: {:?}", entry_path);
                         self.queue
                             .lock()
                             .await
                             .push_back(Entry::Directory(entry_path));
                     } else {
+                        println!("Enqueueing file: {:?}", entry_path);
                         self.queue.lock().await.push_back(Entry::File(entry_path));
                     }
                 }
             }
         }
 
+        println!("Finished scanning directory: {:?}", path);
         Ok(())
     }
 
     async fn summary_for_path(&self, path: &Path) -> Result<Option<String>> {
-        let key = path.to_string_lossy().to_string();
+        let key = format!("path:{}", path.to_string_lossy());
         let cached_summary = self
             .database
             .transact(move |db, txn| Ok(db.get(&txn, &key)?))
@@ -738,12 +858,14 @@ impl Miner {
             .transact(|db, txn| {
                 for item in db.iter(&txn)? {
                     let (key, value) = item?;
+                    let (prefix, path) = key.split_once(':').unwrap_or(("unknown", key));
                     let entry = serde_json::json!({
-                        "path": key,
+                        "type": prefix,
+                        "path": path,
                         "summary": value.summary,
                         "mtime": value.mtime.duration_since(SystemTime::UNIX_EPOCH)?.as_secs()
                     });
-                    println!("{}", serde_json::to_string(&entry)?);
+                    println!("{}", serde_json::to_string_pretty(&entry)?);
                 }
                 Ok(())
             })
