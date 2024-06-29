@@ -1118,8 +1118,25 @@ impl CompletionsMenu {
                                 },
                             ),
                         );
-                        let completion_label = StyledText::new(completion.label.text.clone())
-                            .with_highlights(&style.text, highlights);
+
+                        let completion_label = div()
+                                    .flex()
+                                    .items_start()
+                                    .child(
+                                        StyledText::new(completion.label.text.clone())
+                                    ).when_some(completion.lsp_completion.label_details.as_ref(), |this, ld| {
+                                            this.when_some(ld.detail.as_ref(), |this2, d| {
+                                                    this2.items_start()
+                                                        .child(StyledText::new(d.clone()))
+                                                    }
+                                                ).when_some(ld.description.as_ref(), |this2, d| {
+                                                    this2.items_end()
+                                                        .child(StyledText::new(d.clone()))
+                                                    }
+                                                )
+                                        }
+                                    );
+
                         let documentation_label =
                             if let Some(Documentation::SingleLine(text)) = documentation {
                                 if text.trim().is_empty() {
