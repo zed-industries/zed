@@ -511,7 +511,7 @@ impl DirectXRenderer {
                     .VSSetSamplers(2, Some(&self.render.sampler));
                 self.context
                     .context
-                    .VSSetSamplers(2, Some(&self.render.sampler));
+                    .PSSetSamplers(2, Some(&self.render.sampler));
                 self.context
                     .context
                     .VSSetShaderResources(3, Some(&tex_info.2));
@@ -644,7 +644,7 @@ impl DirectXRenderer {
                 .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
             self.context
                 .context
-                .VSSetSamplers(2, Some(&self.render.sampler));
+                .PSSetSamplers(2, Some(&self.render.sampler));
             self.context
                 .context
                 .VSSetShaderResources(3, Some(&tex_info.2));
@@ -718,7 +718,7 @@ impl DirectXRenderer {
                 .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
             self.context
                 .context
-                .VSSetSamplers(2, Some(&self.render.sampler));
+                .PSSetSamplers(2, Some(&self.render.sampler));
             self.context
                 .context
                 .VSSetShaderResources(3, Some(&tex_info.2));
