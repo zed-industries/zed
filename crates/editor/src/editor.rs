@@ -40,7 +40,6 @@ pub mod tasks;
 #[cfg(test)]
 mod editor_tests;
 mod signature_help_popover;
-mod signature_help_state;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -156,7 +155,6 @@ use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
 use crate::signature_help_popover::{create_signature_help_markdown_string, SignatureHelpPopover};
-use crate::signature_help_state::{SignatureHelpState, SIGNATURE_HELP_DELAY};
 
 pub const FILE_HEADER_HEIGHT: u8 = 1;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u8 = 1;
@@ -504,7 +502,8 @@ pub struct Editor {
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
-    signature_help_state: SignatureHelpState,
+    signature_help_task: Option<Task<()>>,
+    signature_help_state: Option<SignatureHelpPopover>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
@@ -1824,7 +1823,8 @@ impl Editor {
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
             completion_tasks: Default::default(),
-            signature_help_state: SignatureHelpState::new(),
+            signature_help_task: None,
+            signature_help_state: None,
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
             completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
@@ -2413,7 +2413,7 @@ impl Editor {
             }
             self.selections_did_change(true, &old_cursor_position, request_completions, cx);
 
-            if self.signature_help_state.active() {
+            if self.signature_help_state.is_some() {
                 self.show_signature_help(&ShowSignatureHelp, cx);
             }
         }
@@ -2871,7 +2871,7 @@ impl Editor {
             return true;
         }
 
-        if self.hide_signature_help_immediately(cx) {
+        if self.hide_signature_help(cx) {
             return true;
         }
 
@@ -3996,35 +3996,10 @@ impl Editor {
         }))
     }
 
-    fn hide_signature_help_immediately(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if self.signature_help_state.active() {
-            self.signature_help_state.set_show_signature_help_task(None);
-            self.signature_help_state.set_signature_help_popover(None);
-            self.signature_help_state.set_active(false);
-            cx.notify();
-            true
-        } else {
-            false
-        }
-    }
-
-    fn hide_signature_help_lazily(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if self.signature_help_state.active() {
-            self.signature_help_state.set_show_signature_help_task(None);
-            self.signature_help_state.set_signature_help_popover(None);
-
-            self.signature_help_state
-                .set_hide_signature_help_task(Some(cx.spawn(|editor, mut cx| async move {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(SIGNATURE_HELP_DELAY))
-                        .await;
-                    editor
-                        .update(&mut cx, |editor, _| {
-                            editor.signature_help_state.set_active(false);
-                        })
-                        .ok();
-                })));
-
+    fn hide_signature_help(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if self.signature_help_state.is_some() {
+            self.signature_help_state = None;
+            self.signature_help_task = None;
             cx.notify();
             true
         } else {
@@ -4036,7 +4011,6 @@ impl Editor {
         if self.pending_rename.is_some() {
             return;
         }
-        self.signature_help_state.set_hide_signature_help_task(None);
 
         let position = self.selections.newest_anchor().head();
         let Some((buffer, buffer_position)) =
@@ -4045,59 +4019,46 @@ impl Editor {
             return;
         };
 
-        self.signature_help_state
-            .set_show_signature_help_task(Some(cx.spawn(move |editor, mut cx| async move {
-                let markdown_task_result = editor.update(&mut cx, |editor, cx| {
-                    let maybe_language = editor.language_at(0, cx);
-                    let project = editor.project.clone()?;
-                    let (maybe_markdown, language_registry) =
-                        project.update(cx, |project, mut cx| {
-                            let language_registry = project.languages().clone();
-                            let maybe_markdown = project
-                                .signature_help(&buffer, buffer_position, &mut cx)
-                                .map(|signature_help| {
-                                    create_signature_help_markdown_string(signature_help?)
-                                });
-                            (maybe_markdown, language_registry)
+        self.signature_help_task = Some(cx.spawn(move |editor, mut cx| async move {
+            let markdown_task_result = editor.update(&mut cx, |editor, cx| {
+                let maybe_language = editor.language_at(0, cx);
+                let project = editor.project.clone()?;
+                let (maybe_markdown, language_registry) = project.update(cx, |project, mut cx| {
+                    let language_registry = project.languages().clone();
+                    let maybe_markdown = project
+                        .signature_help(&buffer, buffer_position, &mut cx)
+                        .map(|signature_help| {
+                            create_signature_help_markdown_string(signature_help?)
                         });
-                    Some((maybe_markdown, language_registry, maybe_language))
+                    (maybe_markdown, language_registry)
                 });
-                let maybe_signature_help_popover =
-                    if let Ok(Some((markdown, language_registry, maybe_language))) =
-                        markdown_task_result
-                    {
-                        let markdown = markdown.await;
-                        if let Some((markdown, markdown_highlights)) = markdown {
-                            let mut parsed_markdown = parse_markdown(
-                                markdown.as_str(),
-                                &language_registry,
-                                maybe_language,
-                            )
-                            .await;
-                            parsed_markdown.highlights = markdown_highlights;
-                            Some(SignatureHelpPopover {
-                                parsed_content: parsed_markdown,
-                            })
-                        } else {
-                            None
-                        }
+                Some((maybe_markdown, language_registry, maybe_language))
+            });
+            let maybe_signature_help_popover =
+                if let Ok(Some((markdown, language_registry, maybe_language))) =
+                    markdown_task_result
+                {
+                    let markdown = markdown.await;
+                    if let Some((markdown, markdown_highlights)) = markdown {
+                        let mut parsed_markdown =
+                            parse_markdown(markdown.as_str(), &language_registry, maybe_language)
+                                .await;
+                        parsed_markdown.highlights = markdown_highlights;
+                        Some(SignatureHelpPopover {
+                            parsed_content: parsed_markdown,
+                        })
                     } else {
                         None
-                    };
-                editor
-                    .update(&mut cx, |editor, cx| {
-                        if maybe_signature_help_popover.is_some() {
-                            editor.signature_help_state.set_active(true);
-                            editor
-                                .signature_help_state
-                                .set_signature_help_popover(maybe_signature_help_popover);
-                            cx.notify();
-                        } else {
-                            editor.hide_signature_help_lazily(cx);
-                        }
-                    })
-                    .ok();
-            })));
+                    }
+                } else {
+                    None
+                };
+            editor.update(&mut cx, |editor, cx| {
+                editor.signature_help_state = maybe_signature_help_popover;
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     pub fn show_completions(&mut self, options: &ShowCompletions, cx: &mut ViewContext<Self>) {
