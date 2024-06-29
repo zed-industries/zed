@@ -70,9 +70,7 @@ async fn main() -> Result<()> {
     let miner = Miner::new(db_path, project_path.to_path_buf(), cli.num_workers).await?;
 
     if cli.export {
-        println!("Exporting database contents to stdout:");
         miner.export_database().await?;
-        println!("Export completed successfully");
         return Ok(());
     }
 
@@ -104,14 +102,14 @@ pub struct Miner {
     file_progress: ProgressBar,
     chunk_progress: ProgressBar,
     rust_symbol_progress: ProgressBar,
-    total_entries: Arc<AtomicUsize>,
-    completed_entries: Arc<AtomicUsize>,
     summaries: Arc<Mutex<BTreeMap<PathBuf, String>>>,
     paths_loaded_from_cache: Arc<Mutex<BTreeMap<PathBuf, bool>>>,
     file_progress_map: Arc<Mutex<HashMap<PathBuf, FileProgress>>>,
     outstanding_chunks: Arc<AtomicUsize>,
     outstanding_symbols: Arc<AtomicUsize>,
     progress_sender: mpsc::UnboundedSender<()>,
+    total_chunks: Arc<AtomicUsize>,
+    total_symbols: Arc<AtomicUsize>,
 }
 
 impl Miner {
@@ -159,15 +157,14 @@ impl Miner {
             );
         }
 
-        let total_entries = Arc::new(AtomicUsize::new(0));
-        let completed_entries = Arc::new(AtomicUsize::new(0));
-
         let summaries = Arc::new(Mutex::new(BTreeMap::new()));
         let paths_loaded_from_cache = Arc::new(Mutex::new(BTreeMap::new()));
 
         let file_progress_map = Arc::new(Mutex::new(HashMap::new()));
         let outstanding_chunks = Arc::new(AtomicUsize::new(0));
         let outstanding_symbols = Arc::new(AtomicUsize::new(0));
+        let total_chunks = Arc::new(AtomicUsize::new(0));
+        let total_symbols = Arc::new(AtomicUsize::new(0));
 
         let (progress_sender, mut progress_receiver) = mpsc::unbounded_channel();
 
@@ -183,14 +180,14 @@ impl Miner {
             file_progress,
             chunk_progress,
             rust_symbol_progress,
-            total_entries,
-            completed_entries,
             summaries,
             paths_loaded_from_cache,
             file_progress_map,
             outstanding_chunks,
             outstanding_symbols,
             progress_sender,
+            total_chunks,
+            total_symbols,
         });
 
         let miner_clone = Arc::clone(&miner);
@@ -223,15 +220,15 @@ impl Miner {
                 self.file_progress_map.lock().await.insert(
                     path,
                     FileProgress {
-                        outstanding_summaries: 0,
+                        outstanding_chunks: 0,
+                        outstanding_symbols: 0,
                         is_complete: false,
                     },
                 );
             }
         }
 
-        let total_files = self.file_progress_map.lock().await.len();
-        self.file_progress.set_length(total_files as u64);
+        self.update_progress();
 
         let workers: Vec<_> = (0..self.num_workers)
             .map(|_| {
@@ -278,26 +275,26 @@ impl Miner {
 
     async fn worker(self: &Arc<Self>) -> Result<()> {
         loop {
-            let mut queue_lock = self.queue.lock().await;
-            let Some(entry) = queue_lock.pop_front() else {
-                break;
+            let entry = {
+                let mut queue_lock = self.queue.lock().await;
+                queue_lock.pop_front()
             };
-            drop(queue_lock);
 
             match entry {
-                Entry::File(path) => {
+                Some(Entry::File(path)) => {
                     let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
                     self.scan_file(path, content).await?;
                 }
-                Entry::Directory(path) => {
+                Some(Entry::Directory(path)) => {
                     self.scan_directory(path).await?;
                 }
-                Entry::Chunk(path, content, index) => {
+                Some(Entry::Chunk(path, content, index)) => {
                     self.process_chunk(path, content, index).await?;
                 }
-                Entry::RustSymbol(path, name, content) => {
+                Some(Entry::RustSymbol(path, name, content)) => {
                     self.process_rust_symbol(path, name, content).await?;
                 }
+                None => break,
             }
             self.update_progress();
         }
@@ -347,31 +344,34 @@ impl Miner {
                 .await
             {
                 Ok(symbol_count) => {
-                    self.outstanding_symbols
-                        .fetch_add(symbol_count, std::sync::atomic::Ordering::SeqCst);
                     self.file_progress_map
                         .lock()
                         .await
                         .get_mut(&path)
                         .map(|progress| {
-                            progress.outstanding_summaries = symbol_count;
+                            progress.outstanding_symbols = symbol_count;
                         });
+                    self.update_progress();
+                    return Ok(());
                 }
                 Err(e) => {
-                    eprintln!("Error parsing Rust symbols for {}: {}", path.display(), e);
-                    // Continue processing the file as a regular file
+                    eprintln!(
+                        "Error parsing Rust symbols for {}: {}\nProcessing as text instead",
+                        path.display(),
+                        e
+                    );
                 }
             }
-        } else if self.count_tokens(&content) > CHUNK_SIZE {
+        }
+
+        if self.count_tokens(&content) > CHUNK_SIZE {
             let chunk_count = self.split_and_enqueue_chunks(path.clone(), content).await?;
-            self.outstanding_chunks
-                .fetch_add(chunk_count, std::sync::atomic::Ordering::SeqCst);
             self.file_progress_map
                 .lock()
                 .await
                 .get_mut(&path)
                 .map(|progress| {
-                    progress.outstanding_summaries = chunk_count;
+                    progress.outstanding_chunks = chunk_count;
                 });
         } else {
             let summary = self.summarize_file(&path, &content).await?;
@@ -430,6 +430,8 @@ impl Miner {
 
         self.outstanding_symbols
             .fetch_add(symbol_count, std::sync::atomic::Ordering::SeqCst);
+        self.total_symbols
+            .fetch_add(symbol_count, std::sync::atomic::Ordering::SeqCst);
         self.update_progress();
         Ok(symbol_count)
     }
@@ -454,17 +456,18 @@ impl Miner {
             .entry(path.clone())
             .or_insert_with(String::new)
             .push_str(&summary);
-        self.outstanding_chunks
-            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+
         let mut file_progress = self.file_progress_map.lock().await;
         if let Some(progress) = file_progress.get_mut(&path) {
-            progress.outstanding_summaries -= 1;
-            if progress.outstanding_summaries == 0 {
+            progress.outstanding_chunks -= 1;
+
+            if progress.outstanding_chunks == 0 && progress.outstanding_symbols == 0 {
                 progress.is_complete = true;
             }
         }
         drop(file_progress);
         self.update_progress();
+
         Ok(())
     }
 
@@ -479,6 +482,8 @@ impl Miner {
         }
         self.outstanding_chunks
             .fetch_add(chunk_count, std::sync::atomic::Ordering::SeqCst);
+        self.total_chunks
+            .fetch_add(chunk_count, std::sync::atomic::Ordering::SeqCst);
         self.update_progress();
         Ok(chunk_count)
     }
@@ -491,12 +496,13 @@ impl Miner {
     ) -> Result<()> {
         let summary = self.summarize_rust_symbol(&name, &content).await?;
         self.summaries.lock().await.insert(path.clone(), summary);
-        self.outstanding_symbols
+        let previous_outstanding = self
+            .outstanding_symbols
             .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         let mut file_progress = self.file_progress_map.lock().await;
         if let Some(progress) = file_progress.get_mut(&path) {
-            progress.outstanding_summaries -= 1;
-            if progress.outstanding_summaries == 0 {
+            progress.outstanding_symbols -= 1;
+            if progress.outstanding_symbols == 0 && progress.outstanding_chunks == 0 {
                 progress.is_complete = true;
             }
         }
@@ -664,81 +670,33 @@ impl Miner {
         let outstanding_symbols = self
             .outstanding_symbols
             .load(std::sync::atomic::Ordering::SeqCst);
+        let total_chunks = self.total_chunks.load(std::sync::atomic::Ordering::SeqCst);
+        let total_symbols = self.total_symbols.load(std::sync::atomic::Ordering::SeqCst);
+
+        let completed_chunks = total_chunks.saturating_sub(outstanding_chunks);
+        let completed_symbols = total_symbols.saturating_sub(outstanding_symbols);
 
         self.file_progress.set_position(completed_files as u64);
         self.file_progress.set_length(total_files as u64);
-        self.chunk_progress.set_position(
-            (self
-                .outstanding_chunks
-                .load(std::sync::atomic::Ordering::SeqCst)
-                - outstanding_chunks) as u64,
-        );
-        self.rust_symbol_progress.set_position(
-            (self
-                .outstanding_symbols
-                .load(std::sync::atomic::Ordering::SeqCst)
-                - outstanding_symbols) as u64,
-        );
+        self.file_progress.set_message(format!("Files processed"));
+        self.chunk_progress.set_position(completed_chunks as u64);
+        self.chunk_progress.set_length(total_chunks as u64);
+        self.chunk_progress.set_message(format!("Chunks processed"));
+        self.rust_symbol_progress
+            .set_position(completed_symbols as u64);
+        self.rust_symbol_progress.set_length(total_symbols as u64);
+        self.rust_symbol_progress
+            .set_message(format!("Rust symbols processed"));
 
         // Update overall progress
-        let total_work = total_files
-            + self
-                .outstanding_chunks
-                .load(std::sync::atomic::Ordering::SeqCst)
-            + self
-                .outstanding_symbols
-                .load(std::sync::atomic::Ordering::SeqCst);
-        let completed_work = completed_files
-            + (self
-                .outstanding_chunks
-                .load(std::sync::atomic::Ordering::SeqCst)
-                - outstanding_chunks)
-            + (self
-                .outstanding_symbols
-                .load(std::sync::atomic::Ordering::SeqCst)
-                - outstanding_symbols);
+        let total_work = total_files + total_chunks + total_symbols;
+        let completed_work = completed_files + completed_chunks + completed_symbols;
         self.overall_progress.set_position(completed_work as u64);
         self.overall_progress.set_length(total_work as u64);
-    }
-
-    fn increment_total_entries(&self, count: usize) {
-        self.total_entries
-            .fetch_add(count, std::sync::atomic::Ordering::SeqCst);
-        self.update_overall_progress();
-    }
-
-    fn increment_completed_entries(&self, count: usize) {
-        self.completed_entries
-            .fetch_add(count, std::sync::atomic::Ordering::SeqCst);
-        self.update_overall_progress();
-    }
-
-    fn update_file_progress(&self, completed: usize, total: usize) {
-        self.file_progress.set_length(total as u64);
-        self.file_progress.set_position(completed as u64);
-        self.file_progress.set_message("Files processed");
-    }
-
-    fn update_chunk_progress(&self, completed: usize, total: usize) {
-        self.chunk_progress.set_length(total as u64);
-        self.chunk_progress.set_position(completed as u64);
-        self.chunk_progress.set_message("Chunks processed");
-    }
-
-    fn update_rust_symbol_progress(&self, completed: usize, total: usize) {
-        self.rust_symbol_progress.set_length(total as u64);
-        self.rust_symbol_progress.set_position(completed as u64);
-        self.rust_symbol_progress
-            .set_message("Rust symbols processed");
-    }
-
-    fn update_overall_progress(&self) {
-        let total = self.total_entries.load(std::sync::atomic::Ordering::SeqCst);
-        let completed = self
-            .completed_entries
-            .load(std::sync::atomic::Ordering::SeqCst);
-        self.overall_progress.set_length(total as u64);
-        self.overall_progress.set_position(completed as u64);
+        self.overall_progress.set_message(format!(
+            "Overall progress: {:.1}%",
+            (completed_work as f64 / total_work.max(1) as f64) * 100.0
+        ));
     }
 
     pub async fn export_database(&self) -> Result<()> {
@@ -774,7 +732,8 @@ struct CachedSummary {
 }
 
 struct FileProgress {
-    outstanding_summaries: usize,
+    outstanding_chunks: usize,
+    outstanding_symbols: usize,
     is_complete: bool,
 }
 
