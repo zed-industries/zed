@@ -1508,6 +1508,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 if state.axis_source == AxisSource::Wheel {
                     return;
                 }
+                let axis = if state.modifiers.shift {
+                    wl_pointer::Axis::HorizontalScroll
+                } else {
+                    axis
+                };
                 let axis_modifier = match axis {
                     wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
                     wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
@@ -1533,6 +1538,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 discrete,
             } => {
                 state.scroll_event_received = true;
+                let axis = if state.modifiers.shift {
+                    wl_pointer::Axis::HorizontalScroll
+                } else {
+                    axis
+                };
                 let axis_modifier = match axis {
                     wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
                     wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
@@ -1555,6 +1565,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 value120,
             } => {
                 state.scroll_event_received = true;
+                let axis = if state.modifiers.shift {
+                    wl_pointer::Axis::HorizontalScroll
+                } else {
+                    axis
+                };
                 let axis_modifier = match axis {
                     wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
                     wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
