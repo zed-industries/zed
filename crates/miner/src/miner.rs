@@ -76,16 +76,6 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let multi_progress = indicatif::MultiProgress::new();
-    let overall_progress = multi_progress.add(miner.overall_progress.clone());
-    let file_progress = multi_progress.add(miner.file_progress.clone());
-    let chunk_progress = multi_progress.add(miner.chunk_progress.clone());
-    let rust_symbol_progress = multi_progress.add(miner.rust_symbol_progress.clone());
-
-    tokio::spawn(async move {
-        multi_progress.join().unwrap();
-    });
-
     miner.summarize_project().await?;
 
     println!("Finished summarization");
@@ -109,6 +99,7 @@ pub struct Miner {
     tokenizer: Tokenizer,
     client: Arc<HuggingFaceClient>,
     queue: Arc<Mutex<VecDeque<Entry>>>,
+    _multi_progress: Arc<MultiProgress>,
     overall_progress: ProgressBar,
     file_progress: ProgressBar,
     chunk_progress: ProgressBar,
@@ -120,6 +111,7 @@ pub struct Miner {
     file_progress_map: Arc<Mutex<HashMap<PathBuf, FileProgress>>>,
     outstanding_chunks: Arc<AtomicUsize>,
     outstanding_symbols: Arc<AtomicUsize>,
+    progress_sender: mpsc::UnboundedSender<()>,
 }
 
 impl Miner {
@@ -177,13 +169,16 @@ impl Miner {
         let outstanding_chunks = Arc::new(AtomicUsize::new(0));
         let outstanding_symbols = Arc::new(AtomicUsize::new(0));
 
-        Ok(Arc::new(Self {
+        let (progress_sender, mut progress_receiver) = mpsc::unbounded_channel();
+
+        let miner = Arc::new(Self {
             root,
             num_workers,
             database,
             tokenizer,
             client,
             queue,
+            _multi_progress: Arc::clone(&multi_progress),
             overall_progress,
             file_progress,
             chunk_progress,
@@ -195,7 +190,17 @@ impl Miner {
             file_progress_map,
             outstanding_chunks,
             outstanding_symbols,
-        }))
+            progress_sender,
+        });
+
+        let miner_clone = Arc::clone(&miner);
+        tokio::spawn(async move {
+            while progress_receiver.recv().await.is_some() {
+                miner_clone.do_update_progress().await;
+            }
+        });
+
+        Ok(miner)
     }
 
     pub async fn summarize_project(self: &Arc<Self>) -> Result<()> {
@@ -337,18 +342,26 @@ impl Miner {
             .set_message(format!("Summarizing {}", path.display()));
 
         if path.extension().map_or(false, |ext| ext == "rs") {
-            let symbol_count = self
+            match self
                 .parse_and_enqueue_rust_symbols(path.clone(), &content)
-                .await?;
-            self.outstanding_symbols
-                .fetch_add(symbol_count, std::sync::atomic::Ordering::SeqCst);
-            self.file_progress_map
-                .lock()
                 .await
-                .get_mut(&path)
-                .map(|progress| {
-                    progress.outstanding_summaries = symbol_count;
-                });
+            {
+                Ok(symbol_count) => {
+                    self.outstanding_symbols
+                        .fetch_add(symbol_count, std::sync::atomic::Ordering::SeqCst);
+                    self.file_progress_map
+                        .lock()
+                        .await
+                        .get_mut(&path)
+                        .map(|progress| {
+                            progress.outstanding_summaries = symbol_count;
+                        });
+                }
+                Err(e) => {
+                    eprintln!("Error parsing Rust symbols for {}: {}", path.display(), e);
+                    // Continue processing the file as a regular file
+                }
+            }
         } else if self.count_tokens(&content) > CHUNK_SIZE {
             let chunk_count = self.split_and_enqueue_chunks(path.clone(), content).await?;
             self.outstanding_chunks
@@ -388,15 +401,16 @@ impl Miner {
 
     async fn parse_and_enqueue_rust_symbols(&self, path: PathBuf, content: &str) -> Result<usize> {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_rust::language()).unwrap();
-        let tree = parser.parse(content, None).unwrap();
+        parser.set_language(&tree_sitter_rust::language())?;
+        let tree = parser
+            .parse(content, None)
+            .ok_or_else(|| anyhow!("Failed to parse content"))?;
         let root_node = tree.root_node();
 
         let export_query = tree_sitter::Query::new(
             &tree_sitter_rust::language(),
             include_str!("./rust_exports.scm"),
-        )
-        .unwrap();
+        )?;
 
         let mut export_cursor = tree_sitter::QueryCursor::new();
         let mut symbols = Vec::new();
@@ -634,8 +648,12 @@ impl Miner {
     }
 
     fn update_progress(&self) {
+        let _ = self.progress_sender.send(());
+    }
+
+    async fn do_update_progress(&self) {
         let (completed_files, total_files) = {
-            let map = self.file_progress_map.lock().unwrap();
+            let map = self.file_progress_map.lock().await;
             let total = map.len();
             let completed = map.values().filter(|v| v.is_complete).count();
             (completed, total)
