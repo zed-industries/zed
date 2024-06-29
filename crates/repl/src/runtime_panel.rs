@@ -335,9 +335,7 @@ impl Render for RuntimePanel {
             // )
             .child(Label::new("Runtime Sessions").size(LabelSize::Large))
             .children(
-                self.sessions
-                    .iter()
-                    .map(|(_entity_id, session)| session.clone().into_any_element()),
+                self.sessions.values().map(|session| session.clone().into_any_element()),
             )
             .into_any_element()
     }

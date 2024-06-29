@@ -224,12 +224,10 @@ impl Session {
                         ExecutionState::Idle => Indicator::dot().color(Color::Success),
                         ExecutionState::Busy => Indicator::dot().color(Color::Modified),
                     })
-                    .children(kernel.kernel_info.as_ref().and_then(|info| {
-                        Some(Label::new(format!(
+                    .children(kernel.kernel_info.as_ref().map(|info| Label::new(format!(
                             "{} ({})",
                             self.runtime_specification.name, info.language_info.name
-                        )))
-                    })),
+                        )))),
             )
             .child(
                 h_flex()
@@ -240,7 +238,6 @@ impl Session {
                             .style(ButtonStyle::Subtle)
                             .on_click(cx.listener(move |_this, _, _cx| {
                                 // todo!(): Implement shutdown
-                                dbg!("Shutdown");
                             })),
                     )
                     .child(
@@ -272,7 +269,6 @@ impl Session {
                         .style(ButtonStyle::Subtle)
                         .on_click(cx.listener(move |_this, _, _cx| {
                             // todo!(): Implement shutdown
-                            dbg!("Shutdown");
                         })),
                 ),
             )
@@ -297,7 +293,6 @@ impl Session {
                         .style(ButtonStyle::Subtle)
                         .on_click(cx.listener(move |_this, _, _cx| {
                             // todo!(): Implement shutdown
-                            dbg!("Shutdown");
                         })),
                 ),
             )
