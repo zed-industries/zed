@@ -463,3 +463,74 @@ float4 paths_fragment(PathVertexOutput input): SV_Target {
     color.a *= mask;
     return color;
 }
+
+/*
+**
+**              Underlines
+**
+*/
+
+struct Underline {
+    uint order;
+    uint pad;
+    Bounds bounds;
+    Bounds content_mask;
+    Hsla color;
+    float thickness;
+    uint wavy;
+};
+
+struct UnderlineVertexOutput {
+  float4 position: SV_Position;
+  float4 color: COLOR;
+  uint underline_id: FLAT;
+  float4 clip_distance: SV_ClipDistance;
+};
+
+struct UnderlineFragmentInput {
+  float4 position: SV_Position;
+  float4 color: COLOR;
+  uint underline_id: FLAT;
+};
+
+StructuredBuffer<Underline> underlines : register(t5);
+
+UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint underline_id: SV_InstanceID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    Underline underline = underlines[underline_id];
+    float4 device_position = to_device_position(unit_vertex, underline.bounds);
+    float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds, 
+                                                    underline.content_mask);
+    float4 color = hsla_to_rgba(underline.color);
+
+    UnderlineVertexOutput output;
+    output.position = device_position;
+    output.color = color;
+    output.underline_id = underline_id;
+    output.clip_distance = clip_distance;
+    return output;
+}
+
+float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
+    Underline underline = underlines[input.underline_id];
+    if (underline.wavy) {
+        float half_thickness = underline.thickness * 0.5;
+        float2 origin =
+            float2(underline.bounds.origin.x, underline.bounds.origin.y);
+        float2 st = ((input.position.xy - origin) / underline.bounds.size.y) -
+                    float2(0., 0.5);
+        float frequency = (M_PI_F * (3. * underline.thickness)) / 8.;
+        float amplitude = 1. / (2. * underline.thickness);
+        float sine = sin(st.x * frequency) * amplitude;
+        float dSine = cos(st.x * frequency) * amplitude * frequency;
+        float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
+        float distance_in_pixels = distance * underline.bounds.size.y;
+        float distance_from_top_border = distance_in_pixels - half_thickness;
+        float distance_from_bottom_border = distance_in_pixels + half_thickness;
+        float alpha = saturate(
+            0.5 - max(-distance_from_bottom_border, distance_from_top_border));
+        return input.color * float4(1., 1., 1., alpha);
+    } else {
+        return input.color;
+    }
+}

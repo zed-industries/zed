@@ -79,6 +79,7 @@ struct DirectXRenderContext {
     quad_pipeline: PipelineState,
     raster_paths_pipeline: PipelineState,
     paths_pipeline: PipelineState,
+    underline_pipeline: PipelineState,
 }
 
 impl DirectXRenderer {
@@ -527,6 +528,58 @@ impl DirectXRenderer {
         if underlines.is_empty() {
             return true;
         }
+        unsafe {
+            {
+                let mut resource = std::mem::zeroed();
+                self.context
+                    .context
+                    .Map(
+                        &self.render.underline_pipeline.buffer,
+                        0,
+                        D3D11_MAP_WRITE_DISCARD,
+                        0,
+                        Some(&mut resource),
+                    )
+                    .unwrap();
+                std::ptr::copy_nonoverlapping(
+                    underlines.as_ptr(),
+                    resource.pData as *mut Underline,
+                    underlines.len(),
+                );
+                self.context
+                    .context
+                    .Unmap(&self.render.underline_pipeline.buffer, 0);
+                self.context
+                    .context
+                    .VSSetShaderResources(1, Some(&self.render.underline_pipeline.view));
+                self.context
+                    .context
+                    .PSSetShaderResources(1, Some(&self.render.underline_pipeline.view));
+            }
+            self.context
+                .context
+                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            self.context
+                .context
+                .RSSetViewports(Some(&self.context.viewport));
+            self.context
+                .context
+                .VSSetShader(&self.render.underline_pipeline.vertex, None);
+            self.context
+                .context
+                .PSSetShader(&self.render.underline_pipeline.fragment, None);
+            self.context
+                .context
+                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+            // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
+            self.context
+                .context
+                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+
+            self.context
+                .context
+                .DrawInstanced(4, underlines.len() as u32, 0, 0);
+        }
         true
     }
 
@@ -791,6 +844,39 @@ impl DirectXRenderContext {
             }
         };
 
+        let underline_pipeline = unsafe {
+            let vertex_shader_blob = build_shader_blob("underline_vertex", "vs_5_0").unwrap();
+            let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
+            let fragment_shader_blob = build_shader_blob("underline_fragment", "ps_5_0").unwrap();
+            let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
+            let buffer = {
+                let desc = D3D11_BUFFER_DESC {
+                    ByteWidth: std::mem::size_of::<Underline>() as u32 * 256,
+                    Usage: D3D11_USAGE_DYNAMIC,
+                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
+                    StructureByteStride: std::mem::size_of::<Underline>() as u32,
+                };
+                let mut buffer = None;
+                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
+                buffer.unwrap()
+            };
+            let view = {
+                let mut view = None;
+                device
+                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
+                    .unwrap();
+                [view]
+            };
+            PipelineState {
+                vertex,
+                fragment,
+                buffer,
+                view,
+            }
+        };
+
         Ok(Self {
             global_params_buffer,
             sampler,
@@ -798,6 +884,7 @@ impl DirectXRenderContext {
             quad_pipeline,
             raster_paths_pipeline,
             paths_pipeline,
+            underline_pipeline,
         })
     }
 }
