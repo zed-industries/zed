@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use dap_types::{
     BreakpointEvent, CapabilitiesEvent, ContinuedEvent, ExitedEvent, InvalidatedEvent,
-    LoadedSourceEvent, MemoryEvent, ModuleEvent, OutputEvent, ProcessEvent, StoppedEvent,
-    TerminatedEvent, ThreadEvent,
+    LoadedSourceEvent, MemoryEvent, ModuleEvent, OutputEvent, ProcessEvent, ProgressEndEvent,
+    ProgressStartEvent, ProgressUpdateEvent, StoppedEvent, TerminatedEvent, ThreadEvent,
 };
 use futures::{
     channel::mpsc::{unbounded, Sender, UnboundedReceiver, UnboundedSender},
@@ -40,9 +40,9 @@ pub enum Events {
     LoadedSource(LoadedSourceEvent),
     Process(ProcessEvent),
     Capabilities(CapabilitiesEvent),
-    ProgressStart,
-    ProgressUpdate,
-    ProgressEnd,
+    ProgressStart(ProgressStartEvent),
+    ProgressUpdate(ProgressUpdateEvent),
+    ProgressEnd(ProgressEndEvent),
     Invalidated(InvalidatedEvent),
     Memory(MemoryEvent),
 }
@@ -201,7 +201,6 @@ impl Transport {
                         Err(_) => (),
                     },
                     None => {
-                        dbg!("Response to nonexistent request #{}", res.request_seq);
                         client_tx.send(Payload::Response(res)).await.log_err();
                     }
                 }

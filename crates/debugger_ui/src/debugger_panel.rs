@@ -163,9 +163,9 @@ impl DebugPanel {
                             Events::Capabilities(_) => todo!(),
                             Events::Memory(_) => todo!(),
                             Events::Process(_) => todo!(),
-                            Events::ProgressEnd => todo!(),
-                            Events::ProgressStart => todo!(),
-                            Events::ProgressUpdate => todo!(),
+                            Events::ProgressEnd(_) => todo!(),
+                            Events::ProgressStart(_) => todo!(),
+                            Events::ProgressUpdate(_) => todo!(),
                             Events::Invalidated(_) => todo!(),
                         }
                     }
