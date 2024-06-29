@@ -1,7 +1,8 @@
-use std::sync::Arc;
+use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::Result;
+use collections::FxHasher;
 use windows::{
     core::*,
     Win32::{
@@ -73,6 +74,7 @@ struct DirectXRenderContext {
     global_params_buffer: [Option<ID3D11Buffer>; 1],
     shadow_pipeline: PipelineState,
     quad_pipeline: PipelineState,
+    raster_paths_pipeline: PipelineStateEx,
 }
 
 impl DirectXRenderer {
@@ -161,11 +163,15 @@ impl DirectXRenderer {
     }
 
     fn draw_primitives(&mut self, scene: &Scene) {
+        let Some(path_tiles) = self.rasterize_paths(scene.paths()) else {
+            log::error!("failed to rasterize {} paths", scene.paths().len());
+            return;
+        };
         for batch in scene.batches() {
             let ok = match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
                 PrimitiveBatch::Quads(quads) => self.draw_quads(quads),
-                PrimitiveBatch::Paths(paths) => self.draw_paths(paths),
+                PrimitiveBatch::Paths(paths) => self.draw_paths(paths, &path_tiles),
                 PrimitiveBatch::Underlines(underlines) => self.draw_underlines(underlines),
                 PrimitiveBatch::MonochromeSprites {
                     texture_id,
@@ -197,17 +203,54 @@ impl DirectXRenderer {
             return true;
         }
         unsafe {
+            {
+                let mut resource = std::mem::zeroed();
+                self.context
+                    .context
+                    .Map(
+                        &self.render.shadow_pipeline.buffer,
+                        0,
+                        D3D11_MAP_WRITE_DISCARD,
+                        0,
+                        Some(&mut resource),
+                    )
+                    .unwrap();
+                std::ptr::copy_nonoverlapping(
+                    shadows.as_ptr(),
+                    resource.pData as *mut Shadow,
+                    shadows.len(),
+                );
+                self.context
+                    .context
+                    .Unmap(&self.render.shadow_pipeline.buffer, 0);
+                self.context
+                    .context
+                    .VSSetShaderResources(1, Some(&self.render.shadow_pipeline.view));
+                self.context
+                    .context
+                    .PSSetShaderResources(1, Some(&self.render.shadow_pipeline.view));
+            }
+            self.context
+                .context
+                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            self.context
+                .context
+                .RSSetViewports(Some(&self.context.viewport));
             self.context
                 .context
                 .VSSetShader(&self.render.shadow_pipeline.vertex, None);
             self.context
                 .context
                 .PSSetShader(&self.render.shadow_pipeline.fragment, None);
-            // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
             self.context
                 .context
                 .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            self.context.context.DrawInstanced(2, 5, 0, 0);
+            self.context
+                .context
+                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+            self.context
+                .context
+                .DrawInstanced(4, shadows.len() as u32, 0, 0);
         }
         true
     }
@@ -267,20 +310,134 @@ impl DirectXRenderer {
 
             self.context
                 .context
-                // .DrawIndexedInstanced(
-                //     indexcountperinstance,
-                //     instancecount,
-                //     startindexlocation,
-                //     basevertexlocation,
-                //     startinstancelocation,
-                // )
                 .DrawInstanced(4, quads.len() as u32, 0, 0);
         }
         true
     }
 
     // TODO:
-    fn draw_paths(&mut self, paths: &[Path<ScaledPixels>]) -> bool {
+    fn rasterize_paths(
+        &mut self,
+        paths: &[Path<ScaledPixels>],
+    ) -> Option<HashMap<PathId, AtlasTile>> {
+        self.atlas.clear_textures(AtlasTextureKind::Path);
+
+        let mut tiles = HashMap::default();
+        let mut vertices_by_texture_id: HashMap<
+            AtlasTextureId,
+            Vec<PathVertex<ScaledPixels>>,
+            BuildHasherDefault<FxHasher>,
+        > = HashMap::default();
+        for path in paths {
+            let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
+
+            let tile = self
+                .atlas
+                .allocate(clipped_bounds.size.map(Into::into), AtlasTextureKind::Path)?;
+            vertices_by_texture_id
+                .entry(tile.texture_id)
+                .or_insert(Vec::new())
+                .extend(path.vertices.iter().map(|vertex| PathVertex {
+                    xy_position: vertex.xy_position - clipped_bounds.origin
+                        + tile.bounds.origin.map(Into::into),
+                    st_position: vertex.st_position,
+                    content_mask: ContentMask {
+                        bounds: tile.bounds.map(Into::into),
+                    },
+                }));
+            tiles.insert(path.id, tile);
+        }
+
+        for (texture_id, vertices) in vertices_by_texture_id {
+            // align_offset(instance_offset);
+            // let vertices_bytes_len = mem::size_of_val(vertices.as_slice());
+            // let next_offset = *instance_offset + vertices_bytes_len;
+            // if next_offset > instance_buffer.size {
+            //     return None;
+            // }
+            let (texture, texture_size, rtv) = self.atlas.texture_info(texture_id);
+            let globals = GlobalParams {
+                viewport_size: [texture_size.width, texture_size.height],
+                premultiplied_alpha: 0,
+                _pad: 0,
+            };
+            let viewport = [D3D11_VIEWPORT {
+                TopLeftX: 0.0,
+                TopLeftY: 0.0,
+                Width: texture_size.width,
+                Height: texture_size.height,
+                MinDepth: 0.0,
+                MaxDepth: 1.0,
+            }];
+            unsafe {
+                let mut resource = std::mem::zeroed();
+                self.context
+                    .context
+                    .Map(
+                        &self.render.raster_paths_pipeline.vertex_buffer,
+                        0,
+                        D3D11_MAP_WRITE_DISCARD,
+                        0,
+                        Some(&mut resource),
+                    )
+                    .unwrap();
+                std::ptr::copy_nonoverlapping(
+                    vertices.as_ptr(),
+                    resource.pData as _,
+                    vertices.len(),
+                );
+                self.context
+                    .context
+                    .Unmap(&self.render.raster_paths_pipeline.vertex_buffer, 0);
+
+                self.context.context.RSSetViewports(Some(&viewport));
+                self.context.context.OMSetRenderTargets(Some(&rtv), None);
+                self.context
+                    .context
+                    .ClearRenderTargetView(rtv[0].as_ref().unwrap(), &[0., 0., 0., 1.]);
+
+                self.context
+                    .context
+                    .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                self.context
+                    .context
+                    .IASetInputLayout(&self.render.raster_paths_pipeline.layout);
+                self.context.context.IASetVertexBuffers(
+                    0,
+                    1,
+                    Some(&Some(
+                        self.render.raster_paths_pipeline.vertex_buffer.clone(),
+                    )),
+                    Some(&(std::mem::size_of::<PathVertex<ScaledPixels>>() as u32)),
+                    Some(&0),
+                );
+                self.context
+                    .context
+                    .VSSetShader(&self.render.raster_paths_pipeline.vertex, None);
+                self.context
+                    .context
+                    .VSSetConstantBuffers(1, Some(&self.render.global_params_buffer));
+                self.context
+                    .context
+                    .PSSetShader(&self.render.raster_paths_pipeline.fragment, None);
+                self.context
+                    .context
+                    .PSSetConstantBuffers(1, Some(&self.render.global_params_buffer));
+                self.context
+                    .context
+                    .DrawInstanced(vertices.len() as u32, 1, 0, 0);
+            }
+        }
+
+        Some(tiles)
+    }
+
+    // TODO:
+    fn draw_paths(
+        &mut self,
+        paths: &[Path<ScaledPixels>],
+        path_tiles: &HashMap<PathId, AtlasTile>,
+    ) -> bool {
         if paths.is_empty() {
             return true;
         }
@@ -411,7 +568,7 @@ impl DirectXRenderContext {
             let buffer = {
                 let desc = D3D11_BUFFER_DESC {
                     // ByteWidth: BUFFER_SIZE as u32,
-                    ByteWidth: std::mem::size_of::<Shadow>() as u32 * 256,
+                    ByteWidth: std::mem::size_of::<Shadow>() as u32 * 1024,
                     Usage: D3D11_USAGE_DYNAMIC,
                     BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
                     CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
@@ -445,8 +602,7 @@ impl DirectXRenderContext {
             let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
             let buffer = {
                 let desc = D3D11_BUFFER_DESC {
-                    // ByteWidth: BUFFER_SIZE as u32,
-                    ByteWidth: std::mem::size_of::<Quad>() as u32 * 256,
+                    ByteWidth: std::mem::size_of::<Quad>() as u32 * 1024,
                     Usage: D3D11_USAGE_DYNAMIC,
                     BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
                     CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
@@ -473,10 +629,83 @@ impl DirectXRenderContext {
             }
         };
 
+        let raster_paths_pipeline = unsafe {
+            let vertex_shader_blob =
+                build_shader_blob("path_rasterization_vertex", "vs_5_0").unwrap();
+            let layout = {
+                let desc = D3D11_INPUT_ELEMENT_DESC {
+                    SemanticName: windows::core::s!("POSITION"),
+                    SemanticIndex: 0,
+                    Format: DXGI_FORMAT_R32G32_FLOAT,
+                    InputSlot: 0,
+                    AlignedByteOffset: 0,
+                    InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                    InstanceDataStepRate: 0,
+                };
+                let mut input_layout = None;
+                device
+                    .CreateInputLayout(
+                        &[desc],
+                        std::slice::from_raw_parts(
+                            vertex_shader_blob.GetBufferPointer() as *mut u8,
+                            vertex_shader_blob.GetBufferSize(),
+                        ),
+                        Some(&mut input_layout),
+                    )
+                    .unwrap();
+                input_layout.unwrap()
+            };
+            let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
+            let fragment_shader_blob =
+                build_shader_blob("path_rasterization_fragment", "ps_5_0").unwrap();
+            let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
+            let vertex_buffer = {
+                let desc = D3D11_BUFFER_DESC {
+                    ByteWidth: std::mem::size_of::<PathVertex<ScaledPixels>>() as u32 * 1024,
+                    Usage: D3D11_USAGE_DYNAMIC,
+                    BindFlags: D3D11_BIND_VERTEX_BUFFER.0 as u32,
+                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                    ..Default::default()
+                };
+                let mut buffer = None;
+                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
+                buffer.unwrap()
+            };
+            let buffer = {
+                let desc = D3D11_BUFFER_DESC {
+                    ByteWidth: std::mem::size_of::<PathVertex<ScaledPixels>>() as u32 * 1024,
+                    Usage: D3D11_USAGE_DYNAMIC,
+                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
+                    StructureByteStride: std::mem::size_of::<Quad>() as u32,
+                };
+                let mut buffer = None;
+                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
+                buffer.unwrap()
+            };
+            let view = {
+                let mut view = None;
+                device
+                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
+                    .unwrap();
+                [view]
+            };
+            PipelineStateEx {
+                layout,
+                vertex_buffer,
+                vertex,
+                fragment,
+                buffer,
+                view,
+            }
+        };
+
         Ok(Self {
             global_params_buffer,
             shadow_pipeline,
             quad_pipeline,
+            raster_paths_pipeline,
         })
     }
 }
@@ -491,6 +720,15 @@ struct GlobalParams {
 
 struct PipelineState {
     // layout: ID3D11InputLayout,
+    vertex: ID3D11VertexShader,
+    fragment: ID3D11PixelShader,
+    buffer: ID3D11Buffer,
+    view: [Option<ID3D11ShaderResourceView>; 1],
+}
+
+struct PipelineStateEx {
+    vertex_buffer: ID3D11Buffer,
+    layout: ID3D11InputLayout,
     vertex: ID3D11VertexShader,
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,

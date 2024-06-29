@@ -3,9 +3,9 @@ use etagere::BucketedAtlasAllocator;
 use parking_lot::Mutex;
 use windows::Win32::Graphics::{
     Direct3D11::{
-        ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D, D3D11_BIND_RENDER_TARGET,
-        D3D11_BIND_SHADER_RESOURCE, D3D11_CPU_ACCESS_WRITE, D3D11_MAP_WRITE_DISCARD,
-        D3D11_TEXTURE2D_DESC, D3D11_USAGE_DYNAMIC,
+        ID3D11Device, ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11Texture2D,
+        D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CPU_ACCESS_WRITE,
+        D3D11_MAP_WRITE_DISCARD, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DYNAMIC,
     },
     Dxgi::Common::{
         DXGI_FORMAT_A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16_FLOAT, DXGI_SAMPLE_DESC,
@@ -30,6 +30,7 @@ struct DirectXAtlasTexture {
     bytes_per_pixel: u32,
     allocator: BucketedAtlasAllocator,
     texture: ID3D11Texture2D,
+    rtv: [Option<ID3D11RenderTargetView>; 1],
 }
 
 impl DirectXAtlas {
@@ -44,9 +45,26 @@ impl DirectXAtlas {
         }))
     }
 
-    // pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> metal::Texture {
-    //     self.0.lock().texture(id).metal_texture.clone()
-    // }
+    pub(crate) fn texture_info(
+        &self,
+        id: AtlasTextureId,
+    ) -> (
+        ID3D11Texture2D,
+        Size<f32>,
+        [Option<ID3D11RenderTargetView>; 1],
+    ) {
+        let lock = self.0.lock();
+        let tex = lock.texture(id);
+        let size = tex.allocator.size();
+        (
+            tex.texture.clone(),
+            Size {
+                width: size.width as f32,
+                height: size.height as f32,
+            },
+            tex.rtv.clone(),
+        )
+    }
 
     pub(crate) fn allocate(
         &self,
@@ -180,6 +198,16 @@ impl DirectXAtlasState {
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
             AtlasTextureKind::Path => &mut self.path_textures,
         };
+        let rtv = match kind {
+            AtlasTextureKind::Path => unsafe {
+                let mut view: Option<ID3D11RenderTargetView> = None;
+                self.device
+                    .CreateRenderTargetView(&texture, None, Some(&mut view))
+                    .unwrap();
+                [view]
+            },
+            _ => [None],
+        };
         let atlas_texture = DirectXAtlasTexture {
             id: AtlasTextureId {
                 index: textures.len() as u32,
@@ -188,6 +216,7 @@ impl DirectXAtlasState {
             bytes_per_pixel,
             allocator: etagere::BucketedAtlasAllocator::new(size.into()),
             texture,
+            rtv,
         };
         textures.push(atlas_texture);
         textures.last_mut().unwrap()
@@ -230,7 +259,6 @@ impl DirectXAtlasTexture {
     ) {
         unsafe {
             let mut raw_data = std::mem::zeroed();
-            // TODO: D3D11_MAP_WRITE ?
             device_context
                 .Map(
                     &self.texture,
@@ -250,15 +278,6 @@ impl DirectXAtlasTexture {
                 start = start.add(row_pitch);
             }
             device_context.Unmap(&self.texture, 0);
-            // device_context.UpdateSubresource(
-            //     &self.texture,
-            //     0,
-            //     Some(&dest_box),
-            //     bytes.as_ptr() as _,
-            //     bounds.size.width.to_bytes(self.bytes_per_pixel as u8),
-            //     bounds.size.width.to_bytes(self.bytes_per_pixel as u8)
-            //         * bounds.size.height.0 as u32,
-            // );
         }
     }
 }

@@ -146,7 +146,11 @@ float4 over(float4 below, float4 above) {
     return result;
 }
 
-// --- shadows --- //
+/*
+**
+**              Shadows
+**
+*/
 
 struct ShadowVertexOutput {
     float4 position: SV_POSITION;
@@ -238,7 +242,7 @@ float4 shadow_fragment(ShadowVertexOutput input): SV_TARGET {
 
 /*
 **
-**              Shadows
+**              Quads
 **
 */
 
@@ -342,6 +346,43 @@ float4 quad_fragment(QuadVertexOutput input): SV_TARGET {
                     saturate(0.5 - inset_distance));
     }
 
-    // return color * float4(1., 1., 1., saturate(0.5 - distance));
-    return float4(1., 1., 1., 1.);
+    return color * float4(1., 1., 1., saturate(0.5 - distance));
+}
+
+/*
+**
+**              Path raster
+**
+*/
+
+struct PathVertex {
+    float2 xy_position;
+    float2 st_position;
+    Bounds content_mask;
+};
+
+struct PathRasterizationOutput {
+    float4 position: SV_Position;
+    float2 st_position: TEXCOORD0;
+    // float4 clip_distances: SV_ClipDistance;
+};
+
+PathRasterizationOutput path_rasterization_vertex(PathVertex vertex: POSITION) {
+    PathRasterizationOutput output;
+    float2 device_position = vertex.xy_position / global_viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
+    output.position = float4(device_position, 0.0, 1.0);
+    output.st_position = vertex.st_position;
+    // out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
+    return output;
+}
+
+float4 path_rasterization_fragment(PathRasterizationOutput input): SV_Target {
+    float2 dx = ddx(input.st_position);
+    float2 dy = ddy(input.st_position);
+    float2 gradient = float2((2. * input.st_position.x) * dx.x - dx.y,
+                            (2. * input.st_position.x) * dy.x - dy.y);
+    float f = (input.st_position.x * input.st_position.x) - input.st_position.y;
+    float distance = f / length(gradient);
+    float alpha = saturate(0.5 - distance);
+    return float4(alpha, 0., 0., 1.);
 }
