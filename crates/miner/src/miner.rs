@@ -495,15 +495,49 @@ impl Miner {
         content: String,
     ) -> Result<()> {
         let summary = self.summarize_rust_symbol(&name, &content).await?;
+
+        // Save the symbol summary
+        let key = format!("{}_symbol_{}", path.to_string_lossy(), name);
+        let mtime = tokio::fs::metadata(&path).await?.modified()?;
+        let cached_summary = CachedSummary {
+            summary: summary.clone(),
+            mtime,
+        };
+        self.database
+            .transact(move |db, mut txn| {
+                db.put(&mut txn, &key, &cached_summary)?;
+                Ok(())
+            })
+            .await?;
+
         self.summaries.lock().await.insert(path.clone(), summary);
-        let previous_outstanding = self
-            .outstanding_symbols
+        self.outstanding_symbols
             .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         let mut file_progress = self.file_progress_map.lock().await;
         if let Some(progress) = file_progress.get_mut(&path) {
             progress.outstanding_symbols -= 1;
             if progress.outstanding_symbols == 0 && progress.outstanding_chunks == 0 {
                 progress.is_complete = true;
+
+                // Save the complete file summary
+                let complete_summary = self
+                    .summaries
+                    .lock()
+                    .await
+                    .get(&path)
+                    .cloned()
+                    .unwrap_or_default();
+                let complete_key = path.to_string_lossy().to_string();
+                let complete_cached_summary = CachedSummary {
+                    summary: complete_summary,
+                    mtime,
+                };
+                self.database
+                    .transact(move |db, mut txn| {
+                        db.put(&mut txn, &complete_key, &complete_cached_summary)?;
+                        Ok(())
+                    })
+                    .await?;
             }
         }
         drop(file_progress);
