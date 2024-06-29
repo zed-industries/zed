@@ -13,15 +13,13 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
     time::SystemTime,
 };
 use tokenizers::{tokenizer::Tokenizer, FromPretrainedParameters};
 use tokio::sync::{mpsc, Mutex};
 
 const CHUNK_SIZE: usize = 5000;
-const OVERLAP: usize = 2_000;
-
 const HUGGINGFACE_ENDPOINT_URL: &str =
     "https://eezviumpj7crpq2t.us-east-1.aws.endpoints.huggingface.cloud";
 
@@ -45,6 +43,10 @@ struct Cli {
     /// Path to read summaries from
     #[arg(long)]
     read: Option<PathBuf>,
+
+    /// Export the database contents to stdout
+    #[arg(long)]
+    export: bool,
 }
 
 #[tokio::main]
@@ -66,6 +68,24 @@ async fn main() -> Result<()> {
     println!("Number of workers: {}", cli.num_workers);
 
     let miner = Miner::new(db_path, project_path.to_path_buf(), cli.num_workers).await?;
+
+    if cli.export {
+        println!("Exporting database contents to stdout:");
+        miner.export_database().await?;
+        println!("Export completed successfully");
+        return Ok(());
+    }
+
+    let multi_progress = indicatif::MultiProgress::new();
+    let overall_progress = multi_progress.add(miner.overall_progress.clone());
+    let file_progress = multi_progress.add(miner.file_progress.clone());
+    let chunk_progress = multi_progress.add(miner.chunk_progress.clone());
+    let rust_symbol_progress = multi_progress.add(miner.rust_symbol_progress.clone());
+
+    tokio::spawn(async move {
+        multi_progress.join().unwrap();
+    });
+
     miner.summarize_project().await?;
 
     println!("Finished summarization");
@@ -89,11 +109,17 @@ pub struct Miner {
     tokenizer: Tokenizer,
     client: Arc<HuggingFaceClient>,
     queue: Arc<Mutex<VecDeque<Entry>>>,
-    multi_progress: Arc<MultiProgress>,
     overall_progress: ProgressBar,
-    progress_bar: ProgressBar,
+    file_progress: ProgressBar,
+    chunk_progress: ProgressBar,
+    rust_symbol_progress: ProgressBar,
+    total_entries: Arc<AtomicUsize>,
+    completed_entries: Arc<AtomicUsize>,
     summaries: Arc<Mutex<BTreeMap<PathBuf, String>>>,
     paths_loaded_from_cache: Arc<Mutex<BTreeMap<PathBuf, bool>>>,
+    file_progress_map: Arc<Mutex<HashMap<PathBuf, FileProgress>>>,
+    outstanding_chunks: Arc<AtomicUsize>,
+    outstanding_symbols: Arc<AtomicUsize>,
 }
 
 impl Miner {
@@ -128,16 +154,28 @@ impl Miner {
         );
         overall_progress.set_message("Summarizing project...");
 
-        let progress_bar = multi_progress.add(ProgressBar::new(0));
-        progress_bar.set_style(
-            ProgressStyle::default_bar()
-                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
-                .unwrap()
-                .progress_chars("##-"),
-        );
+        let file_progress = multi_progress.add(ProgressBar::new(0));
+        let chunk_progress = multi_progress.add(ProgressBar::new(0));
+        let rust_symbol_progress = multi_progress.add(ProgressBar::new(0));
+
+        for pb in [&file_progress, &chunk_progress, &rust_symbol_progress] {
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                    .unwrap()
+                    .progress_chars("##-"),
+            );
+        }
+
+        let total_entries = Arc::new(AtomicUsize::new(0));
+        let completed_entries = Arc::new(AtomicUsize::new(0));
 
         let summaries = Arc::new(Mutex::new(BTreeMap::new()));
         let paths_loaded_from_cache = Arc::new(Mutex::new(BTreeMap::new()));
+
+        let file_progress_map = Arc::new(Mutex::new(HashMap::new()));
+        let outstanding_chunks = Arc::new(AtomicUsize::new(0));
+        let outstanding_symbols = Arc::new(AtomicUsize::new(0));
 
         Ok(Arc::new(Self {
             root,
@@ -146,11 +184,17 @@ impl Miner {
             tokenizer,
             client,
             queue,
-            multi_progress,
             overall_progress,
-            progress_bar,
+            file_progress,
+            chunk_progress,
+            rust_symbol_progress,
+            total_entries,
+            completed_entries,
             summaries,
             paths_loaded_from_cache,
+            file_progress_map,
+            outstanding_chunks,
+            outstanding_symbols,
         }))
     }
 
@@ -164,15 +208,25 @@ impl Miner {
             if let Ok(entry) = entry {
                 let path = entry.path().to_owned();
                 if entry.file_type().map_or(false, |ft| ft.is_dir()) {
-                    self.queue.lock().await.push_back(Entry::Directory(path));
+                    self.queue
+                        .lock()
+                        .await
+                        .push_back(Entry::Directory(path.clone()));
                 } else {
-                    self.queue.lock().await.push_back(Entry::File(path));
+                    self.queue.lock().await.push_back(Entry::File(path.clone()));
                 }
+                self.file_progress_map.lock().await.insert(
+                    path,
+                    FileProgress {
+                        outstanding_summaries: 0,
+                        is_complete: false,
+                    },
+                );
             }
         }
 
-        let total_entries = self.queue.lock().await.len();
-        self.progress_bar.set_length(total_entries as u64);
+        let total_files = self.file_progress_map.lock().await.len();
+        self.file_progress.set_length(total_files as u64);
 
         let workers: Vec<_> = (0..self.num_workers)
             .map(|_| {
@@ -184,6 +238,8 @@ impl Miner {
         for worker in workers {
             worker.await??;
         }
+
+        self.update_progress();
 
         // Remove deleted entries from the database
         self.database
@@ -200,13 +256,16 @@ impl Miner {
                 for path in paths_to_delete {
                     db.delete(&mut txn, &path.to_string_lossy())?;
                 }
-                txn.commit()?;
                 Ok(())
             })
             .await?;
 
-        self.progress_bar
-            .finish_with_message("Summarization complete");
+        self.file_progress
+            .finish_with_message("File processing complete");
+        self.chunk_progress
+            .finish_with_message("Chunk processing complete");
+        self.rust_symbol_progress
+            .finish_with_message("Rust symbol processing complete");
         self.overall_progress
             .finish_with_message("Project summarization finished");
         Ok(())
@@ -218,52 +277,91 @@ impl Miner {
             let Some(entry) = queue_lock.pop_front() else {
                 break;
             };
+            drop(queue_lock);
 
             match entry {
                 Entry::File(path) => {
-                    drop(queue_lock);
-                    self.scan_file(path).await?;
+                    let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+                    self.scan_file(path, content).await?;
                 }
                 Entry::Directory(path) => {
-                    self.scan_directory(path, &mut queue_lock).await?;
+                    self.scan_directory(path).await?;
+                }
+                Entry::Chunk(path, content, index) => {
+                    self.process_chunk(path, content, index).await?;
+                }
+                Entry::RustSymbol(path, name, content) => {
+                    self.process_rust_symbol(path, name, content).await?;
                 }
             }
+            self.update_progress();
         }
 
         Ok(())
     }
 
-    async fn scan_file(&self, path: PathBuf) -> Result<()> {
-        let summary = async {
-            let mtime = tokio::fs::metadata(&path).await?.modified()?;
-            let key = path.to_string_lossy().to_string();
+    async fn scan_file(&self, path: PathBuf, content: String) -> Result<()> {
+        let mtime = tokio::fs::metadata(&path).await?.modified()?;
+        let key = path.to_string_lossy().to_string();
 
-            let cached = self
-                .database
-                .transact({
-                    let key = key.clone();
-                    move |db, txn| Ok(db.get(&txn, &key)?)
-                })
-                .await?;
-            if let Some(cached) = cached {
-                if cached.mtime == mtime {
-                    self.paths_loaded_from_cache
-                        .lock()
-                        .await
-                        .insert(path.clone(), true);
-                    return Ok(cached.summary);
-                }
+        let cached = self
+            .database
+            .transact({
+                let key = key.clone();
+                move |db, txn| Ok(db.get(&txn, &key)?)
+            })
+            .await?;
+        if let Some(cached) = cached {
+            if cached.mtime == mtime {
+                self.paths_loaded_from_cache
+                    .lock()
+                    .await
+                    .insert(path.clone(), true);
+                self.summaries
+                    .lock()
+                    .await
+                    .insert(path.clone(), cached.summary);
+                self.file_progress_map
+                    .lock()
+                    .await
+                    .get_mut(&path)
+                    .map(|progress| {
+                        progress.is_complete = true;
+                    });
+                self.update_progress();
+                return Ok(());
             }
+        }
 
-            self.progress_bar
-                .set_message(format!("Summarizing {}", path.display()));
+        self.file_progress
+            .set_message(format!("Summarizing {}", path.display()));
 
-            let content = tokio::fs::read_to_string(&path)
+        if path.extension().map_or(false, |ext| ext == "rs") {
+            let symbol_count = self
+                .parse_and_enqueue_rust_symbols(path.clone(), &content)
+                .await?;
+            self.outstanding_symbols
+                .fetch_add(symbol_count, std::sync::atomic::Ordering::SeqCst);
+            self.file_progress_map
+                .lock()
                 .await
-                .unwrap_or_else(|_| "binary file".into());
-
+                .get_mut(&path)
+                .map(|progress| {
+                    progress.outstanding_summaries = symbol_count;
+                });
+        } else if self.count_tokens(&content) > CHUNK_SIZE {
+            let chunk_count = self.split_and_enqueue_chunks(path.clone(), content).await?;
+            self.outstanding_chunks
+                .fetch_add(chunk_count, std::sync::atomic::Ordering::SeqCst);
+            self.file_progress_map
+                .lock()
+                .await
+                .get_mut(&path)
+                .map(|progress| {
+                    progress.outstanding_summaries = chunk_count;
+                });
+        } else {
             let summary = self.summarize_file(&path, &content).await?;
-
             let cached_summary = CachedSummary {
                 summary: summary.clone(),
                 mtime,
@@ -271,105 +369,24 @@ impl Miner {
             self.database
                 .transact(move |db, mut txn| {
                     db.put(&mut txn, &key, &cached_summary)?;
-                    txn.commit()?;
                     Ok(())
                 })
                 .await?;
+            self.summaries.lock().await.insert(path.clone(), summary);
+            self.file_progress_map
+                .lock()
+                .await
+                .get_mut(&path)
+                .map(|progress| {
+                    progress.is_complete = true;
+                });
+        }
 
-            anyhow::Ok(summary)
-        };
-
-        let summary = summary
-            .await
-            .unwrap_or_else(|error| format!("path could not be summarized: {error:?}"));
-        self.summaries.lock().await.insert(path, summary);
-        self.progress_bar.inc(1);
-
+        self.update_progress();
         Ok(())
     }
 
-    fn count_tokens(&self, content: &str) -> usize {
-        self.tokenizer
-            .encode(content, false)
-            .unwrap()
-            .get_ids()
-            .len()
-    }
-
-    async fn summarize_file(&self, path: &Path, content: &str) -> Result<String> {
-        if path.extension().map_or(false, |ext| ext == "rs") {
-            self.summarize_rust_file(content)
-        } else {
-            let token_count = self.count_tokens(content);
-
-            println!("Token count for file {}: {}", path.display(), token_count);
-
-            if token_count > CHUNK_SIZE {
-                let chunks = self.split_into_chunks(content);
-                println!("Chunking file: {}", path.display());
-                println!("Tokenized chunk lengths:");
-                for (i, chunk) in chunks.iter().enumerate() {
-                    let token_count = self.count_tokens(chunk);
-                    println!("  Chunk {}: {} tokens", i + 1, token_count);
-                }
-                let chunk_summaries = Box::pin(self.summarize_chunks(path, &chunks)).await?;
-                println!("Chunk summaries: {:?}", chunk_summaries);
-
-                let combined_content = chunk_summaries.join("\n## Summary\n");
-                let messages = vec![
-                    Message {
-                        role: "system".to_string(),
-                        content: concat!(
-                            "You are a code summarization assistant. ",
-                            "Combine the given summaries into a single, coherent summary ",
-                            "that captures the overall functionality and structure of the code. ",
-                            "Ensure that the final summary is comprehensive and reflects ",
-                            "the content as if it was summarized from a single, complete file. ",
-                            "Be terse and start your response with \"Summary: \""
-                        )
-                        .to_string(),
-                    },
-                    Message {
-                        role: "user".to_string(),
-                        content: format!("# Summaries\n{}", combined_content),
-                    },
-                ];
-
-                let mut receiver = self.client.stream_completion(messages).await?;
-
-                let mut combined_summary = String::new();
-                while let Some(content) = receiver.recv().await {
-                    combined_summary.push_str(&content);
-                }
-
-                Ok(combined_summary)
-            } else {
-                let messages = vec![Message {
-                    role: "user".to_string(),
-                    content: format!(
-                        "You are a code summarization assistant. \
-                        Provide a brief summary of the given file, \
-                        focusing on its main functionality and purpose. \
-                        Be terse and start your response directly with \"Summary: \".\n\
-                        File:\n{}",
-                        content
-                    ),
-                }];
-
-                let mut receiver = self.client.stream_completion(messages).await?;
-
-                let mut summary = String::new();
-                while let Some(content) = receiver.recv().await {
-                    summary.push_str(&content);
-                }
-
-                Ok(summary)
-            }
-        }
-    }
-
-    fn summarize_rust_file(&self, content: &str) -> Result<String> {
-        let mut summary = String::new();
+    async fn parse_and_enqueue_rust_symbols(&self, path: PathBuf, content: &str) -> Result<usize> {
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&tree_sitter_rust::language()).unwrap();
         let tree = parser.parse(content, None).unwrap();
@@ -382,54 +399,150 @@ impl Miner {
         .unwrap();
 
         let mut export_cursor = tree_sitter::QueryCursor::new();
-        let mut exports = Vec::new();
+        let mut symbols = Vec::new();
         for m in export_cursor.matches(&export_query, root_node, content.as_bytes()) {
-            let mut current_level = 0;
-            let mut current_export = String::new();
-            for c in m.captures {
-                let export = content[c.node.byte_range()].to_string();
-                let indent = "  ".repeat(current_level);
-                if current_level == 0 {
-                    current_export = format!("{}{}", indent, export);
-                } else {
-                    current_export.push_str(&format!("\n{}{}", indent, export));
-                }
-                current_level += 1;
-            }
-            exports.push(current_export);
-        }
-
-        let import_query = tree_sitter::Query::new(
-            &tree_sitter_rust::language(),
-            include_str!("./rust_imports.scm"),
-        )
-        .unwrap();
-        let mut import_cursor = tree_sitter::QueryCursor::new();
-        let imports: Vec<_> = import_cursor
-            .matches(&import_query, root_node, content.as_bytes())
-            .flat_map(|m| m.captures)
-            .map(|c| content[c.node.byte_range()].to_string())
-            .collect();
-
-        summary.push_str("Summary: Rust file containing ");
-        if !exports.is_empty() {
-            summary.push_str(&format!("{} exports", exports.len()));
-            if !imports.is_empty() {
-                summary.push_str(" and ");
+            if let Some(capture) = m.captures.first() {
+                let symbol_name = content[capture.node.byte_range()].to_string();
+                let symbol_content =
+                    content[capture.node.start_byte()..capture.node.end_byte()].to_string();
+                symbols.push((symbol_name, symbol_content));
             }
         }
-        if !imports.is_empty() {
-            summary.push_str(&format!("{} imports", imports.len()));
+        let mut queue = self.queue.lock().await;
+        let symbol_count = symbols.len();
+        for (symbol_name, symbol_content) in symbols {
+            queue.push_back(Entry::RustSymbol(path.clone(), symbol_name, symbol_content));
         }
-        summary.push('.');
 
-        if !exports.is_empty() {
-            summary.push_str("\nExports:\n");
-            summary.push_str(&exports.join("\n"));
+        self.outstanding_symbols
+            .fetch_add(symbol_count, std::sync::atomic::Ordering::SeqCst);
+        self.update_progress();
+        Ok(symbol_count)
+    }
+
+    async fn process_chunk(&self, path: PathBuf, content: String, index: usize) -> Result<()> {
+        let summary = self.summarize_file(&path, &content).await?;
+        let key = format!("{}_{}", path.to_string_lossy(), index);
+        let mtime = tokio::fs::metadata(&path).await?.modified()?;
+        let cached_summary = CachedSummary {
+            summary: summary.clone(),
+            mtime,
+        };
+        self.database
+            .transact(move |db, mut txn| {
+                db.put(&mut txn, &key, &cached_summary)?;
+                Ok(())
+            })
+            .await?;
+        self.summaries
+            .lock()
+            .await
+            .entry(path.clone())
+            .or_insert_with(String::new)
+            .push_str(&summary);
+        self.outstanding_chunks
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        let mut file_progress = self.file_progress_map.lock().await;
+        if let Some(progress) = file_progress.get_mut(&path) {
+            progress.outstanding_summaries -= 1;
+            if progress.outstanding_summaries == 0 {
+                progress.is_complete = true;
+            }
         }
-        if !imports.is_empty() {
-            summary.push_str("\nImports: ");
-            summary.push_str(&imports.join(", "));
+        drop(file_progress);
+        self.update_progress();
+        Ok(())
+    }
+
+    async fn split_and_enqueue_chunks(&self, path: PathBuf, content: String) -> Result<usize> {
+        let chunks = self.split_into_chunks(&content);
+        let chunk_count = chunks.len();
+        for (index, chunk) in chunks.into_iter().enumerate() {
+            self.queue
+                .lock()
+                .await
+                .push_back(Entry::Chunk(path.clone(), chunk, index));
+        }
+        self.outstanding_chunks
+            .fetch_add(chunk_count, std::sync::atomic::Ordering::SeqCst);
+        self.update_progress();
+        Ok(chunk_count)
+    }
+
+    async fn process_rust_symbol(
+        &self,
+        path: PathBuf,
+        name: String,
+        content: String,
+    ) -> Result<()> {
+        let summary = self.summarize_rust_symbol(&name, &content).await?;
+        self.summaries.lock().await.insert(path.clone(), summary);
+        self.outstanding_symbols
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        let mut file_progress = self.file_progress_map.lock().await;
+        if let Some(progress) = file_progress.get_mut(&path) {
+            progress.outstanding_summaries -= 1;
+            if progress.outstanding_summaries == 0 {
+                progress.is_complete = true;
+            }
+        }
+        drop(file_progress);
+        self.update_progress();
+        Ok(())
+    }
+
+    async fn summarize_rust_symbol(&self, name: &str, content: &str) -> Result<String> {
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: format!(
+                "You are a code summarization assistant. \
+                Provide a brief summary of the given Rust symbol, \
+                focusing on its main functionality and purpose. \
+                Be terse and start your response directly with \"Summary: \".\n\
+                Symbol name: {}\n\
+                Symbol content:\n{}",
+                name, content
+            ),
+        }];
+
+        let mut receiver = self.client.stream_completion(messages).await?;
+
+        let mut summary = String::new();
+        while let Some(content) = receiver.recv().await {
+            summary.push_str(&content);
+        }
+
+        Ok(summary)
+    }
+
+    fn count_tokens(&self, content: &str) -> usize {
+        self.tokenizer
+            .encode(content, false)
+            .unwrap()
+            .get_ids()
+            .len()
+    }
+
+    async fn summarize_file(&self, path: &Path, content: &str) -> Result<String> {
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: format!(
+                "You are a code summarization assistant. \
+                Provide a brief summary of the given file, \
+                focusing on its main functionality and purpose. \
+                Be terse and start your response directly with \"Summary: \".\n\
+                File path: {}\n\
+                File content:\n{}",
+                path.display(),
+                content
+            ),
+        }];
+
+        let mut receiver = self.client.stream_completion(messages).await?;
+
+        let mut summary = String::new();
+        while let Some(content) = receiver.recv().await {
+            summary.push_str(&content);
         }
 
         Ok(summary)
@@ -476,128 +589,27 @@ impl Miner {
         chunks
     }
 
-    async fn summarize_chunks(&self, path: &Path, chunks: &[String]) -> Result<Vec<String>> {
-        let mut chunk_summaries = Vec::new();
-
-        for chunk in chunks {
-            let token_count = self.count_tokens(chunk);
-            println!("Tokenized length of chunk: {}", token_count);
-            let summary = self.summarize_file(path, chunk).await?;
-            chunk_summaries.push(summary);
-        }
-
-        Ok(chunk_summaries)
-    }
-
-    async fn scan_directory(
-        &self,
-        path: PathBuf,
-        queue_lock: &mut tokio::sync::MutexGuard<'_, VecDeque<Entry>>,
-    ) -> Result<()> {
-        let mut dir_summaries = Vec::new();
-        let mut all_children_summarized = true;
-        let mut all_children_from_cache = true;
+    async fn scan_directory(&self, path: PathBuf) -> Result<()> {
         let dir_walker = ignore::WalkBuilder::new(&path)
             .hidden(true)
             .ignore(true)
             .max_depth(Some(1))
             .build();
+
         for entry in dir_walker {
             if let Ok(entry) = entry {
                 if entry.path() != path {
-                    if let Some(summary) = self.summaries.lock().await.get(entry.path()) {
-                        dir_summaries.push(summary.clone());
-                        if !self
-                            .paths_loaded_from_cache
+                    let entry_path = entry.path().to_path_buf();
+                    if entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                        self.queue
                             .lock()
                             .await
-                            .get(entry.path())
-                            .unwrap_or(&false)
-                        {
-                            all_children_from_cache = false;
-                        }
+                            .push_back(Entry::Directory(entry_path));
                     } else {
-                        all_children_summarized = false;
-                        break;
+                        self.queue.lock().await.push_back(Entry::File(entry_path));
                     }
                 }
             }
-        }
-        if all_children_summarized {
-            let combined_summary = async {
-                let key = path.to_string_lossy().to_string();
-                let mtime = tokio::fs::metadata(&path).await?.modified()?;
-
-                if all_children_from_cache {
-                    if let Some(cached) = self
-                        .database
-                        .transact({
-                            let key = key.clone();
-                            move |db, txn| Ok(db.get(&txn, &key)?)
-                        })
-                        .await?
-                    {
-                        self.paths_loaded_from_cache
-                            .lock()
-                            .await
-                            .insert(path.clone(), true);
-                        return Ok(cached.summary);
-                    }
-                }
-
-                self.progress_bar
-                    .set_message(format!("Summarizing {}", path.display()));
-
-                let combined_content = dir_summaries.join("\n## Summary\n");
-                let messages = vec![
-                    Message {
-                        role: "system".to_string(),
-                        content: concat!(
-                            "You are a code summarization assistant. ",
-                            "Combine the given summaries of different files or directories ",
-                            "into a single, coherent summary that captures the overall ",
-                            "structure and functionality of the project or directory. ",
-                            "Focus on the relationships between different components ",
-                            "and the high-level architecture. ",
-                            "Be terse and start your response with \"Summary: \""
-                        )
-                        .to_string(),
-                    },
-                    Message {
-                        role: "user".to_string(),
-                        content: format!("# Summaries\n{}", combined_content),
-                    },
-                ];
-
-                let mut receiver = self.client.stream_completion(messages).await?;
-
-                let mut combined_summary = String::new();
-                while let Some(content) = receiver.recv().await {
-                    combined_summary.push_str(&content);
-                }
-
-                let cached_summary = CachedSummary {
-                    summary: combined_summary.clone(),
-                    mtime,
-                };
-                self.database
-                    .transact(move |db, mut txn| {
-                        db.put(&mut txn, &key, &cached_summary)?;
-                        txn.commit()?;
-                        Ok(())
-                    })
-                    .await?;
-                anyhow::Ok(combined_summary)
-            };
-
-            let combined_summary = combined_summary
-                .await
-                .unwrap_or_else(|_| "could not combine summaries".into());
-
-            self.summaries.lock().await.insert(path, combined_summary);
-            self.progress_bar.inc(1);
-        } else {
-            queue_lock.push_back(Entry::Directory(path));
         }
 
         Ok(())
@@ -620,18 +632,132 @@ impl Miner {
 
         Ok(None)
     }
+
+    fn update_progress(&self) {
+        let (completed_files, total_files) = {
+            let map = self.file_progress_map.lock().unwrap();
+            let total = map.len();
+            let completed = map.values().filter(|v| v.is_complete).count();
+            (completed, total)
+        };
+        let outstanding_chunks = self
+            .outstanding_chunks
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let outstanding_symbols = self
+            .outstanding_symbols
+            .load(std::sync::atomic::Ordering::SeqCst);
+
+        self.file_progress.set_position(completed_files as u64);
+        self.file_progress.set_length(total_files as u64);
+        self.chunk_progress.set_position(
+            (self
+                .outstanding_chunks
+                .load(std::sync::atomic::Ordering::SeqCst)
+                - outstanding_chunks) as u64,
+        );
+        self.rust_symbol_progress.set_position(
+            (self
+                .outstanding_symbols
+                .load(std::sync::atomic::Ordering::SeqCst)
+                - outstanding_symbols) as u64,
+        );
+
+        // Update overall progress
+        let total_work = total_files
+            + self
+                .outstanding_chunks
+                .load(std::sync::atomic::Ordering::SeqCst)
+            + self
+                .outstanding_symbols
+                .load(std::sync::atomic::Ordering::SeqCst);
+        let completed_work = completed_files
+            + (self
+                .outstanding_chunks
+                .load(std::sync::atomic::Ordering::SeqCst)
+                - outstanding_chunks)
+            + (self
+                .outstanding_symbols
+                .load(std::sync::atomic::Ordering::SeqCst)
+                - outstanding_symbols);
+        self.overall_progress.set_position(completed_work as u64);
+        self.overall_progress.set_length(total_work as u64);
+    }
+
+    fn increment_total_entries(&self, count: usize) {
+        self.total_entries
+            .fetch_add(count, std::sync::atomic::Ordering::SeqCst);
+        self.update_overall_progress();
+    }
+
+    fn increment_completed_entries(&self, count: usize) {
+        self.completed_entries
+            .fetch_add(count, std::sync::atomic::Ordering::SeqCst);
+        self.update_overall_progress();
+    }
+
+    fn update_file_progress(&self, completed: usize, total: usize) {
+        self.file_progress.set_length(total as u64);
+        self.file_progress.set_position(completed as u64);
+        self.file_progress.set_message("Files processed");
+    }
+
+    fn update_chunk_progress(&self, completed: usize, total: usize) {
+        self.chunk_progress.set_length(total as u64);
+        self.chunk_progress.set_position(completed as u64);
+        self.chunk_progress.set_message("Chunks processed");
+    }
+
+    fn update_rust_symbol_progress(&self, completed: usize, total: usize) {
+        self.rust_symbol_progress.set_length(total as u64);
+        self.rust_symbol_progress.set_position(completed as u64);
+        self.rust_symbol_progress
+            .set_message("Rust symbols processed");
+    }
+
+    fn update_overall_progress(&self) {
+        let total = self.total_entries.load(std::sync::atomic::Ordering::SeqCst);
+        let completed = self
+            .completed_entries
+            .load(std::sync::atomic::Ordering::SeqCst);
+        self.overall_progress.set_length(total as u64);
+        self.overall_progress.set_position(completed as u64);
+    }
+
+    pub async fn export_database(&self) -> Result<()> {
+        self.database
+            .transact(|db, txn| {
+                for item in db.iter(&txn)? {
+                    let (key, value) = item?;
+                    let entry = serde_json::json!({
+                        "path": key,
+                        "summary": value.summary,
+                        "mtime": value.mtime.duration_since(SystemTime::UNIX_EPOCH)?.as_secs()
+                    });
+                    println!("{}", serde_json::to_string(&entry)?);
+                }
+                Ok(())
+            })
+            .await
+    }
 }
 
 #[derive(Debug)]
 enum Entry {
     File(PathBuf),
     Directory(PathBuf),
+    Chunk(PathBuf, String, usize),
+    RustSymbol(PathBuf, String, String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CachedSummary {
     summary: String,
     mtime: SystemTime,
+}
+
+struct FileProgress {
+    outstanding_summaries: usize,
+    is_complete: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -676,15 +802,21 @@ impl Database {
 
     async fn transact<F, T>(&self, f: F) -> Result<T>
     where
-        F: FnOnce(&HeedDatabase<Str, SerdeJson<CachedSummary>>, RwTxn) -> Result<T>
+        F: FnOnce(&HeedDatabase<Str, SerdeJson<CachedSummary>>, &mut RwTxn) -> Result<T>
             + Send
             + 'static,
         T: 'static + Send,
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.tx
-            .send(Box::new(move |db, txn| {
-                let result = f(db, txn);
+            .send(Box::new(move |db, mut txn| {
+                let result = f(db, &mut txn);
+                if result.is_ok() {
+                    if let Err(e) = txn.commit() {
+                        let _ = tx.send(Err(anyhow::Error::from(e)));
+                        return;
+                    }
+                }
                 let _ = tx.send(result);
             }))
             .await
