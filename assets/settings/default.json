@@ -131,14 +131,7 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": [
-    "**/.env*",
-    "**/*.pem",
-    "**/*.key",
-    "**/*.cert",
-    "**/*.crt",
-    "**/secrets.yml"
-  ],
+  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -754,6 +747,11 @@
       }
     },
     "JSON": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "JSONC": {
       "prettier": {
         "allowed": true
       }
