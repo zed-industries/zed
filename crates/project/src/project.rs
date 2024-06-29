@@ -86,6 +86,7 @@ use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
 use search_history::SearchHistory;
 use serde::Serialize;
+use serde_json::json;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
@@ -1117,7 +1118,7 @@ impl Project {
             client.configuration_done().await.log_err()?;
 
             // launch/attach request
-            client.launch().await.log_err()?;
+            client.launch(json!({"noDebug": false})).await.log_err()?;
 
             let client = Arc::new(client);
 

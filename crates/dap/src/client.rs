@@ -15,7 +15,7 @@ use futures::{
     AsyncBufRead, AsyncReadExt, AsyncWrite, SinkExt as _, StreamExt,
 };
 use gpui::{AppContext, AsyncAppContext};
-use serde_json::json;
+use serde_json::Value;
 use smol::{
     io::BufReader,
     net::TcpStream,
@@ -244,11 +244,9 @@ impl DebugAdapterClient {
         Ok(capabilities)
     }
 
-    pub async fn launch(&self) -> Result<()> {
-        self.request::<Launch>(LaunchRequestArguments {
-            raw: json!({"noDebug": false}),
-        })
-        .await
+    pub async fn launch(&self, custom: Value) -> Result<()> {
+        self.request::<Launch>(LaunchRequestArguments { raw: custom })
+            .await
     }
 
     pub async fn resume(&self, thread_id: u64) {
