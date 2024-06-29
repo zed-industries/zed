@@ -163,6 +163,23 @@ float4 blend_color(float4 color, float alpha_factor) {
     return float4(color.rgb * multiplier, alpha);
 }
 
+float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds, 
+                                      TransformationMatrix transformation) {
+    float2 position = unit_vertex * bounds.size + bounds.origin;
+
+    // Apply the transformation matrix to the position via matrix multiplication.
+    float2 transformed_position = float2(0, 0);
+    transformed_position.x = position.x * transformation.rotation_scale[0][0] + position.y * transformation.rotation_scale[0][1];
+    transformed_position.y = position.x * transformation.rotation_scale[1][0] + position.y * transformation.rotation_scale[1][1];
+
+    // Add in the translation component of the transformation matrix.
+    transformed_position += transformation.translation;
+
+    float2 viewport_size = global_viewport_size;
+    float2 device_position = transformed_position / viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
+    return float4(device_position, 0.0, 1.0);
+}
+
 /*
 **
 **              Shadows
@@ -533,4 +550,59 @@ float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
     } else {
         return input.color;
     }
+}
+
+/*
+**
+**              Monochrome sprites
+**
+*/
+
+struct MonochromeSprite {
+    uint order;
+    uint pad;
+    Bounds bounds;
+    Bounds content_mask;
+    Hsla color;
+    AtlasTile tile;
+    TransformationMatrix transformation;
+};
+
+struct MonochromeSpriteVertexOutput {
+    float4 position: SV_Position;
+    float2 tile_position: POSITION;
+    float4 color: COLOR;
+    float4 clip_distance: SV_ClipDistance;
+};
+
+struct MonochromeSpriteFragmentInput {
+    float4 position: SV_Position;
+    float2 tile_position: POSITION;
+    float4 color: COLOR;
+};
+
+StructuredBuffer<MonochromeSprite> mono_sprites : register(t6);
+
+MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    MonochromeSprite sprite = mono_sprites[sprite_id];
+    float4 device_position =
+        to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+    float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
+    float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
+    float4 color = hsla_to_rgba(sprite.color);
+
+    MonochromeSpriteVertexOutput output;
+    output.position = device_position;
+    output.tile_position = tile_position;
+    output.color = color;
+    output.clip_distance = clip_distance;
+    return output;
+}
+
+float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
+    float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
+    float4 color = input.color;
+    color.a *= sample.a;
+    return color;
 }
