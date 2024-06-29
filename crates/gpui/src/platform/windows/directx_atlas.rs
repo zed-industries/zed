@@ -3,9 +3,10 @@ use etagere::BucketedAtlasAllocator;
 use parking_lot::Mutex;
 use windows::Win32::Graphics::{
     Direct3D11::{
-        ID3D11Device, ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11Texture2D,
-        D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CPU_ACCESS_WRITE,
-        D3D11_MAP_WRITE_DISCARD, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_USAGE_DYNAMIC,
+        ID3D11Device, ID3D11DeviceContext, ID3D11RenderTargetView, ID3D11ShaderResourceView,
+        ID3D11Texture2D, D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE,
+        D3D11_CPU_ACCESS_WRITE, D3D11_MAP_WRITE_DISCARD, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+        D3D11_USAGE_DYNAMIC,
     },
     Dxgi::Common::{
         DXGI_FORMAT_A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16_FLOAT, DXGI_SAMPLE_DESC,
@@ -31,6 +32,7 @@ struct DirectXAtlasTexture {
     allocator: BucketedAtlasAllocator,
     texture: ID3D11Texture2D,
     rtv: [Option<ID3D11RenderTargetView>; 1],
+    view: [Option<ID3D11ShaderResourceView>; 1],
 }
 
 impl DirectXAtlas {
@@ -48,7 +50,11 @@ impl DirectXAtlas {
     pub(crate) fn texture_info(
         &self,
         id: AtlasTextureId,
-    ) -> (Size<f32>, [Option<ID3D11RenderTargetView>; 1]) {
+    ) -> (
+        Size<f32>,
+        [Option<ID3D11RenderTargetView>; 1],
+        [Option<ID3D11ShaderResourceView>; 1],
+    ) {
         let lock = self.0.lock();
         let tex = lock.texture(id);
         let size = tex.allocator.size();
@@ -58,6 +64,7 @@ impl DirectXAtlas {
                 height: size.height as f32,
             },
             tex.rtv.clone(),
+            tex.view.clone(),
         )
     }
 
@@ -207,6 +214,17 @@ impl DirectXAtlasState {
             },
             _ => [None],
         };
+        let view = match kind {
+            AtlasTextureKind::Monochrome => [None],
+            AtlasTextureKind::Polychrome => [None],
+            AtlasTextureKind::Path => unsafe {
+                let mut view = None;
+                self.device
+                    .CreateShaderResourceView(&texture, None, Some(&mut view))
+                    .unwrap();
+                [view]
+            },
+        };
         let atlas_texture = DirectXAtlasTexture {
             id: AtlasTextureId {
                 index: textures.len() as u32,
@@ -216,6 +234,7 @@ impl DirectXAtlasState {
             allocator: etagere::BucketedAtlasAllocator::new(size.into()),
             texture,
             rtv,
+            view,
         };
         textures.push(atlas_texture);
         textures.last_mut().unwrap()

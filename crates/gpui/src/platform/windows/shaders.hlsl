@@ -4,6 +4,9 @@ cbuffer GlobalParams : register(b0) {
     uint _pad;
 };
 
+Texture2D<float4> t_sprite : register(t4);
+SamplerState s_sprite : register(s0);
+
 struct Bounds {
     float2 origin;
     float2 size;
@@ -144,6 +147,20 @@ float4 over(float4 below, float4 above) {
     result.rgb = (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
     result.a = alpha;
     return result;
+}
+
+float2 to_tile_position(float2 unit_vertex, AtlasTile tile) {
+    float2 atlas_size;
+    t_sprite.GetDimensions(atlas_size.x, atlas_size.y);
+    return (float2(tile.bounds.origin) + unit_vertex * float2(tile.bounds.size)) / atlas_size;
+}
+
+// Abstract away the final color transformation based on the
+// target alpha compositing mode.
+float4 blend_color(float4 color, float alpha_factor) {
+    float alpha = color.a * alpha_factor;
+    float multiplier = (global_premultiplied_alpha != 0) ? alpha : 1.0;
+    return float4(color.rgb * multiplier, alpha);
 }
 
 /*
@@ -403,4 +420,46 @@ float4 path_rasterization_fragment(PathRasterizationInput input): SV_Target {
     float distance = f / length(gradient);
     float alpha = saturate(0.5 - distance);
     return float4(alpha, 0., 0., 1.);
+}
+
+/*
+**
+**              Paths
+**
+*/
+
+struct PathSprite {
+    Bounds bounds;
+    Hsla color;
+    AtlasTile tile;
+};
+
+struct PathVertexOutput {
+    float4 position: SV_Position;
+    float2 tile_position: POSITION1;
+    float4 color: COLOR;
+};
+
+StructuredBuffer<PathSprite> path_sprites : register(t3);
+
+PathVertexOutput paths_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    PathSprite sprite = path_sprites[instance_id];
+    // Don't apply content mask because it was already accounted for when rasterizing the path.
+
+    PathVertexOutput output;
+    output.position = to_device_position(unit_vertex, sprite.bounds);
+    output.tile_position = to_tile_position(unit_vertex, sprite.tile);
+    // output.tile_position = float2(1., 1.);
+    output.color = hsla_to_rgba(sprite.color);
+    return output;
+}
+
+float4 paths_fragment(PathVertexOutput input): SV_Target {
+    float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
+    float mask = 1.0 - abs(1.0 - sample % 2.0);
+    // return blend_color(input.color, mask);
+    float4 color = input.color;
+    color.a *= mask;
+    return color;
 }

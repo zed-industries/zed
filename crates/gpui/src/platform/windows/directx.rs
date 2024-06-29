@@ -16,15 +16,17 @@ use windows::{
             },
             Direct3D11::{
                 D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext,
-                ID3D11InputLayout, ID3D11PixelShader, ID3D11RenderTargetView,
+                ID3D11InputLayout, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11SamplerState,
                 ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
                 D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_FLAG, D3D11_BIND_SHADER_RESOURCE,
-                D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC, D3D11_CPU_ACCESS_WRITE,
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_DEBUG,
+                D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC, D3D11_COMPARISON_NEVER,
+                D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                D3D11_CREATE_DEVICE_DEBUG, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_FLOAT32_MAX,
                 D3D11_INPUT_ELEMENT_DESC, D3D11_INPUT_PER_VERTEX_DATA, D3D11_MAP_WRITE_DISCARD,
-                D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, D3D11_SDK_VERSION,
+                D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, D3D11_SAMPLER_DESC, D3D11_SDK_VERSION,
                 D3D11_SHADER_RESOURCE_VIEW_DESC, D3D11_SHADER_RESOURCE_VIEW_DESC_0,
-                D3D11_SUBRESOURCE_DATA, D3D11_USAGE_DYNAMIC, D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT,
+                D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE_ADDRESS_WRAP, D3D11_USAGE_DYNAMIC,
+                D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT,
             },
             DirectComposition::{
                 DCompositionCreateDevice, DCompositionCreateDevice2, IDCompositionDesktopDevice,
@@ -72,9 +74,11 @@ struct DirectXContext {
 
 struct DirectXRenderContext {
     global_params_buffer: [Option<ID3D11Buffer>; 1],
+    sampler: [Option<ID3D11SamplerState>; 1],
     shadow_pipeline: PipelineState,
     quad_pipeline: PipelineState,
     raster_paths_pipeline: PipelineState,
+    paths_pipeline: PipelineState,
 }
 
 impl DirectXRenderer {
@@ -355,7 +359,7 @@ impl DirectXRenderer {
             // if next_offset > instance_buffer.size {
             //     return None;
             // }
-            let (texture_size, rtv) = self.atlas.texture_info(texture_id);
+            let (texture_size, rtv, _) = self.atlas.texture_info(texture_id);
             let viewport = [D3D11_VIEWPORT {
                 TopLeftX: 0.0,
                 TopLeftY: 0.0,
@@ -444,6 +448,76 @@ impl DirectXRenderer {
     ) -> bool {
         if paths.is_empty() {
             return true;
+        }
+        for path in paths {
+            let tile = &path_tiles[&path.id];
+            let tex_info = self.atlas.texture_info(tile.texture_id);
+            let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
+            let sprites = [PathSprite {
+                bounds: Bounds {
+                    origin: origin.map(|p| p.floor()),
+                    size: tile.bounds.size.map(Into::into),
+                },
+                color: path.color,
+                tile: (*tile).clone(),
+            }];
+
+            unsafe {
+                let mut resource = std::mem::zeroed();
+                self.context
+                    .context
+                    .Map(
+                        &self.render.paths_pipeline.buffer,
+                        0,
+                        D3D11_MAP_WRITE_DISCARD,
+                        0,
+                        Some(&mut resource),
+                    )
+                    .unwrap();
+                std::ptr::copy_nonoverlapping(sprites.as_ptr(), resource.pData as *mut _, 1);
+                self.context
+                    .context
+                    .Unmap(&self.render.paths_pipeline.buffer, 0);
+
+                self.context
+                    .context
+                    .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+                self.context
+                    .context
+                    .RSSetViewports(Some(&self.context.viewport));
+                self.context
+                    .context
+                    .VSSetShader(&self.render.paths_pipeline.vertex, None);
+                self.context
+                    .context
+                    .PSSetShader(&self.render.paths_pipeline.fragment, None);
+                self.context
+                    .context
+                    .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+                self.context
+                    .context
+                    .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+                self.context
+                    .context
+                    .VSSetShaderResources(1, Some(&self.render.paths_pipeline.view));
+                self.context
+                    .context
+                    .PSSetShaderResources(1, Some(&self.render.paths_pipeline.view));
+                self.context
+                    .context
+                    .VSSetSamplers(2, Some(&self.render.sampler));
+                self.context
+                    .context
+                    .VSSetSamplers(2, Some(&self.render.sampler));
+                self.context
+                    .context
+                    .VSSetShaderResources(3, Some(&tex_info.2));
+                self.context
+                    .context
+                    .PSSetShaderResources(3, Some(&tex_info.2));
+
+                self.context.context.DrawInstanced(4, 1, 0, 0);
+            }
         }
         true
     }
@@ -564,6 +638,22 @@ impl DirectXRenderContext {
             [buffer]
         };
 
+        let sampler = unsafe {
+            let desc = D3D11_SAMPLER_DESC {
+                Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                AddressU: D3D11_TEXTURE_ADDRESS_WRAP,
+                AddressV: D3D11_TEXTURE_ADDRESS_WRAP,
+                AddressW: D3D11_TEXTURE_ADDRESS_WRAP,
+                ComparisonFunc: D3D11_COMPARISON_NEVER,
+                MinLOD: 0.0,
+                MaxLOD: D3D11_FLOAT32_MAX,
+                ..Default::default()
+            };
+            let mut output = None;
+            device.CreateSamplerState(&desc, Some(&mut output))?;
+            [output]
+        };
+
         let shadow_pipeline = unsafe {
             let vertex_shader_blob = build_shader_blob("shadow_vertex", "vs_5_0").unwrap();
             let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
@@ -633,6 +723,39 @@ impl DirectXRenderContext {
             }
         };
 
+        let paths_pipeline = unsafe {
+            let vertex_shader_blob = build_shader_blob("paths_vertex", "vs_5_0").unwrap();
+            let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
+            let fragment_shader_blob = build_shader_blob("paths_fragment", "ps_5_0").unwrap();
+            let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
+            let buffer = {
+                let desc = D3D11_BUFFER_DESC {
+                    ByteWidth: std::mem::size_of::<PathSprite>() as u32 * 2,
+                    Usage: D3D11_USAGE_DYNAMIC,
+                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
+                    StructureByteStride: std::mem::size_of::<PathSprite>() as u32,
+                };
+                let mut buffer = None;
+                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
+                buffer.unwrap()
+            };
+            let view = {
+                let mut view = None;
+                device
+                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
+                    .unwrap();
+                [view]
+            };
+            PipelineState {
+                vertex,
+                fragment,
+                buffer,
+                view,
+            }
+        };
+
         let raster_paths_pipeline = unsafe {
             let vertex_shader_blob =
                 build_shader_blob("path_rasterization_vertex", "vs_5_0").unwrap();
@@ -670,9 +793,11 @@ impl DirectXRenderContext {
 
         Ok(Self {
             global_params_buffer,
+            sampler,
             shadow_pipeline,
             quad_pipeline,
             raster_paths_pipeline,
+            paths_pipeline,
         })
     }
 }
@@ -691,6 +816,14 @@ struct PipelineState {
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
     view: [Option<ID3D11ShaderResourceView>; 1],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[repr(C)]
+struct PathSprite {
+    bounds: Bounds<ScaledPixels>,
+    color: Hsla,
+    tile: AtlasTile,
 }
 
 fn get_dxgi_factory() -> Result<IDXGIFactory6> {
