@@ -81,6 +81,7 @@ struct DirectXRenderContext {
     paths_pipeline: PipelineState,
     underline_pipeline: PipelineState,
     mono_sprites: PipelineState,
+    poly_sprites: PipelineState,
 }
 
 impl DirectXRenderer {
@@ -667,6 +668,68 @@ impl DirectXRenderer {
         if sprites.is_empty() {
             return true;
         }
+        let tex_info = self.atlas.texture_info(texture_id);
+        unsafe {
+            {
+                let mut resource = std::mem::zeroed();
+                self.context
+                    .context
+                    .Map(
+                        &self.render.poly_sprites.buffer,
+                        0,
+                        D3D11_MAP_WRITE_DISCARD,
+                        0,
+                        Some(&mut resource),
+                    )
+                    .unwrap();
+                std::ptr::copy_nonoverlapping(
+                    sprites.as_ptr(),
+                    resource.pData as *mut PolychromeSprite,
+                    sprites.len(),
+                );
+                self.context
+                    .context
+                    .Unmap(&self.render.poly_sprites.buffer, 0);
+                self.context
+                    .context
+                    .VSSetShaderResources(1, Some(&self.render.poly_sprites.view));
+                self.context
+                    .context
+                    .PSSetShaderResources(1, Some(&self.render.poly_sprites.view));
+            }
+            self.context
+                .context
+                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            self.context
+                .context
+                .RSSetViewports(Some(&self.context.viewport));
+            self.context
+                .context
+                .VSSetShader(&self.render.poly_sprites.vertex, None);
+            self.context
+                .context
+                .PSSetShader(&self.render.poly_sprites.fragment, None);
+            self.context
+                .context
+                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+            // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
+            self.context
+                .context
+                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+            self.context
+                .context
+                .VSSetSamplers(2, Some(&self.render.sampler));
+            self.context
+                .context
+                .VSSetShaderResources(3, Some(&tex_info.2));
+            self.context
+                .context
+                .PSSetShaderResources(3, Some(&tex_info.2));
+
+            self.context
+                .context
+                .DrawInstanced(4, sprites.len() as u32, 0, 0);
+        }
         true
     }
 
@@ -977,6 +1040,41 @@ impl DirectXRenderContext {
             }
         };
 
+        let poly_sprites = unsafe {
+            let vertex_shader_blob =
+                build_shader_blob("polychrome_sprite_vertex", "vs_5_0").unwrap();
+            let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
+            let fragment_shader_blob =
+                build_shader_blob("polychrome_sprite_fragment", "ps_5_0").unwrap();
+            let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
+            let buffer = {
+                let desc = D3D11_BUFFER_DESC {
+                    ByteWidth: std::mem::size_of::<PolychromeSprite>() as u32 * 256,
+                    Usage: D3D11_USAGE_DYNAMIC,
+                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
+                    StructureByteStride: std::mem::size_of::<PolychromeSprite>() as u32,
+                };
+                let mut buffer = None;
+                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
+                buffer.unwrap()
+            };
+            let view = {
+                let mut view = None;
+                device
+                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
+                    .unwrap();
+                [view]
+            };
+            PipelineState {
+                vertex,
+                fragment,
+                buffer,
+                view,
+            }
+        };
+
         Ok(Self {
             global_params_buffer,
             sampler,
@@ -986,6 +1084,7 @@ impl DirectXRenderContext {
             paths_pipeline,
             underline_pipeline,
             mono_sprites,
+            poly_sprites,
         })
     }
 }

@@ -180,6 +180,34 @@ float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
     return float4(device_position, 0.0, 1.0);
 }
 
+float quad_sdf(float2 pt, Bounds bounds, Corners corner_radii) {
+    float2 half_size = bounds.size / 2.;
+    float2 center = bounds.origin + half_size;
+    float2 center_to_point = pt - center;
+    float corner_radius;
+    if (center_to_point.x < 0.) {
+        if (center_to_point.y < 0.) {
+            corner_radius = corner_radii.top_left;
+        } else {
+            corner_radius = corner_radii.bottom_left;
+        }
+    } else {
+        if (center_to_point.y < 0.) {
+            corner_radius = corner_radii.top_right;
+        } else {
+            corner_radius = corner_radii.bottom_right;
+        }
+    }
+
+    float2 rounded_edge_to_point = abs(center_to_point) - half_size + corner_radius;
+    float distance =
+        length(max(0., rounded_edge_to_point)) +
+        min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) -
+        corner_radius;
+
+    return distance;
+}
+
 /*
 **
 **              Shadows
@@ -604,5 +632,67 @@ float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Targe
     float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
     float4 color = input.color;
     color.a *= sample.a;
+    return color;
+}
+
+/*
+**
+**              Monochrome sprites
+**
+*/
+
+struct PolychromeSprite {
+    uint order;
+    uint grayscale;
+    Bounds bounds;
+    Bounds content_mask;
+    Corners corner_radii;
+    AtlasTile tile;
+};
+
+struct PolychromeSpriteVertexOutput {
+    float4 position: SV_Position;
+    float2 tile_position: POSITION;
+    uint sprite_id: FLAT;
+    float4 clip_distance: SV_ClipDistance;
+};
+
+struct PolychromeSpriteFragmentInput {
+    float4 position: SV_Position;
+    float2 tile_position: POSITION;
+    uint sprite_id: FLAT;
+};
+
+StructuredBuffer<PolychromeSprite> poly_sprites : register(t7);
+
+PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    PolychromeSprite sprite = poly_sprites[sprite_id];
+    float4 device_position = to_device_position(unit_vertex, sprite.bounds);
+    float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds,
+                                                    sprite.content_mask);
+    float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
+
+    PolychromeSpriteVertexOutput output;
+    output.position = device_position;
+    output.tile_position = tile_position;
+    output.sprite_id = sprite_id;
+    output.clip_distance = clip_distance;
+    return output;
+}
+
+float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Target {
+    PolychromeSprite sprite = poly_sprites[input.sprite_id];
+    float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
+    float distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+
+    float4 color = sample;
+    if (sprite.grayscale) {
+        float grayscale = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+        color.r = grayscale;
+        color.g = grayscale;
+        color.b = grayscale;
+    }
+    color.a *= saturate(0.5 - distance);
     return color;
 }
