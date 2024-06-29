@@ -2415,9 +2415,7 @@ impl Editor {
             }
             self.selections_did_change(true, &old_cursor_position, request_completions, cx);
 
-            if self.should_open_signature_help_automatically(cx)
-                || self.signature_help_state.is_some()
-            {
+            if self.should_open_signature_help_automatically(cx) {
                 self.show_signature_help(&ShowSignatureHelp, cx);
             }
         }
@@ -4035,7 +4033,7 @@ impl Editor {
 
         let snapshot = self.snapshot(cx);
 
-        if let Some((opening_range, closing_range)) = snapshot
+        let updated = if let Some((opening_range, closing_range)) = snapshot
             .buffer_snapshot
             .innermost_enclosing_bracket_ranges(from..until, None)
         {
@@ -4053,7 +4051,9 @@ impl Editor {
             true
         } else {
             false
-        }
+        };
+        
+        updated || self.signature_help_state.is_some()
     }
 
     pub fn show_signature_help(&mut self, _: &ShowSignatureHelp, cx: &mut ViewContext<Self>) {
