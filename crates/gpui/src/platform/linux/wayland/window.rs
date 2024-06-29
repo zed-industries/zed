@@ -25,7 +25,7 @@ use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    point, px, size, AnyWindowHandle, Bounds, Decorations, Globals, Modifiers, Output, Pixels,
+    px, size, AnyWindowHandle, Bounds, Decorations, Globals, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling,
     WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowParams,
@@ -63,6 +63,7 @@ impl rwh::HasDisplayHandle for RawWindow {
     }
 }
 
+#[derive(Debug)]
 struct InProgressConfigure {
     size: Option<Size<Pixels>>,
     fullscreen: bool,
@@ -87,17 +88,19 @@ pub struct WaylandWindowState {
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
     decorations: WindowDecorations,
+    background_appearance: WindowBackgroundAppearance,
     fullscreen: bool,
     maximized: bool,
     tiling: Tiling,
-    windowed_bounds: Bounds<Pixels>,
+    window_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
     active: bool,
     in_progress_configure: Option<InProgressConfigure>,
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
-    client_area: Bounds<Pixels>,
+    client_area: Option<Bounds<Pixels>>,
+    requested_client_area: Option<Bounds<Pixels>>,
 }
 
 #[derive(Clone)]
@@ -167,10 +170,11 @@ impl WaylandWindowState {
             scale: 1.0,
             input_handler: None,
             decorations: WindowDecorations::Client,
+            background_appearance: WindowBackgroundAppearance::Opaque,
             fullscreen: false,
             maximized: false,
             tiling: Tiling::default(),
-            windowed_bounds: options.bounds,
+            window_bounds: options.bounds,
             in_progress_configure: None,
             client,
             appearance,
@@ -183,11 +187,14 @@ impl WaylandWindowState {
                 minimize: false,
                 window_menu: false,
             },
-            client_area: Bounds {
-                origin: point(px(0.), px(0.)),
-                size: size(px(f32::MAX), px(f32::MAX)),
-            },
+            client_area: None,
+            requested_client_area: None,
         })
+    }
+
+    pub fn is_transparent(&self) -> bool {
+        self.decorations == WindowDecorations::Client
+            || self.background_appearance != WindowBackgroundAppearance::Opaque
     }
 }
 
@@ -253,7 +260,7 @@ impl WaylandWindow {
             .wm_base
             .get_xdg_surface(&surface, &globals.qh, surface.id());
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
-        toplevel.set_min_size(200, 200);
+        toplevel.set_min_size(50, 50);
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -343,18 +350,22 @@ impl WaylandWindowStatePtr {
                         state.fullscreen = configure.fullscreen;
                         state.maximized = configure.maximized;
                         state.tiling = configure.tiling;
+                        configure.size = compute_outer_size(
+                            state.window_bounds,
+                            state.client_area,
+                            configure.size,
+                        );
 
                         if got_unmaximized {
-                            configure.size = Some(state.windowed_bounds.size);
+                            configure.size = Some(state.window_bounds.size);
                         } else if !configure.fullscreen && !configure.maximized {
                             if let Some(size) = configure.size {
-                                state.windowed_bounds = Bounds {
+                                state.window_bounds = Bounds {
                                     origin: Point::default(),
                                     size,
                                 };
                             }
                         }
-
                         drop(state);
                         if let Some(size) = configure.size {
                             self.resize(size);
@@ -731,9 +742,9 @@ impl PlatformWindow for WaylandWindow {
     fn window_bounds(&self) -> WindowBounds {
         let state = self.borrow();
         if state.fullscreen {
-            WindowBounds::Fullscreen(state.windowed_bounds)
+            WindowBounds::Fullscreen(state.window_bounds)
         } else if state.maximized {
-            WindowBounds::Maximized(state.windowed_bounds)
+            WindowBounds::Maximized(state.window_bounds)
         } else {
             drop(state);
             WindowBounds::Windowed(self.bounds())
@@ -811,49 +822,9 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-        let opaque = background_appearance == WindowBackgroundAppearance::Opaque;
         let mut state = self.borrow_mut();
-        state.renderer.update_transparency(!opaque);
-        let opaque_area = state.client_area.map(|v| v.0 as i32);
-
-        let region = state
-            .globals
-            .compositor
-            .create_region(&state.globals.qh, ());
-        region.add(
-            opaque_area.origin.x,
-            opaque_area.origin.y,
-            opaque_area.size.width,
-            opaque_area.size.height,
-        );
-
-        if opaque {
-            // Promise the compositor that this region of the window surface
-            // contains no transparent pixels. This allows the compositor to
-            // do skip whatever is behind the surface for better performance.
-            state.surface.set_opaque_region(Some(&region));
-        } else {
-            state.surface.set_opaque_region(None);
-        }
-
-        if let Some(ref blur_manager) = state.globals.blur_manager {
-            if background_appearance == WindowBackgroundAppearance::Blurred {
-                if state.blur.is_none() {
-                    let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
-                    blur.set_region(Some(&region));
-                    state.blur = Some(blur);
-                }
-                state.blur.as_ref().unwrap().commit();
-            } else {
-                // It probably doesn't hurt to clear the blur for opaque windows
-                blur_manager.unset(&state.surface);
-                if let Some(b) = state.blur.take() {
-                    b.release()
-                }
-            }
-        }
-
-        region.destroy();
+        state.background_appearance = background_appearance;
+        update_window(state);
     }
 
     fn minimize(&self) {
@@ -922,6 +893,9 @@ impl PlatformWindow for WaylandWindow {
     fn completed_frame(&self) {
         let mut state = self.borrow_mut();
         state.surface.commit();
+        if let Some(area) = state.requested_client_area {
+            state.client_area = Some(area);
+        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -968,8 +942,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn request_decorations(&self, decorations: WindowDecorations) {
         let mut state = self.borrow_mut();
+        state.decorations = decorations;
         if let Some(decoration) = state.decoration.as_ref() {
-            decoration.set_mode(decorations.to_xdg())
+            decoration.set_mode(decorations.to_xdg());
+            update_window(state);
         }
     }
 
@@ -978,8 +954,73 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_client_area(&self, bounds: Bounds<Pixels>) {
-        self.borrow_mut().client_area = bounds;
+        let mut state = self.borrow_mut();
+        if Some(bounds) != state.client_area {
+            if bounds.size.width.0 != 0.0 && bounds.size.height.0 != 0.0 {
+                state.xdg_surface.set_window_geometry(
+                    bounds.origin.x.0 as i32,
+                    bounds.origin.y.0 as i32,
+                    bounds.size.width.0 as i32,
+                    bounds.size.height.0 as i32,
+                );
+                state.requested_client_area = Some(bounds);
+            }
+            update_window(state);
+        }
     }
+}
+
+fn update_window(mut state: RefMut<WaylandWindowState>) {
+    let opaque = !state.is_transparent();
+
+    state.renderer.update_transparency(!opaque);
+    let opaque_area = state
+        .client_area
+        .unwrap_or(state.window_bounds)
+        .map(|v| v.0 as i32);
+
+    let region = state
+        .globals
+        .compositor
+        .create_region(&state.globals.qh, ());
+    region.add(
+        opaque_area.origin.x,
+        opaque_area.origin.y,
+        opaque_area.size.width,
+        opaque_area.size.height,
+    );
+
+    // Note that rounded corners make this rectangle API hard to work with.
+    // As this is common when using CSD, let's just disable this API.
+    if state.background_appearance == WindowBackgroundAppearance::Opaque
+        && state.decorations == WindowDecorations::Server
+    {
+        // Promise the compositor that this region of the window surface
+        // contains no transparent pixels. This allows the compositor to
+        // do skip whatever is behind the surface for better performance.
+        state.surface.set_opaque_region(Some(&region));
+    } else {
+        state.surface.set_opaque_region(None);
+    }
+
+    if let Some(ref blur_manager) = state.globals.blur_manager {
+        if state.background_appearance == WindowBackgroundAppearance::Blurred {
+            if state.blur.is_none() {
+                let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
+                blur.set_region(Some(&region));
+                state.blur = Some(blur);
+            }
+            state.blur.as_ref().unwrap().commit();
+        } else {
+            // It probably doesn't hurt to clear the blur for opaque windows
+            blur_manager.unset(&state.surface);
+            if let Some(b) = state.blur.take() {
+                b.release()
+            }
+        }
+    }
+
+    region.destroy();
 }
 
 impl WindowDecorations {
@@ -1004,4 +1045,28 @@ impl ResizeEdge {
             ResizeEdge::TopLeft => xdg_toplevel::ResizeEdge::TopLeft,
         }
     }
+}
+
+/// The configuration event is in terms of the window geometry, which we are constantly
+/// updating to account for the client decorations. But that's not the area we want to render
+/// to, due to our intrusize CSD. So, here we calculate the 'actual' size, by adding back in the insets
+fn compute_outer_size(
+    window_bounds: Bounds<Pixels>,
+    client_area: Option<Bounds<Pixels>>,
+    new_size: Option<Size<Pixels>>,
+) -> Option<Size<Pixels>> {
+    new_size
+        .zip(client_area)
+        .map(|(new_size, client_area)| {
+            let left_width = (window_bounds.left() - client_area.left()).abs();
+            let right_width = (window_bounds.right() - client_area.right()).abs();
+            let top_width = (window_bounds.top() - client_area.top()).abs();
+            let bottom_width = (window_bounds.bottom() - client_area.bottom()).abs();
+
+            size(
+                left_width + right_width + new_size.width,
+                top_width + bottom_width + new_size.height,
+            )
+        })
+        .or(new_size)
 }

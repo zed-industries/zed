@@ -21,6 +21,7 @@ impl Render for WindowShadow {
 
         div()
             .id("window-backdrop")
+            .bg(transparent_black())
             .map(|div| match decorations {
                 Decorations::Server => div,
                 Decorations::Client { tiling, .. } => div
@@ -166,7 +167,7 @@ impl Render for WindowShadow {
                                         .map(|div| match decorations {
                                             Decorations::Server => div,
                                             Decorations::Client { .. } => div
-                                                .on_mouse_down(MouseButton::Left, |e, cx| {
+                                                .on_mouse_down(MouseButton::Left, |_e, cx| {
                                                     cx.start_window_move();
                                                 })
                                                 .on_click(|e, cx| {
