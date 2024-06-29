@@ -1028,6 +1028,16 @@ impl CompletionsMenu {
                 let documentation = &completion.documentation;
 
                 let mut len = completion.label.text.chars().count();
+
+                if let Some(label_details) = completion.lsp_completion.label_details.as_ref() {
+                    if let Some(d) = label_details.detail.as_ref() {
+                        len += d.chars().count();
+                    }
+                    if let Some(d) = label_details.description.as_ref() {
+                        len += d.chars().count();
+                    }
+                }
+
                 if let Some(Documentation::SingleLine(text)) = documentation {
                     if show_completion_documentation {
                         len += text.chars().count();
