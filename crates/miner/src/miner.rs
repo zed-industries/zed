@@ -23,7 +23,7 @@ const CHUNK_SIZE: usize = 5000;
 const OVERLAP: usize = 2_000;
 
 const HUGGINGFACE_ENDPOINT_URL: &str =
-    "https://riz4p7andt1wt75l.us-east-1.aws.endpoints.huggingface.cloud";
+    "https://eezviumpj7crpq2t.us-east-1.aws.endpoints.huggingface.cloud";
 
 #[derive(Parser)]
 #[command(name = "Project Summarizer")]
