@@ -1126,8 +1126,7 @@ impl CompletionsMenu {
                                         StyledText::new(completion.label.text.clone())
                                     ).when_some(completion.lsp_completion.label_details.as_ref(), |this, ld| {
                                             this.when_some(ld.detail.as_ref(), |this2, d| {
-                                                    this2.gap_1()
-                                                        .items_start()
+                                                    this2.items_start()
                                                         .child(Label::new(d.clone()).color(Color::Hidden))
                                                     }
                                                 ).when_some(ld.description.as_ref(), |this2, d| {
