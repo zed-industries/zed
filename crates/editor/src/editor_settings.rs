@@ -25,6 +25,8 @@ pub struct EditorSettings {
     pub expand_excerpt_lines: u32,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
+    /// Configuration for automatic `ShowSignatureHelp` calling
+    pub auto_signature_help: bool
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -217,6 +219,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: select
     pub double_click_in_multibuffer: Option<DoubleClickInMultibuffer>,
+
+    /// Configuration for automatic `ShowSignatureHelp` calling
+    ///
+    /// Default: false
+    pub auto_signature_help: Option<bool>,
 }
 
 // Toolbar related settings

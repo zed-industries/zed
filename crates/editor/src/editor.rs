@@ -4012,10 +4012,9 @@ impl Editor {
     }
 
     fn should_open_signature_help_automatically(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        // TODO: Make it possible to specify whether to show or hide automatically from the settings.
-        // if !EditorSettings::get_global(cx).show_signature_help_automatically {
-        //     return false;
-        // }
+        if !EditorSettings::get_global(cx).auto_signature_help {
+            return false;
+        }
 
         let newest_selection = self.selections.newest::<usize>(cx);
         if !newest_selection.is_empty() {
