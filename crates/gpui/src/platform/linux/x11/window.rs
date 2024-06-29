@@ -425,6 +425,7 @@ impl X11WindowState {
             .expect("Unable to find screen refresh rate");
 
         let refresh_rate = mode_refresh_rate(&mode);
+        dbg!(refresh_rate);
 
         Ok(Self {
             client,
@@ -649,7 +650,6 @@ impl X11WindowStatePtr {
             state.input_handler = Some(input_handler);
         }
     }
-
     pub fn handle_ime_preedit(&self, text: String) {
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
@@ -772,13 +772,14 @@ impl X11WindowStatePtr {
         }
 
         let refresh_rate = state.refresh_rate;
+
         state.last_refresh_at.map_or(true, |last_refresh_at| {
-            last_refresh_at.elapsed() >= refresh_rate
+            last_refresh_at.elapsed() >= refresh_rate - Duration::from_millis(1)
         })
     }
 
     pub fn set_refresh_queued(&self, value: bool) {
-        self.state.borrow_mut().refresh_queued = value;
+        // self.state.borrow_mut().refresh_queued = value;
     }
 }
 

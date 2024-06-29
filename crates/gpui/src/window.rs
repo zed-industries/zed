@@ -3142,8 +3142,10 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any) {
+        let now = Instant::now();
         if self.window.dirty.get() {
             self.draw();
+            print!("<??{:?}>", now.elapsed());
         }
 
         let node_id = self
@@ -3203,6 +3205,7 @@ impl<'a> WindowContext<'a> {
             }
             if keystroke.is_none() {
                 self.finish_dispatch_key_event(event, dispatch_path);
+                print!("(key:{:?})", now.elapsed());
                 return;
             }
         }
@@ -3278,7 +3281,8 @@ impl<'a> WindowContext<'a> {
             }
         }
 
-        self.finish_dispatch_key_event(event, dispatch_path)
+        self.finish_dispatch_key_event(event, dispatch_path);
+        print!("(key:{:?})", now.elapsed());
     }
 
     fn finish_dispatch_key_event(

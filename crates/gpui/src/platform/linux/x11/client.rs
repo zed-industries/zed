@@ -104,7 +104,6 @@ pub struct X11ClientState {
     pub(crate) current_count: usize,
 
     pub(crate) scale_factor: f32,
-
     pub(crate) xcb_connection: Rc<XCBConnection>,
     pub(crate) x_root_index: usize,
     pub(crate) _resource_database: Database,
@@ -138,6 +137,10 @@ pub struct X11ClientState {
     runnables: Channel<Runnable>,
 
     xdp_event_source: XDPEventSource,
+
+    xim_callback_count: usize,
+    keypress_count: usize,
+    begin: Instant,
 }
 
 #[derive(Clone)]
@@ -185,10 +188,8 @@ impl ChannelQuitSignal {
 impl QuitSignal for ChannelQuitSignal {
     fn quit(&mut self) {
         if let Some(tx) = self.tx.take() {
-            // println!("quitting!");
             tx.send(()).log_err();
             if let Some(waker) = self.waker.as_ref() {
-                // println!("waking after qUitting!");
                 waker.wake().ok();
             }
         }
@@ -347,6 +348,10 @@ impl X11Client {
 
             clipboard,
             clipboard_item: None,
+
+            keypress_count: 0,
+            xim_callback_count: 0,
+            begin: Instant::now(),
         })))
     }
 
@@ -426,29 +431,38 @@ impl X11Client {
             let xim_connected = xim_handler.connected;
             drop(state);
 
-            let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
-                Ok(handled) => handled,
-                Err(err) => {
-                    log::error!("XIMClientError: {}", err);
-                    false
-                }
-            };
+            let xim_filtered = false;
+            // match ximc.filter_event(&event, &mut xim_handler) {
+            //     Ok(handled) => handled,
+            //     Err(err) => {
+            //         log::error!("XIMClientError: {}", err);
+            //         false
+            //     }
+            // };
             let xim_callback_event = xim_handler.last_callback_event.take();
 
             let mut state = self.0.borrow_mut();
             state.ximc = Some(ximc);
             state.xim_handler = Some(xim_handler);
-            drop(state);
 
             if let Some(event) = xim_callback_event {
+                state.xim_callback_count += 1;
+                println!(
+                    "{:?}: handle_xim_callback_event {}",
+                    state.begin.elapsed(),
+                    state.xim_callback_count
+                );
+                drop(state);
                 self.handle_xim_callback_event(event);
+            } else {
+                drop(state);
             }
 
             if xim_filtered {
                 continue;
             }
 
-            if xim_connected {
+            if false {
                 self.xim_handle_event(event);
             } else {
                 self.handle_event(event);
@@ -536,6 +550,7 @@ impl X11Client {
                 }
             }
             Event::KeyPress(event) => {
+                let now = Instant::now();
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
 
@@ -922,33 +937,41 @@ impl X11Client {
             .context("failed to flush XCB connection after sending ExposeEvent")
     }
 
-    fn consume_x11_events(&self) {
-        {
-            let mut events = Vec::new();
-            let mut windows_to_refresh = HashSet::new();
+    fn consume_x11_events(&self) -> (HashSet<u32>, Vec<Event>) {
+        let mut events = Vec::new();
+        let mut windows_to_refresh = HashSet::new();
+        let mut state = self.0.borrow_mut();
 
-            {
-                let state = self.0.borrow_mut();
-                while let Ok(Some(event)) = state.xcb_connection.poll_for_event() {
+        loop {
+            match state.xcb_connection.poll_for_event() {
+                Ok(Some(event)) => {
                     if let Event::Expose(event) = event {
                         windows_to_refresh.insert(event.window);
                     } else {
+                        if let Event::KeyPress(event) = &event {
+                            state.keypress_count += 1;
+                            println!(
+                                "{:?}: keypress: {:?} {}",
+                                state.begin.elapsed(),
+                                event.detail,
+                                state.keypress_count
+                            );
+                        }
                         events.push(event);
                     }
                 }
-            }
 
-            // We prioritize Expose events so that a lot of input events don't hold up
-            // a render.
-            for window in windows_to_refresh.into_iter() {
-                if let Some(window) = self.get_window(window) {
-                    window.refresh();
-                    window.set_refresh_queued(false);
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => {
+                    log::warn!("error polling for X11 events: {e:?}");
+                    break;
                 }
             }
-
-            self.handle_events(events);
         }
+
+        (windows_to_refresh, events)
     }
 }
 
@@ -959,7 +982,6 @@ impl LinuxClient for X11Client {
     fn compositor_name(&self) -> &'static str {
         "X11"
     }
-
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
     }
@@ -1161,123 +1183,116 @@ impl LinuxClient for X11Client {
             .unwrap();
 
         let mut events = mio::Events::with_capacity(1024);
-        let mut timeout = Duration::from_millis(16);
+        let mut next_refresh_needed = Instant::now();
+        let mut start = Instant::now();
+
         'run_loop: loop {
-            let start = Instant::now();
-            println!("starting poll. timeout: {:?}", timeout);
-            if poll.poll(&mut events, Some(timeout)).is_err() {
-                continue;
-            }
-            println!("done poll. took: {:?}", start.elapsed());
+            let time_to_wait = next_refresh_needed - Instant::now();
+            if time_to_wait >= Duration::from_millis(1) {
+                let _ = poll.poll(&mut events, Some(time_to_wait));
+            };
 
-            let mut windows_to_expose = HashSet::new();
-            {
-                let state = self.0.borrow_mut();
+            let mut state = self.0.borrow_mut();
+            // Check if we need to quit
+            if let Ok(Some(())) = state.quit_signal_rx.try_recv() {
+                return;
+            }
+            // Redraw windows
+            let now = Instant::now();
+
+            if now + Duration::from_millis(1) > next_refresh_needed {
+                print!(".");
+                if now > next_refresh_needed + Duration::from_millis(1) {
+                    println!("({:?} late)", now - next_refresh_needed);
+                }
+
+                // This will be pulled down to 16ms (or less) if a window is open
+                let mut frame_length = Duration::from_millis(100);
+
+                let mut windows = vec![];
                 for (x_window, window_ref) in state.windows.iter() {
-                    if window_ref.window.needs_refresh() {
-                        windows_to_expose.insert(*x_window);
-                        window_ref.window.set_refresh_queued(true);
-                    }
+                    frame_length = frame_length.min(window_ref.window.refresh_rate());
+                    windows.push(window_ref.window.clone());
                 }
+
+                drop(state);
+                for window in windows {
+                    window.refresh();
+                }
+                state = self.0.borrow_mut();
+
+                // In the case that we're looping a bit too fast, slow
+                next_refresh_needed = now.max(next_refresh_needed) + frame_length;
             }
-            // TODO: Do we even need to send the events?
-            let _ = self.send_window_expose_events(windows_to_expose).log_err();
 
-            for event in events.iter() {
-                match event.token() {
-                    XCB_CONNECTION_TOKEN => {
-                        self.consume_x11_events();
-                    }
-                    WAKER_TOKEN => {
-                        let mut state = self.0.borrow_mut();
+            drop(state);
 
-                        // Check if we need to quit
-                        if let Ok(Some(())) = state.quit_signal_rx.try_recv() {
-                            return;
-                        }
+            // X11 events
+            loop {
+                let (windows, events) = self.consume_x11_events();
+                for window in windows {
+                    // ignore for now.
+                }
 
-                        // Handle runnables
-                        {
-                            let now = Instant::now();
-                            while let Ok(runnable) = state.runnables.try_recv() {
-                                drop(state);
+                if events.len() == 0 {
+                    break;
+                }
+                self.handle_events(events);
 
-                                runnable.run();
-
-                                state = self.0.borrow_mut();
-
-                                if now.elapsed() >= Duration::from_millis(2) {
-                                    // We spent too much time on runnables, so we're going back to
-                                    // the top of the loop and see whether there aren't
-                                    // other events
-                                    state.waker.wake().ok();
-                                    continue 'run_loop;
-                                }
-                            }
-                        }
-
-                        // Handle XDG events
-                        {
-                            while let Ok(event) = state.xdp_event_source.try_recv() {
-                                drop(state);
-
-                                match event {
-                                    XDPEvent::WindowAppearance(appearance) => {
-                                        self.with_common(|common| common.appearance = appearance);
-                                        for (_, window) in &mut self.0.borrow_mut().windows {
-                                            window.window.set_appearance(appearance);
-                                        }
-                                    }
-                                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
-                                        // noop, X11 manages this for us.
-                                    }
-                                };
-
-                                state = self.0.borrow_mut();
-                            }
-                        }
-                    }
-                    _ => {}
+                // When X11 is sending us events faster than we can handle we'll
+                // stop running runnables, and let the frame rate drop to 10fps
+                // to try and avoid getting too behind.
+                if Instant::now() > next_refresh_needed + Duration::from_millis(80) {
+                    println!("X11 events: {:?}", Instant::now() - next_refresh_needed);
+                    continue 'run_loop;
                 }
             }
 
-            {
-                // // TODO: We can do this calculation when we call `refresh` and essentially calculate
-                // // when the next time is that we have to render. We can take that calculation from
-                // // the code that we had for X11.
-                // let now = Instant::now();
-                // let state = self.0.borrow_mut();
-                // let mut new_timeout = Duration::MAX;
-                // for (_, window_ref) in state.windows.iter() {
-                //     let last_refresh_at = window_ref.window.last_refresh_at();
-                //     let refresh_rate = window_ref.window.refresh_rate();
+            state = self.0.borrow_mut();
 
-                //     if window_ref.window.refresh_queued() {
-                //         // If we have a refresh queued, that means we're waiting
-                //         // for a response from X11, which we'll get on next `.poll()`
-                //         if refresh_rate < timeout {
-                //             new_timeout = refresh_rate;
-                //         }
-                //         continue;
-                //     }
+            // Runnables
+            loop {
+                if Instant::now() + Duration::from_millis(1) >= next_refresh_needed {
+                    continue 'run_loop;
+                }
 
-                //     if let Some(last_refresh_at) = last_refresh_at {
-                //         let next_refresh_at = last_refresh_at + refresh_rate;
+                let Ok(runnable) = state.runnables.try_recv() else {
+                    break;
+                };
+                drop(state);
+                runnable.run();
+                state = self.0.borrow_mut();
+            }
 
-                //         if next_refresh_at <= now {
-                //             println!(
-                //                 "we're lagging. setting timeout to ZERO. lag: {:?}",
-                //                 now - next_refresh_at
-                //             );
-                //             new_timeout = Duration::ZERO;
-                //             break;
-                //         } else if (next_refresh_at - now) < new_timeout {
-                //             println!("setting timeout to {:?}", next_refresh_at - now);
-                //             new_timeout = next_refresh_at - now;
-                //         }
-                //     }
-                // }
-                // timeout = new_timeout;
+            // XDG events
+            loop {
+                if Instant::now() + Duration::from_millis(1) >= next_refresh_needed {
+                    continue 'run_loop;
+                }
+
+                let Ok(event) = state.xdp_event_source.try_recv() else {
+                    break;
+                };
+
+                match event {
+                    XDPEvent::WindowAppearance(appearance) => {
+                        let mut windows = state
+                            .windows
+                            .values()
+                            .map(|window| window.window.clone())
+                            .collect::<Vec<_>>();
+                        drop(state);
+
+                        self.with_common(|common| common.appearance = appearance);
+                        for mut window in windows {
+                            window.set_appearance(appearance);
+                        }
+                        state = self.0.borrow_mut();
+                    }
+                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
+                        // noop, X11 manages this for us.
+                    }
+                };
             }
         }
     }
