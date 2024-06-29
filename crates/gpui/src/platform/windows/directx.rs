@@ -355,7 +355,7 @@ impl DirectXRenderer {
             // if next_offset > instance_buffer.size {
             //     return None;
             // }
-            let (texture, texture_size, rtv) = self.atlas.texture_info(texture_id);
+            let (texture_size, rtv) = self.atlas.texture_info(texture_id);
             let viewport = [D3D11_VIEWPORT {
                 TopLeftX: 0.0,
                 TopLeftY: 0.0,

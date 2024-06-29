@@ -48,16 +48,11 @@ impl DirectXAtlas {
     pub(crate) fn texture_info(
         &self,
         id: AtlasTextureId,
-    ) -> (
-        ID3D11Texture2D,
-        Size<f32>,
-        [Option<ID3D11RenderTargetView>; 1],
-    ) {
+    ) -> (Size<f32>, [Option<ID3D11RenderTargetView>; 1]) {
         let lock = self.0.lock();
         let tex = lock.texture(id);
         let size = tex.allocator.size();
         (
-            tex.texture.clone(),
             Size {
                 width: size.width as f32,
                 height: size.height as f32,
