@@ -320,10 +320,6 @@ impl TerminalBuilder {
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
     ) -> Result<TerminalBuilder> {
-        // TODO: Properly set the current locale,
-        env.entry("LC_ALL".to_string())
-            .or_insert_with(|| "en_US.UTF-8".to_string());
-
         env.insert("ZED_TERM".to_string(), "true".to_string());
 
         let pty_options = {
