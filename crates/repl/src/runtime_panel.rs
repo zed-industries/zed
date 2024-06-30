@@ -321,7 +321,7 @@ impl FocusableView for RuntimePanel {
 }
 
 impl Render for RuntimePanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         // let runtime_manager = self.runtime_manager.read(cx);
 
         v_flex()
@@ -335,7 +335,9 @@ impl Render for RuntimePanel {
             // )
             .child(Label::new("Runtime Sessions").size(LabelSize::Large))
             .children(
-                self.sessions.values().map(|session| session.clone().into_any_element()),
+                self.sessions
+                    .values()
+                    .map(|session| session.clone().into_any_element()),
             )
             .into_any_element()
     }
