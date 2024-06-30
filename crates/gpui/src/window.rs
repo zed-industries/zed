@@ -1262,7 +1262,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Sets the window background appearance.
-    pub fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+    pub fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         self.window
             .platform_window
             .set_background_appearance(background_appearance);

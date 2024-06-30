@@ -511,7 +511,7 @@ impl PlatformWindow for WindowsWindow {
             .ok();
     }
 
-    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+    fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         self.0
             .state
             .borrow_mut()
