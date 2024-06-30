@@ -193,9 +193,11 @@ impl DirectXRenderer {
         if shadows.is_empty() {
             return true;
         }
-        self.draw_normal(
+        draw_normal(
+            &self.context.context,
             &self.render.shadow_pipeline,
             &self.context.viewport,
+            &self.render.global_params_buffer,
             shadows,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
@@ -209,9 +211,11 @@ impl DirectXRenderer {
         if quads.is_empty() {
             return true;
         }
-        self.draw_normal(
+        draw_normal(
+            &self.context.context,
             &self.render.quad_pipeline,
             &self.context.viewport,
+            &self.render.global_params_buffer,
             quads,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
@@ -277,9 +281,11 @@ impl DirectXRenderer {
                 0,
             )
             .unwrap();
-            self.draw_normal(
+            draw_normal(
+                &self.context.context,
                 &self.render.path_raster_pipeline,
                 &viewport,
+                &self.render.global_params_buffer,
                 &vertices,
                 D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
                 vertices.len() as u32,
@@ -312,8 +318,16 @@ impl DirectXRenderer {
                 tile: (*tile).clone(),
             }];
 
-            self.draw_with_texture(&self.render.paths_pipeline, &texture, &sprites)
-                .unwrap();
+            draw_with_texture(
+                &self.context.context,
+                &self.render.paths_pipeline,
+                &texture,
+                &sprites,
+                &self.context.viewport,
+                &self.render.global_params_buffer,
+                &self.render.sampler,
+            )
+            .unwrap();
         }
         true
     }
@@ -322,9 +336,11 @@ impl DirectXRenderer {
         if underlines.is_empty() {
             return true;
         }
-        self.draw_normal(
+        draw_normal(
+            &self.context.context,
             &self.render.underline_pipeline,
             &self.context.viewport,
+            &self.render.global_params_buffer,
             underlines,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
@@ -344,8 +360,16 @@ impl DirectXRenderer {
             return true;
         }
         let (_, _, texture) = self.atlas.texture_info(texture_id);
-        self.draw_with_texture(&self.render.mono_sprites, &texture, sprites)
-            .unwrap();
+        draw_with_texture(
+            &self.context.context,
+            &self.render.mono_sprites,
+            &texture,
+            sprites,
+            &self.context.viewport,
+            &self.render.global_params_buffer,
+            &self.render.sampler,
+        )
+        .unwrap();
         true
     }
 
@@ -358,8 +382,16 @@ impl DirectXRenderer {
             return true;
         }
         let (_, _, texture) = self.atlas.texture_info(texture_id);
-        self.draw_with_texture(&self.render.poly_sprites, &texture, sprites)
-            .unwrap();
+        draw_with_texture(
+            &self.context.context,
+            &self.render.poly_sprites,
+            &texture,
+            sprites,
+            &self.context.viewport,
+            &self.render.global_params_buffer,
+            &self.render.sampler,
+        )
+        .unwrap();
         true
     }
 
@@ -407,95 +439,6 @@ impl DirectXRenderer {
                 .Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut data))?;
             std::ptr::copy_nonoverlapping(&globals, data.pData as *mut _, 1);
             self.context.context.Unmap(buffer, 0);
-        }
-        Ok(())
-    }
-
-    fn update_buffer<T>(&self, buffer: &ID3D11Buffer, data: &[T]) -> Result<()> {
-        unsafe {
-            let mut dest = std::mem::zeroed();
-            self.context
-                .context
-                .Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
-            std::ptr::copy_nonoverlapping(data.as_ptr(), dest.pData as _, data.len());
-            self.context.context.Unmap(buffer, 0);
-        }
-        Ok(())
-    }
-
-    fn draw_normal<T>(
-        &self,
-        pipeline: &PipelineState,
-        viewport: &[D3D11_VIEWPORT],
-        data: &[T],
-        topology: D3D_PRIMITIVE_TOPOLOGY,
-        vertex_count: u32,
-        instance_count: u32,
-    ) -> Result<()> {
-        self.update_buffer(&pipeline.buffer, data)?;
-        unsafe {
-            self.context
-                .context
-                .VSSetShaderResources(1, Some(&pipeline.view));
-            self.context
-                .context
-                .PSSetShaderResources(1, Some(&pipeline.view));
-
-            self.context.context.IASetPrimitiveTopology(topology);
-            self.context.context.RSSetViewports(Some(viewport));
-            self.context.context.VSSetShader(&pipeline.vertex, None);
-            self.context.context.PSSetShader(&pipeline.fragment, None);
-            self.context
-                .context
-                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            self.context
-                .context
-                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-
-            self.context
-                .context
-                .DrawInstanced(vertex_count, instance_count, 0, 0);
-        }
-        Ok(())
-    }
-
-    fn draw_with_texture<T>(
-        &self,
-        pipeline: &PipelineState,
-        texture: &[Option<ID3D11ShaderResourceView>],
-        data: &[T],
-    ) -> Result<()> {
-        self.update_buffer(&self.render.paths_pipeline.buffer, data)?;
-        unsafe {
-            self.context
-                .context
-                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            self.context
-                .context
-                .RSSetViewports(Some(&self.context.viewport));
-            self.context.context.VSSetShader(&pipeline.vertex, None);
-            self.context.context.PSSetShader(&pipeline.fragment, None);
-            self.context
-                .context
-                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            self.context
-                .context
-                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            self.context
-                .context
-                .VSSetShaderResources(1, Some(&pipeline.view));
-            self.context
-                .context
-                .PSSetShaderResources(1, Some(&pipeline.view));
-            self.context
-                .context
-                .PSSetSamplers(0, Some(&self.render.sampler));
-            self.context.context.VSSetShaderResources(0, Some(texture));
-            self.context.context.PSSetShaderResources(0, Some(texture));
-
-            self.context
-                .context
-                .DrawInstanced(4, data.len() as u32, 0, 0);
         }
         Ok(())
     }
@@ -938,6 +881,74 @@ fn create_pipieline<T>(
         buffer,
         view,
     })
+}
+
+fn update_buffer<T>(
+    device_context: &ID3D11DeviceContext,
+    buffer: &ID3D11Buffer,
+    data: &[T],
+) -> Result<()> {
+    unsafe {
+        let mut dest = std::mem::zeroed();
+        device_context.Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
+        std::ptr::copy_nonoverlapping(data.as_ptr(), dest.pData as _, data.len());
+        device_context.Unmap(buffer, 0);
+    }
+    Ok(())
+}
+
+fn draw_normal<T>(
+    device_context: &ID3D11DeviceContext,
+    pipeline: &PipelineState,
+    viewport: &[D3D11_VIEWPORT],
+    global_params: &[Option<ID3D11Buffer>],
+    data: &[T],
+    topology: D3D_PRIMITIVE_TOPOLOGY,
+    vertex_count: u32,
+    instance_count: u32,
+) -> Result<()> {
+    update_buffer(device_context, &pipeline.buffer, data)?;
+    unsafe {
+        device_context.VSSetShaderResources(1, Some(&pipeline.view));
+        device_context.PSSetShaderResources(1, Some(&pipeline.view));
+        device_context.IASetPrimitiveTopology(topology);
+        device_context.RSSetViewports(Some(viewport));
+        device_context.VSSetShader(&pipeline.vertex, None);
+        device_context.PSSetShader(&pipeline.fragment, None);
+        device_context.VSSetConstantBuffers(0, Some(global_params));
+        device_context.PSSetConstantBuffers(0, Some(global_params));
+
+        device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
+    }
+    Ok(())
+}
+
+fn draw_with_texture<T>(
+    device_context: &ID3D11DeviceContext,
+    pipeline: &PipelineState,
+    texture: &[Option<ID3D11ShaderResourceView>],
+    data: &[T],
+    viewport: &[D3D11_VIEWPORT],
+    global_params: &[Option<ID3D11Buffer>],
+    sampler: &[Option<ID3D11SamplerState>],
+) -> Result<()> {
+    update_buffer(device_context, &pipeline.buffer, data)?;
+    unsafe {
+        device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        device_context.RSSetViewports(Some(viewport));
+        device_context.VSSetShader(&pipeline.vertex, None);
+        device_context.PSSetShader(&pipeline.fragment, None);
+        device_context.VSSetConstantBuffers(0, Some(global_params));
+        device_context.PSSetConstantBuffers(0, Some(global_params));
+        device_context.VSSetShaderResources(1, Some(&pipeline.view));
+        device_context.PSSetShaderResources(1, Some(&pipeline.view));
+        device_context.PSSetSamplers(0, Some(sampler));
+        device_context.VSSetShaderResources(0, Some(texture));
+        device_context.PSSetShaderResources(0, Some(texture));
+
+        device_context.DrawInstanced(4, data.len() as u32, 0, 0);
+    }
+    Ok(())
 }
 
 const BUFFER_COUNT: usize = 3;
