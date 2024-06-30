@@ -206,6 +206,9 @@ impl Miner {
         Ok(miner)
     }
 
+    /// Summarizes a project by processing files and directories, generating summaries,
+    /// and storing them in a database. This method coordinates the entire summarization
+    /// process, including worker thread management and progress tracking.
     pub async fn summarize_project(self: &Arc<Self>) -> Result<()> {
         println!("Starting project summarization");
         // Populate the queue with files and directories
@@ -300,6 +303,9 @@ impl Miner {
         Ok(())
     }
 
+    /// Processes entries from the queue, handling files, directories, chunks,
+    /// and Rust symbols. This method runs in a loop until the queue is empty,
+    /// coordinating the summarization of project components.
     async fn worker(self: &Arc<Self>) -> Result<()> {
         loop {
             let entry = {
@@ -350,6 +356,9 @@ impl Miner {
         Ok(())
     }
 
+    /// Processes a directory by summarizing its contents and combining summaries.
+    /// If any entries are not yet summarized, it re-enqueues the directory for later processing.
+    /// The combined summary is stored in the database upon completion.
     async fn process_directory(&self, path: PathBuf, contents: Vec<PathBuf>) -> Result<()> {
         println!("Processing directory: {:?}", path);
 
@@ -402,14 +411,34 @@ impl Miner {
         Ok(())
     }
 
+    /// Combines multiple summaries into a single summary.
+    ///
+    /// This method takes a slice of summary strings and combines them into a single
+    /// coherent summary. Currently, it uses a simple concatenation approach, but
+    /// future implementations may use more sophisticated techniques, such as
+    /// leveraging an AI model to generate a summary of summaries.
+    ///
+    /// # Arguments
+    ///
+    /// * `summaries` - A slice of strings, each representing a summary to be combined.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the combined summary as a `String`, or an error
+    /// if the combination process fails.
     async fn combine_summaries(&self, summaries: &[String]) -> Result<String> {
+        // todo!
         // Implement the logic to combine summaries
         // This could involve using the AI model to generate a summary of summaries
         // For now, let's just concatenate them with a simple separator
-        // todo!
         Ok(summaries.join("\n---\n"))
     }
 
+    /// Scans a file, processes its content, and generates a summary.
+    ///
+    /// This method handles file processing by either parsing Rust symbols,
+    /// splitting the file into chunks, or summarizing it directly based on its size.
+    /// It also manages caching of summaries and updates progress indicators.
     async fn scan_file(&self, path: PathBuf, content: String) -> Result<()> {
         println!("Scanning file: {:?}", path);
 
@@ -518,6 +547,11 @@ impl Miner {
         Ok(())
     }
 
+    /// Parses Rust symbols from a file's content and enqueues them for processing.
+    ///
+    /// This method uses the tree-sitter parser to extract Rust symbols from the file content,
+    /// and then enqueues each symbol for further processing. It also updates the progress
+    /// indicators for the file and overall project.
     async fn parse_and_enqueue_rust_symbols(&self, path: PathBuf, content: &str) -> Result<()> {
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&tree_sitter_rust::language())?;
@@ -569,6 +603,11 @@ impl Miner {
         Ok(())
     }
 
+    /// Processes a chunk of a file, generating a summary and updating progress indicators.
+    ///
+    /// This method handles the summarization of a single chunk from a file, updates the database
+    /// with the chunk's summary, and manages progress tracking for both the individual file
+    /// and the overall project summarization process.
     async fn process_chunk(&self, path: PathBuf, content: String, index: usize) -> Result<()> {
         let chunk_id = (path.clone(), index);
 
@@ -636,6 +675,11 @@ impl Miner {
         Ok(())
     }
 
+    /// Splits the given content into chunks and enqueues them for processing.
+    ///
+    /// This method takes the content of a file, splits it into manageable chunks,
+    /// and enqueues each chunk for further processing. It also updates the progress
+    /// indicators for both the individual file and the overall project summarization.
     async fn split_and_enqueue_chunks(&self, path: PathBuf, content: String) -> Result<usize> {
         let chunks = self.split_into_chunks(&content);
         let chunk_count = chunks.len();
@@ -663,6 +707,11 @@ impl Miner {
         Ok(chunk_count)
     }
 
+    /// Processes a Rust symbol, generating a summary and updating progress indicators.
+    ///
+    /// This method handles the summarization of a single Rust symbol, updates the database
+    /// with the symbol's summary, and manages progress tracking for both the individual file
+    /// and the overall project summarization process.
     async fn process_rust_symbol(
         &self,
         path: PathBuf,
@@ -727,7 +776,12 @@ impl Miner {
         Ok(())
     }
 
+    /// Summarizes a Rust symbol by generating a brief description of its functionality and purpose.
+    ///
+    /// This method uses the AI model to create a concise summary of the given Rust symbol,
+    /// focusing on its main functionality and purpose.
     async fn summarize_rust_symbol(&self, name: &str, content: &str) -> Result<String> {
+        // todo! Add context from the surrounding file as well.
         let messages = vec![Message {
             role: "user".to_string(),
             content: format!(
@@ -759,6 +813,7 @@ impl Miner {
             .len()
     }
 
+    /// Summarizes the content of a file, generating a brief description of its functionality and purpose.
     async fn summarize_file(&self, path: &Path, content: &str) -> Result<String> {
         let messages = vec![Message {
             role: "user".to_string(),
@@ -784,6 +839,11 @@ impl Miner {
         Ok(summary)
     }
 
+    /// Splits the given content into chunks of roughly equal size based on token count.
+    ///
+    /// This method tokenizes the input content and creates chunks that do not exceed
+    /// the specified CHUNK_SIZE. It attempts to maintain line integrity where possible,
+    /// but will truncate lines if necessary to fit within the chunk size limit.
     fn split_into_chunks(&self, content: &str) -> Vec<String> {
         let mut chunks = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
@@ -825,6 +885,7 @@ impl Miner {
         chunks
     }
 
+    /// Retrieves the summary for a given file path from the database or in-memory cache.
     async fn summary_for_path(&self, path: &Path) -> Result<Option<String>> {
         let key = format!("path:{}", path.to_string_lossy());
         let cached_summary = self
@@ -847,6 +908,9 @@ impl Miner {
         let _ = self.progress_sender.send(());
     }
 
+    /// Updates the progress indicators for file processing, chunk processing,
+    /// and Rust symbol processing. This method is called periodically to reflect
+    /// the current state of the summarization process.
     async fn do_update_progress(&self) {
         let (completed_files, total_files) = {
             let map = self.file_progress_map.lock().await;
@@ -889,6 +953,11 @@ impl Miner {
         ));
     }
 
+    /// Exports the contents of the database to stdout in JSON format.
+    ///
+    /// This method iterates through all entries in the database and prints
+    /// them as formatted JSON objects, including type, path, summary, and
+    /// modification time information for each entry.
     pub async fn export_database(&self) -> Result<()> {
         self.database
             .transact(|db, txn| {
