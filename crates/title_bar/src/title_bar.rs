@@ -8,9 +8,9 @@ use call::{ActiveCall, ParticipantLocation};
 use client::{Client, UserStore};
 use collab::render_color_ribbon;
 use gpui::{
-    actions, div, px, Action, AnyElement, AppContext, Element, InteractiveElement, Interactivity,
-    IntoElement, Model, ParentElement, Render, Stateful, StatefulInteractiveElement, Styled,
-    Subscription, ViewContext, VisualContext, WeakView,
+    actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
+    Interactivity, IntoElement, Model, ParentElement, Render, Stateful, StatefulInteractiveElement,
+    Styled, Subscription, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
@@ -71,7 +71,8 @@ impl Render for TitleBar {
 
         let platform_supported = cfg!(target_os = "macos");
         let height = Self::height(cx);
-
+        let supported_controls = cx.window_controls();
+        let decorations = cx.window_decorations();
         h_flex()
             .id("titlebar")
             .w_full()
@@ -379,18 +380,23 @@ impl Render for TitleBar {
             .when(
                 self.platform_style == PlatformStyle::Linux
                     && !cx.is_fullscreen()
-                    && cx.should_render_window_controls(),
+                    && matches!(decorations, Decorations::Client { .. }),
                 |title_bar| {
                     title_bar
                         .child(platform_linux::LinuxWindowControls::new(height, close_action))
-                        .on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
-                            cx.show_window_menu(ev.position)
+
+                        .when(supported_controls.window_menu, |div| {
+                            div.on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
+                                cx.show_window_menu(ev.position)
+                            })
+
                         })
-                        .on_mouse_move(move |ev, cx| {
-                            if ev.dragging() {
-                                cx.start_system_move();
-                            }
-                        })
+                        .on_mouse_down(gpui::MouseButton::Left, move |_ev, cx| {
+                            cx.start_window_move();
+                    })
+
+
+
                 },
             )
     }

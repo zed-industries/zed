@@ -188,7 +188,7 @@ impl PlatformWindow for TestWindow {
 
     fn set_app_id(&mut self, _app_id: &str) {}
 
-    fn set_background_appearance(&mut self, _background: WindowBackgroundAppearance) {
+    fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {
         unimplemented!()
     }
 

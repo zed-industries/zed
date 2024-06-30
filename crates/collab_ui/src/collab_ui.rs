@@ -9,13 +9,8 @@ use std::{rc::Rc, sync::Arc};
 
 pub use collab_panel::CollabPanel;
 use gpui::{
-<<<<<<< HEAD
     point, AppContext, Pixels, PlatformDisplay, Size, WindowBackgroundAppearance, WindowBounds,
-    WindowKind, WindowOptions,
-=======
-    actions, point, AppContext, Pixels, PlatformDisplay, Size, Task, WindowBackgroundAppearance,
-    WindowBounds, WindowContext, WindowDecorations, WindowKind, WindowOptions,
->>>>>>> ded63f70b (clippy)
+    WindowDecorations, WindowKind, WindowOptions,
 };
 use panel_settings::MessageEditorSettings;
 pub use panel_settings::{

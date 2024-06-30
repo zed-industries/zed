@@ -211,7 +211,7 @@ impl Debug for DisplayId {
 unsafe impl Send for DisplayId {}
 
 /// Which part of the window to resize
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResizeEdge {
     /// The top edge
     Top,
@@ -341,7 +341,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn start_window_move(&self) {}
     fn start_window_resize(&self, _edge: ResizeEdge) {}
     fn window_decorations(&self) -> Decorations {
-        Decorations::default()
+        Decorations::Server
     }
     fn set_app_id(&mut self, _app_id: &str) {}
     fn window_controls(&self) -> WindowControls {
