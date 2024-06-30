@@ -44,9 +44,9 @@ use windows::{
                 },
                 CreateDXGIFactory2, IDXGIAdapter1, IDXGIDevice, IDXGIFactory6, IDXGISwapChain1,
                 DXGI_CREATE_FACTORY_DEBUG, DXGI_GPU_PREFERENCE_MINIMUM_POWER,
-                DXGI_MWA_NO_ALT_ENTER, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1,
-                DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-                DXGI_USAGE_RENDER_TARGET_OUTPUT,
+                DXGI_MWA_NO_ALT_ENTER, DXGI_SCALING_ASPECT_RATIO_STRETCH, DXGI_SCALING_NONE,
+                DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_DISCARD,
+                DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
             },
         },
         UI::WindowsAndMessaging::GetClientRect,
@@ -1233,8 +1233,7 @@ fn create_swap_chain_default(
         },
         BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
         BufferCount: BUFFER_COUNT as u32,
-        // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
-        Scaling: DXGI_SCALING_STRETCH,
+        Scaling: DXGI_SCALING_NONE,
         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
         // Premultiplied alpha is the only supported format by composition swapchain.
         // AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
