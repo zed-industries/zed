@@ -62,9 +62,9 @@ struct DirectXContext {
     swap_chain: IDXGISwapChain1,
     back_buffer: [Option<ID3D11RenderTargetView>; 1],
     viewport: [D3D11_VIEWPORT; 1],
-    comp_device: IDCompositionDevice,
-    comp_target: IDCompositionTarget,
-    comp_visual: IDCompositionVisual,
+    // comp_device: IDCompositionDevice,
+    // comp_target: IDCompositionTarget,
+    // comp_visual: IDCompositionVisual,
 }
 
 struct DirectXRenderContext {
@@ -110,8 +110,8 @@ impl DirectXRenderer {
             &self.render.global_params_buffer,
             &self.context.viewport,
             &self.context.back_buffer,
-            [0.0, 0.0, 0.0, 0.0],
-            // [0.0, 0.0, 0.0, 1.0],
+            // [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
             &self.render.blend_state,
             1,
         )
@@ -421,15 +421,15 @@ impl DirectXContext {
             (device.unwrap(), context.unwrap())
         };
         let dxgi_device: IDXGIDevice = device.cast().unwrap();
-        let comp_device = get_comp_device(&dxgi_device)?;
-        let swap_chain = create_swap_chain(&dxgi_factory, &device)?;
-        // let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd)?;
-        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        let comp_visual = unsafe { comp_device.CreateVisual() }?;
+        // let comp_device = get_comp_device(&dxgi_device)?;
+        // let swap_chain = create_swap_chain(&dxgi_factory, &device)?;
+        let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd)?;
+        // let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        // let comp_visual = unsafe { comp_device.CreateVisual() }?;
         unsafe {
-            comp_visual.SetContent(&swap_chain)?;
-            comp_target.SetRoot(&comp_visual)?;
-            comp_device.Commit()?;
+            // comp_visual.SetContent(&swap_chain)?;
+            // comp_target.SetRoot(&comp_visual)?;
+            // comp_device.Commit()?;
             dxgi_factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER)?;
         }
         let back_buffer = [Some(set_render_target_view(
@@ -447,9 +447,9 @@ impl DirectXContext {
             swap_chain,
             back_buffer,
             viewport,
-            comp_device,
-            comp_target,
-            comp_visual,
+            // comp_device,
+            // comp_target,
+            // comp_visual,
         })
     }
 }
