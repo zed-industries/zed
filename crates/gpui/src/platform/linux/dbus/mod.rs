@@ -1,4 +1,4 @@
 #[allow(dead_code)]
-mod dbusmenu;
+pub mod dbusmenu;
 #[allow(dead_code)]
-mod status_notifier;
+pub mod status_notifier;

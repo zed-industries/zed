@@ -25,6 +25,8 @@ use ashpd::{url, ActivationToken};
 use async_task::Runnable;
 use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
+use collections::{HashMap, VecDeque};
+use copypasta::ClipboardProvider;
 use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
@@ -41,9 +43,13 @@ use crate::{
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
     OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler,
     PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, SharedString,
-    Size, Task, WindowAppearance, WindowOptions, WindowParams,
+    Size, Task, TrayIcon, TrayItem, TrayMenuItem, TrayToggleType, WindowAppearance, WindowOptions,
+    WindowParams,
 };
 
+use super::dbus;
+use super::dbus::dbusmenu::{DBusMenu, DBusMenuItem};
+use super::dbus::status_notifier::{StatusNotifierItem, StatusNotifierItemOptions, ToolTip};
 use super::x11::X11Client;
 
 pub(crate) const SCROLL_LINES: f64 = 3.0;
@@ -60,6 +66,8 @@ pub trait LinuxClient {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
+
+    fn set_tray_item(&self, item: Arc<StatusNotifierItem>);
 
     fn open_window(
         &self,
@@ -83,6 +91,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) quit: Option<Box<dyn FnMut()>>,
     pub(crate) reopen: Option<Box<dyn FnMut()>>,
     pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
+    pub(crate) tray_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
@@ -95,6 +104,8 @@ pub(crate) struct LinuxCommon {
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
+    pub(crate) tray_item: Option<Arc<StatusNotifierItem>>,
+    pub(crate) tray_actions: HashMap<String, Box<dyn Action>>,
     pub(crate) menus: Vec<OwnedMenu>,
 }
 
@@ -116,10 +127,60 @@ impl LinuxCommon {
             auto_hide_scrollbars: false,
             callbacks,
             signal,
+            tray_item: None,
+            tray_actions: HashMap::default(),
             menus: Vec::new(),
         };
 
         (common, main_receiver)
+    }
+
+    fn to_dbusmenu(&mut self, value: TrayMenuItem) -> DBusMenuItem {
+        match value {
+            TrayMenuItem::Separator { id, label } => {
+                let mut this = DBusMenuItem::new(id);
+                this.set_type(dbus::dbusmenu::MenuType::Separator);
+                if let Some(label) = label {
+                    this.set_label(label);
+                }
+                this
+            }
+            TrayMenuItem::Submenu {
+                id,
+                label,
+                icon,
+                toggle_type,
+                on_click,
+                children,
+            } => {
+                let mut this = DBusMenuItem::new(id);
+                this.set_label(label);
+                if let Some(TrayIcon::Name(name)) = icon {
+                    this.set_icon(dbus::dbusmenu::Icon::Name(name.to_owned()));
+                }
+                if let Some(toggle_type) = toggle_type {
+                    match toggle_type {
+                        TrayToggleType::Checkbox(state) => {
+                            this.set_toggle_type(dbus::dbusmenu::MenuToggleType::Checkmark);
+                            this.set_toggle_state(state as i32);
+                        }
+                        TrayToggleType::Radio(state) => {
+                            this.set_toggle_type(dbus::dbusmenu::MenuToggleType::Radio);
+                            this.set_toggle_state(state as i32);
+                        }
+                    }
+                }
+                if let Some(action) = on_click {
+                    self.tray_actions.insert(id.to_string(), action);
+                }
+                let mut submenus = Vec::default();
+                for child in children {
+                    submenus.push(self.to_dbusmenu(child));
+                }
+                this.set_children(submenus);
+                this
+            }
+        }
     }
 }
 
@@ -366,10 +427,48 @@ impl<P: LinuxClient + 'static> Platform for P {
         });
     }
 
+    fn on_tray_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+        self.with_common(|common| {
+            common.callbacks.tray_menu_action = Some(callback);
+        });
+    }
+
     fn app_path(&self) -> Result<PathBuf> {
         // get the path of the executable of the current process
         let exe_path = std::env::current_exe()?;
         Ok(exe_path)
+    }
+
+    fn set_tray_item(&self, item: TrayItem) {
+        let mut tray_item: Option<Arc<StatusNotifierItem>> = None;
+        self.with_common(|common| {
+            let icon = match item.icon {
+                TrayIcon::Name(name) => dbus::dbusmenu::Icon::Name(name.to_owned()),
+            };
+            let options = StatusNotifierItemOptions::new()
+                .title(item.title.clone())
+                .icon(icon)
+                .tooltip(
+                    ToolTip::new()
+                        .title(item.title)
+                        .description(item.description),
+                );
+
+            let mut menu = DBusMenu::new();
+            for submenu in item.submenus {
+                menu = menu.submenu(common.to_dbusmenu(submenu));
+            }
+            common.background_executor.block(async {
+                if let Ok(item) = StatusNotifierItem::new(1, options, Some(menu)).await {
+                    let item = Arc::new(item);
+                    common.tray_item = Some(item.clone());
+                    tray_item = Some(item);
+                }
+            });
+        });
+        if let Some(item) = tray_item {
+            self.set_tray_item(item);
+        }
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {

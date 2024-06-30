@@ -242,6 +242,8 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
+    fn set_tray_item(&self, _item: crate::TrayItem) {}
+
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
     fn set_dock_menu(&self, _menu: Vec<crate::MenuItem>, _keymap: &Keymap) {}
 

@@ -1029,7 +1029,11 @@ impl LinuxClient for X11Client {
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
     }
-
+    fn set_tray_item(
+        &self,
+        item: std::sync::Arc<crate::platform::linux::dbus::status_notifier::StatusNotifierItem>,
+    ) {
+    }
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
         let setup = state.xcb_connection.setup();
