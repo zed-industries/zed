@@ -17,6 +17,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use ui::{Color, Indicator};
 
 #[derive(Debug, Clone)]
 pub struct RuntimeSpecification {
@@ -82,9 +83,24 @@ pub enum Kernel {
     RunningKernel(RunningKernel),
     StartingKernel(Shared<Task<()>>),
     ErroredLaunch(String),
+    ShuttingDown,
+    Shutdown,
 }
 
 impl Kernel {
+    pub fn dot(&mut self) -> Indicator {
+        match self {
+            Kernel::RunningKernel(kernel) => match kernel.execution_state {
+                ExecutionState::Idle => Indicator::dot().color(Color::Success),
+                ExecutionState::Busy => Indicator::dot().color(Color::Modified),
+            },
+            Kernel::StartingKernel(_) => Indicator::dot().color(Color::Modified),
+            Kernel::ErroredLaunch(_) => Indicator::dot().color(Color::Error),
+            Kernel::ShuttingDown => Indicator::dot().color(Color::Modified),
+            Kernel::Shutdown => Indicator::dot().color(Color::Disabled),
+        }
+    }
+
     pub fn set_execution_state(&mut self, status: &ExecutionState) {
         match self {
             Kernel::RunningKernel(running_kernel) => {
@@ -93,7 +109,7 @@ impl Kernel {
             Kernel::StartingKernel(_task) => {
                 //
             }
-            Kernel::ErroredLaunch(_) => {}
+            _ => {}
         }
     }
 
@@ -102,8 +118,7 @@ impl Kernel {
             Kernel::RunningKernel(running_kernel) => {
                 running_kernel.kernel_info = Some(kernel_info.clone());
             }
-            Kernel::StartingKernel(_) => {}
-            Kernel::ErroredLaunch(_) => {}
+            _ => {}
         }
     }
 }

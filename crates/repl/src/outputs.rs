@@ -309,6 +309,8 @@ pub enum ExecutionStatus {
     ConnectingToKernel,
     Executing,
     Finished,
+    ShuttingDown,
+    Shutdown,
 }
 
 pub struct ExecutionView {
@@ -452,6 +454,12 @@ impl Render for ExecutionView {
                     return div().child(Icon::new(IconName::Check)).into_any_element()
                 }
                 ExecutionStatus::Unknown => return div().child("...").into_any_element(),
+                ExecutionStatus::ShuttingDown => {
+                    return div().child("Kernel shutting down...").into_any_element()
+                }
+                ExecutionStatus::Shutdown => {
+                    return div().child("Kernel shutdown").into_any_element()
+                }
             }
         }
 
