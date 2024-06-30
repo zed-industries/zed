@@ -8,16 +8,21 @@ mod ollama;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use fs::{Fs, RealFs};
+use futures::{stream, Stream, StreamExt};
+use git::GitHostingProviderRegistry;
 use heed::{
     types::{SerdeJson, Str},
     Database as HeedDatabase, EnvOpenOptions, RwTxn,
 };
 use huggingface::HuggingFaceClient;
+use ignore::gitignore::GitignoreBuilder;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
+    pin::Pin,
     sync::{atomic::AtomicUsize, Arc},
     time::SystemTime,
 };
@@ -73,7 +78,11 @@ async fn main() -> Result<()> {
     println!("Using database at: {}", db_path.display());
     println!("Number of workers: {}", cli.num_workers);
 
-    let miner = Miner::new(db_path, project_path.to_path_buf(), cli.num_workers).await?;
+    let fs = Arc::new(RealFs::new(
+        Arc::new(GitHostingProviderRegistry::new()),
+        None,
+    )) as Arc<dyn Fs>;
+    let miner = Miner::new(db_path, project_path.to_path_buf(), cli.num_workers, fs).await?;
 
     if cli.export {
         miner.export_database().await?;
@@ -118,10 +127,16 @@ pub struct Miner {
     total_symbols: Arc<AtomicUsize>,
     processed_chunks: Arc<Mutex<HashMap<(PathBuf, usize), bool>>>,
     processed_files: Arc<Mutex<HashSet<PathBuf>>>,
+    fs: Arc<dyn Fs>,
 }
 
 impl Miner {
-    pub async fn new(db_path: PathBuf, root: PathBuf, num_workers: usize) -> Result<Arc<Self>> {
+    pub async fn new(
+        db_path: PathBuf,
+        root: PathBuf,
+        num_workers: usize,
+        fs: Arc<dyn Fs>,
+    ) -> Result<Arc<Self>> {
         let database = Database::new(&db_path, &root).await?;
 
         let tokenizer = Tokenizer::from_pretrained(
@@ -200,6 +215,7 @@ impl Miner {
             total_symbols,
             processed_chunks,
             processed_files: Arc::new(Mutex::new(HashSet::new())),
+            fs,
         });
 
         let miner_clone = Arc::clone(&miner);
@@ -218,38 +234,36 @@ impl Miner {
     pub async fn summarize_project(self: &Arc<Self>) -> Result<()> {
         println!("Starting project summarization");
         // Populate the queue with files and directories
-        let mut walker = ignore::WalkBuilder::new(&self.root)
-            .hidden(true)
-            .ignore(true)
-            .build();
-        while let Some(entry) = walker.next() {
-            if let Ok(entry) = entry {
-                let path = entry.path().to_owned();
-                if entry.file_type().map_or(false, |ft| ft.is_dir()) {
-                    println!("Enqueueing directory: {:?}", path);
-                    let mut contents = Vec::new();
-                    if let Ok(read_dir) = std::fs::read_dir(&path) {
-                        for entry in read_dir.filter_map(Result::ok) {
-                            contents.push(entry.path());
-                        }
-                    }
-                    self.queue
-                        .lock()
-                        .await
-                        .push_back(Entry::Directory(path.clone(), contents));
-                } else {
-                    println!("Enqueueing file: {:?}", path);
-                    self.queue.lock().await.push_back(Entry::File(path.clone()));
+        let mut entries = self.walk_directory(&self.root).await?;
+
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            let path = entry.path.clone();
+
+            if entry.metadata.is_dir {
+                println!("Enqueueing directory: {:?}", path);
+                let mut contents = Vec::new();
+                let mut read_dir = self.fs.read_dir(&path).await?;
+                while let Some(child_entry) = read_dir.next().await {
+                    contents.push(child_entry?);
                 }
-                self.file_progress_map.lock().await.insert(
-                    path,
-                    FileProgress {
-                        outstanding_chunks: 0,
-                        outstanding_symbols: 0,
-                        is_complete: false,
-                    },
-                );
+                self.queue
+                    .lock()
+                    .await
+                    .push_back(Entry::Directory(path.clone(), contents));
+            } else {
+                println!("Enqueueing file: {:?}", path);
+                self.queue.lock().await.push_back(Entry::File(path.clone()));
             }
+
+            self.file_progress_map.lock().await.insert(
+                path,
+                FileProgress {
+                    outstanding_chunks: 0,
+                    outstanding_symbols: 0,
+                    is_complete: false,
+                },
+            );
         }
 
         self.update_progress();
@@ -277,18 +291,28 @@ impl Miner {
 
         // Remove deleted entries from the database
         println!("Removing deleted entries from the database");
+        // Read all paths from the database
+        let paths: Vec<PathBuf> = self
+            .database
+            .transact(|db, txn| {
+                db.iter(&txn)?
+                    .map(|item| Ok(PathBuf::from(item?.0)))
+                    .collect()
+            })
+            .await?;
+
+        // Filter paths that no longer exist
+        let mut paths_to_delete = Vec::new();
+        for path in paths {
+            if !self.fs.is_file(&path).await && !self.fs.is_dir(&path).await {
+                println!("Marking for deletion: {:?}", path);
+                paths_to_delete.push(path);
+            }
+        }
+
+        // Delete filtered paths from the database
         self.database
             .transact(|db, mut txn| {
-                let mut paths_to_delete = Vec::new();
-                for item in db.iter(&txn)? {
-                    let (path, _) = item?;
-                    let path = PathBuf::from(path);
-                    if !path.exists() {
-                        println!("Marking for deletion: {:?}", path);
-                        paths_to_delete.push(path);
-                    }
-                }
-
                 for path in paths_to_delete {
                     println!("Deleting from database: {:?}", path);
                     db.delete(&mut txn, &path.to_string_lossy())?;
@@ -307,6 +331,62 @@ impl Miner {
             .finish_with_message("Project summarization finished");
         println!("Project summarization completed successfully");
         Ok(())
+    }
+
+    async fn walk_directory(
+        &self,
+        root: &Path,
+    ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<DirEntry>>>>> {
+        let gitignore = self.build_gitignore(root).await?;
+        let fs = self.fs.clone();
+        let root = root.to_owned();
+
+        let stream = stream::unfold(
+            (vec![root.clone()], fs, gitignore),
+            move |(mut stack, fs, gitignore)| {
+                let root = root.clone();
+                async move {
+                    while let Some(path) = stack.pop() {
+                        match fs.metadata(&path).await {
+                            Ok(Some(metadata)) => {
+                                let relative_path = path.strip_prefix(&root).unwrap_or(&path);
+                                if !gitignore
+                                    .matched(relative_path, metadata.is_dir)
+                                    .is_ignore()
+                                {
+                                    let entry = DirEntry {
+                                        path: path.clone(),
+                                        metadata,
+                                    };
+
+                                    if metadata.is_dir {
+                                        if let Ok(mut read_dir) = fs.read_dir(&path).await {
+                                            while let Some(Ok(child)) = read_dir.next().await {
+                                                stack.push(child);
+                                            }
+                                        }
+                                    }
+
+                                    return Some((Ok(entry), (stack, fs, gitignore)));
+                                }
+                            }
+                            Ok(None) => {
+                                return Some((
+                                    Err(anyhow!("No metadata available for {:?}", path)),
+                                    (stack, fs, gitignore),
+                                ))
+                            }
+                            Err(e) => {
+                                return Some((Err(anyhow::Error::from(e)), (stack, fs, gitignore)))
+                            }
+                        }
+                    }
+                    None
+                }
+            },
+        );
+
+        Ok(Box::pin(stream))
     }
 
     /// Processes entries from the queue, handling files, directories, chunks,
@@ -401,7 +481,13 @@ impl Miner {
 
         // Save the combined summary for the directory
         let key = format!("path:{}", path.to_string_lossy());
-        let mtime = tokio::fs::metadata(&path).await?.modified()?;
+        let metadata = self.fs.metadata(&path).await?.ok_or_else(|| {
+            anyhow!(
+                "Failed to get metadata because path does not exist: {:?}",
+                path
+            )
+        })?;
+        let mtime = metadata.mtime;
         let cached_summary = CachedSummary {
             summary: combined_summary,
             mtime,
@@ -478,7 +564,13 @@ impl Miner {
         processed_files.insert(path.clone());
         drop(processed_files);
 
-        let mtime = tokio::fs::metadata(&path).await?.modified()?;
+        let metadata = self.fs.metadata(&path).await?.ok_or_else(|| {
+            anyhow!(
+                "Failed to get metadata because path does not exist: {:?}",
+                path
+            )
+        })?;
+        let mtime = metadata.mtime;
         let key = format!("path:{}", path.to_string_lossy());
 
         let cached = self
@@ -655,7 +747,13 @@ impl Miner {
 
         let summary = self.summarize_file(&path, &content).await?;
         let key = format!("chunk:{}_{}", path.to_string_lossy(), index);
-        let mtime = tokio::fs::metadata(&path).await?.modified()?;
+        let metadata = self.fs.metadata(&path).await?.ok_or_else(|| {
+            anyhow!(
+                "Failed to get metadata because path does not exist: {:?}",
+                path
+            )
+        })?;
+        let mtime = metadata.mtime;
         let cached_summary = CachedSummary {
             summary: summary.clone(),
             mtime,
@@ -755,7 +853,13 @@ impl Miner {
 
         // Save the symbol summary
         let key = format!("symbol:{}::{}", path.to_string_lossy(), name);
-        let mtime = tokio::fs::metadata(&path).await?.modified()?;
+        let metadata = self.fs.metadata(&path).await?.ok_or_else(|| {
+            anyhow!(
+                "Failed to get metadata because path does not exist: {:?}",
+                path
+            )
+        })?;
+        let mtime = metadata.mtime;
         let cached_summary = CachedSummary {
             summary: summary.clone(),
             mtime,
@@ -1019,6 +1123,43 @@ impl Miner {
             })
             .await
     }
+
+    /// Builds a gitignore matcher for the given root directory.
+    ///
+    /// This method traverses the directory tree, reading .gitignore files
+    /// and constructing a gitignore matcher that can be used to filter files
+    /// and directories based on gitignore rules.
+    async fn build_gitignore(&self, root: &Path) -> Result<ignore::gitignore::Gitignore> {
+        let mut builder = GitignoreBuilder::new(root);
+
+        let mut dir_stack = vec![root.to_path_buf()];
+        while let Some(dir) = dir_stack.pop() {
+            let gitignore_path = dir.join(".gitignore");
+            if self.fs.is_file(&gitignore_path).await {
+                if let Ok(content) = self.fs.load(&gitignore_path).await {
+                    for line in content.lines() {
+                        builder.add_line(Some(gitignore_path.clone()), line)?;
+                    }
+                }
+            }
+
+            let mut read_dir = self.fs.read_dir(&dir).await?;
+            while let Some(entry) = read_dir.next().await {
+                let entry = entry?;
+                if self.fs.is_dir(&entry).await {
+                    dir_stack.push(entry);
+                }
+            }
+        }
+
+        Ok(builder.build()?)
+    }
+}
+
+#[derive(Debug)]
+struct DirEntry {
+    path: PathBuf,
+    metadata: fs::Metadata,
 }
 
 #[derive(Debug)]
@@ -1201,3 +1342,6 @@ impl Database {
         Ok(rx.await.map_err(|_| anyhow!("transaction failed"))??)
     }
 }
+
+#[cfg(test)]
+mod tests {}

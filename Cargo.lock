@@ -6675,7 +6675,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap 4.4.4",
+ "fs",
  "futures 0.3.28",
+ "git",
  "heed",
  "ignore",
  "indicatif",
