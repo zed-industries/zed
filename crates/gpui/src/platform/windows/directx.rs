@@ -109,8 +109,63 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn draw(&mut self, scene: &Scene) {
-        self.update_buffers().log_err();
-        self.draw_primitives(scene);
+        let Some(path_tiles) = self.rasterize_paths(scene.paths()) else {
+            log::error!("failed to rasterize {} paths", scene.paths().len());
+            return;
+        };
+        self.update_global_params(GlobalParams {
+            viewport_size: [
+                self.context.viewport[0].Width,
+                self.context.viewport[0].Height,
+            ],
+            premultiplied_alpha: 1,
+            _pad: 0,
+        })
+        .unwrap();
+        unsafe {
+            self.context
+                .context
+                .RSSetViewports(Some(&self.context.viewport));
+            self.context
+                .context
+                .OMSetRenderTargets(Some(&self.context.back_buffer), None);
+            self.context.context.ClearRenderTargetView(
+                self.context.back_buffer[0].as_ref().unwrap(),
+                // &[0.0, 0.0, 0.0, 0.0],
+                &[0.0, 0.0, 0.0, 1.0],
+            );
+            self.context
+                .context
+                .OMSetBlendState(&self.render.blend_state, None, 0xFFFFFFFF);
+        }
+        for batch in scene.batches() {
+            let ok = match batch {
+                PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
+                PrimitiveBatch::Quads(quads) => self.draw_quads(quads),
+                PrimitiveBatch::Paths(paths) => self.draw_paths(paths, &path_tiles),
+                PrimitiveBatch::Underlines(underlines) => self.draw_underlines(underlines),
+                PrimitiveBatch::MonochromeSprites {
+                    texture_id,
+                    sprites,
+                } => self.draw_monochrome_sprites(texture_id, sprites),
+                PrimitiveBatch::PolychromeSprites {
+                    texture_id,
+                    sprites,
+                } => self.draw_polychrome_sprites(texture_id, sprites),
+                PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(surfaces),
+            };
+            if !ok {
+                log::error!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                    scene.paths.len(),
+                    scene.shadows.len(),
+                    scene.quads.len(),
+                    scene.underlines.len(),
+                    scene.monochrome_sprites.len(),
+                    scene.polychrome_sprites.len(),
+                    scene.surfaces.len(),);
+                return;
+            }
+        }
         unsafe { self.context.swap_chain.Present(0, 0).ok().log_err() };
     }
 
@@ -158,57 +213,6 @@ impl DirectXRenderer {
             }
             WindowBackgroundAppearance::Blurred => {
                 // TODO:
-            }
-        }
-    }
-
-    fn draw_primitives(&mut self, scene: &Scene) {
-        let Some(path_tiles) = self.rasterize_paths(scene.paths()) else {
-            log::error!("failed to rasterize {} paths", scene.paths().len());
-            return;
-        };
-        unsafe {
-            self.context
-                .context
-                .RSSetViewports(Some(&self.context.viewport));
-            self.context
-                .context
-                .OMSetRenderTargets(Some(&self.context.back_buffer), None);
-            self.context.context.ClearRenderTargetView(
-                self.context.back_buffer[0].as_ref().unwrap(),
-                // &[0.0, 0.0, 0.0, 0.0],
-                &[0.0, 0.0, 0.0, 1.0],
-            );
-            self.context
-                .context
-                .OMSetBlendState(&self.render.blend_state, None, 0xFFFFFFFF);
-        }
-        for batch in scene.batches() {
-            let ok = match batch {
-                PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
-                PrimitiveBatch::Quads(quads) => self.draw_quads(quads),
-                PrimitiveBatch::Paths(paths) => self.draw_paths(paths, &path_tiles),
-                PrimitiveBatch::Underlines(underlines) => self.draw_underlines(underlines),
-                PrimitiveBatch::MonochromeSprites {
-                    texture_id,
-                    sprites,
-                } => self.draw_monochrome_sprites(texture_id, sprites),
-                PrimitiveBatch::PolychromeSprites {
-                    texture_id,
-                    sprites,
-                } => self.draw_polychrome_sprites(texture_id, sprites),
-                PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(surfaces),
-            };
-            if !ok {
-                log::error!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
-                    scene.paths.len(),
-                    scene.shadows.len(),
-                    scene.quads.len(),
-                    scene.underlines.len(),
-                    scene.monochrome_sprites.len(),
-                    scene.polychrome_sprites.len(),
-                    scene.surfaces.len(),);
-                return;
             }
         }
     }
@@ -401,23 +405,12 @@ impl DirectXRenderer {
                     .context
                     .Unmap(&self.render.path_raster_pipeline.buffer, 0);
 
-                let mut global_resource = std::mem::zeroed();
-                self.context
-                    .context
-                    .Map(
-                        self.render.global_params_buffer[0].as_ref().unwrap(),
-                        0,
-                        D3D11_MAP_WRITE_DISCARD,
-                        0,
-                        Some(&mut global_resource),
-                    )
-                    .unwrap();
-                let globals = global_resource.pData as *mut GlobalParams;
-                (*globals).viewport_size = [texture_size.width, texture_size.height];
-                (*globals).premultiplied_alpha = 0;
-                self.context
-                    .context
-                    .Unmap(self.render.global_params_buffer[0].as_ref().unwrap(), 0);
+                let globals = GlobalParams {
+                    viewport_size: [texture_size.width, texture_size.height],
+                    premultiplied_alpha: 0,
+                    _pad: 0,
+                };
+                self.update_global_params(globals).unwrap();
 
                 self.context.context.RSSetViewports(Some(&viewport));
                 self.context.context.OMSetRenderTargets(Some(&rtv), None);
@@ -755,16 +748,14 @@ impl DirectXRenderer {
         true
     }
 
-    fn update_buffers(&self) -> Result<()> {
+    fn update_global_params(&self, globals: GlobalParams) -> Result<()> {
+        let buffer = self.render.global_params_buffer[0].as_ref().unwrap();
         unsafe {
-            let buffer = self.render.global_params_buffer[0].as_ref().unwrap();
-            let mut resource = std::mem::zeroed();
+            let mut data = std::mem::zeroed();
             self.context
                 .context
-                .Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut resource))?;
-            let globals = resource.pData as *mut GlobalParams;
-            (*globals).viewport_size = [self.size.width.0 as f32, self.size.height.0 as f32];
-            (*globals).premultiplied_alpha = 1;
+                .Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut data))?;
+            std::ptr::copy_nonoverlapping(&globals, data.pData as *mut _, 1);
             self.context.context.Unmap(buffer, 0);
         }
         Ok(())
@@ -1209,6 +1200,12 @@ fn create_pipieline<T>(
         view,
     })
 }
+
+// fn update_buffer<T>(device_context: &ID3D11DeviceContext, buffer: &ID3D11Buffer, data: &[T]) {
+//     unsafe {
+//         device_context.Map(presource, subresource, maptype, mapflags, pmappedresource)
+//     }
+// }
 
 const BUFFER_COUNT: usize = 3;
 const BUFFER_SIZE: usize = 2 * 1024 * 1024;
