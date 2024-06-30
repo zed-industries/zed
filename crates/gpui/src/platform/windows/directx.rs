@@ -19,14 +19,17 @@ use windows::{
                 ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11SamplerState,
                 ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
                 D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_SHADER_RESOURCE, D3D11_BLEND_DESC,
-                D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD,
+                D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD,
                 D3D11_BLEND_SRC_ALPHA, D3D11_BUFFER_DESC, D3D11_COLOR_WRITE_ENABLE_ALL,
                 D3D11_COMPARISON_ALWAYS, D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 D3D11_CREATE_DEVICE_DEBUG, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_FLOAT32_MAX,
                 D3D11_MAP_WRITE_DISCARD, D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, D3D11_SAMPLER_DESC,
                 D3D11_SDK_VERSION, D3D11_TEXTURE_ADDRESS_WRAP, D3D11_USAGE_DYNAMIC, D3D11_VIEWPORT,
             },
-            DirectComposition::{DCompositionCreateDevice, IDCompositionDevice},
+            DirectComposition::{
+                DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget,
+                IDCompositionVisual,
+            },
             Dxgi::{
                 Common::{
                     DXGI_ALPHA_MODE_IGNORE, DXGI_ALPHA_MODE_PREMULTIPLIED,
@@ -59,9 +62,9 @@ struct DirectXContext {
     swap_chain: IDXGISwapChain1,
     back_buffer: [Option<ID3D11RenderTargetView>; 1],
     viewport: [D3D11_VIEWPORT; 1],
-    // comp_device: IDCompositionDevice,
-    // comp_target: IDCompositionTarget,
-    // comp_visual: IDCompositionVisual,
+    comp_device: IDCompositionDevice,
+    comp_target: IDCompositionTarget,
+    comp_visual: IDCompositionVisual,
 }
 
 struct DirectXRenderContext {
@@ -418,15 +421,15 @@ impl DirectXContext {
             (device.unwrap(), context.unwrap())
         };
         let dxgi_device: IDXGIDevice = device.cast().unwrap();
-        // let comp_device = get_comp_device(&dxgi_device)?;
-        // let swap_chain = create_swap_chain(&dxgi_factory, &device)?;
-        let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd)?;
-        // let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        // let comp_visual = unsafe { comp_device.CreateVisual() }?;
+        let comp_device = get_comp_device(&dxgi_device)?;
+        let swap_chain = create_swap_chain(&dxgi_factory, &device)?;
+        // let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd)?;
+        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        let comp_visual = unsafe { comp_device.CreateVisual() }?;
         unsafe {
-            // comp_visual.SetContent(&swap_chain)?;
-            // comp_target.SetRoot(&comp_visual)?;
-            // comp_device.Commit()?;
+            comp_visual.SetContent(&swap_chain)?;
+            comp_target.SetRoot(&comp_visual)?;
+            comp_device.Commit()?;
             dxgi_factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER)?;
         }
         let back_buffer = [Some(set_render_target_view(
@@ -444,9 +447,9 @@ impl DirectXContext {
             swap_chain,
             back_buffer,
             viewport,
-            // comp_device,
-            // comp_target,
-            // comp_visual,
+            comp_device,
+            comp_target,
+            comp_visual,
         })
     }
 }
@@ -781,7 +784,7 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-    desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_DEST_ALPHA;
+    desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
     desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
     unsafe {
