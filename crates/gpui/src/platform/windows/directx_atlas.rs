@@ -146,7 +146,8 @@ impl DirectXAtlasState {
             width: DevicePixels(1024),
             height: DevicePixels(1024),
         };
-        // Max texture size on all modern Apple GPUs. Anything bigger than that crashes in validateWithDevice.
+        // Max texture size for DirectX. See:
+        // https://learn.microsoft.com/en-us/windows/win32/direct3d11/overviews-direct3d-11-resources-limits
         const MAX_ATLAS_SIZE: Size<DevicePixels> = Size {
             width: DevicePixels(16384),
             height: DevicePixels(16384),

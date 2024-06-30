@@ -436,6 +436,9 @@ impl DirectXRenderer {
                     .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
                 self.context
                     .context
+                    .PSSetShaderResources(1, Some(&self.render.raster_paths_pipeline.view));
+                self.context
+                    .context
                     .DrawInstanced(vertices.len() as u32, 1, 0, 0);
             }
         }
@@ -508,16 +511,13 @@ impl DirectXRenderer {
                     .PSSetShaderResources(1, Some(&self.render.paths_pipeline.view));
                 self.context
                     .context
-                    .VSSetSamplers(2, Some(&self.render.sampler));
+                    .PSSetSamplers(0, Some(&self.render.sampler));
                 self.context
                     .context
-                    .PSSetSamplers(2, Some(&self.render.sampler));
+                    .VSSetShaderResources(0, Some(&tex_info.2));
                 self.context
                     .context
-                    .VSSetShaderResources(3, Some(&tex_info.2));
-                self.context
-                    .context
-                    .PSSetShaderResources(3, Some(&tex_info.2));
+                    .PSSetShaderResources(0, Some(&tex_info.2));
 
                 self.context.context.DrawInstanced(4, 1, 0, 0);
             }
@@ -644,13 +644,13 @@ impl DirectXRenderer {
                 .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
             self.context
                 .context
-                .PSSetSamplers(2, Some(&self.render.sampler));
+                .PSSetSamplers(0, Some(&self.render.sampler));
             self.context
                 .context
-                .VSSetShaderResources(3, Some(&tex_info.2));
+                .VSSetShaderResources(0, Some(&tex_info.2));
             self.context
                 .context
-                .PSSetShaderResources(3, Some(&tex_info.2));
+                .PSSetShaderResources(0, Some(&tex_info.2));
 
             self.context
                 .context
@@ -718,13 +718,13 @@ impl DirectXRenderer {
                 .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
             self.context
                 .context
-                .PSSetSamplers(2, Some(&self.render.sampler));
+                .PSSetSamplers(0, Some(&self.render.sampler));
             self.context
                 .context
-                .VSSetShaderResources(3, Some(&tex_info.2));
+                .VSSetShaderResources(0, Some(&tex_info.2));
             self.context
                 .context
-                .PSSetShaderResources(3, Some(&tex_info.2));
+                .PSSetShaderResources(0, Some(&tex_info.2));
 
             self.context
                 .context
