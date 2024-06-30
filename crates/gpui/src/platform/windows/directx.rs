@@ -11,7 +11,8 @@ use windows::{
             Direct3D::{
                 Fxc::{D3DCompileFromFile, D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION},
                 ID3DBlob, D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
-                D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+                D3D_PRIMITIVE_TOPOLOGY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+                D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             },
             Direct3D11::{
                 D3D11CreateDevice, ID3D11BlendState, ID3D11Buffer, ID3D11Device,
@@ -142,7 +143,6 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) {
-        // TODO:
         unsafe {
             self.size = new_size;
             self.context.context.OMSetRenderTargets(None, None);
@@ -197,6 +197,9 @@ impl DirectXRenderer {
             &self.render.shadow_pipeline,
             &self.context.viewport,
             shadows,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            4,
+            shadows.len() as u32,
         )
         .unwrap();
         true
@@ -206,8 +209,15 @@ impl DirectXRenderer {
         if quads.is_empty() {
             return true;
         }
-        self.draw_normal(&self.render.quad_pipeline, &self.context.viewport, quads)
-            .unwrap();
+        self.draw_normal(
+            &self.render.quad_pipeline,
+            &self.context.viewport,
+            quads,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            4,
+            quads.len() as u32,
+        )
+        .unwrap();
         true
     }
 
@@ -267,35 +277,15 @@ impl DirectXRenderer {
                 0,
             )
             .unwrap();
-            unsafe {
-                self.update_buffer(&self.render.path_raster_pipeline.buffer, &vertices)
-                    .unwrap();
-
-                self.context
-                    .context
-                    .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-                self.context
-                    .context
-                    .VSSetShader(&self.render.path_raster_pipeline.vertex, None);
-                self.context
-                    .context
-                    .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-                self.context
-                    .context
-                    .VSSetShaderResources(1, Some(&self.render.path_raster_pipeline.view));
-                self.context
-                    .context
-                    .PSSetShader(&self.render.path_raster_pipeline.fragment, None);
-                self.context
-                    .context
-                    .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-                self.context
-                    .context
-                    .PSSetShaderResources(1, Some(&self.render.path_raster_pipeline.view));
-                self.context
-                    .context
-                    .DrawInstanced(vertices.len() as u32, 1, 0, 0);
-            }
+            self.draw_normal(
+                &self.render.path_raster_pipeline,
+                &viewport,
+                &vertices,
+                D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+                vertices.len() as u32,
+                1,
+            )
+            .unwrap();
         }
 
         Some(tiles)
@@ -311,7 +301,7 @@ impl DirectXRenderer {
         }
         for path in paths {
             let tile = &path_tiles[&path.id];
-            let tex_info = self.atlas.texture_info(tile.texture_id);
+            let (_, _, texture) = self.atlas.texture_info(tile.texture_id);
             let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
             let sprites = [PathSprite {
                 bounds: Bounds {
@@ -322,46 +312,8 @@ impl DirectXRenderer {
                 tile: (*tile).clone(),
             }];
 
-            unsafe {
-                self.update_buffer(&self.render.paths_pipeline.buffer, &sprites)
-                    .unwrap();
-
-                self.context
-                    .context
-                    .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-                self.context
-                    .context
-                    .RSSetViewports(Some(&self.context.viewport));
-                self.context
-                    .context
-                    .VSSetShader(&self.render.paths_pipeline.vertex, None);
-                self.context
-                    .context
-                    .PSSetShader(&self.render.paths_pipeline.fragment, None);
-                self.context
-                    .context
-                    .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-                self.context
-                    .context
-                    .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-                self.context
-                    .context
-                    .VSSetShaderResources(1, Some(&self.render.paths_pipeline.view));
-                self.context
-                    .context
-                    .PSSetShaderResources(1, Some(&self.render.paths_pipeline.view));
-                self.context
-                    .context
-                    .PSSetSamplers(0, Some(&self.render.sampler));
-                self.context
-                    .context
-                    .VSSetShaderResources(0, Some(&tex_info.2));
-                self.context
-                    .context
-                    .PSSetShaderResources(0, Some(&tex_info.2));
-
-                self.context.context.DrawInstanced(4, 1, 0, 0);
-            }
+            self.draw_with_texture(&self.render.paths_pipeline, &texture, &sprites)
+                .unwrap();
         }
         true
     }
@@ -370,41 +322,16 @@ impl DirectXRenderer {
         if underlines.is_empty() {
             return true;
         }
-        unsafe {
-            {
-                self.update_buffer(&self.render.underline_pipeline.buffer, underlines)
-                    .unwrap();
-                self.context
-                    .context
-                    .VSSetShaderResources(1, Some(&self.render.underline_pipeline.view));
-                self.context
-                    .context
-                    .PSSetShaderResources(1, Some(&self.render.underline_pipeline.view));
-            }
-            self.context
-                .context
-                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            self.context
-                .context
-                .RSSetViewports(Some(&self.context.viewport));
-            self.context
-                .context
-                .VSSetShader(&self.render.underline_pipeline.vertex, None);
-            self.context
-                .context
-                .PSSetShader(&self.render.underline_pipeline.fragment, None);
-            self.context
-                .context
-                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
-            self.context
-                .context
-                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+        self.draw_normal(
+            &self.render.underline_pipeline,
+            &self.context.viewport,
+            underlines,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            4,
+            underlines.len() as u32,
+        )
+        .unwrap();
 
-            self.context
-                .context
-                .DrawInstanced(4, underlines.len() as u32, 0, 0);
-        }
         true
     }
 
@@ -416,51 +343,9 @@ impl DirectXRenderer {
         if sprites.is_empty() {
             return true;
         }
-        let tex_info = self.atlas.texture_info(texture_id);
-        unsafe {
-            {
-                self.update_buffer(&self.render.mono_sprites.buffer, sprites)
-                    .unwrap();
-                self.context
-                    .context
-                    .VSSetShaderResources(1, Some(&self.render.mono_sprites.view));
-                self.context
-                    .context
-                    .PSSetShaderResources(1, Some(&self.render.mono_sprites.view));
-            }
-            self.context
-                .context
-                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            self.context
-                .context
-                .RSSetViewports(Some(&self.context.viewport));
-            self.context
-                .context
-                .VSSetShader(&self.render.mono_sprites.vertex, None);
-            self.context
-                .context
-                .PSSetShader(&self.render.mono_sprites.fragment, None);
-            self.context
-                .context
-                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
-            self.context
-                .context
-                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            self.context
-                .context
-                .PSSetSamplers(0, Some(&self.render.sampler));
-            self.context
-                .context
-                .VSSetShaderResources(0, Some(&tex_info.2));
-            self.context
-                .context
-                .PSSetShaderResources(0, Some(&tex_info.2));
-
-            self.context
-                .context
-                .DrawInstanced(4, sprites.len() as u32, 0, 0);
-        }
+        let (_, _, texture) = self.atlas.texture_info(texture_id);
+        self.draw_with_texture(&self.render.mono_sprites, &texture, sprites)
+            .unwrap();
         true
     }
 
@@ -472,51 +357,9 @@ impl DirectXRenderer {
         if sprites.is_empty() {
             return true;
         }
-        let tex_info = self.atlas.texture_info(texture_id);
-        unsafe {
-            {
-                self.update_buffer(&self.render.poly_sprites.buffer, sprites)
-                    .unwrap();
-                self.context
-                    .context
-                    .VSSetShaderResources(1, Some(&self.render.poly_sprites.view));
-                self.context
-                    .context
-                    .PSSetShaderResources(1, Some(&self.render.poly_sprites.view));
-            }
-            self.context
-                .context
-                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            self.context
-                .context
-                .RSSetViewports(Some(&self.context.viewport));
-            self.context
-                .context
-                .VSSetShader(&self.render.poly_sprites.vertex, None);
-            self.context
-                .context
-                .PSSetShader(&self.render.poly_sprites.fragment, None);
-            self.context
-                .context
-                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
-            self.context
-                .context
-                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            self.context
-                .context
-                .PSSetSamplers(0, Some(&self.render.sampler));
-            self.context
-                .context
-                .VSSetShaderResources(0, Some(&tex_info.2));
-            self.context
-                .context
-                .PSSetShaderResources(0, Some(&tex_info.2));
-
-            self.context
-                .context
-                .DrawInstanced(4, sprites.len() as u32, 0, 0);
-        }
+        let (_, _, texture) = self.atlas.texture_info(texture_id);
+        self.draw_with_texture(&self.render.poly_sprites, &texture, sprites)
+            .unwrap();
         true
     }
 
@@ -585,6 +428,9 @@ impl DirectXRenderer {
         pipeline: &PipelineState,
         viewport: &[D3D11_VIEWPORT],
         data: &[T],
+        topology: D3D_PRIMITIVE_TOPOLOGY,
+        vertex_count: u32,
+        instance_count: u32,
     ) -> Result<()> {
         self.update_buffer(&pipeline.buffer, data)?;
         unsafe {
@@ -595,9 +441,7 @@ impl DirectXRenderer {
                 .context
                 .PSSetShaderResources(1, Some(&pipeline.view));
 
-            self.context
-                .context
-                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            self.context.context.IASetPrimitiveTopology(topology);
             self.context.context.RSSetViewports(Some(viewport));
             self.context.context.VSSetShader(&pipeline.vertex, None);
             self.context.context.PSSetShader(&pipeline.fragment, None);
@@ -607,6 +451,47 @@ impl DirectXRenderer {
             self.context
                 .context
                 .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+
+            self.context
+                .context
+                .DrawInstanced(vertex_count, instance_count, 0, 0);
+        }
+        Ok(())
+    }
+
+    fn draw_with_texture<T>(
+        &self,
+        pipeline: &PipelineState,
+        texture: &[Option<ID3D11ShaderResourceView>],
+        data: &[T],
+    ) -> Result<()> {
+        self.update_buffer(&self.render.paths_pipeline.buffer, data)?;
+        unsafe {
+            self.context
+                .context
+                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            self.context
+                .context
+                .RSSetViewports(Some(&self.context.viewport));
+            self.context.context.VSSetShader(&pipeline.vertex, None);
+            self.context.context.PSSetShader(&pipeline.fragment, None);
+            self.context
+                .context
+                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+            self.context
+                .context
+                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+            self.context
+                .context
+                .VSSetShaderResources(1, Some(&pipeline.view));
+            self.context
+                .context
+                .PSSetShaderResources(1, Some(&pipeline.view));
+            self.context
+                .context
+                .PSSetSamplers(0, Some(&self.render.sampler));
+            self.context.context.VSSetShaderResources(0, Some(texture));
+            self.context.context.PSSetShaderResources(0, Some(texture));
 
             self.context
                 .context
