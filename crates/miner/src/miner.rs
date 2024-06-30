@@ -1,3 +1,8 @@
+// todo! Use Arc<str> where helpful instead of String
+// todo! Cache every model request based on a digest of input and model name
+// todo! Estimate time remaining when progress reporting
+// todo! Add unit/integration tests
+
 mod huggingface;
 mod ollama;
 
@@ -18,6 +23,7 @@ use std::{
 };
 use tokenizers::{tokenizer::Tokenizer, FromPretrainedParameters};
 use tokio::sync::{mpsc, Mutex};
+use tree_sitter::{Node, Tree};
 
 const CHUNK_SIZE: usize = 5000;
 const HUGGINGFACE_ENDPOINT_URL: &str =
@@ -333,10 +339,10 @@ impl Miner {
                         eprintln!("Error processing chunk {} of file {:?}: {}", index, path, e);
                     }
                 }
-                Some(Entry::RustSymbol(path, name, content)) => {
+                Some(Entry::RustSymbol(path, name, content, parsed_file)) => {
                     println!("Worker processing Rust symbol {} in file {:?}", name, path);
                     if let Err(e) = self
-                        .process_rust_symbol(path.clone(), name.clone(), content)
+                        .process_rust_symbol(path.clone(), name.clone(), content, parsed_file)
                         .await
                     {
                         eprintln!(
@@ -574,12 +580,8 @@ impl Miner {
     /// and then enqueues each symbol for further processing. It also updates the progress
     /// indicators for the file and overall project.
     async fn parse_and_enqueue_rust_symbols(&self, path: PathBuf, content: &str) -> Result<()> {
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_rust::language())?;
-        let tree = parser
-            .parse(content, None)
-            .ok_or_else(|| anyhow!("Failed to parse content"))?;
-        let root_node = tree.root_node();
+        let parsed_file = Arc::new(ParsedFile::new(content.to_string())?);
+        let root_node = parsed_file.root_node();
 
         let export_query = tree_sitter::Query::new(
             &tree_sitter_rust::language(),
@@ -588,11 +590,12 @@ impl Miner {
 
         let mut export_cursor = tree_sitter::QueryCursor::new();
         let mut symbols = Vec::new();
-        for m in export_cursor.matches(&export_query, root_node, content.as_bytes()) {
+        for m in export_cursor.matches(&export_query, root_node, parsed_file.content.as_bytes()) {
             if let Some(capture) = m.captures.first() {
-                let symbol_name = content[capture.node.byte_range()].to_string();
-                let symbol_content =
-                    content[capture.node.start_byte()..capture.node.end_byte()].to_string();
+                let symbol_name = parsed_file.content[capture.node.byte_range()].to_string();
+                let symbol_content = parsed_file.content
+                    [capture.node.start_byte()..capture.node.end_byte()]
+                    .to_string();
                 symbols.push((symbol_name, symbol_content));
             }
         }
@@ -617,7 +620,12 @@ impl Miner {
 
         let mut queue = self.queue.lock().await;
         for (symbol_name, symbol_content) in symbols {
-            queue.push_back(Entry::RustSymbol(path.clone(), symbol_name, symbol_content));
+            queue.push_back(Entry::RustSymbol(
+                path.clone(),
+                symbol_name,
+                symbol_content,
+                Arc::clone(&parsed_file),
+            ));
         }
 
         self.update_progress();
@@ -738,8 +746,12 @@ impl Miner {
         path: PathBuf,
         name: String,
         content: String,
+        parsed_file: Arc<ParsedFile>,
     ) -> Result<()> {
-        let summary = self.summarize_rust_symbol(&name, &content).await?;
+        let context = parsed_file.extract_symbol_context(&name);
+        let summary = self
+            .summarize_rust_symbol(&name, &content, &context)
+            .await?;
 
         // Save the symbol summary
         let key = format!("symbol:{}::{}", path.to_string_lossy(), name);
@@ -755,7 +767,12 @@ impl Miner {
             })
             .await?;
 
-        self.summaries.lock().await.insert(path.clone(), summary);
+        self.summaries
+            .lock()
+            .await
+            .entry(path.clone())
+            .or_default()
+            .push_str(&summary);
         self.outstanding_symbols
             .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         let mut file_progress = self.file_progress_map.lock().await;
@@ -801,8 +818,12 @@ impl Miner {
     ///
     /// This method uses the AI model to create a concise summary of the given Rust symbol,
     /// focusing on its main functionality and purpose.
-    async fn summarize_rust_symbol(&self, name: &str, content: &str) -> Result<String> {
-        // todo! Add context from the surrounding file as well.
+    async fn summarize_rust_symbol(
+        &self,
+        name: &str,
+        content: &str,
+        context: &str,
+    ) -> Result<String> {
         let messages = vec![Message {
             role: "user".to_string(),
             content: format!(
@@ -811,8 +832,9 @@ impl Miner {
                 focusing on its main functionality and purpose. \
                 Be terse and start your response directly with \"Summary: \".\n\
                 Symbol name: {}\n\
-                Symbol content:\n{}",
-                name, content
+                Symbol content:\n{}\n\
+                Symbol context:\n{}",
+                name, content, context
             ),
         }];
 
@@ -1000,11 +1022,107 @@ impl Miner {
 }
 
 #[derive(Debug)]
+struct ParsedFile {
+    content: Arc<str>,
+    tree: Arc<Tree>,
+}
+
+impl ParsedFile {
+    fn new(content: String) -> Result<Self> {
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_rust::language())?;
+        let tree = parser
+            .parse(&content, None)
+            .ok_or_else(|| anyhow!("Failed to parse file content"))?;
+
+        Ok(Self {
+            content: Arc::from(content),
+            tree: Arc::new(tree),
+        })
+    }
+
+    fn root_node(&self) -> Node {
+        self.tree.root_node()
+    }
+
+    fn extract_symbol_context(&self, symbol_name: &str) -> String {
+        let tree_sitter_context = self.extract_symbol_context_tree_sitter(symbol_name);
+        let module_structure = self.extract_module_structure(symbol_name);
+        let nearby_functions = self.extract_nearby_functions(symbol_name);
+
+        format!(
+            "Full symbol context:\n{}\n\n{}\n\n{}",
+            tree_sitter_context, module_structure, nearby_functions
+        )
+    }
+
+    fn extract_symbol_context_tree_sitter(&self, symbol_name: &str) -> String {
+        let query = tree_sitter::Query::new(
+            &tree_sitter_rust::language(),
+            &format!("((function_item name: (identifier) @func-name) @function (#eq? @func-name \"{}\"))", symbol_name)
+        ).unwrap();
+
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let matches = query_cursor.matches(&query, self.root_node(), self.content.as_bytes());
+
+        for m in matches {
+            if let Some(func_node) = m.captures.iter().find(|c| c.index == 1) {
+                let start_byte = func_node.node.start_byte();
+                let end_byte = func_node.node.end_byte();
+                return self.content[start_byte..end_byte].to_string();
+            }
+        }
+
+        String::new()
+    }
+
+    fn extract_module_structure(&self, symbol_name: &str) -> String {
+        let mut module_path = Vec::new();
+        let mut current_node = self.root_node();
+
+        while let Some(parent) = current_node.parent() {
+            if parent.kind() == "mod_item" {
+                if let Some(name_node) = parent.child_by_field_name("name") {
+                    module_path.push(self.content[name_node.byte_range()].to_string());
+                }
+            }
+            current_node = parent;
+        }
+
+        module_path.reverse();
+        format!("Module path: {}", module_path.join("::"))
+    }
+
+    fn extract_nearby_functions(&self, symbol_name: &str) -> String {
+        let query = tree_sitter::Query::new(
+            &tree_sitter_rust::language(),
+            "(function_item name: (identifier) @func-name)",
+        )
+        .unwrap();
+
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let matches = query_cursor.matches(&query, self.root_node(), self.content.as_bytes());
+
+        let mut nearby_functions = Vec::new();
+        for m in matches {
+            if let Some(func_name_node) = m.captures.iter().find(|c| c.index == 0) {
+                let func_name = self.content[func_name_node.node.byte_range()].to_string();
+                if func_name != symbol_name {
+                    nearby_functions.push(func_name);
+                }
+            }
+        }
+
+        format!("Nearby functions: {}", nearby_functions.join(", "))
+    }
+}
+
+#[derive(Debug)]
 enum Entry {
     File(PathBuf),
     Directory(PathBuf, Vec<PathBuf>),
     Chunk(PathBuf, String, usize),
-    RustSymbol(PathBuf, String, String),
+    RustSymbol(PathBuf, String, String, Arc<ParsedFile>),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
