@@ -82,7 +82,7 @@ struct DirectXRenderContext {
     blend_state_for_pr: ID3D11BlendState,
     shadow_pipeline: PipelineState,
     quad_pipeline: PipelineState,
-    raster_paths_pipeline: PipelineState,
+    path_raster_pipeline: PipelineState,
     paths_pipeline: PipelineState,
     underline_pipeline: PipelineState,
     mono_sprites: PipelineState,
@@ -385,7 +385,7 @@ impl DirectXRenderer {
                 self.context
                     .context
                     .Map(
-                        &self.render.raster_paths_pipeline.buffer,
+                        &self.render.path_raster_pipeline.buffer,
                         0,
                         D3D11_MAP_WRITE_DISCARD,
                         0,
@@ -399,7 +399,7 @@ impl DirectXRenderer {
                 );
                 self.context
                     .context
-                    .Unmap(&self.render.raster_paths_pipeline.buffer, 0);
+                    .Unmap(&self.render.path_raster_pipeline.buffer, 0);
 
                 let mut global_resource = std::mem::zeroed();
                 self.context
@@ -435,22 +435,22 @@ impl DirectXRenderer {
                     .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
                 self.context
                     .context
-                    .VSSetShader(&self.render.raster_paths_pipeline.vertex, None);
+                    .VSSetShader(&self.render.path_raster_pipeline.vertex, None);
                 self.context
                     .context
                     .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
                 self.context
                     .context
-                    .VSSetShaderResources(1, Some(&self.render.raster_paths_pipeline.view));
+                    .VSSetShaderResources(1, Some(&self.render.path_raster_pipeline.view));
                 self.context
                     .context
-                    .PSSetShader(&self.render.raster_paths_pipeline.fragment, None);
+                    .PSSetShader(&self.render.path_raster_pipeline.fragment, None);
                 self.context
                     .context
                     .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
                 self.context
                     .context
-                    .PSSetShaderResources(1, Some(&self.render.raster_paths_pipeline.view));
+                    .PSSetShaderResources(1, Some(&self.render.path_raster_pipeline.view));
                 self.context
                     .context
                     .DrawInstanced(vertices.len() as u32, 1, 0, 0);
@@ -819,7 +819,6 @@ impl DirectXRenderContext {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
         let global_params_buffer = unsafe {
             let desc = D3D11_BUFFER_DESC {
-                // ByteWidth must be a multiple of 16, per the docs
                 ByteWidth: std::mem::size_of::<GlobalParams>() as u32,
                 Usage: D3D11_USAGE_DYNAMIC,
                 BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
@@ -852,245 +851,31 @@ impl DirectXRenderContext {
         let blend_state = create_blend_state(device)?;
         let blend_state_for_pr = create_blend_state_for_path_raster(device)?;
 
-        let shadow_pipeline = unsafe {
-            let vertex_shader_blob = build_shader_blob("shadow_vertex", "vs_5_0").unwrap();
-            let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
-            let fragment_shader_blob = build_shader_blob("shadow_fragment", "ps_5_0").unwrap();
-            let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
-            let buffer = {
-                let desc = D3D11_BUFFER_DESC {
-                    // ByteWidth: BUFFER_SIZE as u32,
-                    ByteWidth: std::mem::size_of::<Shadow>() as u32 * 1024,
-                    Usage: D3D11_USAGE_DYNAMIC,
-                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
-                    StructureByteStride: std::mem::size_of::<Shadow>() as u32,
-                };
-                let mut buffer = None;
-                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
-                buffer.unwrap()
-            };
-            let view = {
-                let mut view = None;
-                device
-                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
-                    .unwrap();
-                [view]
-            };
-            PipelineState {
-                // layout,
-                vertex,
-                fragment,
-                buffer,
-                view,
-            }
-        };
-
-        let quad_pipeline = unsafe {
-            let vertex_shader_blob = build_shader_blob("quad_vertex", "vs_5_0").unwrap();
-            let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
-            let fragment_shader_blob = build_shader_blob("quad_fragment", "ps_5_0").unwrap();
-            let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
-            let buffer = {
-                let desc = D3D11_BUFFER_DESC {
-                    ByteWidth: std::mem::size_of::<Quad>() as u32 * 1024,
-                    Usage: D3D11_USAGE_DYNAMIC,
-                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
-                    StructureByteStride: std::mem::size_of::<Quad>() as u32,
-                };
-                let mut buffer = None;
-                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
-                buffer.unwrap()
-            };
-            let view = {
-                let mut view = None;
-                device
-                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
-                    .unwrap();
-                [view]
-            };
-            PipelineState {
-                // layout,
-                vertex,
-                fragment,
-                buffer,
-                view,
-            }
-        };
-
-        let paths_pipeline = unsafe {
-            let vertex_shader_blob = build_shader_blob("paths_vertex", "vs_5_0").unwrap();
-            let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
-            let fragment_shader_blob = build_shader_blob("paths_fragment", "ps_5_0").unwrap();
-            let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
-            let buffer = {
-                let desc = D3D11_BUFFER_DESC {
-                    ByteWidth: std::mem::size_of::<PathSprite>() as u32 * 2,
-                    Usage: D3D11_USAGE_DYNAMIC,
-                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
-                    StructureByteStride: std::mem::size_of::<PathSprite>() as u32,
-                };
-                let mut buffer = None;
-                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
-                buffer.unwrap()
-            };
-            let view = {
-                let mut view = None;
-                device
-                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
-                    .unwrap();
-                [view]
-            };
-            PipelineState {
-                vertex,
-                fragment,
-                buffer,
-                view,
-            }
-        };
-
-        let raster_paths_pipeline = unsafe {
-            let vertex_shader_blob =
-                build_shader_blob("path_rasterization_vertex", "vs_5_0").unwrap();
-            let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
-            let fragment_shader_blob =
-                build_shader_blob("path_rasterization_fragment", "ps_5_0").unwrap();
-            let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
-            let buffer = {
-                let desc = D3D11_BUFFER_DESC {
-                    ByteWidth: std::mem::size_of::<PathVertex<ScaledPixels>>() as u32 * 256,
-                    Usage: D3D11_USAGE_DYNAMIC,
-                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
-                    StructureByteStride: std::mem::size_of::<PathVertex<ScaledPixels>>() as u32,
-                };
-                let mut buffer = None;
-                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
-                buffer.unwrap()
-            };
-            let view = {
-                let mut view = None;
-                device
-                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
-                    .unwrap();
-                [view]
-            };
-            PipelineState {
-                vertex,
-                fragment,
-                buffer,
-                view,
-            }
-        };
-
-        let underline_pipeline = unsafe {
-            let vertex_shader_blob = build_shader_blob("underline_vertex", "vs_5_0").unwrap();
-            let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
-            let fragment_shader_blob = build_shader_blob("underline_fragment", "ps_5_0").unwrap();
-            let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
-            let buffer = {
-                let desc = D3D11_BUFFER_DESC {
-                    ByteWidth: std::mem::size_of::<Underline>() as u32 * 256,
-                    Usage: D3D11_USAGE_DYNAMIC,
-                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
-                    StructureByteStride: std::mem::size_of::<Underline>() as u32,
-                };
-                let mut buffer = None;
-                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
-                buffer.unwrap()
-            };
-            let view = {
-                let mut view = None;
-                device
-                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
-                    .unwrap();
-                [view]
-            };
-            PipelineState {
-                vertex,
-                fragment,
-                buffer,
-                view,
-            }
-        };
-
-        let mono_sprites = unsafe {
-            let vertex_shader_blob =
-                build_shader_blob("monochrome_sprite_vertex", "vs_5_0").unwrap();
-            let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
-            let fragment_shader_blob =
-                build_shader_blob("monochrome_sprite_fragment", "ps_5_0").unwrap();
-            let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
-            let buffer = {
-                let desc = D3D11_BUFFER_DESC {
-                    ByteWidth: std::mem::size_of::<MonochromeSprite>() as u32 * 256,
-                    Usage: D3D11_USAGE_DYNAMIC,
-                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
-                    StructureByteStride: std::mem::size_of::<MonochromeSprite>() as u32,
-                };
-                let mut buffer = None;
-                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
-                buffer.unwrap()
-            };
-            let view = {
-                let mut view = None;
-                device
-                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
-                    .unwrap();
-                [view]
-            };
-            PipelineState {
-                vertex,
-                fragment,
-                buffer,
-                view,
-            }
-        };
-
-        let poly_sprites = unsafe {
-            let vertex_shader_blob =
-                build_shader_blob("polychrome_sprite_vertex", "vs_5_0").unwrap();
-            let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
-            let fragment_shader_blob =
-                build_shader_blob("polychrome_sprite_fragment", "ps_5_0").unwrap();
-            let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
-            let buffer = {
-                let desc = D3D11_BUFFER_DESC {
-                    ByteWidth: std::mem::size_of::<PolychromeSprite>() as u32 * 256,
-                    Usage: D3D11_USAGE_DYNAMIC,
-                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                    MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
-                    StructureByteStride: std::mem::size_of::<PolychromeSprite>() as u32,
-                };
-                let mut buffer = None;
-                device.CreateBuffer(&desc, None, Some(&mut buffer))?;
-                buffer.unwrap()
-            };
-            let view = {
-                let mut view = None;
-                device
-                    .CreateShaderResourceView(&buffer, None, Some(&mut view))
-                    .unwrap();
-                [view]
-            };
-            PipelineState {
-                vertex,
-                fragment,
-                buffer,
-                view,
-            }
-        };
+        let shadow_pipeline =
+            create_pipieline::<Shadow>(device, "shadow_vertex", "shadow_fragment", 256)?;
+        let quad_pipeline = create_pipieline::<Quad>(device, "quad_vertex", "quad_fragment", 1024)?;
+        let path_raster_pipeline = create_pipieline::<PathVertex<ScaledPixels>>(
+            device,
+            "path_rasterization_vertex",
+            "path_rasterization_fragment",
+            256,
+        )?;
+        let paths_pipeline =
+            create_pipieline::<PathSprite>(device, "paths_vertex", "paths_fragment", 2)?;
+        let underline_pipeline =
+            create_pipieline::<Underline>(device, "underline_vertex", "underline_fragment", 256)?;
+        let mono_sprites = create_pipieline::<MonochromeSprite>(
+            device,
+            "monochrome_sprite_vertex",
+            "monochrome_sprite_fragment",
+            1024,
+        )?;
+        let poly_sprites = create_pipieline::<PolychromeSprite>(
+            device,
+            "polychrome_sprite_vertex",
+            "polychrome_sprite_fragment",
+            128,
+        )?;
 
         Ok(Self {
             global_params_buffer,
@@ -1099,7 +884,7 @@ impl DirectXRenderContext {
             blend_state_for_pr,
             shadow_pipeline,
             quad_pipeline,
-            raster_paths_pipeline,
+            path_raster_pipeline,
             paths_pipeline,
             underline_pipeline,
             mono_sprites,
@@ -1117,7 +902,6 @@ struct GlobalParams {
 }
 
 struct PipelineState {
-    // layout: ID3D11InputLayout,
     vertex: ID3D11VertexShader,
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
@@ -1388,6 +1172,42 @@ fn create_blend_state_for_path_raster(device: &ID3D11Device) -> Result<ID3D11Ble
         device.CreateBlendState(&desc, Some(&mut state))?;
         Ok(state.unwrap())
     }
+}
+
+fn create_pipieline<T>(
+    device: &ID3D11Device,
+    vertex_entry: &str,
+    fragment_entry: &str,
+    buffer_size: u32,
+) -> Result<PipelineState> {
+    let vertex_shader_blob = build_shader_blob(vertex_entry, "vs_5_0").unwrap();
+    let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
+    let fragment_shader_blob = build_shader_blob(fragment_entry, "ps_5_0").unwrap();
+    let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
+    let buffer = {
+        let desc = D3D11_BUFFER_DESC {
+            ByteWidth: std::mem::size_of::<T>() as u32 * buffer_size,
+            Usage: D3D11_USAGE_DYNAMIC,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
+            StructureByteStride: std::mem::size_of::<T>() as u32,
+        };
+        let mut buffer = None;
+        unsafe { device.CreateBuffer(&desc, None, Some(&mut buffer)) }?;
+        buffer.unwrap()
+    };
+    let view = {
+        let mut view = None;
+        unsafe { device.CreateShaderResourceView(&buffer, None, Some(&mut view)) }?;
+        [view]
+    };
+    Ok(PipelineState {
+        vertex,
+        fragment,
+        buffer,
+        view,
+    })
 }
 
 const BUFFER_COUNT: usize = 3;
