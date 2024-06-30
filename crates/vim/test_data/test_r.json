@@ -22,3 +22,10 @@
 {"Key":"w"}
 {"Key":"."}
 {"Get":{"state":"--llo -ˇ-rld\n","mode":"Normal"}}
+{"Put":{"state":"ˇhello world\n"}}
+{"Key":"2"}
+{"Key":"0"}
+{"Key":"r"}
+{"Key":"-"}
+{"Key":""}
+{"Get":{"state":"ˇhello world\n","mode":"Normal"}}

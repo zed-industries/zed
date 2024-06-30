@@ -96,7 +96,7 @@ Here are all the currently available settings.
 
 - Description: The name of a font to use for rendering text in the editor.
 - Setting: `buffer_font_family`
-- Default: `Zed Mono`
+- Default: `Zed Plex Mono`
 
 **Options**
 
@@ -112,12 +112,21 @@ The name of any font family installed on the user's system
 
 Zed supports all OpenType features that can be enabled or disabled for a given buffer or terminal font, as well as setting values for font features.
 
-For example, to disable ligatures and set `cv01` to `7` for a given font you can add the following to your settings:
+For example, to disable font ligatures, add the following to your settings:
 
 ```json
 {
   "buffer_font_features": {
-    "calt": false,
+    "calt": false
+  }
+}
+```
+
+You can also set other OpenType features, like setting `cv01` to `7`:
+
+```json
+{
+  "buffer_font_features": {
     "cv01": 7
   }
 }
@@ -132,6 +141,16 @@ For example, to disable ligatures and set `cv01` to `7` for a given font you can
 **Options**
 
 `integer` values
+
+## Buffer Font Weight
+
+- Description: The default font weight for text in the editor.
+- Setting: `buffer_font_weight`
+- Default: `400`
+
+**Options**
+
+`integer` values between `100` and `900`
 
 ## Confirm Quit
 
@@ -1596,7 +1615,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "soft_wrap": "none",
 
   "buffer_font_size": 18,
-  "buffer_font_family": "Zed Mono",
+  "buffer_font_family": "Zed Plex Mono",
 
   "autosave": "on_focus_change",
   "format_on_save": "off",
