@@ -51,6 +51,11 @@ impl LinuxClient for HeadlessClient {
         vec![]
     }
 
+    fn set_tray_item(
+        &self,
+        item: std::sync::Arc<crate::platform::linux::dbus::status_notifier::StatusNotifierItem>,
+    ) {
+    }
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         None
     }

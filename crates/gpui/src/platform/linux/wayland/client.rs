@@ -4,10 +4,11 @@ use std::hash::Hash;
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use calloop::timer::{TimeoutAction, Timer};
-use calloop::{EventLoop, LoopHandle};
+use calloop::{EventLoop, LoopHandle, RegistrationToken};
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
@@ -59,6 +60,9 @@ use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
+use crate::platform::linux::dbus::status_notifier::{
+    StatusNotifierEventSource, StatusNotifierItem,
+};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
@@ -172,6 +176,7 @@ pub struct Output {
 }
 
 pub(crate) struct WaylandClientState {
+    tray_item_token: Option<RegistrationToken>,
     serial_tracker: SerialTracker,
     globals: Globals,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
@@ -467,6 +472,7 @@ impl WaylandClient {
         let foreground = common.foreground_executor.clone();
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
+            tray_item_token: None,
             serial_tracker: SerialTracker::new(),
             globals,
             wl_seat: seat,
@@ -581,6 +587,37 @@ impl LinuxClient for WaylandClient {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         None
+    }
+
+    fn set_tray_item(&self, item: Arc<StatusNotifierItem>) {
+        let mut state = self.0.borrow_mut();
+        if let Some(token) = state.tray_item_token.take() {
+            state.loop_handle.remove(token);
+        }
+        state.tray_item_token = state
+            .loop_handle
+            .insert_source(
+                StatusNotifierEventSource::new(&state.common.background_executor, item),
+                move |event, _, client| {
+                    let client = client.get_client();
+                    let mut state = client.borrow_mut();
+                    if let Some(mut fun) = state.common.callbacks.tray_menu_action.take() {
+                        match event {
+                            crate::platform::linux::dbus::status_notifier::StatusNotifierEvents::MenuItemClick(id) => {
+                                if let Some(action) = state.common.tray_actions.remove(&id) {
+                                    drop(state);
+                                    fun(action.as_ref());
+                                    state = client.borrow_mut();
+                                    state.common.tray_actions.insert(id, action);
+                                }
+                            }
+                            _ => {}
+                        };
+                        state.common.callbacks.tray_menu_action = Some(fun);
+                    }
+                },
+            )
+            .ok();
     }
 
     fn open_window(

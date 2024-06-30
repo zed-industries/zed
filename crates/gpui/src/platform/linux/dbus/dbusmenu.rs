@@ -1,4 +1,7 @@
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use serde::Serialize;
 use zbus::{
@@ -9,14 +12,14 @@ use zbus::{
 
 pub const DBUS_MENU_PATH: &str = "/MenuBar";
 
-pub(crate) const MENU_PROPERTY_TYPE: &str = "type";
-pub(crate) const MENU_PROPERTY_LABEL: &str = "label";
-pub(crate) const MENU_PROPERTY_ENABLED: &str = "enabled";
-pub(crate) const MENU_PROPERTY_VISIBLE: &str = "visible";
-pub(crate) const MENU_PROPERTY_ICON_NAME: &str = "icon-name";
-pub(crate) const MENU_PROPERTY_ICON_DATA: &str = "icon-data";
-pub(crate) const MENU_PROPERTY_TOGGLE_TYPE: &str = "toggle-type";
-pub(crate) const MENU_PROPERTY_TOGGLE_STATE: &str = "toggle-state";
+const MENU_PROPERTY_TYPE: &str = "type";
+const MENU_PROPERTY_LABEL: &str = "label";
+const MENU_PROPERTY_ENABLED: &str = "enabled";
+const MENU_PROPERTY_VISIBLE: &str = "visible";
+const MENU_PROPERTY_ICON_NAME: &str = "icon-name";
+const MENU_PROPERTY_ICON_DATA: &str = "icon-data";
+const MENU_PROPERTY_TOGGLE_TYPE: &str = "toggle-type";
+const MENU_PROPERTY_TOGGLE_STATE: &str = "toggle-state";
 
 #[derive(Default, Debug, Clone, Type)]
 pub struct Pixmap {
@@ -39,6 +42,7 @@ impl From<Pixmap> for Structure<'_> {
 #[zvariant(signature = "(sv)")]
 pub enum Icon {
     Name(String),
+    Bytes(Vec<u8>),
     Pixmaps(Vec<Pixmap>),
 }
 
@@ -90,7 +94,8 @@ impl<'a> Into<Value<'a>> for MenuProperty {
             Self::Visible(visible) => Value::from(visible),
             Self::Icon(icon) => match icon {
                 Icon::Name(name) => Value::from(name),
-                Icon::Pixmaps(pixmaps) => Value::from(pixmaps),
+                Icon::Bytes(bytes) => Value::from(bytes),
+                _ => panic!("Wrong icon variant"),
             },
             Self::ToggleType(toggle_type) => match toggle_type {
                 MenuToggleType::Checkmark => Value::from("checkmark"),
@@ -134,8 +139,7 @@ pub(crate) struct DBusMenuRemovedProperties {
 pub(crate) struct DBusMenuItemPrivate {
     id: i32,
     parent_id: i32,
-    user_id: Option<String>,
-    action: Option<Box<dyn Fn(String, Value) + Sync + Send>>,
+    pub(crate) user_id: String,
     properties: HashMap<&'static str, MenuProperty>,
     children: Vec<i32>,
 }
@@ -172,7 +176,8 @@ impl DBusMenuItemPrivate {
                 MenuProperty::Visible(_) => MENU_PROPERTY_VISIBLE,
                 MenuProperty::Icon(icon) => match icon {
                     Icon::Name(_) => MENU_PROPERTY_ICON_NAME,
-                    Icon::Pixmaps(_) => MENU_PROPERTY_ICON_DATA,
+                    Icon::Bytes(_) => MENU_PROPERTY_ICON_DATA,
+                    _ => panic!("Wrong Icon Type"),
                 },
                 MenuProperty::ToggleType(_) => MENU_PROPERTY_TOGGLE_TYPE,
                 MenuProperty::ToggleState(_) => MENU_PROPERTY_TOGGLE_STATE,
@@ -218,96 +223,93 @@ impl DBusMenuItemPrivate {
 ///
 #[derive(Default)]
 pub struct DBusMenuItem {
-    user_id: Option<String>,
-    action: Option<Box<dyn Fn(String, Value) + Sync + Send>>,
+    user_id: String,
     properties: HashMap<&'static str, MenuProperty>,
     children: Vec<DBusMenuItem>,
 }
 
 impl DBusMenuItem {
     ///
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// `id` can be used to get a reference to this item later.
-    pub fn id(mut self, id: impl Into<String>) -> Self {
-        self.user_id = Some(id.into());
-        self
+    pub fn new(user_id: impl Into<String>) -> Self {
+        Self {
+            user_id: user_id.into(),
+            ..Default::default()
+        }
     }
 
     ///
-    pub fn menu_type(mut self, menu_type: MenuType) -> Self {
-        match menu_type {
-            MenuType::Standard => self.properties.remove("type"),
-            MenuType::Separator => self
-                .properties
-                .insert("type", MenuProperty::Type(menu_type)),
-        };
-        self
-    }
-
-    ///
-    pub fn label(mut self, text: impl Into<String>) -> Self {
+    pub fn set_type(&mut self, menu_type: MenuType) -> &mut Self {
         self.properties
-            .insert("label", MenuProperty::Label(text.into()));
+            .insert(MENU_PROPERTY_TYPE, MenuProperty::Type(menu_type));
         self
     }
 
     ///
-    pub fn enabled(mut self, enabled: bool) -> Self {
+    pub fn set_label(&mut self, label: impl Into<String>) -> &mut Self {
+        self.properties
+            .insert(MENU_PROPERTY_LABEL, MenuProperty::Label(label.into()));
+        self
+    }
+
+    ///
+    pub fn set_enabled(&mut self, enabled: bool) -> &mut Self {
         match enabled {
-            true => self.properties.remove("enabled"),
+            true => self.properties.remove(MENU_PROPERTY_ENABLED),
             false => self
                 .properties
-                .insert("enabled", MenuProperty::Enabled(false)),
+                .insert(MENU_PROPERTY_ENABLED, MenuProperty::Enabled(false)),
         };
         self
     }
 
     ///
-    pub fn visible(mut self, visible: bool) -> Self {
+    pub fn set_visible(&mut self, visible: bool) -> &mut Self {
         match visible {
-            true => self.properties.remove("visible"),
+            true => self.properties.remove(MENU_PROPERTY_VISIBLE),
             false => self
                 .properties
-                .insert("visible", MenuProperty::Visible(false)),
+                .insert(MENU_PROPERTY_VISIBLE, MenuProperty::Visible(false)),
         };
         self
     }
 
     ///
-    pub fn icon(mut self, icon: Icon) -> Self {
-        match &icon {
-            Icon::Name(_) => {
-                self.properties
-                    .insert("icon-name", MenuProperty::Icon(icon));
-            }
-            Icon::Pixmaps(_) => {
-                self.properties
-                    .insert("icon-data", MenuProperty::Icon(icon));
-            }
+    pub fn set_icon(&mut self, icon: Icon) -> &mut Self {
+        match icon {
+            Icon::Name(_) | Icon::Bytes(_) => self
+                .properties
+                .insert(MENU_PROPERTY_ICON_NAME, MenuProperty::Icon(icon)),
+            _ => panic!("Invalid Icon Type"),
         };
         self
     }
 
     ///
-    pub fn on_click(mut self, on_click: Box<dyn Fn(String, Value) + Sync + Send>) -> Self {
-        self.action = Some(on_click);
+    pub fn set_toggle_type(&mut self, toggle_type: MenuToggleType) -> &mut Self {
+        self.properties.insert(
+            MENU_PROPERTY_TOGGLE_TYPE,
+            MenuProperty::ToggleType(toggle_type),
+        );
         self
     }
 
     ///
-    pub fn children(mut self, mut children: Vec<DBusMenuItem>) -> Self {
-        self.children.append(&mut children);
+    pub fn set_toggle_state(&mut self, state: i32) -> &mut Self {
+        self.properties
+            .insert(MENU_PROPERTY_TOGGLE_TYPE, MenuProperty::ToggleState(state));
         self
+    }
+
+    ///
+    pub fn set_children(&mut self, mut children: Vec<DBusMenuItem>) {
+        self.children = children;
     }
 }
+
 ///
-#[derive(Default)]
 pub struct DBusMenu {
     next_id: i32,
-    items: HashMap<i32, DBusMenuItemPrivate>,
+    pub(crate) items: HashMap<i32, DBusMenuItemPrivate>,
     user_id_to_id_map: HashMap<String, i32>,
 }
 
@@ -401,9 +403,7 @@ impl DBusMenu {
             let user_id = submenu.user_id;
             let parent = self.items.get_mut(&submenu.parent_id).unwrap();
             parent.children.retain(|child| *child != submenu.id);
-            if let Some(user_id) = user_id {
-                self.user_id_to_id_map.remove(&user_id);
-            }
+            self.user_id_to_id_map.remove(&user_id);
             for id in submenu.children {
                 queue.push_back(self.items.remove(&id).unwrap());
             }
@@ -453,7 +453,6 @@ impl DBusMenu {
             id,
             parent_id,
             user_id: submenu.user_id,
-            action: submenu.action,
             properties: submenu
                 .properties
                 .into_iter()
@@ -465,9 +464,8 @@ impl DBusMenu {
         for child in submenu.children {
             self.add_to_root(child, id);
         }
-        if let Some(user_id) = new_submenu.user_id.clone() {
-            self.user_id_to_id_map.insert(user_id, id);
-        }
+        self.user_id_to_id_map
+            .insert(new_submenu.user_id.clone(), id);
         self.items.insert(id, new_submenu);
         if let Some(parent) = self.items.get_mut(&parent_id) {
             parent.children.push(id);
@@ -527,15 +525,6 @@ impl DBusMenuInterface {
             });
         }
         properties
-    }
-
-    async fn event(&self, id: i32, event_id: String, event_data: Value<'_>, _timestamp: u32) {
-        if event_id.eq("clicked") {
-            let menu = self.menu.items.get(&id).unwrap();
-            menu.action
-                .as_ref()
-                .map(|action| action(event_id, event_data));
-        }
     }
 
     async fn about_to_show(&self, _id: i32) -> bool {

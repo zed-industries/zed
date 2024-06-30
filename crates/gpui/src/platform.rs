@@ -3,6 +3,7 @@
 
 mod app_menu;
 mod keystroke;
+mod system_tray;
 
 #[cfg(not(target_os = "macos"))]
 mod cosmic_text;
@@ -50,6 +51,7 @@ use uuid::Uuid;
 
 pub use app_menu::*;
 pub use keystroke::*;
+pub use system_tray::*;
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) use cosmic_text::*;
@@ -144,6 +146,8 @@ pub(crate) trait Platform: 'static {
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
 
+    fn set_tray_item(&self, item: TrayItem);
+
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
         None
@@ -154,6 +158,7 @@ pub(crate) trait Platform: 'static {
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
+    fn on_tray_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
 
     fn compositor_name(&self) -> &'static str {
         ""

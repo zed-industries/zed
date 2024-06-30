@@ -1,12 +1,19 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 
+use calloop::{channel::Channel, EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
 use serde::Deserialize;
 use zbus::{
     export::futures_util::{Stream, StreamExt},
     interface,
     object_server::{InterfaceRef, SignalContext},
-    zvariant::{OwnedObjectPath, Structure, StructureBuilder, Type},
+    zvariant::{OwnedObjectPath, OwnedValue, Structure, StructureBuilder, Type},
+    MessageStream,
 };
+
+use crate::BackgroundExecutor;
 
 use super::dbusmenu::{
     DBusMenu, DBusMenuInterface, DBusMenuItem, DBusMenuRemovedProperties,
@@ -196,6 +203,7 @@ impl From<ToolTip> for Structure<'_> {
         let (name, pixmaps) = match value.icon {
             Icon::Name(name) => (name, Vec::default()),
             Icon::Pixmaps(pixmaps) => (String::default(), pixmaps),
+            _ => panic!("Wrong Icon Variant"),
         };
         StructureBuilder::new()
             .add_field(name)
@@ -204,14 +212,6 @@ impl From<ToolTip> for Structure<'_> {
             .add_field(value.description)
             .build()
     }
-}
-
-#[derive(Default)]
-struct Callbacks {
-    on_activate: Option<Box<dyn Fn(i32, i32) + Sync + Send>>,
-    on_secondary_activate: Option<Box<dyn Fn(i32, i32) + Sync + Send>>,
-    on_scroll: Option<Box<dyn Fn(i32, String) + Sync + Send>>,
-    on_provide_xdg_activation_token: Option<Box<dyn Fn(String) + Sync + Send>>,
 }
 
 #[derive(Debug, Clone, Type)]
@@ -322,9 +322,21 @@ impl StatusNotifierItemOptions {
     }
 }
 
+pub enum StatusNotifierEvents {
+    ///
+    Activate(i32, i32),
+    ///
+    SecondaryActivate(i32, i32),
+    ///
+    Scroll(i32, String),
+    ///
+    XdgActivationToken(String),
+    ///
+    MenuItemClick(String),
+}
+
 struct StatusNotifierItemInterface {
     id: String,
-    callbacks: Callbacks,
     options: StatusNotifierItemOptions,
 }
 
@@ -418,34 +430,6 @@ impl StatusNotifierItemInterface {
         OwnedObjectPath::try_from(DBUS_MENU_PATH).unwrap()
     }
 
-    async fn provide_xdg_activation_token(&self, token: String) {
-        self.callbacks
-            .on_provide_xdg_activation_token
-            .as_ref()
-            .map(move |xdg_activation_token| xdg_activation_token(token));
-    }
-
-    async fn activate(&self, x: i32, y: i32) {
-        self.callbacks
-            .on_activate
-            .as_ref()
-            .map(move |activate| activate(x, y));
-    }
-
-    async fn secondary_activate(&self, x: i32, y: i32) {
-        self.callbacks
-            .on_secondary_activate
-            .as_ref()
-            .map(move |activate| activate(x, y));
-    }
-
-    async fn scroll(&self, delta: i32, orientation: String) {
-        self.callbacks
-            .on_scroll
-            .as_ref()
-            .map(move |scroll| scroll(delta, orientation));
-    }
-
     #[zbus(signal, name = "NewTitle")]
     async fn new_title(&self, cx: &SignalContext<'_>) -> zbus::Result<()>;
 
@@ -484,10 +468,9 @@ impl StatusNotifierItem {
         let item_iface = StatusNotifierItemInterface {
             id: id.to_string(),
             options,
-            callbacks: Default::default(),
         };
         let menu_iface = DBusMenuInterface {
-            menu: menu.unwrap_or(DBusMenu::default()),
+            menu: menu.unwrap_or(DBusMenu::new()),
             revision: 1,
         };
         let name = format!(
@@ -496,7 +479,7 @@ impl StatusNotifierItem {
             id
         );
 
-        let conn = zbus::connection::Builder::session()?
+        let connection = zbus::connection::Builder::session()?
             .name(name.clone())?
             .serve_at(STATUS_NOTIFIER_ITEM_PATH, item_iface)?
             .serve_at(DBUS_MENU_PATH, menu_iface)?
@@ -504,43 +487,19 @@ impl StatusNotifierItem {
             .await?;
         watcher.register_status_notifier_item(name).await?;
 
-        let item_ref = conn
+        let item_ref = connection
             .object_server()
             .interface::<_, StatusNotifierItemInterface>(STATUS_NOTIFIER_ITEM_PATH)
             .await?;
-        let menu_ref = conn
+        let menu_ref = connection
             .object_server()
             .interface::<_, DBusMenuInterface>(DBUS_MENU_PATH)
             .await?;
         Ok(Self {
-            connection: conn,
+            connection,
             item_ref,
             menu_ref,
         })
-    }
-
-    /// Usually called when the user left clicks the icon
-    pub async fn on_activate(&self, fun: Box<dyn Fn(i32, i32) + Sync + Send>) {
-        let mut iface = self.item_ref.get_mut().await;
-        iface.callbacks.on_activate = Some(fun);
-    }
-
-    /// Usually called when the user middle clicks the icon
-    pub async fn on_secondary_activate(&self, fun: Box<dyn Fn(i32, i32) + Sync + Send>) {
-        let mut iface = self.item_ref.get_mut().await;
-        iface.callbacks.on_secondary_activate = Some(fun);
-    }
-
-    /// Called when the user scrolls in the icon
-    pub async fn on_scroll(&self, fun: Box<dyn Fn(i32, String) + Sync + Send>) {
-        let mut iface = self.item_ref.get_mut().await;
-        iface.callbacks.on_scroll = Some(fun);
-    }
-
-    /// Usually called when `Activate` and `OnSecondaryActivate` is called
-    pub async fn on_provide_xdg_activation_token(&self, fun: Box<dyn Fn(String) + Sync + Send>) {
-        let mut iface = self.item_ref.get_mut().await;
-        iface.callbacks.on_provide_xdg_activation_token = Some(fun);
     }
 
     /// Changes the current title. This may not work if the tooltip title is set
@@ -616,7 +575,7 @@ impl StatusNotifierItem {
         Ok(())
     }
 
-    /// Adds a submenu to the menu
+    /// Adds a submenu to root
     pub async fn add_submenu(&self, submenu: DBusMenuItem) -> zbus::Result<()> {
         let mut iface = self.menu_ref.get_mut().await;
         let updated = iface.menu.add_submenu(submenu);
@@ -682,6 +641,119 @@ impl StatusNotifierItem {
             iface.layout_updated(cx, iface.revision, parent_id).await?;
             iface.items_properties_updated(cx, updated, removed).await?;
         }
+        Ok(())
+    }
+}
+
+pub struct StatusNotifierEventSource {
+    channel: Channel<StatusNotifierEvents>,
+    item: Arc<StatusNotifierItem>,
+}
+
+impl StatusNotifierEventSource {
+    pub fn new(executor: &BackgroundExecutor, item: Arc<StatusNotifierItem>) -> Self {
+        let (sender, channel) = calloop::channel::channel();
+        let executor = executor.clone();
+        executor
+            .spawn({
+                let item = item.clone();
+                async move {
+                    let mut stream = MessageStream::from(&item.connection);
+                    while let Some(Ok(msg)) = stream.next().await {
+                        if !matches!(msg.message_type(), zbus::message::Type::MethodCall) {
+                            continue;
+                        }
+                        if let Some(member) = msg.header().member() {
+                            match member.as_str() {
+                                "Activate" => {
+                                    let (x, y) = msg.body().deserialize::<(i32, i32)>()?;
+                                    sender.send(StatusNotifierEvents::Activate(x, y))?;
+                                }
+                                "SecondaryActivate" => {
+                                    let (x, y) = msg.body().deserialize::<(i32, i32)>()?;
+                                    sender.send(StatusNotifierEvents::SecondaryActivate(x, y))?;
+                                }
+                                "Scroll" => {
+                                    let (delta, orientation) =
+                                        msg.body().deserialize::<(i32, String)>()?;
+                                    sender
+                                        .send(StatusNotifierEvents::Scroll(delta, orientation))?;
+                                }
+                                "ProvideXdgActivationToken" => {
+                                    let token = msg.body().deserialize::<String>()?;
+                                    sender.send(StatusNotifierEvents::XdgActivationToken(token))?;
+                                }
+                                "Event" => {
+                                    let (id, event_id, _event_data, _timestamp) = msg
+                                        .body()
+                                        .deserialize::<(i32, String, OwnedValue, u32)>()?;
+                                    let iface = item.menu_ref.get().await;
+                                    if let Some(submenu) = iface.menu.items.get(&id) {
+                                        let id = submenu.user_id.clone();
+                                        if event_id.eq("clicked") {
+                                            sender.send(StatusNotifierEvents::MenuItemClick(id))?;
+                                        }
+                                    };
+                                }
+                                _ => {}
+                            };
+                        }
+                    }
+                    anyhow::Ok(())
+                }
+            })
+            .detach();
+        Self { channel, item }
+    }
+}
+
+impl EventSource for StatusNotifierEventSource {
+    type Event = StatusNotifierEvents;
+    type Metadata = ();
+    type Ret = ();
+    type Error = anyhow::Error;
+
+    fn process_events<F>(
+        &mut self,
+        readiness: Readiness,
+        token: Token,
+        mut callback: F,
+    ) -> Result<PostAction, Self::Error>
+    where
+        F: FnMut(Self::Event, &mut Self::Metadata) -> Self::Ret,
+    {
+        self.channel.process_events(readiness, token, |evt, _| {
+            if let calloop::channel::Event::Msg(msg) = evt {
+                (callback)(msg, &mut ())
+            }
+        })?;
+
+        Ok(PostAction::Continue)
+    }
+
+    fn register(
+        &mut self,
+        poll: &mut Poll,
+        token_factory: &mut TokenFactory,
+    ) -> calloop::Result<()> {
+        self.channel.register(poll, token_factory)?;
+
+        Ok(())
+    }
+
+    fn reregister(
+        &mut self,
+        poll: &mut Poll,
+        token_factory: &mut TokenFactory,
+    ) -> calloop::Result<()> {
+        self.channel.reregister(poll, token_factory)?;
+
+        Ok(())
+    }
+
+    fn unregister(&mut self, poll: &mut Poll) -> calloop::Result<()> {
+        self.channel.unregister(poll)?;
+
         Ok(())
     }
 }
