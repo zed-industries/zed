@@ -100,10 +100,12 @@ impl DirectXRenderer {
         self.atlas.clone()
     }
 
-    pub(crate) fn draw(&mut self, scene: &Scene) {
+    pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
         let Some(path_tiles) = self.rasterize_paths(scene.paths()) else {
-            log::error!("failed to rasterize {} paths", scene.paths().len());
-            return;
+            return Err(anyhow::anyhow!(
+                "failed to rasterize {} paths",
+                scene.paths().len()
+            ));
         };
         pre_draw(
             &self.context.context,
@@ -114,8 +116,7 @@ impl DirectXRenderer {
             [0.0, 0.0, 0.0, 1.0],
             &self.render.blend_state,
             1,
-        )
-        .unwrap();
+        )?;
         for batch in scene.batches() {
             let ok = match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
@@ -132,7 +133,7 @@ impl DirectXRenderer {
                 } => self.draw_polychrome_sprites(texture_id, sprites),
                 PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(surfaces),
             };
-            if !ok {
+            if ok.is_err() {
                 log::error!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
                     scene.paths.len(),
                     scene.shadows.len(),
@@ -141,40 +142,38 @@ impl DirectXRenderer {
                     scene.monochrome_sprites.len(),
                     scene.polychrome_sprites.len(),
                     scene.surfaces.len(),);
-                return;
+                return ok;
             }
         }
-        unsafe { self.context.swap_chain.Present(0, 0).ok().log_err() };
+        unsafe { self.context.swap_chain.Present(0, 0) }.ok()?;
+        Ok(())
     }
 
-    pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) {
+    pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
+        self.size = new_size;
+        unsafe { self.context.context.OMSetRenderTargets(None, None) };
+        drop(self.context.back_buffer[0].take().unwrap());
         unsafe {
-            self.size = new_size;
-            self.context.context.OMSetRenderTargets(None, None);
-            drop(self.context.back_buffer[0].take().unwrap());
-            self.context
-                .swap_chain
-                .ResizeBuffers(
-                    BUFFER_COUNT as u32,
-                    new_size.width.0 as u32,
-                    new_size.height.0 as u32,
-                    DXGI_FORMAT_B8G8R8A8_UNORM,
-                    0,
-                )
-                .log_err();
-            let backbuffer = set_render_target_view(
-                &self.context.swap_chain,
-                &self.context.device,
-                &self.context.context,
-            )
-            .unwrap();
-            self.context.back_buffer[0] = Some(backbuffer);
-            self.context.viewport = set_viewport(
-                &self.context.context,
-                new_size.width.0 as f32,
-                new_size.height.0 as f32,
-            );
+            self.context.swap_chain.ResizeBuffers(
+                BUFFER_COUNT as u32,
+                new_size.width.0 as u32,
+                new_size.height.0 as u32,
+                DXGI_FORMAT_B8G8R8A8_UNORM,
+                0,
+            )?;
         }
+        let backbuffer = set_render_target_view(
+            &self.context.swap_chain,
+            &self.context.device,
+            &self.context.context,
+        )?;
+        self.context.back_buffer[0] = Some(backbuffer);
+        self.context.viewport = set_viewport(
+            &self.context.context,
+            new_size.width.0 as f32,
+            new_size.height.0 as f32,
+        );
+        Ok(())
     }
 
     pub(crate) fn update_transparency(
@@ -194,9 +193,9 @@ impl DirectXRenderer {
         }
     }
 
-    fn draw_shadows(&mut self, shadows: &[Shadow]) -> bool {
+    fn draw_shadows(&mut self, shadows: &[Shadow]) -> Result<()> {
         if shadows.is_empty() {
-            return true;
+            return Ok(());
         }
         draw_normal(
             &self.context.context,
@@ -208,13 +207,11 @@ impl DirectXRenderer {
             4,
             shadows.len() as u32,
         )
-        .unwrap();
-        true
     }
 
-    fn draw_quads(&mut self, quads: &[Quad]) -> bool {
+    fn draw_quads(&mut self, quads: &[Quad]) -> Result<()> {
         if quads.is_empty() {
-            return true;
+            return Ok(());
         }
         draw_normal(
             &self.context.context,
@@ -226,8 +223,6 @@ impl DirectXRenderer {
             4,
             quads.len() as u32,
         )
-        .unwrap();
-        true
     }
 
     fn rasterize_paths(
@@ -287,7 +282,7 @@ impl DirectXRenderer {
                 &self.render.blend_state_for_pr,
                 0,
             )
-            .unwrap();
+            .log_err()?;
             draw_normal(
                 &self.context.context,
                 &self.render.path_raster_pipeline,
@@ -298,9 +293,8 @@ impl DirectXRenderer {
                 vertices.len() as u32,
                 1,
             )
-            .unwrap();
+            .log_err()?;
         }
-
         Some(tiles)
     }
 
@@ -308,9 +302,9 @@ impl DirectXRenderer {
         &mut self,
         paths: &[Path<ScaledPixels>],
         path_tiles: &HashMap<PathId, AtlasTile>,
-    ) -> bool {
+    ) -> Result<()> {
         if paths.is_empty() {
-            return true;
+            return Ok(());
         }
         for path in paths {
             let tile = &path_tiles[&path.id];
@@ -333,15 +327,14 @@ impl DirectXRenderer {
                 &self.context.viewport,
                 &self.render.global_params_buffer,
                 &self.render.sampler,
-            )
-            .unwrap();
+            )?;
         }
-        true
+        Ok(())
     }
 
-    fn draw_underlines(&mut self, underlines: &[Underline]) -> bool {
+    fn draw_underlines(&mut self, underlines: &[Underline]) -> Result<()> {
         if underlines.is_empty() {
-            return true;
+            return Ok(());
         }
         draw_normal(
             &self.context.context,
@@ -353,18 +346,15 @@ impl DirectXRenderer {
             4,
             underlines.len() as u32,
         )
-        .unwrap();
-
-        true
     }
 
     fn draw_monochrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
         sprites: &[MonochromeSprite],
-    ) -> bool {
+    ) -> Result<()> {
         if sprites.is_empty() {
-            return true;
+            return Ok(());
         }
         let (_, _, texture) = self.atlas.texture_info(texture_id);
         draw_with_texture(
@@ -376,17 +366,15 @@ impl DirectXRenderer {
             &self.render.global_params_buffer,
             &self.render.sampler,
         )
-        .unwrap();
-        true
     }
 
     fn draw_polychrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
         sprites: &[PolychromeSprite],
-    ) -> bool {
+    ) -> Result<()> {
         if sprites.is_empty() {
-            return true;
+            return Ok(());
         }
         let (_, _, texture) = self.atlas.texture_info(texture_id);
         draw_with_texture(
@@ -398,15 +386,13 @@ impl DirectXRenderer {
             &self.render.global_params_buffer,
             &self.render.sampler,
         )
-        .unwrap();
-        true
     }
 
-    fn draw_surfaces(&mut self, surfaces: &[Surface]) -> bool {
+    fn draw_surfaces(&mut self, surfaces: &[Surface]) -> Result<()> {
         if surfaces.is_empty() {
-            return true;
+            return Ok(());
         }
-        true
+        Ok(())
     }
 }
 
@@ -607,8 +593,8 @@ fn get_device(
             device,
             None,
             context,
-        )
-    }?)
+        )?
+    })
 }
 
 fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {

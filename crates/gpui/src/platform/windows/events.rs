@@ -137,7 +137,7 @@ fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Opti
     let mut lock = state_ptr.state.borrow_mut();
     let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
-    lock.renderer.resize(new_size);
+    lock.renderer.resize(new_size).log_err();
     let new_size = new_size.to_pixels(scale_factor);
     lock.logical_size = new_size;
     if let Some(mut callback) = lock.callbacks.resize.take() {
