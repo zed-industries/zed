@@ -102,7 +102,9 @@ impl DirectXRenderer {
             log::error!("failed to rasterize {} paths", scene.paths().len());
             return;
         };
-        self.pre_draw(
+        pre_draw(
+            &self.context.context,
+            &self.render.global_params_buffer,
             &self.context.viewport,
             &self.context.back_buffer,
             // [0.0, 0.0, 0.0, 0.0],
@@ -273,7 +275,9 @@ impl DirectXRenderer {
                 MinDepth: 0.0,
                 MaxDepth: 1.0,
             }];
-            self.pre_draw(
+            pre_draw(
+                &self.context.context,
+                &self.render.global_params_buffer,
                 &viewport,
                 &rtv,
                 [0.0, 0.0, 0.0, 1.0],
@@ -400,47 +404,6 @@ impl DirectXRenderer {
             return true;
         }
         true
-    }
-
-    fn pre_draw(
-        &self,
-        view_port: &[D3D11_VIEWPORT],
-        render_target_view: &[Option<ID3D11RenderTargetView>],
-        clear_color: [f32; 4],
-        blend_state: &ID3D11BlendState,
-        premultiplied_alpha: u32,
-    ) -> Result<()> {
-        self.update_global_params(GlobalParams {
-            viewport_size: [view_port[0].Width, view_port[0].Height],
-            premultiplied_alpha,
-            _pad: 0,
-        })?;
-        unsafe {
-            self.context.context.RSSetViewports(Some(view_port));
-            self.context
-                .context
-                .OMSetRenderTargets(Some(render_target_view), None);
-            self.context
-                .context
-                .ClearRenderTargetView(render_target_view[0].as_ref().unwrap(), &clear_color);
-            self.context
-                .context
-                .OMSetBlendState(blend_state, None, 0xFFFFFFFF);
-        }
-        Ok(())
-    }
-
-    fn update_global_params(&self, globals: GlobalParams) -> Result<()> {
-        let buffer = self.render.global_params_buffer[0].as_ref().unwrap();
-        unsafe {
-            let mut data = std::mem::zeroed();
-            self.context
-                .context
-                .Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut data))?;
-            std::ptr::copy_nonoverlapping(&globals, data.pData as *mut _, 1);
-            self.context.context.Unmap(buffer, 0);
-        }
-        Ok(())
     }
 }
 
@@ -881,6 +844,48 @@ fn create_pipieline<T>(
         buffer,
         view,
     })
+}
+
+fn update_global_params(
+    device_context: &ID3D11DeviceContext,
+    buffer: &[Option<ID3D11Buffer>; 1],
+    globals: GlobalParams,
+) -> Result<()> {
+    let buffer = buffer[0].as_ref().unwrap();
+    unsafe {
+        let mut data = std::mem::zeroed();
+        device_context.Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut data))?;
+        std::ptr::copy_nonoverlapping(&globals, data.pData as *mut _, 1);
+        device_context.Unmap(buffer, 0);
+    }
+    Ok(())
+}
+
+fn pre_draw(
+    device_context: &ID3D11DeviceContext,
+    global_params_buffer: &[Option<ID3D11Buffer>; 1],
+    view_port: &[D3D11_VIEWPORT; 1],
+    render_target_view: &[Option<ID3D11RenderTargetView>; 1],
+    clear_color: [f32; 4],
+    blend_state: &ID3D11BlendState,
+    premultiplied_alpha: u32,
+) -> Result<()> {
+    update_global_params(
+        device_context,
+        global_params_buffer,
+        GlobalParams {
+            viewport_size: [view_port[0].Width, view_port[0].Height],
+            premultiplied_alpha,
+            _pad: 0,
+        },
+    )?;
+    unsafe {
+        device_context.RSSetViewports(Some(view_port));
+        device_context.OMSetRenderTargets(Some(render_target_view), None);
+        device_context.ClearRenderTargetView(render_target_view[0].as_ref().unwrap(), &clear_color);
+        device_context.OMSetBlendState(blend_state, None, 0xFFFFFFFF);
+    }
+    Ok(())
 }
 
 fn update_buffer<T>(
