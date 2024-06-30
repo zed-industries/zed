@@ -779,7 +779,7 @@ impl BufferSearchBar {
                 {
                     // If 'wrapscan' is disabled, searches do not wrap around the end of the file.
                     let mut count = count;
-                    if EditorSettings::get_global(cx).search_wrap == false {
+                    if !EditorSettings::get_global(cx).search_wrap {
                         if direction == Direction::Next && index + count >= matches.len() {
                             count = matches.len() - index - 1;
                         }
