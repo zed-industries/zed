@@ -287,10 +287,12 @@ impl DirectXAtlasTexture {
             let row_pitch = raw_data.RowPitch as usize;
             let offset = bounds.top().0 as usize * row_pitch
                 + bounds.left().to_bytes(self.bytes_per_pixel as u8) as usize;
+            let mut src_ptr = bytes.as_ptr();
             let mut start = (raw_data.pData as *mut u8).add(offset);
             for _ in 0..bounds.size.height.0 as usize {
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), start, count);
+                std::ptr::copy_nonoverlapping(src_ptr, start, count);
                 start = start.add(row_pitch);
+                src_ptr = src_ptr.add(count);
             }
             device_context.Unmap(&self.texture, 0);
         }
