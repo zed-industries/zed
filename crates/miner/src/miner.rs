@@ -427,11 +427,32 @@ impl Miner {
     /// Returns a `Result` containing the combined summary as a `String`, or an error
     /// if the combination process fails.
     async fn combine_summaries(&self, summaries: &[String]) -> Result<String> {
-        // todo!
-        // Implement the logic to combine summaries
-        // This could involve using the AI model to generate a summary of summaries
-        // For now, let's just concatenate them with a simple separator
-        Ok(summaries.join("\n---\n"))
+        if summaries.is_empty() {
+            return Ok(String::new());
+        }
+
+        if summaries.len() == 1 {
+            return Ok(summaries[0].clone());
+        }
+
+        let combined_prompt = format!(
+            "Create a concise summary that combines the following summaries:\n\n{}",
+            summaries.join("\n\n")
+        );
+
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: combined_prompt,
+        }];
+
+        let mut receiver = self.client.stream_completion(messages).await?;
+        let mut combined_summary = String::new();
+
+        while let Some(content) = receiver.recv().await {
+            combined_summary.push_str(&content);
+        }
+
+        Ok(combined_summary)
     }
 
     /// Scans a file, processes its content, and generates a summary.
