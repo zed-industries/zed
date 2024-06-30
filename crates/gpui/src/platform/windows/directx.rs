@@ -113,31 +113,15 @@ impl DirectXRenderer {
             log::error!("failed to rasterize {} paths", scene.paths().len());
             return;
         };
-        self.update_global_params(GlobalParams {
-            viewport_size: [
-                self.context.viewport[0].Width,
-                self.context.viewport[0].Height,
-            ],
-            premultiplied_alpha: 1,
-            _pad: 0,
-        })
+        self.pre_draw(
+            &self.context.viewport,
+            &self.context.back_buffer,
+            // [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+            &self.render.blend_state,
+            1,
+        )
         .unwrap();
-        unsafe {
-            self.context
-                .context
-                .RSSetViewports(Some(&self.context.viewport));
-            self.context
-                .context
-                .OMSetRenderTargets(Some(&self.context.back_buffer), None);
-            self.context.context.ClearRenderTargetView(
-                self.context.back_buffer[0].as_ref().unwrap(),
-                // &[0.0, 0.0, 0.0, 0.0],
-                &[0.0, 0.0, 0.0, 1.0],
-            );
-            self.context
-                .context
-                .OMSetBlendState(&self.render.blend_state, None, 0xFFFFFFFF);
-        }
         for batch in scene.batches() {
             let ok = match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
@@ -217,125 +201,28 @@ impl DirectXRenderer {
         }
     }
 
-    // TODO:
     fn draw_shadows(&mut self, shadows: &[Shadow]) -> bool {
         if shadows.is_empty() {
             return true;
         }
-        unsafe {
-            {
-                let mut resource = std::mem::zeroed();
-                self.context
-                    .context
-                    .Map(
-                        &self.render.shadow_pipeline.buffer,
-                        0,
-                        D3D11_MAP_WRITE_DISCARD,
-                        0,
-                        Some(&mut resource),
-                    )
-                    .unwrap();
-                std::ptr::copy_nonoverlapping(
-                    shadows.as_ptr(),
-                    resource.pData as *mut Shadow,
-                    shadows.len(),
-                );
-                self.context
-                    .context
-                    .Unmap(&self.render.shadow_pipeline.buffer, 0);
-                self.context
-                    .context
-                    .VSSetShaderResources(1, Some(&self.render.shadow_pipeline.view));
-                self.context
-                    .context
-                    .PSSetShaderResources(1, Some(&self.render.shadow_pipeline.view));
-            }
-            self.context
-                .context
-                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            self.context
-                .context
-                .RSSetViewports(Some(&self.context.viewport));
-            self.context
-                .context
-                .VSSetShader(&self.render.shadow_pipeline.vertex, None);
-            self.context
-                .context
-                .PSSetShader(&self.render.shadow_pipeline.fragment, None);
-            self.context
-                .context
-                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            self.context
-                .context
-                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            self.context
-                .context
-                .DrawInstanced(4, shadows.len() as u32, 0, 0);
-        }
+        self.draw_normal(
+            &self.render.shadow_pipeline,
+            &self.context.viewport,
+            shadows,
+        )
+        .unwrap();
         true
     }
 
-    // TODO:
     fn draw_quads(&mut self, quads: &[Quad]) -> bool {
         if quads.is_empty() {
             return true;
         }
-        unsafe {
-            {
-                let mut resource = std::mem::zeroed();
-                self.context
-                    .context
-                    .Map(
-                        &self.render.quad_pipeline.buffer,
-                        0,
-                        D3D11_MAP_WRITE_DISCARD,
-                        0,
-                        Some(&mut resource),
-                    )
-                    .unwrap();
-                std::ptr::copy_nonoverlapping(
-                    quads.as_ptr(),
-                    resource.pData as *mut Quad,
-                    quads.len(),
-                );
-                self.context
-                    .context
-                    .Unmap(&self.render.quad_pipeline.buffer, 0);
-                self.context
-                    .context
-                    .VSSetShaderResources(1, Some(&self.render.quad_pipeline.view));
-                self.context
-                    .context
-                    .PSSetShaderResources(1, Some(&self.render.quad_pipeline.view));
-            }
-            self.context
-                .context
-                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            self.context
-                .context
-                .RSSetViewports(Some(&self.context.viewport));
-            self.context
-                .context
-                .VSSetShader(&self.render.quad_pipeline.vertex, None);
-            self.context
-                .context
-                .PSSetShader(&self.render.quad_pipeline.fragment, None);
-            self.context
-                .context
-                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-            // self.context.context.VSSetConstantBuffers(startslot, ppconstantbuffers)
-            self.context
-                .context
-                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
-
-            self.context
-                .context
-                .DrawInstanced(4, quads.len() as u32, 0, 0);
-        }
+        self.draw_normal(&self.render.quad_pipeline, &self.context.viewport, quads)
+            .unwrap();
         true
     }
 
-    // TODO:
     fn rasterize_paths(
         &mut self,
         paths: &[Path<ScaledPixels>],
@@ -384,44 +271,17 @@ impl DirectXRenderer {
                 MinDepth: 0.0,
                 MaxDepth: 1.0,
             }];
+            self.pre_draw(
+                &viewport,
+                &rtv,
+                [0.0, 0.0, 0.0, 1.0],
+                &self.render.blend_state_for_pr,
+                0,
+            )
+            .unwrap();
             unsafe {
-                let mut resource = std::mem::zeroed();
-                self.context
-                    .context
-                    .Map(
-                        &self.render.path_raster_pipeline.buffer,
-                        0,
-                        D3D11_MAP_WRITE_DISCARD,
-                        0,
-                        Some(&mut resource),
-                    )
+                self.update_buffer(&self.render.path_raster_pipeline.buffer, &vertices)
                     .unwrap();
-                std::ptr::copy_nonoverlapping(
-                    vertices.as_ptr(),
-                    resource.pData as _,
-                    vertices.len(),
-                );
-                self.context
-                    .context
-                    .Unmap(&self.render.path_raster_pipeline.buffer, 0);
-
-                let globals = GlobalParams {
-                    viewport_size: [texture_size.width, texture_size.height],
-                    premultiplied_alpha: 0,
-                    _pad: 0,
-                };
-                self.update_global_params(globals).unwrap();
-
-                self.context.context.RSSetViewports(Some(&viewport));
-                self.context.context.OMSetRenderTargets(Some(&rtv), None);
-                self.context.context.OMSetBlendState(
-                    &self.render.blend_state_for_pr,
-                    None,
-                    0xFFFFFFFF,
-                );
-                self.context
-                    .context
-                    .ClearRenderTargetView(rtv[0].as_ref().unwrap(), &[0., 0., 0., 1.]);
 
                 self.context
                     .context
@@ -453,7 +313,6 @@ impl DirectXRenderer {
         Some(tiles)
     }
 
-    // TODO:
     fn draw_paths(
         &mut self,
         paths: &[Path<ScaledPixels>],
@@ -476,21 +335,8 @@ impl DirectXRenderer {
             }];
 
             unsafe {
-                let mut resource = std::mem::zeroed();
-                self.context
-                    .context
-                    .Map(
-                        &self.render.paths_pipeline.buffer,
-                        0,
-                        D3D11_MAP_WRITE_DISCARD,
-                        0,
-                        Some(&mut resource),
-                    )
+                self.update_buffer(&self.render.paths_pipeline.buffer, &sprites)
                     .unwrap();
-                std::ptr::copy_nonoverlapping(sprites.as_ptr(), resource.pData as *mut _, 1);
-                self.context
-                    .context
-                    .Unmap(&self.render.paths_pipeline.buffer, 0);
 
                 self.context
                     .context
@@ -532,32 +378,14 @@ impl DirectXRenderer {
         true
     }
 
-    // TODO:
     fn draw_underlines(&mut self, underlines: &[Underline]) -> bool {
         if underlines.is_empty() {
             return true;
         }
         unsafe {
             {
-                let mut resource = std::mem::zeroed();
-                self.context
-                    .context
-                    .Map(
-                        &self.render.underline_pipeline.buffer,
-                        0,
-                        D3D11_MAP_WRITE_DISCARD,
-                        0,
-                        Some(&mut resource),
-                    )
+                self.update_buffer(&self.render.underline_pipeline.buffer, underlines)
                     .unwrap();
-                std::ptr::copy_nonoverlapping(
-                    underlines.as_ptr(),
-                    resource.pData as *mut Underline,
-                    underlines.len(),
-                );
-                self.context
-                    .context
-                    .Unmap(&self.render.underline_pipeline.buffer, 0);
                 self.context
                     .context
                     .VSSetShaderResources(1, Some(&self.render.underline_pipeline.view));
@@ -592,7 +420,6 @@ impl DirectXRenderer {
         true
     }
 
-    // TODO:
     fn draw_monochrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
@@ -604,25 +431,8 @@ impl DirectXRenderer {
         let tex_info = self.atlas.texture_info(texture_id);
         unsafe {
             {
-                let mut resource = std::mem::zeroed();
-                self.context
-                    .context
-                    .Map(
-                        &self.render.mono_sprites.buffer,
-                        0,
-                        D3D11_MAP_WRITE_DISCARD,
-                        0,
-                        Some(&mut resource),
-                    )
+                self.update_buffer(&self.render.mono_sprites.buffer, sprites)
                     .unwrap();
-                std::ptr::copy_nonoverlapping(
-                    sprites.as_ptr(),
-                    resource.pData as *mut MonochromeSprite,
-                    sprites.len(),
-                );
-                self.context
-                    .context
-                    .Unmap(&self.render.mono_sprites.buffer, 0);
                 self.context
                     .context
                     .VSSetShaderResources(1, Some(&self.render.mono_sprites.view));
@@ -666,7 +476,6 @@ impl DirectXRenderer {
         true
     }
 
-    // TODO:
     fn draw_polychrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
@@ -678,25 +487,8 @@ impl DirectXRenderer {
         let tex_info = self.atlas.texture_info(texture_id);
         unsafe {
             {
-                let mut resource = std::mem::zeroed();
-                self.context
-                    .context
-                    .Map(
-                        &self.render.poly_sprites.buffer,
-                        0,
-                        D3D11_MAP_WRITE_DISCARD,
-                        0,
-                        Some(&mut resource),
-                    )
+                self.update_buffer(&self.render.poly_sprites.buffer, sprites)
                     .unwrap();
-                std::ptr::copy_nonoverlapping(
-                    sprites.as_ptr(),
-                    resource.pData as *mut PolychromeSprite,
-                    sprites.len(),
-                );
-                self.context
-                    .context
-                    .Unmap(&self.render.poly_sprites.buffer, 0);
                 self.context
                     .context
                     .VSSetShaderResources(1, Some(&self.render.poly_sprites.view));
@@ -740,12 +532,39 @@ impl DirectXRenderer {
         true
     }
 
-    // TODO:
     fn draw_surfaces(&mut self, surfaces: &[Surface]) -> bool {
         if surfaces.is_empty() {
             return true;
         }
         true
+    }
+
+    fn pre_draw(
+        &self,
+        view_port: &[D3D11_VIEWPORT],
+        render_target_view: &[Option<ID3D11RenderTargetView>],
+        clear_color: [f32; 4],
+        blend_state: &ID3D11BlendState,
+        premultiplied_alpha: u32,
+    ) -> Result<()> {
+        self.update_global_params(GlobalParams {
+            viewport_size: [view_port[0].Width, view_port[0].Height],
+            premultiplied_alpha,
+            _pad: 0,
+        })?;
+        unsafe {
+            self.context.context.RSSetViewports(Some(view_port));
+            self.context
+                .context
+                .OMSetRenderTargets(Some(render_target_view), None);
+            self.context
+                .context
+                .ClearRenderTargetView(render_target_view[0].as_ref().unwrap(), &clear_color);
+            self.context
+                .context
+                .OMSetBlendState(blend_state, None, 0xFFFFFFFF);
+        }
+        Ok(())
     }
 
     fn update_global_params(&self, globals: GlobalParams) -> Result<()> {
@@ -757,6 +576,53 @@ impl DirectXRenderer {
                 .Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut data))?;
             std::ptr::copy_nonoverlapping(&globals, data.pData as *mut _, 1);
             self.context.context.Unmap(buffer, 0);
+        }
+        Ok(())
+    }
+
+    fn update_buffer<T>(&self, buffer: &ID3D11Buffer, data: &[T]) -> Result<()> {
+        unsafe {
+            let mut dest = std::mem::zeroed();
+            self.context
+                .context
+                .Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
+            std::ptr::copy_nonoverlapping(data.as_ptr(), dest.pData as _, data.len());
+            self.context.context.Unmap(buffer, 0);
+        }
+        Ok(())
+    }
+
+    fn draw_normal<T>(
+        &self,
+        pipeline: &PipelineState,
+        viewport: &[D3D11_VIEWPORT],
+        data: &[T],
+    ) -> Result<()> {
+        self.update_buffer(&pipeline.buffer, data)?;
+        unsafe {
+            self.context
+                .context
+                .VSSetShaderResources(1, Some(&pipeline.view));
+            self.context
+                .context
+                .PSSetShaderResources(1, Some(&pipeline.view));
+
+            self.context
+                .context
+                .IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            self.context.context.RSSetViewports(Some(viewport));
+            self.context.context.VSSetShader(&pipeline.vertex, None);
+            self.context.context.PSSetShader(&pipeline.fragment, None);
+            self.context
+                .context
+                .VSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+            self.context
+                .context
+                .PSSetConstantBuffers(0, Some(&self.render.global_params_buffer));
+
+            self.context
+                .context
+                .DrawInstanced(4, data.len() as u32, 0, 0);
         }
         Ok(())
     }
@@ -1200,12 +1066,6 @@ fn create_pipieline<T>(
         view,
     })
 }
-
-// fn update_buffer<T>(device_context: &ID3D11DeviceContext, buffer: &ID3D11Buffer, data: &[T]) {
-//     unsafe {
-//         device_context.Map(presource, subresource, maptype, mapflags, pmappedresource)
-//     }
-// }
 
 const BUFFER_COUNT: usize = 3;
 const BUFFER_SIZE: usize = 2 * 1024 * 1024;
