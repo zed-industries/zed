@@ -6835,6 +6835,13 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
 #[gpui::test]
 async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<EditorSettings>(cx, |settings| {
+                settings.auto_signature_help = Some(true);
+            });
+        });
+    });
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
