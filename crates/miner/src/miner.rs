@@ -347,6 +347,10 @@ impl Miner {
                 let root = root.clone();
                 async move {
                     while let Some(path) = stack.pop() {
+                        if path.file_name().map_or(false, |name| name == ".git") {
+                            continue;
+                        }
+
                         match fs.metadata(&path).await {
                             Ok(Some(metadata)) => {
                                 let relative_path = path.strip_prefix(&root).unwrap_or(&path);
