@@ -20,7 +20,8 @@ use windows::{
                 ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
                 D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_FLAG, D3D11_BIND_SHADER_RESOURCE,
                 D3D11_BIND_VERTEX_BUFFER, D3D11_BLEND_DESC, D3D11_BLEND_DEST_ALPHA,
-                D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD, D3D11_BLEND_SRC_ALPHA, D3D11_BUFFER_DESC,
+                D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD,
+                D3D11_BLEND_SRC_ALPHA, D3D11_BLEND_ZERO, D3D11_BUFFER_DESC,
                 D3D11_COLOR_WRITE_ENABLE_ALL, D3D11_COMPARISON_ALWAYS, D3D11_COMPARISON_NEVER,
                 D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 D3D11_CREATE_DEVICE_DEBUG, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_FLOAT32_MAX,
@@ -69,9 +70,10 @@ struct DirectXContext {
     swap_chain: IDXGISwapChain1,
     back_buffer: [Option<ID3D11RenderTargetView>; 1],
     viewport: [D3D11_VIEWPORT; 1],
-    // comp_device: IDCompositionDevice,
-    // comp_target: IDCompositionTarget,
-    // comp_visual: IDCompositionVisual,
+
+    comp_device: IDCompositionDevice,
+    comp_target: IDCompositionTarget,
+    comp_visual: IDCompositionVisual,
 }
 
 struct DirectXRenderContext {
@@ -174,7 +176,8 @@ impl DirectXRenderer {
                 .OMSetRenderTargets(Some(&self.context.back_buffer), None);
             self.context.context.ClearRenderTargetView(
                 self.context.back_buffer[0].as_ref().unwrap(),
-                &[0.0, 0.2, 0.4, 0.6],
+                &[0.0, 0.0, 0.0, 0.0],
+                // &[0.0, 0.0, 0.0, 1.0],
             );
             self.context
                 .context
@@ -774,15 +777,15 @@ impl DirectXContext {
             (device.unwrap(), context.unwrap())
         };
         let dxgi_device: IDXGIDevice = device.cast().unwrap();
-        // let comp_device = get_comp_device(&dxgi_device)?;
-        // let swap_chain = get_swap_chain(&dxgi_factory, &device)?;
-        let swap_chain = get_swap_chain(&dxgi_factory, &device, hwnd)?;
-        // let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        // let comp_visual = unsafe { comp_device.CreateVisual() }?;
+        let comp_device = get_comp_device(&dxgi_device)?;
+        let swap_chain = create_swap_chain(&dxgi_factory, &device)?;
+        // let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd)?;
+        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        let comp_visual = unsafe { comp_device.CreateVisual() }?;
         unsafe {
-            // comp_visual.SetContent(&swap_chain)?;
-            // comp_target.SetRoot(&comp_visual)?;
-            // comp_device.Commit()?;
+            comp_visual.SetContent(&swap_chain)?;
+            comp_target.SetRoot(&comp_visual)?;
+            comp_device.Commit()?;
             dxgi_factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER)?;
         }
         let back_buffer = [Some(set_render_target_view(
@@ -800,9 +803,9 @@ impl DirectXContext {
             swap_chain,
             back_buffer,
             viewport,
-            // comp_device,
-            // comp_target,
-            // comp_visual,
+            comp_device,
+            comp_target,
+            comp_visual,
         })
     }
 }
@@ -1182,29 +1185,32 @@ fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
     Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
 }
 
-// fn get_swap_chain(dxgi_factory: &IDXGIFactory6, device: &ID3D11Device) -> Result<IDXGISwapChain1> {
-//     let desc = DXGI_SWAP_CHAIN_DESC1 {
-//         Width: 1,
-//         Height: 1,
-//         Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-//         Stereo: false.into(),
-//         SampleDesc: DXGI_SAMPLE_DESC {
-//             Count: 1,
-//             Quality: 0,
-//         },
-//         BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-//         BufferCount: BUFFER_COUNT as u32,
-//         // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
-//         Scaling: DXGI_SCALING_STRETCH,
-//         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-//         // Premultiplied alpha is the only supported format by composition swapchain.
-//         AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
-//         Flags: 0,
-//     };
-//     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
-// }
+fn create_swap_chain(
+    dxgi_factory: &IDXGIFactory6,
+    device: &ID3D11Device,
+) -> Result<IDXGISwapChain1> {
+    let desc = DXGI_SWAP_CHAIN_DESC1 {
+        Width: 1,
+        Height: 1,
+        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+        Stereo: false.into(),
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
+        BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+        BufferCount: BUFFER_COUNT as u32,
+        // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
+        Scaling: DXGI_SCALING_STRETCH,
+        SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+        // Premultiplied alpha is the only supported format by composition swapchain.
+        AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
+        Flags: 0,
+    };
+    Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
+}
 
-fn get_swap_chain(
+fn create_swap_chain_default(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
     hwnd: HWND,
@@ -1339,6 +1345,7 @@ fn create_fragment_shader(device: &ID3D11Device, blob: &ID3DBlob) -> Result<ID3D
     }
 }
 
+// https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_blend_desc
 fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
     // device performs the blend in linear space, which is ideal.
@@ -1348,7 +1355,7 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-    desc.RenderTarget[0].DestBlend = D3D11_BLEND_DEST_ALPHA;
+    desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_DEST_ALPHA;
     desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
     unsafe {
