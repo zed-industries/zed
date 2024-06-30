@@ -352,7 +352,7 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint quad_id: SV_Insta
     return output;
 }
 
-float4 quad_fragment(QuadFragmentInput input): SV_TARGET {
+float4 quad_fragment(QuadFragmentInput input): SV_Target {
     Quad quad = quads[input.quad_id];
 
     // Fast path when the quad is not rounded and doesn't have any border.
