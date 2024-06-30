@@ -4179,6 +4179,7 @@ impl Render for Workspace {
                 .items_start()
                 .text_color(colors.text)
                 .bg(colors.background)
+                .overflow_hidden()
                 .children(self.titlebar_item.clone())
                 .child(
                     div()
