@@ -9,7 +9,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     actions::{Tab, TabPrev},
-    DisplayPoint, Editor, EditorElement, EditorStyle,
+    DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -777,12 +777,15 @@ impl BufferSearchBar {
                     .get(&searchable_item.downgrade())
                     .filter(|matches| !matches.is_empty())
                 {
-                    // Read the setting, if 'wrapscan' is enabled and the index and directio at the endpoint, do nothing
-                    if matches.len() == index + 1 && direction == Direction::Next {
-                        return;
-                    }
-                    if index == 0 && direction == Direction::Prev {
-                        return;
+                    // If 'wrapscan' is disabled, searches do not wrap around the end of the file.
+                    let mut count = count;
+                    if EditorSettings::get_global(cx).search_wrap == false {
+                        if direction == Direction::Next && index + count >= matches.len() {
+                            count = matches.len() - index - 1;
+                        }
+                        if direction == Direction::Prev && index < count {
+                            count = index
+                        }
                     }
                     let new_match_index = searchable_item
                         .match_index_for_direction(matches, index, direction, count, cx);
