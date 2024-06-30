@@ -15,12 +15,14 @@ use windows::{
                 D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             },
             Direct3D11::{
-                D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext,
-                ID3D11InputLayout, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11SamplerState,
-                ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
+                D3D11CreateDevice, ID3D11BlendState, ID3D11Buffer, ID3D11Device,
+                ID3D11DeviceContext, ID3D11InputLayout, ID3D11PixelShader, ID3D11RenderTargetView,
+                ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
                 D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_FLAG, D3D11_BIND_SHADER_RESOURCE,
-                D3D11_BIND_VERTEX_BUFFER, D3D11_BUFFER_DESC, D3D11_COMPARISON_ALWAYS,
-                D3D11_COMPARISON_NEVER, D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                D3D11_BIND_VERTEX_BUFFER, D3D11_BLEND_DESC, D3D11_BLEND_DEST_ALPHA,
+                D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD, D3D11_BLEND_SRC_ALPHA, D3D11_BUFFER_DESC,
+                D3D11_COLOR_WRITE_ENABLE_ALL, D3D11_COMPARISON_ALWAYS, D3D11_COMPARISON_NEVER,
+                D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 D3D11_CREATE_DEVICE_DEBUG, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_FLOAT32_MAX,
                 D3D11_INPUT_ELEMENT_DESC, D3D11_INPUT_PER_VERTEX_DATA, D3D11_MAP_WRITE_DISCARD,
                 D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, D3D11_SAMPLER_DESC, D3D11_SDK_VERSION,
@@ -75,6 +77,7 @@ struct DirectXContext {
 struct DirectXRenderContext {
     global_params_buffer: [Option<ID3D11Buffer>; 1],
     sampler: [Option<ID3D11SamplerState>; 1],
+    blend_state: ID3D11BlendState,
     shadow_pipeline: PipelineState,
     quad_pipeline: PipelineState,
     raster_paths_pipeline: PipelineState,
@@ -173,6 +176,9 @@ impl DirectXRenderer {
                 self.context.back_buffer[0].as_ref().unwrap(),
                 &[0.0, 0.2, 0.4, 0.6],
             );
+            self.context
+                .context
+                .OMSetBlendState(&self.render.blend_state, None, 0xFFFFFFFF);
         }
         for batch in scene.batches() {
             let ok = match batch {
@@ -835,6 +841,8 @@ impl DirectXRenderContext {
             [output]
         };
 
+        let blend_state = create_blend_state(device)?;
+
         let shadow_pipeline = unsafe {
             let vertex_shader_blob = build_shader_blob("shadow_vertex", "vs_5_0").unwrap();
             let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
@@ -1078,6 +1086,7 @@ impl DirectXRenderContext {
         Ok(Self {
             global_params_buffer,
             sampler,
+            blend_state,
             shadow_pipeline,
             quad_pipeline,
             raster_paths_pipeline,
@@ -1327,6 +1336,25 @@ fn create_fragment_shader(device: &ID3D11Device, blob: &ID3DBlob) -> Result<ID3D
             Some(&mut shader),
         )?;
         Ok(shader.unwrap())
+    }
+}
+
+fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
+    // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
+    // device performs the blend in linear space, which is ideal.
+    let mut desc = D3D11_BLEND_DESC::default();
+    desc.RenderTarget[0].BlendEnable = true.into();
+    desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+    desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].DestBlend = D3D11_BLEND_DEST_ALPHA;
+    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
+    unsafe {
+        let mut state = None;
+        device.CreateBlendState(&desc, Some(&mut state))?;
+        Ok(state.unwrap())
     }
 }
 

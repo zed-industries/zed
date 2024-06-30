@@ -215,16 +215,12 @@ impl DirectXAtlasState {
             },
             _ => [None],
         };
-        let view = match kind {
-            AtlasTextureKind::Monochrome => [None],
-            AtlasTextureKind::Polychrome => [None],
-            AtlasTextureKind::Path => unsafe {
-                let mut view = None;
-                self.device
-                    .CreateShaderResourceView(&texture, None, Some(&mut view))
-                    .unwrap();
-                [view]
-            },
+        let view = unsafe {
+            let mut view = None;
+            self.device
+                .CreateShaderResourceView(&texture, None, Some(&mut view))
+                .unwrap();
+            [view]
         };
         let atlas_texture = DirectXAtlasTexture {
             id: AtlasTextureId {
