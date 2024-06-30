@@ -498,8 +498,12 @@ impl WaylandWindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(range) = input_handler.selected_text_range() {
-                bounds = input_handler.bounds_for_range(range);
+            if let Some((range, reversed)) = input_handler.selected_text_range(true) {
+                bounds = input_handler.bounds_for_range(if reversed {
+                    range.start..range.start
+                } else {
+                    range.end..range.end
+                });
             }
             self.state.borrow_mut().input_handler = Some(input_handler);
         }
@@ -858,6 +862,13 @@ impl PlatformWindow for WaylandWindow {
 
     fn should_render_window_controls(&self) -> bool {
         self.borrow().decoration_state == WaylandDecorationState::Client
+    }
+
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let state = self.borrow();
+        let client = state.client.clone();
+        drop(state);
+        client.update_ime_position(bounds);
     }
 }
 

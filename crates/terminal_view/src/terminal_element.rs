@@ -887,7 +887,11 @@ struct TerminalInputHandler {
 }
 
 impl InputHandler for TerminalInputHandler {
-    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<std::ops::Range<usize>> {
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        cx: &mut WindowContext,
+    ) -> Option<(std::ops::Range<usize>, bool)> {
         if self
             .terminal
             .read(cx)
@@ -897,7 +901,7 @@ impl InputHandler for TerminalInputHandler {
         {
             None
         } else {
-            Some(0..0)
+            Some((0..0, false))
         }
     }
 
@@ -925,6 +929,8 @@ impl InputHandler for TerminalInputHandler {
 
         self.workspace
             .update(cx, |this, cx| {
+                cx.invalidate_character_coordinates();
+
                 let telemetry = this.project().read(cx).client().telemetry().clone();
                 telemetry.log_edit_event("terminal");
             })

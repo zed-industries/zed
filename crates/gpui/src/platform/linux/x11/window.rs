@@ -651,7 +651,7 @@ impl X11WindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(range) = input_handler.selected_text_range() {
+            if let Some((range, _)) = input_handler.selected_text_range(true) {
                 bounds = input_handler.bounds_for_range(range);
             }
             let mut state = self.state.borrow_mut();
@@ -1037,5 +1037,12 @@ impl PlatformWindow for X11Window {
 
     fn should_render_window_controls(&self) -> bool {
         false
+    }
+
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let mut state = self.0.state.borrow_mut();
+        let client = state.client.clone();
+        drop(state);
+        client.update_ime_position(bounds);
     }
 }

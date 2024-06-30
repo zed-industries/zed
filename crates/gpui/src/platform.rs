@@ -259,6 +259,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn start_system_move(&self);
     fn should_render_window_controls(&self) -> bool;
 
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
@@ -403,9 +405,9 @@ impl PlatformInputHandler {
         Self { cx, handler }
     }
 
-    fn selected_text_range(&mut self) -> Option<Range<usize>> {
+    fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<(Range<usize>, bool)> {
         self.cx
-            .update(|cx| self.handler.selected_text_range(cx))
+            .update(|cx| self.handler.selected_text_range(ignore_disabled_input, cx))
             .ok()
             .flatten()
     }
@@ -466,6 +468,20 @@ impl PlatformInputHandler {
     pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut WindowContext) {
         self.handler.replace_text_in_range(None, input, cx);
     }
+
+    pub fn selected_bounds(&mut self, cx: &mut WindowContext) -> Option<Bounds<Pixels>> {
+        let Some((pos, rev)) = self.handler.selected_text_range(true, cx) else {
+            return None;
+        };
+        self.handler.bounds_for_range(
+            if rev {
+                pos.start..pos.start
+            } else {
+                pos.end..pos.end
+            },
+            cx,
+        )
+    }
 }
 
 /// Zed's interface for handling text input from the platform's IME system
@@ -473,11 +489,15 @@ impl PlatformInputHandler {
 ///
 /// <https://developer.apple.com/documentation/appkit/nstextinputclient>
 pub trait InputHandler: 'static {
-    /// Get the range of the user's currently selected text, if any
+    /// Get the range of the user's currently selected text, if any, also return if it was selected in reverse
     /// Corresponds to [selectedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438242-selectedrange)
     ///
     /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
-    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
+    fn selected_text_range(
+        &mut self,
+        ignore_disabled_input: bool,
+        cx: &mut WindowContext,
+    ) -> Option<(Range<usize>, bool)>;
 
     /// Get the range of the currently marked text, if any
     /// Corresponds to [markedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438250-markedrange)
