@@ -23,7 +23,7 @@ impl Database {
                 .add(extension_version::Column::SchemaVersion.lte(max_schema_version));
             if let Some(filter) = filter {
                 let fuzzy_name_filter = Self::fuzzy_like_string(filter);
-                condition = condition.add(Expr::cust_with_expr("name ILIKE $1", fuzzy_name_filter));
+                condition = condition.add(Expr::cust_with_expr("name ILIKE $1 OR description ILIKE $1",, fuzzy_name_filter));
             }
 
             self.get_extensions_where(condition, Some(limit as u64), &tx)
