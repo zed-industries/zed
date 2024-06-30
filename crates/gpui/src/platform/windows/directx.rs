@@ -70,16 +70,16 @@ struct DirectXContext {
     swap_chain: IDXGISwapChain1,
     back_buffer: [Option<ID3D11RenderTargetView>; 1],
     viewport: [D3D11_VIEWPORT; 1],
-
-    comp_device: IDCompositionDevice,
-    comp_target: IDCompositionTarget,
-    comp_visual: IDCompositionVisual,
+    // comp_device: IDCompositionDevice,
+    // comp_target: IDCompositionTarget,
+    // comp_visual: IDCompositionVisual,
 }
 
 struct DirectXRenderContext {
     global_params_buffer: [Option<ID3D11Buffer>; 1],
     sampler: [Option<ID3D11SamplerState>; 1],
     blend_state: ID3D11BlendState,
+    blend_state_for_pr: ID3D11BlendState,
     shadow_pipeline: PipelineState,
     quad_pipeline: PipelineState,
     raster_paths_pipeline: PipelineState,
@@ -176,8 +176,8 @@ impl DirectXRenderer {
                 .OMSetRenderTargets(Some(&self.context.back_buffer), None);
             self.context.context.ClearRenderTargetView(
                 self.context.back_buffer[0].as_ref().unwrap(),
-                &[0.0, 0.0, 0.0, 0.0],
-                // &[0.0, 0.0, 0.0, 1.0],
+                // &[0.0, 0.0, 0.0, 0.0],
+                &[0.0, 0.0, 0.0, 1.0],
             );
             self.context
                 .context
@@ -421,6 +421,11 @@ impl DirectXRenderer {
 
                 self.context.context.RSSetViewports(Some(&viewport));
                 self.context.context.OMSetRenderTargets(Some(&rtv), None);
+                self.context.context.OMSetBlendState(
+                    &self.render.blend_state_for_pr,
+                    None,
+                    0xFFFFFFFF,
+                );
                 self.context
                     .context
                     .ClearRenderTargetView(rtv[0].as_ref().unwrap(), &[0., 0., 0., 1.]);
@@ -777,15 +782,15 @@ impl DirectXContext {
             (device.unwrap(), context.unwrap())
         };
         let dxgi_device: IDXGIDevice = device.cast().unwrap();
-        let comp_device = get_comp_device(&dxgi_device)?;
-        let swap_chain = create_swap_chain(&dxgi_factory, &device)?;
-        // let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd)?;
-        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        let comp_visual = unsafe { comp_device.CreateVisual() }?;
+        // let comp_device = get_comp_device(&dxgi_device)?;
+        // let swap_chain = create_swap_chain(&dxgi_factory, &device)?;
+        let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd)?;
+        // let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        // let comp_visual = unsafe { comp_device.CreateVisual() }?;
         unsafe {
-            comp_visual.SetContent(&swap_chain)?;
-            comp_target.SetRoot(&comp_visual)?;
-            comp_device.Commit()?;
+            // comp_visual.SetContent(&swap_chain)?;
+            // comp_target.SetRoot(&comp_visual)?;
+            // comp_device.Commit()?;
             dxgi_factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER)?;
         }
         let back_buffer = [Some(set_render_target_view(
@@ -803,9 +808,9 @@ impl DirectXContext {
             swap_chain,
             back_buffer,
             viewport,
-            comp_device,
-            comp_target,
-            comp_visual,
+            // comp_device,
+            // comp_target,
+            // comp_visual,
         })
     }
 }
@@ -845,6 +850,7 @@ impl DirectXRenderContext {
         };
 
         let blend_state = create_blend_state(device)?;
+        let blend_state_for_pr = create_blend_state_for_path_raster(device)?;
 
         let shadow_pipeline = unsafe {
             let vertex_shader_blob = build_shader_blob("shadow_vertex", "vs_5_0").unwrap();
@@ -1090,6 +1096,7 @@ impl DirectXRenderContext {
             global_params_buffer,
             sampler,
             blend_state,
+            blend_state_for_pr,
             shadow_pipeline,
             quad_pipeline,
             raster_paths_pipeline,
@@ -1356,6 +1363,25 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_DEST_ALPHA;
+    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
+    unsafe {
+        let mut state = None;
+        device.CreateBlendState(&desc, Some(&mut state))?;
+        Ok(state.unwrap())
+    }
+}
+
+fn create_blend_state_for_path_raster(device: &ID3D11Device) -> Result<ID3D11BlendState> {
+    // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
+    // device performs the blend in linear space, which is ideal.
+    let mut desc = D3D11_BLEND_DESC::default();
+    desc.RenderTarget[0].BlendEnable = true.into();
+    desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
     desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
     unsafe {
