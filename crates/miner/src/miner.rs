@@ -218,10 +218,16 @@ impl Miner {
                 let path = entry.path().to_owned();
                 if entry.file_type().map_or(false, |ft| ft.is_dir()) {
                     println!("Enqueueing directory: {:?}", path);
+                    let mut contents = Vec::new();
+                    if let Ok(read_dir) = std::fs::read_dir(&path) {
+                        for entry in read_dir.filter_map(Result::ok) {
+                            contents.push(entry.path());
+                        }
+                    }
                     self.queue
                         .lock()
                         .await
-                        .push_back(Entry::Directory(path.clone()));
+                        .push_back(Entry::Directory(path.clone(), contents));
                 } else {
                     println!("Enqueueing file: {:?}", path);
                     self.queue.lock().await.push_back(Entry::File(path.clone()));
@@ -309,9 +315,9 @@ impl Miner {
                         eprintln!("Error processing file {:?}: {}", path, e);
                     }
                 }
-                Some(Entry::Directory(path)) => {
+                Some(Entry::Directory(path, contents)) => {
                     println!("Worker processing directory: {:?}", path);
-                    if let Err(e) = self.scan_directory(path.clone()).await {
+                    if let Err(e) = self.process_directory(path.clone(), contents).await {
                         eprintln!("Error processing directory {:?}: {}", path, e);
                     }
                 }
@@ -342,6 +348,66 @@ impl Miner {
         }
 
         Ok(())
+    }
+
+    async fn process_directory(&self, path: PathBuf, contents: Vec<PathBuf>) -> Result<()> {
+        println!("Processing directory: {:?}", path);
+
+        let mut summaries = Vec::new();
+        let mut pending_entries = Vec::new();
+
+        for entry_path in contents {
+            let key = format!("path:{}", entry_path.to_string_lossy());
+            match self
+                .database
+                .transact(move |db, txn| Ok(db.get(&txn, &key)?))
+                .await?
+            {
+                Some(cached_summary) => {
+                    summaries.push(cached_summary.summary);
+                }
+                None => {
+                    pending_entries.push(entry_path);
+                }
+            }
+        }
+
+        if !pending_entries.is_empty() {
+            // Re-enqueue the directory with remaining entries
+            self.queue
+                .lock()
+                .await
+                .push_back(Entry::Directory(path, pending_entries));
+            return Ok(());
+        }
+
+        // All entries are summarized, combine them
+        let combined_summary = self.combine_summaries(&summaries).await?;
+
+        // Save the combined summary for the directory
+        let key = format!("path:{}", path.to_string_lossy());
+        let mtime = tokio::fs::metadata(&path).await?.modified()?;
+        let cached_summary = CachedSummary {
+            summary: combined_summary,
+            mtime,
+        };
+        self.database
+            .transact(move |db, mut txn| {
+                db.put(&mut txn, &key, &cached_summary)?;
+                Ok(())
+            })
+            .await?;
+
+        println!("Finished processing and summarizing directory: {:?}", path);
+        Ok(())
+    }
+
+    async fn combine_summaries(&self, summaries: &[String]) -> Result<String> {
+        // Implement the logic to combine summaries
+        // This could involve using the AI model to generate a summary of summaries
+        // For now, let's just concatenate them with a simple separator
+        // todo!
+        Ok(summaries.join("\n---\n"))
     }
 
     async fn scan_file(&self, path: PathBuf, content: String) -> Result<()> {
@@ -759,36 +825,6 @@ impl Miner {
         chunks
     }
 
-    async fn scan_directory(&self, path: PathBuf) -> Result<()> {
-        println!("Scanning directory: {:?}", path);
-        let dir_walker = ignore::WalkBuilder::new(&path)
-            .hidden(true)
-            .ignore(true)
-            .max_depth(Some(1))
-            .build();
-
-        for entry in dir_walker {
-            if let Ok(entry) = entry {
-                if entry.path() != path {
-                    let entry_path = entry.path().to_path_buf();
-                    if entry.file_type().map_or(false, |ft| ft.is_dir()) {
-                        println!("Enqueueing directory: {:?}", entry_path);
-                        self.queue
-                            .lock()
-                            .await
-                            .push_back(Entry::Directory(entry_path));
-                    } else {
-                        println!("Enqueueing file: {:?}", entry_path);
-                        self.queue.lock().await.push_back(Entry::File(entry_path));
-                    }
-                }
-            }
-        }
-
-        println!("Finished scanning directory: {:?}", path);
-        Ok(())
-    }
-
     async fn summary_for_path(&self, path: &Path) -> Result<Option<String>> {
         let key = format!("path:{}", path.to_string_lossy());
         let cached_summary = self
@@ -876,7 +912,7 @@ impl Miner {
 #[derive(Debug)]
 enum Entry {
     File(PathBuf),
-    Directory(PathBuf),
+    Directory(PathBuf, Vec<PathBuf>),
     Chunk(PathBuf, String, usize),
     RustSymbol(PathBuf, String, String),
 }
