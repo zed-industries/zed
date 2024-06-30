@@ -783,7 +783,7 @@ impl Element for TerminalElement {
                         dimensions,
                     };
                     let element = render(&mut block_cx);
-                    let mut element = div().child(element).into_any_element();
+                    let mut element = div().occlude().child(element).into_any_element();
                     let available_space = size(
                         AvailableSpace::Definite(dimensions.width() + gutter),
                         AvailableSpace::Definite(block.height as f32 * dimensions.line_height()),
