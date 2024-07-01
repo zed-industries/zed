@@ -158,19 +158,6 @@ impl EntryOwned {
             }
         }
     }
-
-    fn abs_path(&self, project: &Model<Project>, cx: &AppContext) -> Option<PathBuf> {
-        match self {
-            Self::Entry(entry) => entry.abs_path(project, cx),
-            Self::FoldedDirs(worktree_id, dirs) => dirs.last().and_then(|entry| {
-                project
-                    .read(cx)
-                    .worktree_for_id(*worktree_id, cx)
-                    .and_then(|worktree| worktree.read(cx).absolutize(&entry.path).ok())
-            }),
-            Self::Excerpt(..) | Self::Outline(..) => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,46 +204,6 @@ impl PartialEq for FsEntry {
                 Self::File(worktree_b, entry_b, id_b, ..),
             ) => worktree_a == worktree_b && entry_a.id == entry_b.id && id_a == id_b,
             _ => false,
-        }
-    }
-}
-
-impl FsEntry {
-    fn abs_path(&self, project: &Model<Project>, cx: &AppContext) -> Option<PathBuf> {
-        match self {
-            Self::ExternalFile(buffer_id, _) => project
-                .read(cx)
-                .buffer_for_id(*buffer_id)
-                .and_then(|buffer| File::from_dyn(buffer.read(cx).file()))
-                .and_then(|file| file.worktree.read(cx).absolutize(&file.path).ok()),
-            Self::Directory(worktree_id, entry) => project
-                .read(cx)
-                .worktree_for_id(*worktree_id, cx)?
-                .read(cx)
-                .absolutize(&entry.path)
-                .ok(),
-            Self::File(worktree_id, entry, _, _) => project
-                .read(cx)
-                .worktree_for_id(*worktree_id, cx)?
-                .read(cx)
-                .absolutize(&entry.path)
-                .ok(),
-        }
-    }
-
-    fn relative_path<'a>(
-        &'a self,
-        project: &Model<Project>,
-        cx: &'a AppContext,
-    ) -> Option<&'a Path> {
-        match self {
-            Self::ExternalFile(buffer_id, _) => project
-                .read(cx)
-                .buffer_for_id(*buffer_id)
-                .and_then(|buffer| buffer.read(cx).file())
-                .map(|file| file.path().as_ref()),
-            Self::Directory(_, entry) => Some(entry.path.as_ref()),
-            Self::File(_, entry, ..) => Some(entry.path.as_ref()),
         }
     }
 }
@@ -1142,7 +1089,7 @@ impl OutlinePanel {
         if let Some(clipboard_text) = self
             .selected_entry
             .as_ref()
-            .and_then(|entry| entry.abs_path(&self.project, cx))
+            .and_then(|entry| self.abs_path(&entry, cx))
             .map(|p| p.to_string_lossy().to_string())
         {
             cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
@@ -1154,8 +1101,10 @@ impl OutlinePanel {
             .selected_entry
             .as_ref()
             .and_then(|entry| match entry {
-                EntryOwned::Entry(entry) => entry.relative_path(&self.project, cx),
-                EntryOwned::FoldedDirs(_, dirs) => dirs.last().map(|entry| entry.path.as_ref()),
+                EntryOwned::Entry(entry) => self.relative_path(&entry, cx),
+                EntryOwned::FoldedDirs(_, dirs) => {
+                    dirs.last().map(|entry| entry.path.to_path_buf())
+                }
                 EntryOwned::Excerpt(..) | EntryOwned::Outline(..) => None,
             })
             .map(|p| p.to_string_lossy().to_string())
@@ -1168,7 +1117,7 @@ impl OutlinePanel {
         if let Some(abs_path) = self
             .selected_entry
             .as_ref()
-            .and_then(|entry| entry.abs_path(&self.project, cx))
+            .and_then(|entry| self.abs_path(&entry, cx))
         {
             cx.reveal_path(&abs_path);
         }
@@ -1176,7 +1125,7 @@ impl OutlinePanel {
 
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         let selected_entry = self.selected_entry.as_ref();
-        let abs_path = selected_entry.and_then(|entry| entry.abs_path(&self.project, cx));
+        let abs_path = selected_entry.and_then(|entry| self.abs_path(&entry, cx));
         let working_directory = if let (
             Some(abs_path),
             Some(EntryOwned::Entry(FsEntry::File(..) | FsEntry::ExternalFile(..))),
@@ -1331,12 +1280,7 @@ impl OutlinePanel {
         }
         .unwrap_or_else(empty_icon);
 
-        let buffer_snapshot = self
-            .project
-            .read(cx)
-            .buffer_for_id(buffer_id)?
-            .read(cx)
-            .snapshot();
+        let buffer_snapshot = self.buffer_snapshot_for_id(buffer_id, cx)?;
         let excerpt_range = range.context.to_point(&buffer_snapshot);
         let label_element = Label::new(format!(
             "Lines {}-{}",
@@ -1454,8 +1398,8 @@ impl OutlinePanel {
             }
             FsEntry::ExternalFile(buffer_id, ..) => {
                 let color = entry_label_color(is_active);
-                let (icon, name) = match self.project.read(cx).buffer_for_id(*buffer_id) {
-                    Some(buffer) => match buffer.read(cx).file() {
+                let (icon, name) = match self.buffer_snapshot_for_id(*buffer_id, cx) {
+                    Some(buffer_snapshot) => match buffer_snapshot.file() {
                         Some(file) => {
                             let path = file.path();
                             let icon = if settings.file_icons {
@@ -2484,11 +2428,8 @@ impl OutlinePanel {
                                                 .insert(file_excerpt, excerpt.range.clone());
                                         }
                                         hash_map::Entry::Vacant(v) => {
-                                            if let Some(buffer_snapshot) = self
-                                                .project
-                                                .read(cx)
-                                                .buffer_for_id(*buffer_id)
-                                                .map(|buffer| buffer.read(cx).snapshot())
+                                            if let Some(buffer_snapshot) =
+                                                self.buffer_snapshot_for_id(*buffer_id, cx)
                                             {
                                                 v.insert((buffer_snapshot, HashMap::default()))
                                                     .1
@@ -2511,11 +2452,8 @@ impl OutlinePanel {
                                         o.get_mut().1.insert(*excerpt_id, excerpt.range.clone());
                                     }
                                     hash_map::Entry::Vacant(v) => {
-                                        if let Some(buffer_snapshot) = self
-                                            .project
-                                            .read(cx)
-                                            .buffer_for_id(*buffer_id)
-                                            .map(|buffer| buffer.read(cx).snapshot())
+                                        if let Some(buffer_snapshot) =
+                                            self.buffer_snapshot_for_id(*buffer_id, cx)
                                         {
                                             v.insert((buffer_snapshot, HashMap::default()))
                                                 .1
@@ -2531,6 +2469,60 @@ impl OutlinePanel {
                 },
             ),
             None => HashMap::default(),
+        }
+    }
+
+    fn buffer_snapshot_for_id(
+        &self,
+        buffer_id: BufferId,
+        cx: &AppContext,
+    ) -> Option<BufferSnapshot> {
+        let editor = self.active_item.as_ref()?.active_editor.upgrade()?;
+        Some(
+            editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .buffer(buffer_id)?
+                .read(cx)
+                .snapshot(),
+        )
+    }
+
+    fn abs_path(&self, entry: &EntryOwned, cx: &AppContext) -> Option<PathBuf> {
+        match entry {
+            EntryOwned::Entry(
+                FsEntry::File(_, _, buffer_id, _) | FsEntry::ExternalFile(buffer_id, _),
+            ) => self
+                .buffer_snapshot_for_id(*buffer_id, cx)
+                .and_then(|buffer_snapshot| {
+                    let file = File::from_dyn(buffer_snapshot.file())?;
+                    file.worktree.read(cx).absolutize(&file.path).ok()
+                }),
+            EntryOwned::Entry(FsEntry::Directory(worktree_id, entry)) => self
+                .project
+                .read(cx)
+                .worktree_for_id(*worktree_id, cx)?
+                .read(cx)
+                .absolutize(&entry.path)
+                .ok(),
+            EntryOwned::FoldedDirs(worktree_id, dirs) => dirs.last().and_then(|entry| {
+                self.project
+                    .read(cx)
+                    .worktree_for_id(*worktree_id, cx)
+                    .and_then(|worktree| worktree.read(cx).absolutize(&entry.path).ok())
+            }),
+            EntryOwned::Excerpt(..) | EntryOwned::Outline(..) => None,
+        }
+    }
+
+    fn relative_path(&self, entry: &FsEntry, cx: &AppContext) -> Option<PathBuf> {
+        match entry {
+            FsEntry::ExternalFile(buffer_id, _) => self
+                .buffer_snapshot_for_id(*buffer_id, cx)
+                .and_then(|buffer_snapshot| Some(buffer_snapshot.file()?.path().to_path_buf())),
+            FsEntry::Directory(_, entry) => Some(entry.path.to_path_buf()),
+            FsEntry::File(_, entry, ..) => Some(entry.path.to_path_buf()),
         }
     }
 }
