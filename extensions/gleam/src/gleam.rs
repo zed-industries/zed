@@ -1,10 +1,13 @@
+use html_to_markdown::{convert_html_to_markdown, TagHandler};
+use std::cell::RefCell;
 use std::fs;
+use std::rc::Rc;
 use zed::lsp::CompletionKind;
 use zed::{
     CodeLabel, CodeLabelSpan, LanguageServerId, SlashCommand, SlashCommandOutput,
     SlashCommandOutputSection,
 };
-use zed_extension_api::{self as zed, Result};
+use zed_extension_api::{self as zed, fetch, HttpRequest, Result};
 
 struct GleamExtension {
     cached_binary_path: Option<String>,
@@ -164,10 +167,55 @@ impl zed::Extension for GleamExtension {
     fn run_slash_command(
         &self,
         command: SlashCommand,
-        _argument: Option<String>,
+        argument: Option<String>,
         worktree: &zed::Worktree,
     ) -> Result<SlashCommandOutput, String> {
         match command.name.as_str() {
+            "gleam-docs" => {
+                let argument = argument.ok_or_else(|| "missing argument".to_string())?;
+
+                let mut components = argument.split('/');
+                let package_name = components
+                    .next()
+                    .ok_or_else(|| "missing package name".to_string())?;
+                let module_path = components.map(ToString::to_string).collect::<Vec<_>>();
+
+                let response = fetch(&HttpRequest {
+                    url: format!(
+                        "https://hexdocs.pm/{package_name}{maybe_path}",
+                        maybe_path = if !module_path.is_empty() {
+                            format!("/{}.html", module_path.join("/"))
+                        } else {
+                            String::new()
+                        }
+                    ),
+                })?;
+
+                let mut handlers: Vec<TagHandler> = vec![
+                    Rc::new(RefCell::new(
+                        html_to_markdown::markdown::WebpageChromeRemover,
+                    )),
+                    Rc::new(RefCell::new(html_to_markdown::markdown::ParagraphHandler)),
+                    Rc::new(RefCell::new(html_to_markdown::markdown::HeadingHandler)),
+                    Rc::new(RefCell::new(html_to_markdown::markdown::ListHandler)),
+                    Rc::new(RefCell::new(html_to_markdown::markdown::TableHandler::new())),
+                    Rc::new(RefCell::new(html_to_markdown::markdown::StyledTextHandler)),
+                ];
+
+                let markdown = convert_html_to_markdown(response.body.as_bytes(), &mut handlers)
+                    .map_err(|err| format!("failed to convert docs to Markdown {err}"))?;
+
+                let mut text = String::new();
+                text.push_str(&markdown);
+
+                Ok(SlashCommandOutput {
+                    sections: vec![SlashCommandOutputSection {
+                        range: (0..text.len()).into(),
+                        label: format!("gleam-docs: {package_name} {}", module_path.join("/")),
+                    }],
+                    text,
+                })
+            }
             "gleam-project" => {
                 let mut text = String::new();
                 text.push_str("You are in a Gleam project.\n");

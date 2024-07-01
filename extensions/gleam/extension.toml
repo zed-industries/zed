@@ -18,3 +18,8 @@ commit = "8432ffe32ccd360534837256747beb5b1c82fca1"
 description = "Returns information about the current Gleam project."
 requires_argument = false
 tooltip_text = "Insert Gleam project data"
+
+[slash_commands.gleam-docs]
+description = "Returns Gleam docs."
+requires_argument = true
+tooltip_text = "Insert Gleam docs"
