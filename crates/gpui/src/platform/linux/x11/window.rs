@@ -576,6 +576,13 @@ impl X11Window {
 
     fn send_moveresize(&self, flag: u32) {
         let state = self.0.state.borrow();
+        
+        self.0
+            .xcb_connection
+            .ungrab_pointer(x11rb::CURRENT_TIME)
+            .unwrap()
+            .check()
+            .unwrap();
 
         let pointer = self
             .0
