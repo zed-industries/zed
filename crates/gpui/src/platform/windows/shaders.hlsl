@@ -166,17 +166,8 @@ float4 blend_color(float4 color, float alpha_factor) {
 float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds, 
                                       TransformationMatrix transformation) {
     float2 position = unit_vertex * bounds.size + bounds.origin;
-
-    // Apply the transformation matrix to the position via matrix multiplication.
-    float2 transformed_position = float2(0, 0);
-    transformed_position.x = position.x * transformation.rotation_scale[0][0] + position.y * transformation.rotation_scale[0][1];
-    transformed_position.y = position.x * transformation.rotation_scale[1][0] + position.y * transformation.rotation_scale[1][1];
-
-    // Add in the translation component of the transformation matrix.
-    transformed_position += transformation.translation;
-
-    float2 viewport_size = global_viewport_size;
-    float2 device_position = transformed_position / viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
+    float2 transformed = mul(position, transformation.rotation_scale) + transformation.translation;
+    float2 device_position = transformed / global_viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
     return float4(device_position, 0.0, 1.0);
 }
 
