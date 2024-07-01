@@ -15,7 +15,7 @@ pub(crate) use language_model::*;
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use fs::{Fs, RealFs};
-use futures::{lock::Mutex, stream, Stream, StreamExt};
+use futures::{channel::mpsc, lock::Mutex, stream, Stream, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{App, BackgroundExecutor};
 use ignore::gitignore::GitignoreBuilder;
@@ -602,24 +602,166 @@ impl Miner {
             return Ok(summaries[0].clone());
         }
 
-        let combined_prompt = format!(
-            "Create a concise summary that combines the following summaries:\n\n{}",
-            summaries.join("\n\n")
-        );
+        let chunk_size = CHUNK_SIZE;
+        let mut chunked_summaries = Vec::new();
+        let mut current_chunk = String::new();
 
-        let messages = vec![Message {
-            role: "user".to_string(),
-            content: combined_prompt,
-        }];
-
-        let mut receiver = self.language_model.stream_completion(messages).await?;
-        let mut combined_summary = String::new();
-
-        while let Some(content) = receiver.next().await {
-            combined_summary.push_str(&content);
+        for summary in summaries {
+            if self.count_tokens(&(current_chunk.clone() + summary)) > chunk_size {
+                if !current_chunk.is_empty() {
+                    chunked_summaries.push(current_chunk);
+                }
+                current_chunk = summary.clone();
+            } else {
+                if !current_chunk.is_empty() {
+                    current_chunk.push_str("\n\n");
+                }
+                current_chunk.push_str(summary);
+            }
         }
 
-        Ok(combined_summary)
+        if !current_chunk.is_empty() {
+            chunked_summaries.push(current_chunk);
+        }
+
+        let mut final_summary = String::new();
+
+        for (index, chunk) in chunked_summaries.iter().enumerate() {
+            let chunk_prompt = format!(
+                "Create a concise summary for part {} of {}:\n\n{}",
+                index + 1,
+                chunked_summaries.len(),
+                chunk
+            );
+
+            let messages = vec![Message {
+                role: "user".to_string(),
+                content: chunk_prompt,
+            }];
+
+            let mut receiver = self.stream_completion(messages).await?;
+            let mut chunk_summary = String::new();
+
+            while let Some(content) = receiver.next().await {
+                chunk_summary.push_str(&content);
+            }
+
+            if !chunk_summary.is_empty() {
+                if !final_summary.is_empty() {
+                    final_summary.push_str("\n\n");
+                }
+                final_summary.push_str(&chunk_summary);
+            }
+        }
+
+        if chunked_summaries.len() > 1 {
+            let final_prompt = format!(
+                "Create a final concise summary that combines the following {} summaries:\n\n{}",
+                chunked_summaries.len(),
+                final_summary
+            );
+
+            let messages = vec![Message {
+                role: "user".to_string(),
+                content: final_prompt,
+            }];
+
+            let mut receiver = self.stream_completion(messages).await?;
+            let mut combined_summary = String::new();
+
+            while let Some(content) = receiver.next().await {
+                combined_summary.push_str(&content);
+            }
+
+            final_summary = combined_summary;
+        }
+
+        if final_summary.is_empty() {
+            println!("Warning: Language model returned an empty combined summary");
+            Ok(format!(
+                "Summary: Combined summary of {} items",
+                summaries.len()
+            ))
+        } else {
+            Ok(final_summary)
+        }
+    }
+
+    /// Streams the completion of a language model request.
+    ///
+    /// This method sends the given messages to the language model and returns
+    /// a receiver that can be used to stream the generated response.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - A vector of `Message` structs representing the conversation history.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a `mpsc::Receiver<String>` that yields chunks of the generated response.
+    async fn stream_completion(
+        &self,
+        mut messages: Vec<Message>,
+    ) -> Result<mpsc::Receiver<String>> {
+        self.truncate_messages(&mut messages);
+        self.language_model.stream_completion(messages).await
+    }
+
+    /// Truncates the given list of messages to fit within the maximum token limit.
+    ///
+    /// This method starts by truncating the last message and removes empty messages.
+    /// It repeats this process until the total token count of all messages fits
+    /// within the specified limit.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - A mutable vector of Message structs to be truncated.
+    ///
+    /// # Returns
+    ///
+    /// Returns the total number of tokens in the truncated messages.
+    fn truncate_messages(&self, messages: &mut Vec<Message>) -> usize {
+        let mut total_tokens = messages.iter().map(|m| self.count_tokens(&m.content)).sum();
+
+        while total_tokens > CHUNK_SIZE && !messages.is_empty() {
+            if let Some(last_message) = messages.last_mut() {
+                let tokens_to_remove = total_tokens - CHUNK_SIZE;
+                let message_tokens = self.count_tokens(&last_message.content);
+
+                if message_tokens <= tokens_to_remove {
+                    total_tokens -= message_tokens;
+                    messages.pop();
+                } else {
+                    let truncated_content = self
+                        .truncate_string(&last_message.content, message_tokens - tokens_to_remove);
+                    total_tokens -= tokens_to_remove;
+                    last_message.content = truncated_content;
+                }
+            }
+        }
+
+        total_tokens
+    }
+
+    /// Truncates a string to the specified number of tokens.
+    ///
+    /// # Arguments
+    ///
+    /// * `s` - The string to truncate.
+    /// * `max_tokens` - The maximum number of tokens to keep.
+    ///
+    /// # Returns
+    ///
+    /// Returns the truncated string.
+    fn truncate_string(&self, s: &str, max_tokens: usize) -> String {
+        let encoded = self.tokenizer.encode(s, false).unwrap();
+        let truncated_tokens = encoded
+            .get_ids()
+            .iter()
+            .take(max_tokens)
+            .cloned()
+            .collect::<Vec<_>>();
+        self.tokenizer.decode(&truncated_tokens, true).unwrap()
     }
 
     /// Scans a file, processes its content, and generates a summary.
@@ -1021,7 +1163,7 @@ impl Miner {
             ),
         }];
 
-        let mut receiver = self.language_model.stream_completion(messages).await?;
+        let mut receiver = self.stream_completion(messages).await?;
 
         let mut summary = String::new();
         while let Some(content) = receiver.next().await {
@@ -1055,7 +1197,7 @@ impl Miner {
             ),
         }];
 
-        let mut receiver = self.language_model.stream_completion(messages).await?;
+        let mut receiver = self.stream_completion(messages).await?;
 
         let mut summary = String::new();
         while let Some(content) = receiver.next().await {
