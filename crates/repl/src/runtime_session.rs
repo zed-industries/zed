@@ -13,7 +13,8 @@ use futures::{FutureExt as _, StreamExt as _};
 use gpui::{div, prelude::*, Entity, Render, Task, View, ViewContext};
 use project::Fs;
 use runtimelib::{
-    ExecuteRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest, ShutdownRequest,
+    ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest,
+    ShutdownRequest,
 };
 use settings::Settings as _;
 use std::{ops::Range, sync::Arc, time::Duration};
@@ -204,11 +205,11 @@ impl Session {
         };
 
         match &message.content {
-            runtimelib::JupyterMessageContent::Status(status) => {
+            JupyterMessageContent::Status(status) => {
                 self.kernel.set_execution_state(&status.execution_state);
                 cx.notify();
             }
-            runtimelib::JupyterMessageContent::KernelInfoReply(reply) => {
+            JupyterMessageContent::KernelInfoReply(reply) => {
                 self.kernel.set_kernel_info(&reply);
                 cx.notify();
             }
@@ -234,6 +235,18 @@ impl Session {
         }
     }
 
+    pub fn interrupt(&mut self, cx: &mut ViewContext<Self>) {
+        match &mut self.kernel {
+            Kernel::RunningKernel(_kernel) => {
+                self.send(&InterruptRequest {}.into(), cx).ok();
+            }
+            Kernel::StartingKernel(_task) => {
+                // todo!(): Drop all queued executions
+            }
+            _ => {}
+        }
+    }
+
     pub fn shutdown(&mut self, cx: &mut ViewContext<Self>) {
         let kernel = std::mem::replace(&mut self.kernel, Kernel::ShuttingDown);
         // todo!(): emit event for the runtime panel to remove this session once in shutdown state
@@ -243,10 +256,7 @@ impl Session {
                 let mut request_tx = kernel.request_tx.clone();
 
                 cx.spawn(|this, mut cx| async move {
-                    let request = ShutdownRequest { restart: false };
-                    let message =
-                        JupyterMessage::new(JupyterMessageContent::ShutdownRequest(request), None);
-
+                    let message: JupyterMessage = ShutdownRequest { restart: false }.into();
                     request_tx.try_send(message).ok();
 
                     // Give the kernel a bit of time to clean up
@@ -293,8 +303,8 @@ impl Render for Session {
                     ButtonLike::new("interrupt")
                         .child(Label::new("Interrupt"))
                         .style(ButtonStyle::Subtle)
-                        .on_click(cx.listener(move |_this, _, _cx| {
-                            // todo!(): Implement interrupt
+                        .on_click(cx.listener(move |session, _, cx| {
+                            session.interrupt(cx);
                         })),
                 );
                 let mut name = self.runtime_specification.name.clone();

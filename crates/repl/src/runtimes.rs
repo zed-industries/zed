@@ -8,7 +8,8 @@ use futures::{
 use gpui::{AppContext, EntityId, Task};
 use project::Fs;
 use runtimelib::{
-    dirs, ConnectionInfo, ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply,
+    dirs, ConnectionInfo, ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent,
+    KernelInfoReply,
 };
 use smol::{net::TcpListener, process::Command};
 use std::{
@@ -130,14 +131,20 @@ pub struct RunningKernel {
     shell_task: Task<anyhow::Result<()>>,
     #[allow(unused)]
     iopub_task: Task<anyhow::Result<()>>,
+    #[allow(unused)]
+    control_task: Task<anyhow::Result<()>>,
+    #[allow(unused)]
+    routing_task: Task<anyhow::Result<()>>,
     connection_path: PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
     pub kernel_info: Option<KernelInfoReply>,
 }
 
-type JupyterMessageChannel =
-    stream::Select<mpsc::Receiver<JupyterMessage>, mpsc::Receiver<JupyterMessage>>;
+type JupyterMessageChannel = stream::Select<
+    mpsc::Receiver<JupyterMessage>,
+    stream::Select<mpsc::Receiver<JupyterMessage>, mpsc::Receiver<JupyterMessage>>,
+>;
 
 impl Debug for RunningKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -187,13 +194,18 @@ impl RunningKernel {
 
             let mut iopub_socket = connection_info.create_client_iopub_connection("").await?;
             let mut shell_socket = connection_info.create_client_shell_connection().await?;
+            let mut control_socket = connection_info.create_client_control_connection().await?;
 
             let (mut iopub, iosub) = futures::channel::mpsc::channel(100);
-            let (request_tx, mut request_rx) = futures::channel::mpsc::channel(100);
 
-            let (mut reply_tx, reply_rx) = futures::channel::mpsc::channel(100);
+            let (request_tx, mut request_rx) =
+                futures::channel::mpsc::channel::<JupyterMessage>(100);
 
-            let messages_rx = stream::select(reply_rx, iosub);
+            let (mut control_reply_tx, control_reply_rx) = futures::channel::mpsc::channel(100);
+            let (mut shell_reply_tx, shell_reply_rx) = futures::channel::mpsc::channel(100);
+
+            let reply_rx = stream::select(control_reply_rx, shell_reply_rx);
+            let messages_rx = stream::select(iosub, reply_rx);
 
             let iopub_task = cx.background_executor().spawn({
                 async move {
@@ -204,14 +216,46 @@ impl RunningKernel {
                 }
             });
 
-            let shell_task = cx.background_executor().spawn({
+            let (mut control_request_tx, mut control_request_rx) =
+                futures::channel::mpsc::channel(100);
+            let (mut shell_request_tx, mut shell_request_rx) = futures::channel::mpsc::channel(100);
+
+            // Route on request to the proper shell_request or control_request
+            let routing_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = request_rx.next().await {
-                        // todo!(): Based on the message type, route to shell or control
-                        shell_socket.send(message).await.ok();
+                        match message.content {
+                            JupyterMessageContent::DebugRequest(_)
+                            | JupyterMessageContent::InterruptRequest(_)
+                            | JupyterMessageContent::ShutdownRequest(_) => {
+                                control_request_tx.send(message).await?;
+                            }
+                            _ => {
+                                shell_request_tx.send(message).await?;
+                            }
+                        }
+                    }
+                    anyhow::Ok(())
+                }
+            });
 
+            let shell_task = cx.background_executor().spawn({
+                async move {
+                    while let Some(message) = shell_request_rx.next().await {
+                        shell_socket.send(message).await.ok();
                         let reply = shell_socket.read().await?;
-                        reply_tx.send(reply).await?;
+                        shell_reply_tx.send(reply).await?;
+                    }
+                    anyhow::Ok(())
+                }
+            });
+
+            let control_task = cx.background_executor().spawn({
+                async move {
+                    while let Some(message) = control_request_rx.next().await {
+                        control_socket.send(message).await.ok();
+                        let reply = control_socket.read().await?;
+                        control_reply_tx.send(reply).await?;
                     }
                     anyhow::Ok(())
                 }
@@ -223,8 +267,9 @@ impl RunningKernel {
                     request_tx,
                     shell_task,
                     iopub_task,
+                    control_task,
+                    routing_task,
                     connection_path,
-                    // Technically a third secret thing -- unknown
                     execution_state: ExecutionState::Busy,
                     kernel_info: None,
                 },
