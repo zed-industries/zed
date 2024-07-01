@@ -945,6 +945,18 @@ impl Terminal {
         &self.last_content
     }
 
+    pub fn total_lines(&self) -> usize {
+        let term = self.term.clone();
+        let terminal = term.lock_unfair();
+        terminal.total_lines()
+    }
+
+    pub fn viewport_lines(&self) -> usize {
+        let term = self.term.clone();
+        let terminal = term.lock_unfair();
+        terminal.screen_lines()
+    }
+
     //To test:
     //- Activate match on terminal (scrolling and selection)
     //- Editor search snapping behavior

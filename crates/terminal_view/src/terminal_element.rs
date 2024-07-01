@@ -3,9 +3,9 @@ use gpui::{
     div, fill, point, px, relative, size, AnyElement, AvailableSpace, Bounds, DispatchPhase,
     Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
     Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId, Model,
-    ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
-    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle,
-    View, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Overflow, Pixels, Point,
+    ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
+    UnderlineStyle, View, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -569,6 +569,7 @@ impl Element for TerminalElement {
             .request_layout(global_id, cx, |mut style, cx| {
                 style.size.width = relative(1.).into();
                 style.size.height = relative(1.).into();
+                // style.overflow = point(Overflow::Hidden, Overflow::Hidden);
                 let layout_id = cx.request_layout(style, None);
 
                 layout_id
@@ -686,8 +687,9 @@ impl Element for TerminalElement {
                     }
                 });
 
+                let scroll_top = self.terminal_view.read(cx).scroll_top;
                 let hyperlink_tooltip = last_hovered_word.clone().map(|hovered_word| {
-                    let offset = bounds.origin + Point::new(gutter, px(0.));
+                    let offset = bounds.origin + point(gutter, px(0.)) - point(px(0.), scroll_top);
                     let mut element = div()
                         .size_full()
                         .id("terminal-element")
@@ -795,7 +797,8 @@ impl Element for TerminalElement {
                         AvailableSpace::Definite(block.height as f32 * dimensions.line_height()),
                     );
                     let origin = bounds.origin
-                        + Point::new(px(0.), target_line as f32 * dimensions.line_height());
+                        + point(px(0.), target_line as f32 * dimensions.line_height())
+                        - point(px(0.), scroll_top);
                     element.prepaint_as_root(origin, available_space, cx);
                     Some(element)
                 } else {
@@ -828,15 +831,11 @@ impl Element for TerminalElement {
         layout: &mut Self::PrepaintState,
         cx: &mut WindowContext<'_>,
     ) {
-        let content = &self.terminal.read(cx).last_content;
-        dbg!(
-            content.size.bottommost_line(),
-            content.cursor.point.line,
-            content.display_offset
-        );
+        let scroll_top = self.terminal_view.read(cx).scroll_top;
 
         cx.paint_quad(fill(bounds, layout.background_color));
-        let origin = bounds.origin + Point::new(layout.gutter, px(0.));
+        let origin =
+            bounds.origin + Point::new(layout.gutter, px(0.)) - Point::new(px(0.), scroll_top);
 
         let terminal_input_handler = TerminalInputHandler {
             terminal: self.terminal.clone(),
@@ -887,11 +886,10 @@ impl Element for TerminalElement {
                         to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
                     {
                         let hr = HighlightedRange {
-                            start_y, //Need to change this
+                            start_y,
                             line_height: layout.dimensions.line_height,
                             lines: highlighted_range_lines,
                             color: *color,
-                            //Copied from editor. TODO: move to theme or something
                             corner_radius: 0.15 * layout.dimensions.line_height,
                         };
                         hr.paint(bounds, cx);
@@ -998,7 +996,7 @@ impl InputHandler for TerminalInputHandler {
     }
 }
 
-fn is_blank(cell: &IndexedCell) -> bool {
+pub fn is_blank(cell: &IndexedCell) -> bool {
     if cell.c != ' ' {
         return false;
     }

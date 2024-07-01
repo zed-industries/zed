@@ -25,7 +25,7 @@ use terminal::{
     ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskStatus, Terminal,
     TerminalSize,
 };
-use terminal_element::TerminalElement;
+use terminal_element::{is_blank, TerminalElement};
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
@@ -40,7 +40,7 @@ use workspace::{
 use anyhow::Context;
 use dirs::home_dir;
 use serde::Deserialize;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use smol::Timer;
 
 use std::{
@@ -268,6 +268,37 @@ impl TerminalView {
         cx.notify();
     }
 
+    fn max_scroll_top(&self, cx: &AppContext) -> Pixels {
+        let terminal = self.terminal.read(cx);
+
+        let Some(block) = self.block_below_cursor.as_ref() else {
+            return Pixels::ZERO;
+        };
+
+        let line_height = terminal.last_content().size.line_height;
+        let mut terminal_lines = terminal.total_lines();
+        let viewport_lines = terminal.viewport_lines();
+        if terminal.total_lines() == terminal.viewport_lines() {
+            let mut last_line = None;
+            for cell in terminal.last_content.cells.iter().rev() {
+                if !is_blank(cell) {
+                    break;
+                }
+
+                let last_line = last_line.get_or_insert(cell.point.line);
+                if *last_line != cell.point.line {
+                    terminal_lines -= 1;
+                }
+                *last_line = cell.point.line;
+            }
+        }
+
+        let max_scroll_top_in_lines =
+            (block.height as usize).saturating_sub(viewport_lines.saturating_sub(terminal_lines));
+
+        max_scroll_top_in_lines as f32 * line_height
+    }
+
     fn scroll_wheel(
         &mut self,
         event: &ScrollWheelEvent,
@@ -276,12 +307,14 @@ impl TerminalView {
     ) {
         let terminal_content = self.terminal.read(cx).last_content();
 
-        if terminal_content.display_offset == 0 {
-            if let Some(block) = self.block_below_cursor.as_ref() {
-                let line_height = terminal_content.size.line_height;
-                let max_scroll_top = block.height as f32 * line_height;
-                let pixels = event.delta.pixel_delta(line_height).y;
-                self.scroll_top = cmp::max(self.scroll_top + pixels, max_scroll_top);
+        if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
+            let line_height = terminal_content.size.line_height;
+            let y_delta = event.delta.pixel_delta(line_height).y;
+            if y_delta < Pixels::ZERO || self.scroll_top > Pixels::ZERO {
+                self.scroll_top = cmp::max(
+                    Pixels::ZERO,
+                    cmp::min(self.scroll_top - y_delta, self.max_scroll_top(cx)),
+                );
                 cx.notify();
                 return;
             }
@@ -377,6 +410,8 @@ impl TerminalView {
     }
 
     pub fn set_block_below_cursor(&mut self, block: BlockProperties, cx: &mut ViewContext<Self>) {
+        let line_height = self.terminal.read(cx).last_content().size.line_height;
+        self.scroll_top = cmp::min(block.height as f32 * line_height, self.max_scroll_top(cx));
         self.block_below_cursor = Some(Arc::new(block));
         cx.notify();
     }
