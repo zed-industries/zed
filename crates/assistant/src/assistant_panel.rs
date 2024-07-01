@@ -1,5 +1,6 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
+    humanize_token_count,
     prompt_library::open_prompt_library,
     search::*,
     slash_command::{
@@ -87,6 +88,10 @@ pub fn init(cx: &mut AppContext) {
         },
     )
     .detach();
+}
+
+pub enum AssistantPanelEvent {
+    ContextEdited,
 }
 
 pub struct AssistantPanel {
@@ -360,11 +365,11 @@ impl AssistantPanel {
             return;
         }
 
-        let Some(assistant) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
 
-        let context_editor = assistant
+        let context_editor = assistant_panel
             .read(cx)
             .active_context_editor()
             .and_then(|editor| {
@@ -391,25 +396,37 @@ impl AssistantPanel {
             return;
         };
 
-        if assistant.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
+        if assistant_panel.update(cx, |panel, cx| panel.is_authenticated(cx)) {
             InlineAssistant::update_global(cx, |assistant, cx| {
                 assistant.assist(
                     &active_editor,
                     Some(cx.view().downgrade()),
-                    include_context,
+                    include_context.then_some(&assistant_panel),
                     cx,
                 )
             })
         } else {
-            let assistant = assistant.downgrade();
+            let assistant_panel = assistant_panel.downgrade();
             cx.spawn(|workspace, mut cx| async move {
-                assistant
+                assistant_panel
                     .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
                     .await?;
-                if assistant.update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))? {
+                if assistant_panel
+                    .update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))?
+                {
                     cx.update(|cx| {
+                        let assistant_panel = if include_context {
+                            assistant_panel.upgrade()
+                        } else {
+                            None
+                        };
                         InlineAssistant::update_global(cx, |assistant, cx| {
-                            assistant.assist(&active_editor, Some(workspace), include_context, cx)
+                            assistant.assist(
+                                &active_editor,
+                                Some(workspace),
+                                assistant_panel.as_ref(),
+                                cx,
+                            )
                         })
                     })?
                 } else {
@@ -460,7 +477,7 @@ impl AssistantPanel {
             _subscriptions: subscriptions,
         });
         self.show_saved_contexts = false;
-
+        cx.emit(AssistantPanelEvent::ContextEdited);
         cx.notify();
     }
 
@@ -472,6 +489,7 @@ impl AssistantPanel {
     ) {
         match event {
             ContextEditorEvent::TabContentChanged => cx.notify(),
+            ContextEditorEvent::Edited => cx.emit(AssistantPanelEvent::ContextEdited),
         }
     }
 
@@ -863,18 +881,33 @@ impl AssistantPanel {
         context: &Model<Context>,
         cx: &mut ViewContext<Self>,
     ) -> Option<impl IntoElement> {
-        let remaining_tokens = context.read(cx).remaining_tokens(cx)?;
-        let remaining_tokens_color = if remaining_tokens <= 0 {
+        let model = CompletionProvider::global(cx).model();
+        let token_count = context.read(cx).token_count()?;
+        let max_token_count = model.max_token_count();
+
+        let remaining_tokens = max_token_count as isize - token_count as isize;
+        let token_count_color = if remaining_tokens <= 0 {
             Color::Error
-        } else if remaining_tokens <= 500 {
+        } else if token_count as f32 / max_token_count as f32 >= 0.8 {
             Color::Warning
         } else {
             Color::Muted
         };
+
         Some(
-            Label::new(remaining_tokens.to_string())
-                .size(LabelSize::Small)
-                .color(remaining_tokens_color),
+            h_flex()
+                .gap_0p5()
+                .child(
+                    Label::new(humanize_token_count(token_count))
+                        .size(LabelSize::Small)
+                        .color(token_count_color),
+                )
+                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                .child(
+                    Label::new(humanize_token_count(max_token_count))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
         )
     }
 }
@@ -978,6 +1011,7 @@ impl Panel for AssistantPanel {
 }
 
 impl EventEmitter<PanelEvent> for AssistantPanel {}
+impl EventEmitter<AssistantPanelEvent> for AssistantPanel {}
 
 impl FocusableView for AssistantPanel {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
@@ -1536,11 +1570,6 @@ impl Context {
                 updated: vec![pending_command.clone()],
             });
         }
-    }
-
-    fn remaining_tokens(&self, cx: &AppContext) -> Option<isize> {
-        let model = CompletionProvider::global(cx).model();
-        Some(model.max_token_count() as isize - self.token_count? as isize)
     }
 
     fn completion_provider_changed(&mut self, cx: &mut ModelContext<Self>) {
@@ -2183,6 +2212,7 @@ struct PendingCompletion {
 }
 
 enum ContextEditorEvent {
+    Edited,
     TabContentChanged,
 }
 
@@ -2775,6 +2805,7 @@ impl ContextEditor {
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
             }
+            EditorEvent::BufferEdited => cx.emit(ContextEditorEvent::Edited),
             _ => {}
         }
     }

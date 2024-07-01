@@ -114,6 +114,15 @@ For vim-specific shortcuts, you may find the following template a good place to 
       // e.g.
       // "j j": "vim::NormalBefore" // remap jj in insert mode to escape.
     }
+  },
+  {
+    "context": "EmptyPane || SharedScreen",
+    "bindings": {
+      // put key-bindings here (in addition to above) if you want them to
+      // work when no editor exists
+      // e.g.
+      // "space f": "file_finder::Toggle"
+    }
   }
 ]
 ```
@@ -291,6 +300,22 @@ Subword motion is not enabled by default. To enable it, add these bindings to yo
       "g e": "vim::PreviousSubwordEnd"
     }
   },
+```
+
+Surrounding the selection in visual mode is also not enabled by default (`shift-s` normally behaves like `c`). To enable it, add the following to your keymap.
+
+```json
+  {
+    "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
+    "bindings": {
+      "shift-s": [
+        "vim::PushOperator",
+        {
+          "AddSurrounds": {}
+        }
+      ]
+    }
+  }
 ```
 
 ## Supported plugins

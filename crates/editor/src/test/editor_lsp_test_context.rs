@@ -10,7 +10,7 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{AssetSource, View, ViewContext, VisualTestContext};
+use gpui::{View, ViewContext, VisualTestContext};
 use indoc::indoc;
 use language::{
     point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
@@ -39,12 +39,7 @@ impl EditorLspTestContext {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            cx.text_system()
-                .add_fonts(vec![assets::Assets
-                    .load("fonts/zed-mono/zed-mono-extended.ttf")
-                    .unwrap()
-                    .unwrap()])
-                .unwrap();
+            assets::Assets.load_test_fonts(cx);
             language::init(cx);
             crate::init(cx);
             workspace::init(app_state.clone(), cx);

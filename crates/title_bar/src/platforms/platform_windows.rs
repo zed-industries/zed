@@ -1,23 +1,38 @@
-use gpui::{prelude::*, Action, Rgba, WindowAppearance};
+use gpui::{prelude::*, Rgba, WindowAppearance};
 
-use crate::prelude::*;
+use ui::prelude::*;
 
 #[derive(IntoElement)]
-pub struct LinuxWindowControls {
+pub struct WindowsWindowControls {
     button_height: Pixels,
-    close_window_action: Box<dyn Action>,
 }
 
-impl LinuxWindowControls {
-    pub fn new(button_height: Pixels, close_window_action: Box<dyn Action>) -> Self {
-        Self {
-            button_height,
-            close_window_action,
+impl WindowsWindowControls {
+    pub fn new(button_height: Pixels) -> Self {
+        Self { button_height }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn get_font() -> &'static str {
+        "Segoe Fluent Icons"
+    }
+
+    #[cfg(target_os = "windows")]
+    fn get_font() -> &'static str {
+        use windows::Wdk::System::SystemServices::RtlGetVersion;
+
+        let mut version = unsafe { std::mem::zeroed() };
+        let status = unsafe { RtlGetVersion(&mut version) };
+
+        if status.is_ok() && version.dwBuildNumber >= 22000 {
+            "Segoe Fluent Icons"
+        } else {
+            "Segoe MDL2 Assets"
         }
     }
 }
 
-impl RenderOnce for LinuxWindowControls {
+impl RenderOnce for WindowsWindowControls {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let close_button_hover_color = Rgba {
             r: 232.0 / 255.0,
@@ -42,40 +57,38 @@ impl RenderOnce for LinuxWindowControls {
         };
 
         div()
-            .id("linux-window-controls")
+            .id("windows-window-controls")
+            .font_family(Self::get_font())
             .flex()
             .flex_row()
             .justify_center()
             .content_stretch()
             .max_h(self.button_height)
             .min_h(self.button_height)
-            .child(TitlebarButton::new(
+            .child(WindowsCaptionButton::new(
                 "minimize",
-                TitlebarButtonType::Minimize,
+                WindowsCaptionButtonIcon::Minimize,
                 button_hover_color,
-                self.close_window_action.boxed_clone(),
             ))
-            .child(TitlebarButton::new(
+            .child(WindowsCaptionButton::new(
                 "maximize-or-restore",
                 if cx.is_maximized() {
-                    TitlebarButtonType::Restore
+                    WindowsCaptionButtonIcon::Restore
                 } else {
-                    TitlebarButtonType::Maximize
+                    WindowsCaptionButtonIcon::Maximize
                 },
                 button_hover_color,
-                self.close_window_action.boxed_clone(),
             ))
-            .child(TitlebarButton::new(
+            .child(WindowsCaptionButton::new(
                 "close",
-                TitlebarButtonType::Close,
+                WindowsCaptionButtonIcon::Close,
                 close_button_hover_color,
-                self.close_window_action,
             ))
     }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-enum TitlebarButtonType {
+enum WindowsCaptionButtonIcon {
     Minimize,
     Restore,
     Maximize,
@@ -83,31 +96,32 @@ enum TitlebarButtonType {
 }
 
 #[derive(IntoElement)]
-struct TitlebarButton {
+struct WindowsCaptionButton {
     id: ElementId,
-    icon: TitlebarButtonType,
+    icon: WindowsCaptionButtonIcon,
     hover_background_color: Rgba,
-    close_window_action: Box<dyn Action>,
 }
 
-impl TitlebarButton {
+impl WindowsCaptionButton {
     pub fn new(
         id: impl Into<ElementId>,
-        icon: TitlebarButtonType,
+        icon: WindowsCaptionButtonIcon,
         hover_background_color: Rgba,
-        close_window_action: Box<dyn Action>,
     ) -> Self {
         Self {
             id: id.into(),
             icon,
             hover_background_color,
-            close_window_action,
         }
     }
 }
 
-impl RenderOnce for TitlebarButton {
+impl RenderOnce for WindowsCaptionButton {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        // todo(windows) report this width to the Windows platform API
+        // NOTE: this is intentionally hard coded. An option to use the 'native' size
+        //       could be added when the width is reported to the Windows platform API
+        //       as this could change between future Windows versions.
         let width = px(36.);
 
         h_flex()
@@ -116,6 +130,7 @@ impl RenderOnce for TitlebarButton {
             .content_center()
             .w(width)
             .h_full()
+            .text_size(px(10.0))
             .hover(|style| style.bg(self.hover_background_color))
             .active(|style| {
                 let mut active_color = self.hover_background_color;
@@ -123,23 +138,11 @@ impl RenderOnce for TitlebarButton {
 
                 style.bg(active_color)
             })
-            .child(Icon::new(match self.icon {
-                TitlebarButtonType::Minimize => IconName::Dash,
-                TitlebarButtonType::Restore => IconName::Minimize,
-                TitlebarButtonType::Maximize => IconName::Maximize,
-                TitlebarButtonType::Close => IconName::Close,
-            }))
-            .on_mouse_move(|_, cx| cx.stop_propagation())
-            .on_click(move |_, cx| {
-                cx.stop_propagation();
-                match self.icon {
-                    TitlebarButtonType::Minimize => cx.minimize_window(),
-                    TitlebarButtonType::Restore => cx.zoom_window(),
-                    TitlebarButtonType::Maximize => cx.zoom_window(),
-                    TitlebarButtonType::Close => {
-                        cx.dispatch_action(self.close_window_action.boxed_clone())
-                    }
-                }
+            .child(match self.icon {
+                WindowsCaptionButtonIcon::Minimize => "\u{e921}",
+                WindowsCaptionButtonIcon::Restore => "\u{e923}",
+                WindowsCaptionButtonIcon::Maximize => "\u{e922}",
+                WindowsCaptionButtonIcon::Close => "\u{e8bb}",
             })
     }
 }

@@ -95,7 +95,7 @@ pub struct TabBarSettings {
 pub struct TabBarSettingsContent {
     /// Whether or not to show the tab bar in the editor.
     ///
-    /// Default: top
+    /// Default: true
     pub show: Option<bool>,
     /// Whether or not to show the navigation history buttons in the tab bar.
     ///

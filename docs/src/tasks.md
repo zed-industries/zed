@@ -32,7 +32,7 @@ There are two actions that drive the workflow of using tasks: `task: spawn` and 
 
 Tasks can be defined:
 
-- in global `tasks.json` file; such tasks are available in all Zed projects you work on. This file is usually located in `~/.config/tasks.json`. You can edit them by using `zed: open tasks` action.
+- in global `tasks.json` file; such tasks are available in all Zed projects you work on. This file is usually located in `~/.config/zed/tasks.json`. You can edit them by using `zed: open tasks` action.
 - in worktree-specific (local) `.zed/tasks.json` file; such tasks are available only when working on a project with that worktree included. You can edit worktree-specific tasks by using `zed: open local tasks`.
 - on the fly with [oneshot tasks](#oneshot-tasks). These tasks are project-specific and do not persist across sections.
 - by language extension.

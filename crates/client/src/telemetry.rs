@@ -611,6 +611,7 @@ impl Telemetry {
 
                         let request_body = EventRequestBody {
                             installation_id: state.installation_id.as_deref().map(Into::into),
+                            metrics_id: state.metrics_id.as_deref().map(Into::into),
                             session_id: state.session_id.clone(),
                             is_staff: state.is_staff,
                             app_version: state.app_version.clone(),
