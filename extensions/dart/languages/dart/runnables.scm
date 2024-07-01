@@ -7,10 +7,10 @@
                     ("import"
                         (configurable_uri
                             (uri
-                                (string_literal) @import
-                                (#match? @import "package:flutter/(material|widgets|cupertino).dart")
-                                (#not-match? @import "package:flutter_test/flutter_test.dart")
-                                (#not-match? @import "package:test/test.dart")
+                                (string_literal) @_import
+                                (#match? @_import "package:flutter/(material|widgets|cupertino).dart")
+                                (#not-match? @_import "package:flutter_test/flutter_test.dart")
+                                (#not-match? @_import "package:test/test.dart")
         ))))))
         (
             (function_signature
@@ -31,8 +31,8 @@
                     ("import"
                         (configurable_uri
                             (uri
-                                (string_literal) @import
-                                (#match? @import "package:flutter_test/flutter_test.dart")
+                                (string_literal) @_import
+                                (#match? @_import "package:flutter_test/flutter_test.dart")
         ))))))
         (
             (function_signature
