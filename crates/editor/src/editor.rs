@@ -4046,7 +4046,7 @@ impl Editor {
             }
             (None, Some(_)) => true,
             (Some(previous), Some(current)) => {
-                previous != current || self.signature_help_state.is_none()
+                previous != current || (previous == current && self.signature_help_state.is_some())
             }
         }
     }
