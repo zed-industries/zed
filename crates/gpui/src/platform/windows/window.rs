@@ -63,6 +63,7 @@ pub(crate) struct WindowsWindowStatePtr {
 impl WindowsWindowState {
     fn new(
         hwnd: HWND,
+        transparent: bool,
         cs: &CREATESTRUCTW,
         current_cursor: HCURSOR,
         display: WindowsDisplay,
@@ -80,8 +81,7 @@ impl WindowsWindowState {
             origin,
             size: logical_size,
         };
-        // let renderer = windows_renderer::windows_renderer(hwnd, transparent);
-        let renderer = DirectXRenderer::new(hwnd);
+        let renderer = DirectXRenderer::new(hwnd, transparent);
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
@@ -201,6 +201,7 @@ impl WindowsWindowStatePtr {
     fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Rc<Self> {
         let state = RefCell::new(WindowsWindowState::new(
             hwnd,
+            context.transparent,
             cs,
             context.current_cursor,
             context.display,
@@ -233,6 +234,7 @@ struct WindowCreateContext {
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: WindowsDisplay,
+    transparent: bool,
     executor: ForegroundExecutor,
     current_cursor: HCURSOR,
 }
@@ -272,6 +274,7 @@ impl WindowsWindow {
             handle,
             hide_title_bar,
             display,
+            transparent: params.window_background != WindowBackgroundAppearance::Opaque,
             executor,
             current_cursor,
         };
