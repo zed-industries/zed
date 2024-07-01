@@ -215,20 +215,21 @@ impl DirectXRenderer {
     pub(crate) fn update_transparency(
         &mut self,
         background_appearance: WindowBackgroundAppearance,
-    ) {
+    ) -> Result<()> {
         // We only support setting `Transparent` and `Opaque` for now.
         match background_appearance {
             WindowBackgroundAppearance::Opaque => {
                 if self.transparent {
-                    self.recreate_swap_chain(false).log_err();
+                    return Err(anyhow::anyhow!("Restart required."));
                 }
             }
             WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
                 if !self.transparent {
-                    self.recreate_swap_chain(true).log_err();
+                    return Err(anyhow::anyhow!("Restart required."));
                 }
             }
         }
+        Ok(())
     }
 
     #[cfg(target_feature = "enable-renderdoc")]
@@ -236,19 +237,6 @@ impl DirectXRenderer {
         &mut self,
         _background_appearance: WindowBackgroundAppearance,
     ) {
-    }
-
-    fn recreate_swap_chain(&mut self, transparent: bool) -> Result<()> {
-        self.transparent = transparent;
-        unsafe {
-            self.devices.device_context.ClearState();
-            self.devices.device_context.Flush();
-        }
-        let viewport = self.context.viewport.clone();
-        self.context = DirectXContext::new(&self.devices, self.hwnd, transparent)?;
-        self.context.viewport = viewport;
-
-        Ok(())
     }
 
     fn draw_shadows(&mut self, shadows: &[Shadow]) -> Result<()> {
