@@ -3,12 +3,13 @@ use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
     requests::{
-        ConfigurationDone, Continue, Initialize, Launch, Next, SetBreakpoints, StepBack, StepIn,
-        StepOut,
+        ConfigurationDone, Continue, Initialize, Launch, Next, Pause, SetBreakpoints, StepBack,
+        StepIn, StepOut,
     },
     ConfigurationDoneArguments, ContinueArguments, InitializeRequestArgumentsPathFormat,
-    LaunchRequestArguments, NextArguments, SetBreakpointsArguments, SetBreakpointsResponse, Source,
-    SourceBreakpoint, StepBackArguments, StepInArguments, StepOutArguments, SteppingGranularity,
+    LaunchRequestArguments, NextArguments, PauseArguments, SetBreakpointsArguments,
+    SetBreakpointsResponse, Source, SourceBreakpoint, StepBackArguments, StepInArguments,
+    StepOutArguments, SteppingGranularity,
 };
 use futures::{
     channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
@@ -250,68 +251,87 @@ impl DebugAdapterClient {
     }
 
     pub async fn resume(&self, thread_id: u64) {
-        let _ = self
-            .request::<Continue>(ContinueArguments {
-                thread_id,
-                single_thread: self
-                    .capabilities
-                    .clone()
-                    .and_then(|c| c.supports_single_thread_execution_requests),
-            })
-            .await;
+        self.request::<Continue>(ContinueArguments {
+            thread_id,
+            single_thread: self
+                .capabilities
+                .clone()
+                .and_then(|c| c.supports_single_thread_execution_requests),
+        })
+        .await
+        .log_err();
     }
 
     pub async fn step_over(&self, thread_id: u64) {
-        let _ = self
-            .request::<Next>(NextArguments {
-                thread_id,
-                granularity: Some(SteppingGranularity::Statement),
-                single_thread: self
-                    .capabilities
-                    .clone()
-                    .and_then(|c| c.supports_single_thread_execution_requests),
-            })
-            .await;
+        self.request::<Next>(NextArguments {
+            thread_id,
+            granularity: Some(SteppingGranularity::Statement),
+            single_thread: self
+                .capabilities
+                .clone()
+                .and_then(|c| c.supports_single_thread_execution_requests),
+        })
+        .await
+        .log_err();
     }
 
     pub async fn step_in(&self, thread_id: u64) {
-        let _ = self
-            .request::<StepIn>(StepInArguments {
-                thread_id,
-                target_id: None,
-                granularity: Some(SteppingGranularity::Statement),
-                single_thread: self
-                    .capabilities
-                    .clone()
-                    .and_then(|c| c.supports_single_thread_execution_requests),
-            })
-            .await;
+        self.request::<StepIn>(StepInArguments {
+            thread_id,
+            target_id: None,
+            granularity: Some(SteppingGranularity::Statement),
+            single_thread: self
+                .capabilities
+                .clone()
+                .and_then(|c| c.supports_single_thread_execution_requests),
+        })
+        .await
+        .log_err();
     }
 
     pub async fn step_out(&self, thread_id: u64) {
-        let _ = self
-            .request::<StepOut>(StepOutArguments {
-                thread_id,
-                granularity: Some(SteppingGranularity::Statement),
-                single_thread: self
-                    .capabilities
-                    .clone()
-                    .and_then(|c| c.supports_single_thread_execution_requests),
-            })
-            .await;
+        self.request::<StepOut>(StepOutArguments {
+            thread_id,
+            granularity: Some(SteppingGranularity::Statement),
+            single_thread: self
+                .capabilities
+                .clone()
+                .and_then(|c| c.supports_single_thread_execution_requests),
+        })
+        .await
+        .log_err();
     }
 
     pub async fn step_back(&self, thread_id: u64) {
-        let _ = self
-            .request::<StepBack>(StepBackArguments {
-                thread_id,
-                single_thread: self
-                    .capabilities
-                    .clone()
-                    .and_then(|c| c.supports_single_thread_execution_requests),
-                granularity: Some(SteppingGranularity::Statement),
-            })
-            .await;
+        self.request::<StepBack>(StepBackArguments {
+            thread_id,
+            single_thread: self
+                .capabilities
+                .clone()
+                .and_then(|c| c.supports_single_thread_execution_requests),
+            granularity: Some(SteppingGranularity::Statement),
+        })
+        .await
+        .log_err();
+    }
+
+    pub async fn restart(&self, thread_id: u64) {
+        self.request::<StepBack>(StepBackArguments {
+            thread_id,
+            single_thread: self
+                .capabilities
+                .clone()
+                .and_then(|c| c.supports_single_thread_execution_requests),
+            granularity: Some(SteppingGranularity::Statement),
+        })
+        .await
+        .log_err();
+    }
+
+    pub async fn pause(&self, thread_id: u64) {
+        self.request::<Pause>(PauseArguments { thread_id })
+            .await
+            .log_err();
     }
 
     pub async fn set_breakpoints(
