@@ -1,4 +1,7 @@
+use html_to_markdown::{convert_html_to_markdown, TagHandler};
+use std::cell::RefCell;
 use std::fs;
+use std::rc::Rc;
 use zed::lsp::CompletionKind;
 use zed::{
     CodeLabel, CodeLabelSpan, LanguageServerId, SlashCommand, SlashCommandOutput,
@@ -168,6 +171,38 @@ impl zed::Extension for GleamExtension {
         worktree: &zed::Worktree,
     ) -> Result<SlashCommandOutput, String> {
         match command.name.as_str() {
+            "gleam-docs" => {
+                let mut text = String::new();
+
+                let docs = std::fs::read_to_string(
+                    "/Users/maxdeviant/projects/startest/build/dev/docs/startest/index.html",
+                )
+                .map_err(|err| format!("failed to open docs {err}"))?;
+
+                let mut handlers: Vec<TagHandler> = vec![
+                    Rc::new(RefCell::new(
+                        html_to_markdown::markdown::WebpageChromeRemover,
+                    )),
+                    Rc::new(RefCell::new(html_to_markdown::markdown::ParagraphHandler)),
+                    Rc::new(RefCell::new(html_to_markdown::markdown::HeadingHandler)),
+                    Rc::new(RefCell::new(html_to_markdown::markdown::ListHandler)),
+                    Rc::new(RefCell::new(html_to_markdown::markdown::TableHandler::new())),
+                    Rc::new(RefCell::new(html_to_markdown::markdown::StyledTextHandler)),
+                ];
+
+                let markdown = convert_html_to_markdown(docs.as_bytes(), &mut handlers)
+                    .map_err(|err| format!("failed to convert docs to Markdown {err}"))?;
+
+                text.push_str(&markdown);
+
+                Ok(SlashCommandOutput {
+                    sections: vec![SlashCommandOutputSection {
+                        range: (0..text.len()).into(),
+                        label: "gleam-docs".to_string(),
+                    }],
+                    text,
+                })
+            }
             "gleam-project" => {
                 let mut text = String::new();
                 text.push_str("You are in a Gleam project.\n");

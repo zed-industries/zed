@@ -174,6 +174,11 @@ impl WasmHost {
             .context("failed to preopen extension current directory")?;
         let extension_work_dir = extension_work_dir.to_string_lossy();
 
+        let gleam_build_dir_preopen = Dir::open_ambient_dir(
+            "/Users/maxdeviant/projects/startest/build/",
+            ambient_authority(),
+        )?;
+
         let perms = wasi::FilePerms::all();
         let dir_perms = wasi::DirPerms::all();
 
@@ -181,6 +186,12 @@ impl WasmHost {
             .inherit_stdio()
             .preopened_dir(current_dir_preopen, dir_perms, perms, ".")
             .preopened_dir(work_dir_preopen, dir_perms, perms, &extension_work_dir)
+            .preopened_dir(
+                gleam_build_dir_preopen,
+                dir_perms,
+                perms,
+                "/Users/maxdeviant/projects/startest/build/",
+            )
             .env("PWD", &extension_work_dir)
             .env("RUST_BACKTRACE", "full")
             .build())
