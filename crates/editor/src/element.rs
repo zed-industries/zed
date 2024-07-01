@@ -1655,14 +1655,12 @@ impl EditorElement {
     }
 
     fn calculate_roman_number(&self, number: &DisplayRowDelta) -> String {
-        let values = [
-            1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1
-        ];
+        let values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
         let symbols = [
-            "M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"
+            "M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I",
         ];
 
-        let mut num = number.clone();
+        let mut num = *number;
         let mut roman = String::with_capacity(15);
 
         for i in 0..values.len() {
@@ -1784,8 +1782,7 @@ impl EditorElement {
                     .unwrap_or(&default_number);
                 if !is_roman {
                     write!(&mut line_number, "{number}").unwrap();
-                }
-                else {
+                } else {
                     let roman = self.calculate_roman_number(number);
                     write!(&mut line_number, "{roman}").unwrap();
                 }
