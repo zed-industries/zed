@@ -109,6 +109,11 @@ impl CloudCompletionProvider {
                 // Can't find a tokenizer for Claude 3, so for now just use the same as OpenAI's as an approximation.
                 count_open_ai_tokens(request, cx.background_executor())
             }
+            LanguageModel::Cloud(CloudModel::Gemini15Pro | CloudModel::Gemini15Flash) => {
+                // TODO: Implement a proper tokenizer for Gemini models
+                // For now, use OpenAI's tokenizer as an approximation
+                count_open_ai_tokens(request, cx.background_executor())
+            }
             LanguageModel::Cloud(CloudModel::Custom(model)) => {
                 let request = self.client.request(proto::CountTokensWithLanguageModel {
                     model,
