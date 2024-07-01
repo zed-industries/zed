@@ -1,6 +1,7 @@
 mod outline_panel_settings;
 
 use std::{
+    borrow::Cow,
     cmp,
     ops::Range,
     path::{Path, PathBuf},
@@ -85,13 +86,13 @@ pub struct OutlinePanel {
     selected_entry: Option<EntryOwned>,
     active_item: Option<ActiveItem>,
     _subscriptions: Vec<Subscription>,
-    loading_outlines: bool,
+    updating_fs_entries: bool,
     fs_entries_update_task: Task<()>,
     cached_entries_update_task: Task<()>,
     outline_fetch_tasks: HashMap<(BufferId, ExcerptId), Task<()>>,
     excerpts: HashMap<BufferId, HashMap<ExcerptId, Excerpt>>,
     cached_entries_with_depth: Vec<(usize, EntryOwned)>,
-    filter_editor: View<Editor>,
+    query_editor: View<Editor>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -276,13 +277,13 @@ impl OutlinePanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
         let outline_panel = cx.new_view(|cx| {
-            let filter_editor = cx.new_view(|cx| {
+            let query_editor = cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
                 editor.set_placeholder_text("Filter...", cx);
                 editor
             });
             let filter_update_subscription =
-                cx.subscribe(&filter_editor, |outline_panel: &mut Self, _, event, cx| {
+                cx.subscribe(&query_editor, |outline_panel: &mut Self, _, event, cx| {
                     if let editor::EditorEvent::BufferEdited = event {
                         outline_panel.update_cached_entries(cx);
                     }
@@ -338,7 +339,7 @@ impl OutlinePanel {
                 fs: workspace.app_state().fs.clone(),
                 scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
-                filter_editor,
+                query_editor,
                 fs_entries: Vec::new(),
                 fs_entries_depth: HashMap::default(),
                 collapsed_entries: HashSet::default(),
@@ -348,7 +349,7 @@ impl OutlinePanel {
                 width: None,
                 active_item: None,
                 pending_serialization: Task::ready(None),
-                loading_outlines: false,
+                updating_fs_entries: false,
                 fs_entries_update_task: Task::ready(()),
                 cached_entries_update_task: Task::ready(()),
                 outline_fetch_tasks: HashMap::default(),
@@ -481,14 +482,14 @@ impl OutlinePanel {
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if self.filter_editor.focus_handle(cx).is_focused(cx) {
-            self.filter_editor.update(cx, |editor, cx| {
+        if self.query_editor.focus_handle(cx).is_focused(cx) {
+            self.query_editor.update(cx, |editor, cx| {
                 if editor.buffer().read(cx).len(cx) > 0 {
                     editor.set_text("", cx);
                 }
             });
         } else {
-            cx.focus_view(&self.filter_editor);
+            cx.focus_view(&self.query_editor);
         }
 
         if self.context_menu.is_some() {
@@ -1675,7 +1676,7 @@ impl OutlinePanel {
             },
         );
 
-        self.loading_outlines = true;
+        self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn(|outline_panel, mut cx| async move {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
@@ -1980,7 +1981,7 @@ impl OutlinePanel {
 
             outline_panel
                 .update(&mut cx, |outline_panel, cx| {
-                    outline_panel.loading_outlines = false;
+                    outline_panel.updating_fs_entries = false;
                     outline_panel.excerpts = new_excerpts;
                     outline_panel.collapsed_entries = new_collapsed_entries;
                     outline_panel.unfolded_dirs = new_unfolded_dirs;
@@ -2381,17 +2382,12 @@ impl OutlinePanel {
 
     fn update_cached_entries(&mut self, cx: &mut ViewContext<OutlinePanel>) {
         let is_singleton = self.is_singleton_active(cx);
-        let filter_text = self.filter_editor.read(cx).text(cx);
-        let filter_text = if filter_text.trim().is_empty() {
-            None
-        } else {
-            Some(filter_text)
-        };
+        let query = self.query(cx);
         self.cached_entries_update_task = cx.spawn(|outline_panel, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(new_cached_entries) = outline_panel
                 .update(&mut cx, |outline_panel, cx| {
-                    outline_panel.generate_cached_entries(is_singleton, filter_text, cx)
+                    outline_panel.generate_cached_entries(is_singleton, query, cx)
                 })
                 .ok()
             else {
@@ -2688,6 +2684,15 @@ impl OutlinePanel {
 
         entries.push((depth, entry));
     }
+
+    fn query(&self, cx: &AppContext) -> Option<String> {
+        let query = self.query_editor.read(cx).text(cx);
+        if query.trim().is_empty() {
+            None
+        } else {
+            Some(query)
+        }
+    }
 }
 
 fn back_to_common_visited_parent(
@@ -2825,38 +2830,55 @@ impl EventEmitter<PanelEvent> for OutlinePanel {}
 impl Render for OutlinePanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
-        if self.fs_entries.is_empty() {
-            let header = if self.loading_outlines {
-                "Loading outlines"
+        let query = self.query(cx);
+        if self.cached_entries_with_depth.is_empty() {
+            let header = if self.updating_fs_entries {
+                Cow::Borrowed("Loading outlines")
+            } else if let Some(query) = query.as_deref() {
+                // TODO kb can be too long, wrap or shorten?
+                Cow::Owned(format!("No matches for query '{query}'"))
             } else {
-                "No outlines available"
+                Cow::Borrowed("No outlines available")
             };
+
             v_flex()
                 .id("empty-outline_panel")
-                .justify_center()
                 .size_full()
                 .p_4()
                 .track_focus(&self.focus_handle)
-                .child(h_flex().justify_center().child(Label::new(header)))
                 .child(
-                    h_flex()
-                        .pt(Spacing::Small.rems(cx))
+                    v_flex()
                         .justify_center()
-                        .child({
-                            let keystroke = match self.position(cx) {
-                                DockPosition::Left => {
-                                    cx.keystroke_text_for(&workspace::ToggleLeftDock)
-                                }
-                                DockPosition::Bottom => {
-                                    cx.keystroke_text_for(&workspace::ToggleBottomDock)
-                                }
-                                DockPosition::Right => {
-                                    cx.keystroke_text_for(&workspace::ToggleRightDock)
-                                }
-                            };
-                            Label::new(format!("Toggle this panel with {keystroke}",))
-                        }),
+                        .size_full()
+                        .child(h_flex().justify_center().child(Label::new(header)))
+                        .child(
+                            h_flex()
+                                .pt(Spacing::Small.rems(cx))
+                                .justify_center()
+                                .child({
+                                    let keystroke = match self.position(cx) {
+                                        DockPosition::Left => {
+                                            cx.keystroke_text_for(&workspace::ToggleLeftDock)
+                                        }
+                                        DockPosition::Bottom => {
+                                            cx.keystroke_text_for(&workspace::ToggleBottomDock)
+                                        }
+                                        DockPosition::Right => {
+                                            cx.keystroke_text_for(&workspace::ToggleRightDock)
+                                        }
+                                    };
+                                    Label::new(format!("Toggle this panel with {keystroke}",))
+                                }),
+                        ),
                 )
+                // TODO kb jumps when no matches
+                .when(query.is_some(), |empty_panel| {
+                    empty_panel.child(
+                        v_flex()
+                            .child(div().mx_2().border_primary(cx).border_t_1())
+                            .child(v_flex().p_2().child(self.query_editor.clone())),
+                    )
+                })
         } else {
             v_flex()
                 .id("outline-panel")
@@ -2950,7 +2972,7 @@ impl Render for OutlinePanel {
                 .child(
                     v_flex()
                         .child(div().mx_2().border_primary(cx).border_t_1())
-                        .child(v_flex().p_2().child(self.filter_editor.clone())),
+                        .child(v_flex().p_2().child(self.query_editor.clone())),
                 )
         }
     }
