@@ -887,6 +887,9 @@ pub enum CodegenEvent {
 
 impl EventEmitter<CodegenEvent> for Codegen {}
 
+const CLEAR_INPUT: &str = "\x15";
+const CARRIAGE_RETURN: &str = "\x0d";
+
 struct TerminalTransaction {
     terminal: Model<Terminal>,
 }
@@ -897,17 +900,21 @@ impl TerminalTransaction {
     }
 
     pub fn push(&mut self, hunk: String, cx: &mut AppContext) {
-        self.terminal.update(cx, |terminal, _| terminal.input(hunk));
+        // Ensure that the assistant cannot accidently execute commands that are streamed into the terminal
+        let input = hunk.replace(CARRIAGE_RETURN, " ");
+        self.terminal
+            .update(cx, |terminal, _| terminal.input(input));
     }
 
     pub fn undo(&self, cx: &mut AppContext) {
         self.terminal
-            .update(cx, |terminal, _| terminal.clear_input());
+            .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.to_string()));
     }
 
     pub fn complete(&self, cx: &mut AppContext) {
-        self.terminal
-            .update(cx, |terminal, _| terminal.execute_input());
+        self.terminal.update(cx, |terminal, _| {
+            terminal.input(CARRIAGE_RETURN.to_string())
+        });
     }
 }
 

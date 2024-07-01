@@ -1056,16 +1056,6 @@ impl Terminal {
         self.write_bytes_to_pty(input);
     }
 
-    pub fn clear_input(&mut self) {
-        // \x15 is the escape sequence that's used for ctrl-u, which clears the input
-        self.input("\x15".to_string());
-    }
-
-    pub fn execute_input(&mut self) {
-        // \x0d is the escape sequence that's used for enter, which executes the input
-        self.input("\x0d".to_string());
-    }
-
     pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
         let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
         if let Some(esc) = esc {
