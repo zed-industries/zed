@@ -20,7 +20,7 @@
         )
         (#set! tag flutter-main)
     )
-) @flutter-main
+)
 
 ; Flutter test main
 (
@@ -42,4 +42,4 @@
         )
         (#set! tag flutter-test-main)
     )
-) @flutter-test-main
+)
