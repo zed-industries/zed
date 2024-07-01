@@ -53,6 +53,8 @@ pub(crate) struct DirectXRenderer {
     context: DirectXContext,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
+    hwnd: HWND,
+    transparent: bool,
 }
 
 #[derive(Clone)]
@@ -131,6 +133,8 @@ impl DirectXRenderer {
             context,
             globals,
             pipelines,
+            hwnd,
+            transparent,
         })
     }
 
@@ -207,22 +211,44 @@ impl DirectXRenderer {
         Ok(())
     }
 
+    #[cfg(not(target_feature = "enable-renderdoc"))]
     pub(crate) fn update_transparency(
         &mut self,
         background_appearance: WindowBackgroundAppearance,
     ) {
+        // We only support setting `Transparent` and `Opaque` for now.
         match background_appearance {
-            // We only support setting `Transparent` and `Opaque` for now.
             WindowBackgroundAppearance::Opaque => {
-                // TODO:
+                if self.transparent {
+                    self.recreate_swap_chain(false).log_err();
+                }
             }
-            WindowBackgroundAppearance::Transparent => {
-                // TODO:
-            }
-            WindowBackgroundAppearance::Blurred => {
-                // TODO:
+            WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
+                if !self.transparent {
+                    self.recreate_swap_chain(true).log_err();
+                }
             }
         }
+    }
+
+    #[cfg(target_feature = "enable-renderdoc")]
+    pub(crate) fn update_transparency(
+        &mut self,
+        _background_appearance: WindowBackgroundAppearance,
+    ) {
+    }
+
+    fn recreate_swap_chain(&mut self, transparent: bool) -> Result<()> {
+        self.transparent = transparent;
+        unsafe {
+            self.devices.device_context.ClearState();
+            self.devices.device_context.Flush();
+        }
+        let viewport = self.context.viewport.clone();
+        self.context = DirectXContext::new(&self.devices, self.hwnd, transparent)?;
+        self.context.viewport = viewport;
+
+        Ok(())
     }
 
     fn draw_shadows(&mut self, shadows: &[Shadow]) -> Result<()> {
@@ -506,7 +532,8 @@ impl DirectXContext {
         #[cfg(not(target_feature = "enable-renderdoc"))]
         let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, transparent)?;
         #[cfg(target_feature = "enable-renderdoc")]
-        let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd, transparent)?;
+        let swap_chain =
+            create_swap_chain_default(&devices.dxgi_factory, &devices.device, hwnd, transparent)?;
         #[cfg(not(target_feature = "enable-renderdoc"))]
         let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
         #[cfg(not(target_feature = "enable-renderdoc"))]
