@@ -267,3 +267,47 @@ pub struct CountTokensRequest {
 pub struct CountTokensResponse {
     pub total_tokens: usize,
 }
+
+pub async fn create_cached_content<T: HttpClient>(
+    client: &T,
+    api_url: &str,
+    api_key: &str,
+    request: CreateCachedContentRequest,
+) -> Result<CreateCachedContentResponse> {
+    let uri = format!(
+        "{}/v1beta/models/gemini-pro:createCachedContent?key={}",
+        api_url, api_key
+    );
+    let request = serde_json::to_string(&request)?;
+    let mut response = client.post_json(&uri, request.into()).await?;
+    let mut text = String::new();
+    response.body_mut().read_to_string(&mut text).await?;
+    if response.status().is_success() {
+        Ok(serde_json::from_str::<CreateCachedContentResponse>(&text)?)
+    } else {
+        Err(anyhow!(
+            "error during createCachedContent, status code: {:?}, body: {}",
+            response.status(),
+            text
+        ))
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateCachedContentRequest {
+    pub cached_content: Option<CachedContent>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedContent {
+    pub content: String,
+    pub model: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateCachedContentResponse {
+    pub name: String,
+}
