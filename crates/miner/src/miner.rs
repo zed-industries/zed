@@ -396,6 +396,9 @@ impl Miner {
         let gitignore = self.build_gitignore(&self.root).await?;
         let relative_path = path.strip_prefix(&self.root).unwrap_or(path);
         let is_dir = self.fs.is_dir(path).await;
+        if path.file_name().map_or(false, |name| name == ".git") {
+            return Ok(true);
+        }
         Ok(gitignore.matched(relative_path, is_dir).is_ignore())
     }
 
@@ -766,6 +769,10 @@ impl Miner {
 
         // Update progress before enqueueing
         let symbol_count = symbols.len();
+        if symbol_count == 0 {
+            return Err(anyhow!("no symbols found for path: {}", path.display()));
+        }
+
         {
             let mut file_progress = self.file_progress_map.lock().await;
             if let Some(progress) = file_progress.get_mut(&path) {
