@@ -54,11 +54,16 @@ pub(crate) struct DirectXRenderer {
     size: Size<DevicePixels>,
 }
 
-struct DirectXContext {
+#[derive(Clone)]
+pub(crate) struct DirectXDevices {
     dxgi_factory: IDXGIFactory6,
-    device: ID3D11Device,
     dxgi_device: IDXGIDevice,
-    context: ID3D11DeviceContext,
+    device: ID3D11Device,
+    device_context: ID3D11DeviceContext,
+}
+
+struct DirectXContext {
+    devices: DirectXDevices,
     swap_chain: IDXGISwapChain1,
     back_buffer: [Option<ID3D11RenderTargetView>; 1],
     viewport: [D3D11_VIEWPORT; 1],
@@ -85,6 +90,27 @@ struct DirectComposition {
     comp_device: IDCompositionDevice,
     comp_target: IDCompositionTarget,
     comp_visual: IDCompositionVisual,
+}
+
+impl DirectXDevices {
+    pub(crate) fn new() -> Result<Self> {
+        let dxgi_factory = get_dxgi_factory()?;
+        let adapter = get_adapter(&dxgi_factory)?;
+        let (device, device_context) = {
+            let mut device: Option<ID3D11Device> = None;
+            let mut context: Option<ID3D11DeviceContext> = None;
+            get_device(&adapter, Some(&mut device), Some(&mut context))?;
+            (device.unwrap(), context.unwrap())
+        };
+        let dxgi_device: IDXGIDevice = device.cast()?;
+
+        Ok(Self {
+            dxgi_factory,
+            dxgi_device,
+            device,
+            device_context,
+        })
+    }
 }
 
 impl DirectXRenderer {
@@ -490,13 +516,10 @@ impl DirectXContext {
         let swap_chain = create_swap_chain(&dxgi_factory, &device, transparent)?;
         #[cfg(target_feature = "enable-renderdoc")]
         let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd, transparent)?;
-        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        let comp_visual = unsafe { comp_device.CreateVisual() }?;
-        unsafe {
-            comp_visual.SetContent(&swap_chain)?;
-            comp_target.SetRoot(&comp_visual)?;
-            comp_device.Commit()?;
-        }
+        #[cfg(not(target_feature = "enable-renderdoc"))]
+        let direct_composition = DirectComposition::new(&dxgi_device, hwnd)?;
+        #[cfg(not(target_feature = "enable-renderdoc"))]
+        direct_composition.set_swap_chain(&swap_chain)?;
         let back_buffer = [Some(set_render_target_view(
             &swap_chain,
             &device,
@@ -504,12 +527,6 @@ impl DirectXContext {
         )?)];
         let viewport = set_viewport(&context, 1.0, 1.0);
         set_rasterizer_state(&device, &context)?;
-        #[cfg(not(target_feature = "enable-renderdoc"))]
-        let direct_composition = DirectComposition {
-            comp_device,
-            comp_target,
-            comp_visual,
-        };
 
         Ok(Self {
             dxgi_factory,
@@ -624,6 +641,29 @@ impl DirectXRenderContext {
             mono_sprites,
             poly_sprites,
         })
+    }
+}
+
+impl DirectComposition {
+    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
+        let comp_device = get_comp_device(&dxgi_device)?;
+        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        let comp_visual = unsafe { comp_device.CreateVisual() }?;
+
+        Ok(Self {
+            comp_device,
+            comp_target,
+            comp_visual,
+        })
+    }
+
+    pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
+        unsafe {
+            self.comp_visual.SetContent(swap_chain)?;
+            self.comp_target.SetRoot(&self.comp_visual)?;
+            self.comp_device.Commit()?;
+        }
+        Ok(())
     }
 }
 
