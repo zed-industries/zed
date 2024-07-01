@@ -1,14 +1,13 @@
 use html_to_markdown::{convert_html_to_markdown, TagHandler};
 use std::cell::RefCell;
 use std::fs;
-use std::path::PathBuf;
 use std::rc::Rc;
 use zed::lsp::CompletionKind;
 use zed::{
     CodeLabel, CodeLabelSpan, LanguageServerId, SlashCommand, SlashCommandOutput,
     SlashCommandOutputSection,
 };
-use zed_extension_api::{self as zed, Result};
+use zed_extension_api::{self as zed, fetch, HttpRequest, Result};
 
 struct GleamExtension {
     cached_binary_path: Option<String>,
@@ -174,12 +173,11 @@ impl zed::Extension for GleamExtension {
         match command.name.as_str() {
             "gleam-docs" => {
                 let argument = argument.ok_or_else(|| "missing argument".to_string())?;
+                let package_name = argument;
 
-                let mut docs_path = PathBuf::from_iter(["build", "dev", "docs"]);
-                docs_path.push(argument);
-                docs_path.push("index.html");
-
-                let html = worktree.read_text_file(&docs_path.to_string_lossy())?;
+                let response = fetch(&HttpRequest {
+                    url: format!("https://hexdocs.pm/{package_name}"),
+                })?;
 
                 let mut handlers: Vec<TagHandler> = vec![
                     Rc::new(RefCell::new(
@@ -192,7 +190,7 @@ impl zed::Extension for GleamExtension {
                     Rc::new(RefCell::new(html_to_markdown::markdown::StyledTextHandler)),
                 ];
 
-                let markdown = convert_html_to_markdown(html.as_bytes(), &mut handlers)
+                let markdown = convert_html_to_markdown(response.body.as_bytes(), &mut handlers)
                     .map_err(|err| format!("failed to convert docs to Markdown {err}"))?;
 
                 let mut text = String::new();
