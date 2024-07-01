@@ -3,44 +3,16 @@ use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
 use ::util::ResultExt;
 use anyhow::{Context, Result};
 use collections::FxHasher;
+#[cfg(not(feature = "enable-renderdoc"))]
+use windows::Win32::Graphics::DirectComposition::*;
 use windows::{
     core::*,
     Win32::{
         Foundation::HWND,
         Graphics::{
-            Direct3D::{
-                Fxc::{D3DCompileFromFile, D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION},
-                ID3DBlob, D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
-                D3D_PRIMITIVE_TOPOLOGY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-                D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            },
-            Direct3D11::{
-                D3D11CreateDevice, ID3D11BlendState, ID3D11Buffer, ID3D11Device,
-                ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11SamplerState,
-                ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
-                D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_SHADER_RESOURCE, D3D11_BLEND_DESC,
-                D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD,
-                D3D11_BLEND_SRC_ALPHA, D3D11_BUFFER_DESC, D3D11_COLOR_WRITE_ENABLE_ALL,
-                D3D11_COMPARISON_ALWAYS, D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                D3D11_CREATE_DEVICE_DEBUG, D3D11_CULL_NONE, D3D11_FILL_SOLID,
-                D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_FLOAT32_MAX, D3D11_MAP_WRITE_DISCARD,
-                D3D11_RASTERIZER_DESC, D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, D3D11_SAMPLER_DESC,
-                D3D11_SDK_VERSION, D3D11_TEXTURE_ADDRESS_WRAP, D3D11_USAGE_DYNAMIC, D3D11_VIEWPORT,
-            },
-            DirectComposition::{
-                DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget,
-                IDCompositionVisual,
-            },
-            Dxgi::{
-                Common::{
-                    DXGI_ALPHA_MODE_IGNORE, DXGI_ALPHA_MODE_PREMULTIPLIED,
-                    DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
-                },
-                CreateDXGIFactory2, IDXGIAdapter1, IDXGIDevice, IDXGIFactory6, IDXGISwapChain1,
-                DXGI_CREATE_FACTORY_DEBUG, DXGI_GPU_PREFERENCE_MINIMUM_POWER, DXGI_SCALING_STRETCH,
-                DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-                DXGI_USAGE_RENDER_TARGET_OUTPUT,
-            },
+            Direct3D::{Fxc::*, *},
+            Direct3D11::*,
+            Dxgi::{Common::*, *},
         },
     },
 };
@@ -69,7 +41,7 @@ struct DirectXContext {
     swap_chain: IDXGISwapChain1,
     back_buffer: [Option<ID3D11RenderTargetView>; 1],
     viewport: [D3D11_VIEWPORT; 1],
-    #[cfg(not(target_feature = "enable-renderdoc"))]
+    #[cfg(not(feature = "enable-renderdoc"))]
     direct_composition: DirectComposition,
 }
 
@@ -90,7 +62,7 @@ struct DirectXGlobalElements {
     blend_state_for_pr: ID3D11BlendState,
 }
 
-#[cfg(not(target_feature = "enable-renderdoc"))]
+#[cfg(not(feature = "enable-renderdoc"))]
 struct DirectComposition {
     comp_device: IDCompositionDevice,
     comp_target: IDCompositionTarget,
@@ -211,7 +183,7 @@ impl DirectXRenderer {
         Ok(())
     }
 
-    #[cfg(not(target_feature = "enable-renderdoc"))]
+    #[cfg(not(feature = "enable-renderdoc"))]
     pub(crate) fn update_transparency(
         &mut self,
         background_appearance: WindowBackgroundAppearance,
@@ -221,14 +193,14 @@ impl DirectXRenderer {
             WindowBackgroundAppearance::Opaque => {
                 if self.transparent {
                     return Err(anyhow::anyhow!(
-                        "Set opaque backgroud from transparent background, a restart is required."
+                        "Set opaque backgroud from transparent background, a restart is required. Or, you can open a new window."
                     ));
                 }
             }
             WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
                 if !self.transparent {
                     return Err(anyhow::anyhow!(
-                        "Set transparent backgroud from opaque background, a restart is required."
+                        "Set transparent backgroud from opaque background, a restart is required. Or, you can open a new window."
                     ));
                 }
             }
@@ -236,11 +208,16 @@ impl DirectXRenderer {
         Ok(())
     }
 
-    #[cfg(target_feature = "enable-renderdoc")]
+    #[cfg(feature = "enable-renderdoc")]
     pub(crate) fn update_transparency(
         &mut self,
-        _background_appearance: WindowBackgroundAppearance,
-    ) {
+        background_appearance: WindowBackgroundAppearance,
+    ) -> Result<()> {
+        if background_appearance != WindowBackgroundAppearance::Opaque {
+            Err(anyhow::anyhow!("Set transparent background not supported when feature \"enable-renderdoc\" is enabled."))
+        } else {
+            Ok(())
+        }
     }
 
     fn draw_shadows(&mut self, shadows: &[Shadow]) -> Result<()> {
@@ -521,14 +498,14 @@ impl DirectXRenderer {
 
 impl DirectXContext {
     pub fn new(devices: &DirectXDevices, hwnd: HWND, transparent: bool) -> Result<Self> {
-        #[cfg(not(target_feature = "enable-renderdoc"))]
+        #[cfg(not(feature = "enable-renderdoc"))]
         let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, transparent)?;
-        #[cfg(target_feature = "enable-renderdoc")]
+        #[cfg(feature = "enable-renderdoc")]
         let swap_chain =
             create_swap_chain_default(&devices.dxgi_factory, &devices.device, hwnd, transparent)?;
-        #[cfg(not(target_feature = "enable-renderdoc"))]
+        #[cfg(not(feature = "enable-renderdoc"))]
         let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
-        #[cfg(not(target_feature = "enable-renderdoc"))]
+        #[cfg(not(feature = "enable-renderdoc"))]
         direct_composition.set_swap_chain(&swap_chain)?;
         let back_buffer = [Some(set_render_target_view(
             &swap_chain,
@@ -542,7 +519,7 @@ impl DirectXContext {
             swap_chain,
             back_buffer,
             viewport,
-            #[cfg(not(target_feature = "enable-renderdoc"))]
+            #[cfg(not(feature = "enable-renderdoc"))]
             direct_composition,
         })
     }
@@ -612,6 +589,7 @@ impl DirectXRenderPipelines {
     }
 }
 
+#[cfg(not(feature = "enable-renderdoc"))]
 impl DirectComposition {
     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
         let comp_device = get_comp_device(&dxgi_device)?;
@@ -759,6 +737,7 @@ fn get_device(
     })
 }
 
+#[cfg(not(feature = "enable-renderdoc"))]
 fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
     Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
 }
@@ -793,7 +772,7 @@ fn create_swap_chain(
     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
 }
 
-#[cfg(target_feature = "enable-renderdoc")]
+#[cfg(feature = "enable-renderdoc")]
 fn create_swap_chain_default(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
