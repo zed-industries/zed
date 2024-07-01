@@ -1,3 +1,8 @@
+use crate::{
+    assistant_settings::AssistantSettings, humanize_token_count,
+    prompts::generate_terminal_assistant_prompt, AssistantPanel, AssistantPanelEvent,
+    CompletionProvider, LanguageModelRequest, LanguageModelRequestMessage, Role,
+};
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
@@ -6,40 +11,24 @@ use editor::{
     Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
 };
 use fs::Fs;
-use futures::channel::mpsc;
-use futures::SinkExt;
-use futures::StreamExt;
-use gpui::Context;
-use gpui::ModelContext;
+use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
-    AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global, Model,
-    Subscription, Task, TextStyle, UpdateGlobal, View, WeakView, WhiteSpace,
+    AppContext, Context, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global,
+    Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, WeakView, WhiteSpace,
 };
 use language::Buffer;
-use settings::update_settings_file;
-use settings::Settings;
-use std::cmp;
-use std::sync::Arc;
-use std::time::Duration;
-use std::time::Instant;
+use settings::{update_settings_file, Settings};
+use std::{
+    cmp,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::prelude::*;
-use ui::ContextMenu;
-use ui::PopoverMenu;
-use ui::Tooltip;
+use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
-
-use crate::humanize_token_count;
-use crate::AssistantPanel;
-use crate::AssistantPanelEvent;
-use crate::CompletionProvider;
-use crate::LanguageModelRequest;
-use crate::LanguageModelRequestMessage;
-use crate::Role;
-use crate::{assistant_settings::AssistantSettings, prompts::generate_terminal_assistant_prompt};
 
 pub fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
     cx.set_global(TerminalInlineAssistant::new(fs, telemetry));
