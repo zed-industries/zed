@@ -1057,12 +1057,10 @@ fn draw_normal(
     pipeline: &PipelineState,
     viewport: &[D3D11_VIEWPORT],
     global_params: &[Option<ID3D11Buffer>],
-    // data: &[T],
     topology: D3D_PRIMITIVE_TOPOLOGY,
     vertex_count: u32,
     instance_count: u32,
 ) -> Result<()> {
-    // update_buffer(device_context, &pipeline.buffer, data)?;
     unsafe {
         device_context.VSSetShaderResources(1, Some(&pipeline.view));
         device_context.PSSetShaderResources(1, Some(&pipeline.view));
@@ -1082,13 +1080,11 @@ fn draw_with_texture(
     device_context: &ID3D11DeviceContext,
     pipeline: &PipelineState,
     texture: &[Option<ID3D11ShaderResourceView>],
-    // data: &[T],
     viewport: &[D3D11_VIEWPORT],
     global_params: &[Option<ID3D11Buffer>],
     sampler: &[Option<ID3D11SamplerState>],
     instance_count: u32,
 ) -> Result<()> {
-    // update_buffer(device_context, &pipeline.buffer, data)?;
     unsafe {
         device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
         device_context.RSSetViewports(Some(viewport));
