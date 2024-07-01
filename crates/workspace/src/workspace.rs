@@ -3502,11 +3502,11 @@ impl Workspace {
                     if let Some(item) = pane.active_item() {
                         item.workspace_deactivated(cx);
                     }
-                    if matches!(
-                        WorkspaceSettings::get_global(cx).autosave,
-                        AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
-                    ) {
-                        for item in pane.items() {
+                    for item in pane.items() {
+                        if matches!(
+                            item.workspace_settings(cx).autosave,
+                            AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
+                        ) {
                             Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
                                 .detach_and_log_err(cx);
                         }

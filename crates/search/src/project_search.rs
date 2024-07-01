@@ -591,9 +591,7 @@ impl ProjectSearchView {
         }
 
         self.results_editor.update(cx, |editor, cx| {
-            for item in &match_ranges {
-                editor.replace(item, &query, cx);
-            }
+            editor.replace_all(&mut match_ranges.iter(), &query, cx);
         });
 
         self.model.update(cx, |model, _cx| {

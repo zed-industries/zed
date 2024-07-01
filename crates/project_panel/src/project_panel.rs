@@ -28,11 +28,12 @@ use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktr
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowScrollbar};
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::OnceCell,
+    cell::{Cell, OnceCell},
     collections::HashSet,
     ffi::OsStr,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -71,6 +72,7 @@ pub struct ProjectPanel {
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     show_scrollbar: bool,
+    scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
     hide_scrollbar_task: Option<Task<()>>,
 }
 
@@ -287,6 +289,7 @@ impl ProjectPanel {
                 pending_serialization: Task::ready(None),
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
+                scrollbar_drag_thumb_offset: Default::default(),
             };
             this.update_visible_entries(None, cx);
 
@@ -2233,7 +2236,7 @@ impl ProjectPanel {
 
         let height = scroll_handle
             .last_item_height
-            .filter(|_| self.show_scrollbar)?;
+            .filter(|_| self.show_scrollbar || self.scrollbar_drag_thumb_offset.get().is_some())?;
 
         let total_list_length = height.0 as f64 * items_count as f64;
         let current_offset = scroll_handle.base_handle.offset().y.0.min(0.).abs() as f64;
@@ -2269,6 +2272,19 @@ impl ProjectPanel {
                 .on_any_mouse_down(|_, cx| {
                     cx.stop_propagation();
                 })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, cx| {
+                        if this.scrollbar_drag_thumb_offset.get().is_none()
+                            && !this.focus_handle.contains_focused(cx)
+                        {
+                            this.hide_scrollbar(cx);
+                            cx.notify();
+                        }
+
+                        cx.stop_propagation();
+                    }),
+                )
                 .on_scroll_wheel(cx.listener(|_, _, cx| {
                     cx.notify();
                 }))
@@ -2282,6 +2298,8 @@ impl ProjectPanel {
                 .child(ProjectPanelScrollbar::new(
                     percentage as f32..end_offset as f32,
                     self.scroll_handle.clone(),
+                    self.scrollbar_drag_thumb_offset.clone(),
+                    cx.view().clone().into(),
                     items_count,
                 )),
         )
@@ -2317,8 +2335,8 @@ impl ProjectPanel {
                 .timer(SCROLLBAR_SHOW_INTERVAL)
                 .await;
             panel
-                .update(&mut cx, |editor, cx| {
-                    editor.show_scrollbar = false;
+                .update(&mut cx, |panel, cx| {
+                    panel.show_scrollbar = false;
                     cx.notify();
                 })
                 .log_err();

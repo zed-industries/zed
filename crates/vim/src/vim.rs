@@ -39,7 +39,7 @@ use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, Register, WorkspaceState};
 use std::{ops::Range, sync::Arc};
-use surrounds::{add_surrounds, change_surrounds, delete_surrounds};
+use surrounds::{add_surrounds, change_surrounds, delete_surrounds, SurroundsType};
 use ui::BorrowAppContext;
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
@@ -418,10 +418,12 @@ impl Vim {
             state.last_mode = last_mode;
             state.mode = mode;
             state.operator_stack.clear();
-            state.current_tx.take();
-            state.current_anchor.take();
+            if mode == Mode::Normal || mode != last_mode {
+                state.current_tx.take();
+                state.current_anchor.take();
+            }
         });
-        if mode != Mode::Insert {
+        if mode != Mode::Insert && mode != Mode::Replace {
             self.take_count(cx);
         }
 
@@ -487,11 +489,6 @@ impl Vim {
                     } else if !last_mode.is_visual() && mode.is_visual() {
                         if selection.is_empty() {
                             selection.end = movement::right(map, selection.start);
-                        }
-                    } else if last_mode == Mode::Replace {
-                        if selection.head().column() != 0 {
-                            let point = movement::left(map, selection.head());
-                            selection.collapse_to(point, selection.goal)
                         }
                     }
                 });
@@ -749,33 +746,48 @@ impl Vim {
     }
 
     fn transaction_undone(&mut self, transaction_id: &TransactionId, cx: &mut WindowContext) {
-        if !self.state().mode.is_visual() {
-            return;
-        };
-        self.update_active_editor(cx, |vim, editor, cx| {
-            let original_mode = vim.state().undo_modes.get(transaction_id);
-            editor.change_selections(None, cx, |s| match original_mode {
-                Some(Mode::VisualLine) => {
-                    s.move_with(|map, selection| {
-                        selection.collapse_to(
-                            map.prev_line_boundary(selection.start.to_point(map)).1,
-                            SelectionGoal::None,
-                        )
+        match self.state().mode {
+            Mode::VisualLine | Mode::VisualBlock | Mode::Visual => {
+                self.update_active_editor(cx, |vim, editor, cx| {
+                    let original_mode = vim.state().undo_modes.get(transaction_id);
+                    editor.change_selections(None, cx, |s| match original_mode {
+                        Some(Mode::VisualLine) => {
+                            s.move_with(|map, selection| {
+                                selection.collapse_to(
+                                    map.prev_line_boundary(selection.start.to_point(map)).1,
+                                    SelectionGoal::None,
+                                )
+                            });
+                        }
+                        Some(Mode::VisualBlock) => {
+                            let mut first = s.first_anchor();
+                            first.collapse_to(first.start, first.goal);
+                            s.select_anchors(vec![first]);
+                        }
+                        _ => {
+                            s.move_with(|map, selection| {
+                                selection.collapse_to(
+                                    map.clip_at_line_end(selection.start),
+                                    selection.goal,
+                                );
+                            });
+                        }
                     });
-                }
-                Some(Mode::VisualBlock) => {
-                    let mut first = s.first_anchor();
-                    first.collapse_to(first.start, first.goal);
-                    s.select_anchors(vec![first]);
-                }
-                _ => {
-                    s.move_with(|_, selection| {
-                        selection.collapse_to(selection.start, selection.goal);
-                    });
-                }
-            });
-        });
-        self.switch_mode(Mode::Normal, true, cx)
+                });
+                self.switch_mode(Mode::Normal, true, cx)
+            }
+            Mode::Normal => {
+                self.update_active_editor(cx, |_, editor, cx| {
+                    editor.change_selections(None, cx, |s| {
+                        s.move_with(|map, selection| {
+                            selection
+                                .collapse_to(map.clip_at_line_end(selection.end), selection.goal)
+                        })
+                    })
+                });
+            }
+            Mode::Insert | Mode::Replace => {}
+        }
     }
 
     fn transaction_ended(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
@@ -860,6 +872,10 @@ impl Vim {
                         add_surrounds(text, target, cx);
                         Vim::update(cx, |vim, cx| vim.clear_operator(cx));
                     }
+                }
+                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                    add_surrounds(text, SurroundsType::Selection, cx);
+                    Vim::update(cx, |vim, cx| vim.clear_operator(cx));
                 }
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },

@@ -120,6 +120,8 @@ pub struct LanguageSettings {
     pub code_actions_on_format: HashMap<String, bool>,
     /// Whether to perform linked edits
     pub linked_edits: bool,
+    /// Task configuration for this language.
+    pub tasks: LanguageTaskConfig,
 }
 
 impl LanguageSettings {
@@ -340,6 +342,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
+    /// Task configuration for this language.
+    ///
+    /// Default: {}
+    pub tasks: Option<LanguageTaskConfig>,
 }
 
 /// The contents of the inline completion settings.
@@ -546,6 +552,13 @@ fn scroll_debounce_ms() -> u64 {
     50
 }
 
+/// The task settings for a particular language.
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
+pub struct LanguageTaskConfig {
+    /// Extra task variables to set for a particular language.
+    pub variables: HashMap<String, String>,
+}
+
 impl InlayHintSettings {
     /// Returns the kinds of inlay hints that are enabled based on the settings.
     pub fn enabled_inlay_hint_kinds(&self) -> HashSet<Option<InlayHintKind>> {
@@ -662,6 +675,17 @@ impl settings::Settings for AllLanguageSettings {
             .ok_or_else(Self::missing_default)?;
 
         let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
+
+        for (language, suffixes) in &default_value.file_types {
+            let mut builder = GlobSetBuilder::new();
+
+            for suffix in suffixes {
+                builder.add(Glob::new(suffix)?);
+            }
+
+            file_types.insert(language.clone(), builder.build()?);
+        }
+
         for user_settings in sources.customizations() {
             if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
                 copilot_enabled = Some(copilot);
@@ -700,6 +724,15 @@ impl settings::Settings for AllLanguageSettings {
 
             for (language, suffixes) in &user_settings.file_types {
                 let mut builder = GlobSetBuilder::new();
+
+                let default_value = default_value.file_types.get(&language.clone());
+
+                // Merge the default value with the user's value.
+                if let Some(suffixes) = default_value {
+                    for suffix in suffixes {
+                        builder.add(Glob::new(suffix)?);
+                    }
+                }
 
                 for suffix in suffixes {
                     builder.add(Glob::new(suffix)?);
@@ -803,6 +836,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.code_actions_on_format.clone(),
     );
     merge(&mut settings.linked_edits, src.linked_edits);
+    merge(&mut settings.tasks, src.tasks.clone());
 
     merge(
         &mut settings.preferred_line_length,

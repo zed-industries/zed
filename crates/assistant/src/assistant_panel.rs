@@ -1,11 +1,13 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
+    humanize_token_count,
     prompt_library::open_prompt_library,
     search::*,
     slash_command::{
         default_command::DefaultSlashCommand, SlashCommandCompletionProvider, SlashCommandLine,
         SlashCommandRegistry,
     },
+    terminal_inline_assistant::TerminalInlineAssistant,
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, ContextStore, CycleMessageRole,
     InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, MessageId,
     MessageMetadata, MessageStatus, ModelSelector, QuoteSelection, ResetKey, Role, SavedContext,
@@ -57,6 +59,7 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::AssistantKind;
+use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::{
     prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tab, TabBar, Tooltip,
@@ -89,6 +92,10 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+pub enum AssistantPanelEvent {
+    ContextEdited,
+}
+
 pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
@@ -117,6 +124,11 @@ struct SavedContextPickerDelegate {
 
 enum SavedContextPickerEvent {
     Confirmed { path: PathBuf },
+}
+
+enum InlineAssistTarget {
+    Editor(View<Editor>, bool),
+    Terminal(View<TerminalView>),
 }
 
 impl EventEmitter<SavedContextPickerEvent> for Picker<SavedContextPickerDelegate> {}
@@ -360,11 +372,108 @@ impl AssistantPanel {
             return;
         }
 
-        let Some(assistant) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
 
-        let context_editor = assistant
+        let Some(inline_assist_target) =
+            Self::resolve_inline_assist_target(workspace, &assistant_panel, cx)
+        else {
+            return;
+        };
+
+        if assistant_panel.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
+            match inline_assist_target {
+                InlineAssistTarget::Editor(active_editor, include_context) => {
+                    InlineAssistant::update_global(cx, |assistant, cx| {
+                        assistant.assist(
+                            &active_editor,
+                            Some(cx.view().downgrade()),
+                            include_context.then_some(&assistant_panel),
+                            cx,
+                        )
+                    })
+                }
+                InlineAssistTarget::Terminal(active_terminal) => {
+                    TerminalInlineAssistant::update_global(cx, |assistant, cx| {
+                        assistant.assist(
+                            &active_terminal,
+                            Some(cx.view().downgrade()),
+                            Some(&assistant_panel),
+                            cx,
+                        )
+                    })
+                }
+            }
+        } else {
+            let assistant_panel = assistant_panel.downgrade();
+            cx.spawn(|workspace, mut cx| async move {
+                assistant_panel
+                    .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
+                    .await?;
+                if assistant_panel.update(&mut cx, |panel, cx| panel.is_authenticated(cx))? {
+                    cx.update(|cx| match inline_assist_target {
+                        InlineAssistTarget::Editor(active_editor, include_context) => {
+                            let assistant_panel = if include_context {
+                                assistant_panel.upgrade()
+                            } else {
+                                None
+                            };
+                            InlineAssistant::update_global(cx, |assistant, cx| {
+                                assistant.assist(
+                                    &active_editor,
+                                    Some(workspace),
+                                    assistant_panel.as_ref(),
+                                    cx,
+                                )
+                            })
+                        }
+                        InlineAssistTarget::Terminal(active_terminal) => {
+                            TerminalInlineAssistant::update_global(cx, |assistant, cx| {
+                                assistant.assist(
+                                    &active_terminal,
+                                    Some(workspace),
+                                    assistant_panel.upgrade().as_ref(),
+                                    cx,
+                                )
+                            })
+                        }
+                    })?
+                } else {
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.focus_panel::<AssistantPanel>(cx)
+                    })?;
+                }
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx)
+        }
+    }
+
+    fn resolve_inline_assist_target(
+        workspace: &mut Workspace,
+        assistant_panel: &View<AssistantPanel>,
+        cx: &mut WindowContext,
+    ) -> Option<InlineAssistTarget> {
+        if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) {
+            if terminal_panel
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(cx)
+            {
+                if let Some(terminal_view) = terminal_panel
+                    .read(cx)
+                    .pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|t| t.downcast::<TerminalView>())
+                {
+                    return Some(InlineAssistTarget::Terminal(terminal_view));
+                }
+            }
+        }
+        let context_editor = assistant_panel
             .read(cx)
             .active_context_editor()
             .and_then(|editor| {
@@ -376,51 +485,15 @@ impl AssistantPanel {
                 }
             });
 
-        let include_context;
-        let active_editor;
         if let Some(context_editor) = context_editor {
-            active_editor = context_editor;
-            include_context = false;
+            Some(InlineAssistTarget::Editor(context_editor, false))
         } else if let Some(workspace_editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
         {
-            active_editor = workspace_editor;
-            include_context = true;
+            Some(InlineAssistTarget::Editor(workspace_editor, true))
         } else {
-            return;
-        };
-
-        if assistant.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
-            InlineAssistant::update_global(cx, |assistant, cx| {
-                assistant.assist(
-                    &active_editor,
-                    Some(cx.view().downgrade()),
-                    include_context,
-                    cx,
-                )
-            })
-        } else {
-            let assistant = assistant.downgrade();
-            cx.spawn(|workspace, mut cx| async move {
-                assistant
-                    .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
-                    .await?;
-                if assistant.update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))? {
-                    cx.update(|cx| {
-                        InlineAssistant::update_global(cx, |assistant, cx| {
-                            assistant.assist(&active_editor, Some(workspace), include_context, cx)
-                        })
-                    })?
-                } else {
-                    workspace.update(&mut cx, |workspace, cx| {
-                        workspace.focus_panel::<AssistantPanel>(cx)
-                    })?;
-                }
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx)
+            None
         }
     }
 
@@ -460,7 +533,7 @@ impl AssistantPanel {
             _subscriptions: subscriptions,
         });
         self.show_saved_contexts = false;
-
+        cx.emit(AssistantPanelEvent::ContextEdited);
         cx.notify();
     }
 
@@ -472,6 +545,7 @@ impl AssistantPanel {
     ) {
         match event {
             ContextEditorEvent::TabContentChanged => cx.notify(),
+            ContextEditorEvent::Edited => cx.emit(AssistantPanelEvent::ContextEdited),
         }
     }
 
@@ -863,18 +937,33 @@ impl AssistantPanel {
         context: &Model<Context>,
         cx: &mut ViewContext<Self>,
     ) -> Option<impl IntoElement> {
-        let remaining_tokens = context.read(cx).remaining_tokens(cx)?;
-        let remaining_tokens_color = if remaining_tokens <= 0 {
+        let model = CompletionProvider::global(cx).model();
+        let token_count = context.read(cx).token_count()?;
+        let max_token_count = model.max_token_count();
+
+        let remaining_tokens = max_token_count as isize - token_count as isize;
+        let token_count_color = if remaining_tokens <= 0 {
             Color::Error
-        } else if remaining_tokens <= 500 {
+        } else if token_count as f32 / max_token_count as f32 >= 0.8 {
             Color::Warning
         } else {
             Color::Muted
         };
+
         Some(
-            Label::new(remaining_tokens.to_string())
-                .size(LabelSize::Small)
-                .color(remaining_tokens_color),
+            h_flex()
+                .gap_0p5()
+                .child(
+                    Label::new(humanize_token_count(token_count))
+                        .size(LabelSize::Small)
+                        .color(token_count_color),
+                )
+                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                .child(
+                    Label::new(humanize_token_count(max_token_count))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
         )
     }
 }
@@ -978,6 +1067,7 @@ impl Panel for AssistantPanel {
 }
 
 impl EventEmitter<PanelEvent> for AssistantPanel {}
+impl EventEmitter<AssistantPanelEvent> for AssistantPanel {}
 
 impl FocusableView for AssistantPanel {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
@@ -1536,11 +1626,6 @@ impl Context {
                 updated: vec![pending_command.clone()],
             });
         }
-    }
-
-    fn remaining_tokens(&self, cx: &AppContext) -> Option<isize> {
-        let model = CompletionProvider::global(cx).model();
-        Some(model.max_token_count() as isize - self.token_count? as isize)
     }
 
     fn completion_provider_changed(&mut self, cx: &mut ModelContext<Self>) {
@@ -2183,6 +2268,7 @@ struct PendingCompletion {
 }
 
 enum ContextEditorEvent {
+    Edited,
     TabContentChanged,
 }
 
@@ -2775,6 +2861,7 @@ impl ContextEditor {
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
             }
+            EditorEvent::BufferEdited => cx.emit(ContextEditorEvent::Edited),
             _ => {}
         }
     }

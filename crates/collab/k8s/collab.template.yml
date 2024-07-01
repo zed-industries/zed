@@ -125,7 +125,7 @@ spec:
             - name: GOOGLE_AI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: google_ai
+                  name: google-ai
                   key: api_key
             - name: BLOB_STORE_ACCESS_KEY
               valueFrom:

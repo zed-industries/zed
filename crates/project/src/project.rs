@@ -8192,7 +8192,7 @@ impl Project {
                 }
             };
 
-            if abs_path.ends_with(local_settings_file_relative_path()) {
+            if path.ends_with(local_settings_file_relative_path()) {
                 let settings_dir = Arc::from(
                     path.ancestors()
                         .nth(local_settings_file_relative_path().components().count())
@@ -8209,7 +8209,7 @@ impl Project {
                         },
                     )
                 });
-            } else if abs_path.ends_with(local_tasks_file_relative_path()) {
+            } else if path.ends_with(local_tasks_file_relative_path()) {
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
@@ -8229,7 +8229,7 @@ impl Project {
                         );
                     }
                 })
-            } else if abs_path.ends_with(local_vscode_tasks_file_relative_path()) {
+            } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
                 self.task_inventory().update(cx, |task_inventory, cx| {
                     if removed {
                         task_inventory.remove_local_static_source(&abs_path);
@@ -10861,12 +10861,19 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
         if self.is_local() {
-            let language = location
-                .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
+            let (file, language) = location
+                .map(|location| {
+                    let buffer = location.buffer.read(cx);
+                    (
+                        buffer.file().cloned(),
+                        buffer.language_at(location.range.start),
+                    )
+                })
+                .unwrap_or_default();
             Task::ready(Ok(self
                 .task_inventory()
                 .read(cx)
-                .list_tasks(language, worktree)))
+                .list_tasks(file, language, worktree, cx)))
         } else if let Some(project_id) = self
             .remote_id()
             .filter(|_| self.ssh_connection_string(cx).is_some())

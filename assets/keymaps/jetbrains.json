@@ -78,6 +78,7 @@
     "bindings": {
       "cmd-shift-o": "file_finder::Toggle",
       "cmd-shift-a": "command_palette::Toggle",
+      "shift shift": "command_palette::Toggle",
       "cmd-alt-o": "project_symbols::Toggle",
       "cmd-1": "workspace::ToggleLeftDock",
       "cmd-6": "diagnostics::Deploy"
@@ -94,6 +95,10 @@
     "context": "ProjectPanel",
     "bindings": {
       "enter": "project_panel::Open",
+      "cmd-backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "delete": ["project_panel::Trash", { "skip_prompt": false }],
+      "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "shift-f6": "project_panel::Rename"
     }
   }

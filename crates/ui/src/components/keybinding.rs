@@ -30,7 +30,7 @@ impl KeyBinding {
         Some(Self::new(key_binding))
     }
 
-    fn icon_for_key(keystroke: &Keystroke) -> Option<IconName> {
+    fn icon_for_key(&self, keystroke: &Keystroke) -> Option<IconName> {
         match keystroke.key.as_str() {
             "left" => Some(IconName::ArrowLeft),
             "right" => Some(IconName::ArrowRight),
@@ -45,6 +45,11 @@ impl KeyBinding {
             "escape" => Some(IconName::Escape),
             "pagedown" => Some(IconName::PageDown),
             "pageup" => Some(IconName::PageUp),
+            "shift" if self.platform_style == PlatformStyle::Mac => Some(IconName::Shift),
+            "control" if self.platform_style == PlatformStyle::Mac => Some(IconName::Control),
+            "platform" if self.platform_style == PlatformStyle::Mac => Some(IconName::Command),
+            "function" if self.platform_style == PlatformStyle::Mac => Some(IconName::Control),
+            "alt" if self.platform_style == PlatformStyle::Mac => Some(IconName::Option),
             _ => None,
         }
     }
@@ -80,7 +85,7 @@ impl RenderOnce for KeyBinding {
             .gap(Spacing::Small.rems(cx))
             .flex_none()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
-                let key_icon = Self::icon_for_key(keystroke);
+                let key_icon = self.icon_for_key(keystroke);
 
                 h_flex()
                     .flex_none()

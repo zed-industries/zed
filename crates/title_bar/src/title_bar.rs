@@ -1,21 +1,27 @@
-use crate::face_pile::FacePile;
+mod call_controls;
+mod collab;
+mod platforms;
+
+use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
-use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, Client, User, UserStore};
+use call::{ActiveCall, ParticipantLocation};
+use client::{Client, UserStore};
+use collab::render_color_ribbon;
 use gpui::{
-    actions, canvas, div, point, px, Action, AnyElement, AppContext, Element, Hsla,
-    InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
-    StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext, WeakView,
+    actions, div, px, Action, AnyElement, AppContext, Element, InteractiveElement, Interactivity,
+    IntoElement, Model, ParentElement, Render, Stateful, StatefulInteractiveElement, Styled,
+    Subscription, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
-use rpc::proto::{self, DevServerStatus};
+use rpc::proto::DevServerStatus;
 use settings::Settings;
+use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    h_flex, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike, ButtonStyle,
-    ContextMenu, Icon, IconButton, IconName, Indicator, PopoverMenu, TintColor, TitleBar, Tooltip,
+    h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconButton,
+    IconName, Indicator, PopoverMenu, TintColor, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
@@ -37,13 +43,16 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        let titlebar_item = cx.new_view(|cx| CollabTitlebarItem::new(workspace, cx));
-        workspace.set_titlebar_item(titlebar_item.into(), cx)
+        let item = cx.new_view(|cx| TitleBar::new("title-bar", workspace, cx));
+        workspace.set_titlebar_item(item.into(), cx)
     })
     .detach();
 }
 
-pub struct CollabTitlebarItem {
+pub struct TitleBar {
+    platform_style: PlatformStyle,
+    content: Stateful<Div>,
+    children: SmallVec<[AnyElement; 2]>,
     project: Model<Project>,
     user_store: Model<UserStore>,
     client: Arc<Client>,
@@ -51,319 +60,348 @@ pub struct CollabTitlebarItem {
     _subscriptions: Vec<Subscription>,
 }
 
-impl Render for CollabTitlebarItem {
+impl Render for TitleBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let room = ActiveCall::global(cx).read(cx).room().cloned();
         let current_user = self.user_store.read(cx).current_user();
         let client = self.client.clone();
         let project_id = self.project.read(cx).remote_id();
         let workspace = self.workspace.upgrade();
+        let close_action = Box::new(workspace::CloseWindow);
 
         let platform_supported = cfg!(target_os = "macos");
+        let height = Self::height(cx);
 
-        TitleBar::new("collab-titlebar", Box::new(workspace::CloseWindow))
-            // note: on windows titlebar behaviour is handled by the platform implementation
-            .when(cfg!(not(windows)), |this| {
-                this.on_click(|event, cx| {
-                    if event.up.click_count == 2 {
-                        cx.zoom_window();
-                    }
-                })
+        h_flex()
+            .id("titlebar")
+            .w_full()
+            .pt(Self::top_padding(cx))
+            .h(height + Self::top_padding(cx))
+            .map(|this| {
+                if cx.is_fullscreen() {
+                    this.pl_2()
+                } else if self.platform_style == PlatformStyle::Mac {
+                    this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
+                } else {
+                    this.pl_2()
+                }
             })
-            // left side
+            .bg(cx.theme().colors().title_bar_background)
+            .content_stretch()
             .child(
-                h_flex()
-                    .gap_1()
-                    .children(self.render_application_menu(cx))
-                    .children(self.render_project_host(cx))
-                    .child(self.render_project_name(cx))
-                    .children(self.render_project_branch(cx))
-                    .on_mouse_move(|_, cx| cx.stop_propagation()),
-            )
-            .child(
-                h_flex()
-                    .id("collaborator-list")
+                div()
+                    .id("titlebar-content")
+                    .flex()
+                    .flex_row()
+                    .justify_between()
                     .w_full()
-                    .gap_1()
-                    .overflow_x_scroll()
-                    .when_some(
-                        current_user.clone().zip(client.peer_id()).zip(room.clone()),
-                        |this, ((current_user, peer_id), room)| {
-                            let player_colors = cx.theme().players();
-                            let room = room.read(cx);
-                            let mut remote_participants =
-                                room.remote_participants().values().collect::<Vec<_>>();
-                            remote_participants.sort_by_key(|p| p.participant_index.0);
-
-                            let current_user_face_pile = self.render_collaborator(
-                                &current_user,
-                                peer_id,
-                                true,
-                                room.is_speaking(),
-                                room.is_muted(),
-                                None,
-                                &room,
-                                project_id,
-                                &current_user,
-                                cx,
-                            );
-
-                            this.children(current_user_face_pile.map(|face_pile| {
-                                v_flex()
-                                    .on_mouse_move(|_, cx| cx.stop_propagation())
-                                    .child(face_pile)
-                                    .child(render_color_ribbon(player_colors.local().cursor))
-                            }))
-                            .children(
-                                remote_participants.iter().filter_map(|collaborator| {
-                                    let player_color = player_colors
-                                        .color_for_participant(collaborator.participant_index.0);
-                                    let is_following = workspace
-                                        .as_ref()?
-                                        .read(cx)
-                                        .is_being_followed(collaborator.peer_id);
-                                    let is_present = project_id.map_or(false, |project_id| {
-                                        collaborator.location
-                                            == ParticipantLocation::SharedProject { project_id }
-                                    });
-
-                                    let face_pile = self.render_collaborator(
-                                        &collaborator.user,
-                                        collaborator.peer_id,
-                                        is_present,
-                                        collaborator.speaking,
-                                        collaborator.muted,
-                                        is_following.then_some(player_color.selection),
-                                        &room,
-                                        project_id,
-                                        &current_user,
-                                        cx,
-                                    )?;
-
-                                    Some(
-                                        v_flex()
-                                            .id(("collaborator", collaborator.user.id))
-                                            .child(face_pile)
-                                            .child(render_color_ribbon(player_color.cursor))
-                                            .cursor_pointer()
-                                            .on_click({
-                                                let peer_id = collaborator.peer_id;
-                                                cx.listener(move |this, _, cx| {
-                                                    this.workspace
-                                                        .update(cx, |workspace, cx| {
-                                                            workspace.follow(peer_id, cx);
-                                                        })
-                                                        .ok();
-                                                })
-                                            })
-                                            .tooltip({
-                                                let login = collaborator.user.github_login.clone();
-                                                move |cx| {
-                                                    Tooltip::text(format!("Follow {login}"), cx)
-                                                }
-                                            }),
-                                    )
-                                }),
-                            )
-                        },
-                    ),
-            )
-            // right side
-            .child(
-                h_flex()
-                    .gap_1()
-                    .pr_1()
-                    .on_mouse_move(|_, cx| cx.stop_propagation())
-                    .when_some(room, |this, room| {
-                        let room = room.read(cx);
-                        let project = self.project.read(cx);
-                        let is_local = project.is_local();
-                        let is_dev_server_project = project.dev_server_project_id().is_some();
-                        let is_shared = (is_local || is_dev_server_project) && project.is_shared();
-                        let is_muted = room.is_muted();
-                        let is_deafened = room.is_deafened().unwrap_or(false);
-                        let is_screen_sharing = room.is_screen_sharing();
-                        let can_use_microphone = room.can_use_microphone();
-                        let can_share_projects = room.can_share_projects();
-
-                        this.when(
-                            (is_local || is_dev_server_project) && can_share_projects,
-                            |this| {
-                                this.child(
-                                    Button::new(
-                                        "toggle_sharing",
-                                        if is_shared { "Unshare" } else { "Share" },
-                                    )
-                                    .tooltip(move |cx| {
-                                        Tooltip::text(
-                                            if is_shared {
-                                                "Stop sharing project with call participants"
-                                            } else {
-                                                "Share project with call participants"
-                                            },
-                                            cx,
-                                        )
-                                    })
-                                    .style(ButtonStyle::Subtle)
-                                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                    .selected(is_shared)
-                                    .label_size(LabelSize::Small)
-                                    .on_click(cx.listener(
-                                        move |this, _, cx| {
-                                            if is_shared {
-                                                this.unshare_project(&Default::default(), cx);
-                                            } else {
-                                                this.share_project(&Default::default(), cx);
-                                            }
-                                        },
-                                    )),
-                                )
-                            },
-                        )
-                        .child(
-                            div()
-                                .child(
-                                    IconButton::new("leave-call", ui::IconName::Exit)
-                                        .style(ButtonStyle::Subtle)
-                                        .tooltip(|cx| Tooltip::text("Leave call", cx))
-                                        .icon_size(IconSize::Small)
-                                        .on_click(move |_, cx| {
-                                            ActiveCall::global(cx)
-                                                .update(cx, |call, cx| call.hang_up(cx))
-                                                .detach_and_log_err(cx);
-                                        }),
-                                )
-                                .pr_2(),
-                        )
-                        .when(can_use_microphone, |this| {
-                            this.child(
-                                IconButton::new(
-                                    "mute-microphone",
-                                    if is_muted {
-                                        ui::IconName::MicMute
-                                    } else {
-                                        ui::IconName::Mic
-                                    },
-                                )
-                                .tooltip(move |cx| {
-                                    Tooltip::text(
-                                        if !platform_supported {
-                                            "Cannot share microphone"
-                                        } else if is_muted {
-                                            "Unmute microphone"
-                                        } else {
-                                            "Mute microphone"
-                                        },
-                                        cx,
-                                    )
-                                })
-                                .style(ButtonStyle::Subtle)
-                                .icon_size(IconSize::Small)
-                                .selected(platform_supported && is_muted)
-                                .disabled(!platform_supported)
-                                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-                                .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
-                            )
+                    // note: on windows titlebar behaviour is handled by the platform implementation
+                    .when(cfg!(not(windows)), |this| {
+                        this.on_click(|event, cx| {
+                            if event.up.click_count == 2 {
+                                cx.zoom_window();
+                            }
                         })
-                        .child(
-                            IconButton::new(
-                                "mute-sound",
-                                if is_deafened {
-                                    ui::IconName::AudioOff
-                                } else {
-                                    ui::IconName::AudioOn
-                                },
-                            )
-                            .style(ButtonStyle::Subtle)
-                            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-                            .icon_size(IconSize::Small)
-                            .selected(is_deafened)
-                            .disabled(!platform_supported)
-                            .tooltip(move |cx| {
-                                if !platform_supported {
-                                    Tooltip::text("Cannot share microphone", cx)
-                                } else if can_use_microphone {
-                                    Tooltip::with_meta(
-                                        "Deafen Audio",
-                                        None,
-                                        "Mic will be muted",
-                                        cx,
-                                    )
-                                } else {
-                                    Tooltip::text("Deafen Audio", cx)
-                                }
-                            })
-                            .on_click(move |_, cx| crate::toggle_deafen(&Default::default(), cx)),
-                        )
-                        .when(can_share_projects, |this| {
-                            this.child(
-                                IconButton::new("screen-share", ui::IconName::Screen)
-                                    .style(ButtonStyle::Subtle)
-                                    .icon_size(IconSize::Small)
-                                    .selected(is_screen_sharing)
-                                    .disabled(!platform_supported)
-                                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                    .tooltip(move |cx| {
-                                        Tooltip::text(
-                                            if !platform_supported {
-                                                "Cannot share screen"
-                                            } else if is_screen_sharing {
-                                                "Stop Sharing Screen"
-                                            } else {
-                                                "Share Screen"
-                                            },
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(move |_, cx| {
-                                        crate::toggle_screen_sharing(&Default::default(), cx)
-                                    }),
-                            )
-                        })
-                        .child(div().pr_2())
                     })
-                    .map(|el| {
-                        let status = self.client.status();
-                        let status = &*status.borrow();
-                        if matches!(status, client::Status::Connected { .. }) {
-                            el.child(self.render_user_menu_button(cx))
-                        } else {
-                            el.children(self.render_connection_status(status, cx))
-                                .child(self.render_sign_in_button(cx))
-                                .child(self.render_user_menu_button(cx))
-                        }
-                    }),
+                        // left side
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .children(self.render_application_menu(cx))
+                                .children(self.render_project_host(cx))
+                                .child(self.render_project_name(cx))
+                                .children(self.render_project_branch(cx))
+                                .on_mouse_move(|_, cx| cx.stop_propagation()),
+                        )
+                        .child(
+                            h_flex()
+                                .id("collaborator-list")
+                                .w_full()
+                                .gap_1()
+                                .overflow_x_scroll()
+                                .when_some(
+                                    current_user.clone().zip(client.peer_id()).zip(room.clone()),
+                                    |this, ((current_user, peer_id), room)| {
+                                        let player_colors = cx.theme().players();
+                                        let room = room.read(cx);
+                                        let mut remote_participants =
+                                            room.remote_participants().values().collect::<Vec<_>>();
+                                        remote_participants.sort_by_key(|p| p.participant_index.0);
+
+                                        let current_user_face_pile = self.render_collaborator(
+                                            &current_user,
+                                            peer_id,
+                                            true,
+                                            room.is_speaking(),
+                                            room.is_muted(),
+                                            None,
+                                            &room,
+                                            project_id,
+                                            &current_user,
+                                            cx,
+                                        );
+
+                                        this.children(current_user_face_pile.map(|face_pile| {
+                                            v_flex()
+                                                .on_mouse_move(|_, cx| cx.stop_propagation())
+                                                .child(face_pile)
+                                                .child(render_color_ribbon(player_colors.local().cursor))
+                                        }))
+                                        .children(
+                                            remote_participants.iter().filter_map(|collaborator| {
+                                                let player_color = player_colors
+                                                    .color_for_participant(collaborator.participant_index.0);
+                                                let is_following = workspace
+                                                    .as_ref()?
+                                                    .read(cx)
+                                                    .is_being_followed(collaborator.peer_id);
+                                                let is_present = project_id.map_or(false, |project_id| {
+                                                    collaborator.location
+                                                        == ParticipantLocation::SharedProject { project_id }
+                                                });
+
+                                                let facepile = self.render_collaborator(
+                                                    &collaborator.user,
+                                                    collaborator.peer_id,
+                                                    is_present,
+                                                    collaborator.speaking,
+                                                    collaborator.muted,
+                                                    is_following.then_some(player_color.selection),
+                                                    &room,
+                                                    project_id,
+                                                    &current_user,
+                                                    cx,
+                                                )?;
+
+                                                Some(
+                                                    v_flex()
+                                                        .id(("collaborator", collaborator.user.id))
+                                                        .child(facepile)
+                                                        .child(render_color_ribbon(player_color.cursor))
+                                                        .cursor_pointer()
+                                                        .on_click({
+                                                            let peer_id = collaborator.peer_id;
+                                                            cx.listener(move |this, _, cx| {
+                                                                this.workspace
+                                                                    .update(cx, |workspace, cx| {
+                                                                        workspace.follow(peer_id, cx);
+                                                                    })
+                                                                    .ok();
+                                                            })
+                                                        })
+                                                        .tooltip({
+                                                            let login = collaborator.user.github_login.clone();
+                                                            move |cx| {
+                                                                Tooltip::text(format!("Follow {login}"), cx)
+                                                            }
+                                                        }),
+                                                )
+                                            }),
+                                        )
+                                    },
+                                ),
+                        )
+                        // right side
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .pr_1()
+                                .on_mouse_move(|_, cx| cx.stop_propagation())
+                                .when_some(room, |this, room| {
+                                    let room = room.read(cx);
+                                    let project = self.project.read(cx);
+                                    let is_local = project.is_local();
+                                    let is_dev_server_project = project.dev_server_project_id().is_some();
+                                    let is_shared = (is_local || is_dev_server_project) && project.is_shared();
+                                    let is_muted = room.is_muted();
+                                    let is_deafened = room.is_deafened().unwrap_or(false);
+                                    let is_screen_sharing = room.is_screen_sharing();
+                                    let can_use_microphone = room.can_use_microphone();
+                                    let can_share_projects = room.can_share_projects();
+
+                                    this.when(
+                                        (is_local || is_dev_server_project) && can_share_projects,
+                                        |this| {
+                                            this.child(
+                                                Button::new(
+                                                    "toggle_sharing",
+                                                    if is_shared { "Unshare" } else { "Share" },
+                                                )
+                                                .tooltip(move |cx| {
+                                                    Tooltip::text(
+                                                        if is_shared {
+                                                            "Stop sharing project with call participants"
+                                                        } else {
+                                                            "Share project with call participants"
+                                                        },
+                                                        cx,
+                                                    )
+                                                })
+                                                .style(ButtonStyle::Subtle)
+                                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                                .selected(is_shared)
+                                                .label_size(LabelSize::Small)
+                                                .on_click(cx.listener(
+                                                    move |this, _, cx| {
+                                                        if is_shared {
+                                                            this.unshare_project(&Default::default(), cx);
+                                                        } else {
+                                                            this.share_project(&Default::default(), cx);
+                                                        }
+                                                    },
+                                                )),
+                                            )
+                                        },
+                                    )
+                                    .child(
+                                        div()
+                                            .child(
+                                                IconButton::new("leave-call", ui::IconName::Exit)
+                                                    .style(ButtonStyle::Subtle)
+                                                    .tooltip(|cx| Tooltip::text("Leave call", cx))
+                                                    .icon_size(IconSize::Small)
+                                                    .on_click(move |_, cx| {
+                                                        ActiveCall::global(cx)
+                                                            .update(cx, |call, cx| call.hang_up(cx))
+                                                            .detach_and_log_err(cx);
+                                                    }),
+                                            )
+                                            .pr_2(),
+                                    )
+                                    .when(can_use_microphone, |this| {
+                                        this.child(
+                                            IconButton::new(
+                                                "mute-microphone",
+                                                if is_muted {
+                                                    ui::IconName::MicMute
+                                                } else {
+                                                    ui::IconName::Mic
+                                                },
+                                            )
+                                            .tooltip(move |cx| {
+                                                Tooltip::text(
+                                                    if !platform_supported {
+                                                        "Cannot share microphone"
+                                                    } else if is_muted {
+                                                        "Unmute microphone"
+                                                    } else {
+                                                        "Mute microphone"
+                                                    },
+                                                    cx,
+                                                )
+                                            })
+                                            .style(ButtonStyle::Subtle)
+                                            .icon_size(IconSize::Small)
+                                            .selected(platform_supported && is_muted)
+                                            .disabled(!platform_supported)
+                                            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                                            .on_click(move |_, cx| {
+                                                call_controls::toggle_mute(&Default::default(), cx);
+                                            }),
+                                        )
+                                    })
+                                    .child(
+                                        IconButton::new(
+                                            "mute-sound",
+                                            if is_deafened {
+                                                ui::IconName::AudioOff
+                                            } else {
+                                                ui::IconName::AudioOn
+                                            },
+                                        )
+                                        .style(ButtonStyle::Subtle)
+                                        .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                                        .icon_size(IconSize::Small)
+                                        .selected(is_deafened)
+                                        .disabled(!platform_supported)
+                                        .tooltip(move |cx| {
+                                            if !platform_supported {
+                                                Tooltip::text("Cannot share microphone", cx)
+                                            } else if can_use_microphone {
+                                                Tooltip::with_meta(
+                                                    "Deafen Audio",
+                                                    None,
+                                                    "Mic will be muted",
+                                                    cx,
+                                                )
+                                            } else {
+                                                Tooltip::text("Deafen Audio", cx)
+                                            }
+                                        })
+                                        .on_click(move |_, cx| {
+                                            call_controls::toggle_deafen(&Default::default(), cx)
+                                        }),
+                                    )
+                                    .when(can_share_projects, |this| {
+                                        this.child(
+                                            IconButton::new("screen-share", ui::IconName::Screen)
+                                                .style(ButtonStyle::Subtle)
+                                                .icon_size(IconSize::Small)
+                                                .selected(is_screen_sharing)
+                                                .disabled(!platform_supported)
+                                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                                .tooltip(move |cx| {
+                                                    Tooltip::text(
+                                                        if !platform_supported {
+                                                            "Cannot share screen"
+                                                        } else if is_screen_sharing {
+                                                            "Stop Sharing Screen"
+                                                        } else {
+                                                            "Share Screen"
+                                                        },
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click(move |_, cx| {
+                                                    call_controls::toggle_screen_sharing(&Default::default(), cx)
+                                                }),
+                                        )
+                                    })
+                                    .child(div().pr_2())
+                                })
+                                .map(|el| {
+                                    let status = self.client.status();
+                                    let status = &*status.borrow();
+                                    if matches!(status, client::Status::Connected { .. }) {
+                                        el.child(self.render_user_menu_button(cx))
+                                    } else {
+                                        el.children(self.render_connection_status(status, cx))
+                                            .child(self.render_sign_in_button(cx))
+                                            .child(self.render_user_menu_button(cx))
+                                    }
+                                }),
+                        )
+            )
+            .when(
+                self.platform_style == PlatformStyle::Windows && !cx.is_fullscreen(),
+                |title_bar| title_bar.child(platform_windows::WindowsWindowControls::new(height)),
+            )
+            .when(
+                self.platform_style == PlatformStyle::Linux
+                    && !cx.is_fullscreen()
+                    && cx.should_render_window_controls(),
+                |title_bar| {
+                    title_bar
+                        .child(platform_linux::LinuxWindowControls::new(height, close_action))
+                        .on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
+                            cx.show_window_menu(ev.position)
+                        })
+                        .on_mouse_move(move |ev, cx| {
+                            if ev.dragging() {
+                                cx.start_system_move();
+                            }
+                        })
+                },
             )
     }
 }
 
-fn render_color_ribbon(color: Hsla) -> impl Element {
-    canvas(
-        move |_, _| {},
-        move |bounds, _, cx| {
-            let height = bounds.size.height;
-            let horizontal_offset = height;
-            let vertical_offset = px(height.0 / 2.0);
-            let mut path = Path::new(bounds.lower_left());
-            path.curve_to(
-                bounds.origin + point(horizontal_offset, vertical_offset),
-                bounds.origin + point(px(0.0), vertical_offset),
-            );
-            path.line_to(bounds.upper_right() + point(-horizontal_offset, vertical_offset));
-            path.curve_to(
-                bounds.lower_right(),
-                bounds.upper_right() + point(px(0.0), vertical_offset),
-            );
-            path.line_to(bounds.lower_left());
-            cx.paint_path(path, color);
-        },
-    )
-    .h_1()
-    .w_full()
-}
-
-impl CollabTitlebarItem {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
+impl TitleBar {
+    pub fn new(
+        id: impl Into<ElementId>,
+        workspace: &Workspace,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
@@ -380,12 +418,54 @@ impl CollabTitlebarItem {
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
         Self {
+            platform_style: PlatformStyle::platform(),
+            content: div().id(id.into()),
+            children: SmallVec::new(),
             workspace: workspace.weak_handle(),
             project,
             user_store,
             client,
             _subscriptions: subscriptions,
         }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn height(cx: &mut WindowContext) -> Pixels {
+        (1.75 * cx.rem_size()).max(px(34.))
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn height(_cx: &mut WindowContext) -> Pixels {
+        // todo(windows) instead of hard coded size report the actual size to the Windows platform API
+        px(32.)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn top_padding(_cx: &WindowContext) -> Pixels {
+        px(0.)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn top_padding(cx: &WindowContext) -> Pixels {
+        use windows::Win32::UI::{
+            HiDpi::GetSystemMetricsForDpi,
+            WindowsAndMessaging::{SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI},
+        };
+
+        // This top padding is not dependent on the title bar style and is instead a quirk of maximized windows on Windows:
+        // https://devblogs.microsoft.com/oldnewthing/20150304-00/?p=44543
+        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI) };
+        if cx.is_maximized() {
+            px((padding * 2) as f32)
+        } else {
+            px(0.)
+        }
+    }
+
+    /// Sets the platform style.
+    pub fn platform_style(mut self, style: PlatformStyle) -> Self {
+        self.platform_style = style;
+        self
     }
 
     pub fn render_application_menu(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
@@ -712,97 +792,6 @@ impl CollabTitlebarItem {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn render_collaborator(
-        &self,
-        user: &Arc<User>,
-        peer_id: PeerId,
-        is_present: bool,
-        is_speaking: bool,
-        is_muted: bool,
-        leader_selection_color: Option<Hsla>,
-        room: &Room,
-        project_id: Option<u64>,
-        current_user: &Arc<User>,
-        cx: &ViewContext<Self>,
-    ) -> Option<Div> {
-        if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
-            return None;
-        }
-
-        const FACEPILE_LIMIT: usize = 3;
-        let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
-        let extra_count = followers.len().saturating_sub(FACEPILE_LIMIT);
-
-        Some(
-            div()
-                .m_0p5()
-                .p_0p5()
-                // When the collaborator is not followed, still draw this wrapper div, but leave
-                // it transparent, so that it does not shift the layout when following.
-                .when_some(leader_selection_color, |div, color| {
-                    div.rounded_md().bg(color)
-                })
-                .child(
-                    FacePile::empty()
-                        .child(
-                            Avatar::new(user.avatar_uri.clone())
-                                .grayscale(!is_present)
-                                .border_color(if is_speaking {
-                                    cx.theme().status().info
-                                } else {
-                                    // We draw the border in a transparent color rather to avoid
-                                    // the layout shift that would come with adding/removing the border.
-                                    gpui::transparent_black()
-                                })
-                                .when(is_muted, |avatar| {
-                                    avatar.indicator(
-                                        AvatarAudioStatusIndicator::new(ui::AudioStatus::Muted)
-                                            .tooltip({
-                                                let github_login = user.github_login.clone();
-                                                move |cx| {
-                                                    Tooltip::text(
-                                                        format!("{} is muted", github_login),
-                                                        cx,
-                                                    )
-                                                }
-                                            }),
-                                    )
-                                }),
-                        )
-                        .children(followers.iter().take(FACEPILE_LIMIT).filter_map(
-                            |follower_peer_id| {
-                                let follower = room
-                                    .remote_participants()
-                                    .values()
-                                    .find_map(|p| {
-                                        (p.peer_id == *follower_peer_id).then_some(&p.user)
-                                    })
-                                    .or_else(|| {
-                                        (self.client.peer_id() == Some(*follower_peer_id))
-                                            .then_some(current_user)
-                                    })?
-                                    .clone();
-
-                                Some(div().mt(-px(4.)).child(
-                                    Avatar::new(follower.avatar_uri.clone()).size(rems(0.75)),
-                                ))
-                            },
-                        ))
-                        .children(if extra_count > 0 {
-                            Some(
-                                div()
-                                    .ml_1()
-                                    .child(Label::new(format!("+{extra_count}")))
-                                    .into_any_element(),
-                            )
-                        } else {
-                            None
-                        }),
-                ),
-        )
-    }
-
     fn window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
         if cx.is_window_active() {
             ActiveCall::global(cx)
@@ -958,5 +947,19 @@ impl CollabTitlebarItem {
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
                 )
         }
+    }
+}
+
+impl InteractiveElement for TitleBar {
+    fn interactivity(&mut self) -> &mut Interactivity {
+        self.content.interactivity()
+    }
+}
+
+impl StatefulInteractiveElement for TitleBar {}
+
+impl ParentElement for TitleBar {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(elements)
     }
 }
