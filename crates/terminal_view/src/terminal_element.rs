@@ -550,6 +550,26 @@ impl TerminalElement {
             );
         }
     }
+
+    fn rem_size(&self, cx: &WindowContext) -> Option<Pixels> {
+        let settings = ThemeSettings::get_global(cx).clone();
+        let buffer_font_size = settings.buffer_font_size(cx);
+        let rem_size_scale = {
+            // Our default UI font size is 14px on a 16px base scale.
+            // This means the default UI font size is 0.875rems.
+            let default_font_size_scale = 14. / ui::BASE_REM_SIZE_IN_PX;
+
+            // We then determine the delta between a single rem and the default font
+            // size scale.
+            let default_font_size_delta = 1. - default_font_size_scale;
+
+            // Finally, we add this delta to 1rem to get the scale factor that
+            // should be used to scale up the UI.
+            1. + default_font_size_delta
+        };
+
+        Some(buffer_font_size * rem_size_scale)
+    }
 }
 
 impl Element for TerminalElement {
@@ -585,6 +605,7 @@ impl Element for TerminalElement {
         _: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Self::PrepaintState {
+        let rem_size = self.rem_size(cx);
         self.interactivity
             .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, cx| {
                 let hitbox = hitbox.unwrap();
@@ -804,7 +825,10 @@ impl Element for TerminalElement {
                         let origin = bounds.origin
                             + point(px(0.), target_line as f32 * dimensions.line_height())
                             - point(px(0.), scroll_top);
-                        element.prepaint_as_root(origin, available_space, cx);
+                        cx.with_rem_size(rem_size, |cx| {
+                            dbg!(cx.text_style().line_height_in_pixels(cx.rem_size()));
+                            element.prepaint_as_root(origin, available_space, cx);
+                        });
                         Some(element)
                     } else {
                         None
