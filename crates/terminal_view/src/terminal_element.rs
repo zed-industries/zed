@@ -826,7 +826,6 @@ impl Element for TerminalElement {
                             + point(px(0.), target_line as f32 * dimensions.line_height())
                             - point(px(0.), scroll_top);
                         cx.with_rem_size(rem_size, |cx| {
-                            dbg!(cx.text_style().line_height_in_pixels(cx.rem_size()));
                             element.prepaint_as_root(origin, available_space, cx);
                         });
                         Some(element)
