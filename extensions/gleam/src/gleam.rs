@@ -173,10 +173,22 @@ impl zed::Extension for GleamExtension {
         match command.name.as_str() {
             "gleam-docs" => {
                 let argument = argument.ok_or_else(|| "missing argument".to_string())?;
-                let package_name = argument;
+
+                let mut components = argument.split('/');
+                let package_name = components
+                    .next()
+                    .ok_or_else(|| "missing package name".to_string())?;
+                let module_path = components.map(ToString::to_string).collect::<Vec<_>>();
 
                 let response = fetch(&HttpRequest {
-                    url: format!("https://hexdocs.pm/{package_name}"),
+                    url: format!(
+                        "https://hexdocs.pm/{package_name}{maybe_path}",
+                        maybe_path = if !module_path.is_empty() {
+                            format!("/{}.html", module_path.join("/"))
+                        } else {
+                            String::new()
+                        }
+                    ),
                 })?;
 
                 let mut handlers: Vec<TagHandler> = vec![
@@ -199,7 +211,7 @@ impl zed::Extension for GleamExtension {
                 Ok(SlashCommandOutput {
                     sections: vec![SlashCommandOutputSection {
                         range: (0..text.len()).into(),
-                        label: "gleam-docs".to_string(),
+                        label: format!("gleam-docs: {package_name} {}", module_path.join("/")),
                     }],
                     text,
                 })
