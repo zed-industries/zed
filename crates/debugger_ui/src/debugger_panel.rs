@@ -16,7 +16,18 @@ use workspace::{
     Workspace,
 };
 
-actions!(debug, [TogglePanel]);
+actions!(
+    debug_panel,
+    [
+        TogglePanel,
+        Continue,
+        StepOver,
+        StepIn,
+        StepOut,
+        Restart,
+        Pause
+    ]
+);
 
 #[derive(Default)]
 struct ThreadState {
@@ -352,6 +363,60 @@ impl DebugPanel {
             )
             .into_any()
     }
+
+    fn handle_continue_action(&mut self, _: &Continue, cx: &mut ViewContext<Self>) {
+        let client = self.debug_adapter(cx);
+        if let Some(thread_id) = self.current_thread_id {
+            cx.background_executor()
+                .spawn(async move { client.resume(thread_id).await })
+                .detach();
+        }
+    }
+
+    fn handle_step_over_action(&mut self, _: &StepOver, cx: &mut ViewContext<Self>) {
+        let client = self.debug_adapter(cx);
+        if let Some(thread_id) = self.current_thread_id {
+            cx.background_executor()
+                .spawn(async move { client.step_over(thread_id).await })
+                .detach();
+        }
+    }
+
+    fn handle_step_in_action(&mut self, _: &StepIn, cx: &mut ViewContext<Self>) {
+        let client = self.debug_adapter(cx);
+        if let Some(thread_id) = self.current_thread_id {
+            cx.background_executor()
+                .spawn(async move { client.step_in(thread_id).await })
+                .detach();
+        }
+    }
+
+    fn handle_step_out_action(&mut self, _: &StepOut, cx: &mut ViewContext<Self>) {
+        let client = self.debug_adapter(cx);
+        if let Some(thread_id) = self.current_thread_id {
+            cx.background_executor()
+                .spawn(async move { client.step_out(thread_id).await })
+                .detach();
+        }
+    }
+
+    fn handle_restart_action(&mut self, _: &Restart, cx: &mut ViewContext<Self>) {
+        let client = self.debug_adapter(cx);
+        if let Some(thread_id) = self.current_thread_id {
+            cx.background_executor()
+                .spawn(async move { client.restart(thread_id).await })
+                .detach();
+        }
+    }
+
+    fn handle_pause_action(&mut self, _: &Pause, cx: &mut ViewContext<Self>) {
+        let client = self.debug_adapter(cx);
+        if let Some(thread_id) = self.current_thread_id {
+            cx.background_executor()
+                .spawn(async move { client.pause(thread_id).await })
+                .detach();
+        }
+    }
 }
 
 impl EventEmitter<PanelEvent> for DebugPanel {}
@@ -421,6 +486,14 @@ impl Panel for DebugPanel {
 impl Render for DebugPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
+            .key_context("DebugPanel")
+            .track_focus(&self.focus_handle)
+            .capture_action(cx.listener(Self::handle_continue_action))
+            .capture_action(cx.listener(Self::handle_step_over_action))
+            .capture_action(cx.listener(Self::handle_step_in_action))
+            .capture_action(cx.listener(Self::handle_step_out_action))
+            .capture_action(cx.listener(Self::handle_restart_action))
+            .capture_action(cx.listener(Self::handle_pause_action))
             .items_start()
             .child(
                 h_flex()
@@ -428,60 +501,45 @@ impl Render for DebugPanel {
                     .gap_2()
                     .child(
                         IconButton::new("debug-continue", IconName::DebugContinue)
-                            .on_click(cx.listener(|view, _, cx| {
-                                let client = view.debug_adapter(cx);
-                                if let Some(thread_id) = view.current_thread_id {
-                                    cx.background_executor()
-                                        .spawn(async move { client.resume(thread_id).await })
-                                        .detach();
-                                }
-                            }))
+                            .on_click(
+                                cx.listener(|_, _, cx| cx.dispatch_action(Continue.boxed_clone())),
+                            )
                             .tooltip(move |cx| Tooltip::text("Continue debug", cx)),
                     )
                     .child(
                         IconButton::new("debug-step-over", IconName::DebugStepOver)
-                            .on_click(cx.listener(|view, _, cx| {
-                                let client = view.debug_adapter(cx);
-                                if let Some(thread_id) = view.current_thread_id {
-                                    cx.background_executor()
-                                        .spawn(async move { client.step_over(thread_id).await })
-                                        .detach();
-                                }
-                            }))
+                            .on_click(
+                                cx.listener(|_, _, cx| cx.dispatch_action(StepOver.boxed_clone())),
+                            )
                             .tooltip(move |cx| Tooltip::text("Step over", cx)),
                     )
                     .child(
-                        IconButton::new("debug-go-in", IconName::DebugStepInto)
-                            .on_click(cx.listener(|view, _, cx| {
-                                let client = view.debug_adapter(cx);
-
-                                if let Some(thread_id) = view.current_thread_id {
-                                    cx.background_executor()
-                                        .spawn(async move { client.step_in(thread_id).await })
-                                        .detach();
-                                }
-                            }))
+                        IconButton::new("debug-step-in", IconName::DebugStepInto)
+                            .on_click(
+                                cx.listener(|_, _, cx| cx.dispatch_action(StepIn.boxed_clone())),
+                            )
                             .tooltip(move |cx| Tooltip::text("Go in", cx)),
                     )
                     .child(
-                        IconButton::new("debug-go-out", IconName::DebugStepOut)
-                            .on_click(cx.listener(|view, _, cx| {
-                                let client = view.debug_adapter(cx);
-                                if let Some(thread_id) = view.current_thread_id {
-                                    cx.background_executor()
-                                        .spawn(async move { client.step_out(thread_id).await })
-                                        .detach();
-                                }
-                            }))
+                        IconButton::new("debug-step-out", IconName::DebugStepOut)
+                            .on_click(
+                                cx.listener(|_, _, cx| cx.dispatch_action(StepOut.boxed_clone())),
+                            )
                             .tooltip(move |cx| Tooltip::text("Go out", cx)),
                     )
                     .child(
                         IconButton::new("debug-restart", IconName::DebugRestart)
+                            .on_click(
+                                cx.listener(|_, _, cx| cx.dispatch_action(Restart.boxed_clone())),
+                            )
                             .tooltip(move |cx| Tooltip::text("Restart", cx)),
                     )
                     .child(
-                        IconButton::new("debug-stop", IconName::DebugStop)
-                            .tooltip(move |cx| Tooltip::text("Stop", cx)),
+                        IconButton::new("debug-pause", IconName::DebugStop)
+                            .on_click(
+                                cx.listener(|_, _, cx| cx.dispatch_action(Pause.boxed_clone())),
+                            )
+                            .tooltip(move |cx| Tooltip::text("Pause", cx)),
                     ),
             )
             .child(
