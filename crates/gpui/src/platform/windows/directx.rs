@@ -37,8 +37,7 @@ use windows::{
                     DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
                 },
                 CreateDXGIFactory2, IDXGIAdapter1, IDXGIDevice, IDXGIFactory6, IDXGISwapChain1,
-                DXGI_CREATE_FACTORY_DEBUG, DXGI_GPU_PREFERENCE_MINIMUM_POWER,
-                DXGI_MWA_NO_ALT_ENTER, DXGI_SCALING_NONE, DXGI_SCALING_STRETCH,
+                DXGI_CREATE_FACTORY_DEBUG, DXGI_GPU_PREFERENCE_MINIMUM_POWER, DXGI_SCALING_STRETCH,
                 DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
                 DXGI_USAGE_RENDER_TARGET_OUTPUT,
             },
@@ -63,9 +62,8 @@ struct DirectXContext {
     swap_chain: IDXGISwapChain1,
     back_buffer: [Option<ID3D11RenderTargetView>; 1],
     viewport: [D3D11_VIEWPORT; 1],
-    // comp_device: IDCompositionDevice,
-    // comp_target: IDCompositionTarget,
-    // comp_visual: IDCompositionVisual,
+    #[cfg(not(target_feature = "enable-renderdoc"))]
+    direct_composition: DirectComposition,
 }
 
 struct DirectXRenderContext {
@@ -80,6 +78,13 @@ struct DirectXRenderContext {
     underline_pipeline: PipelineState,
     mono_sprites: PipelineState,
     poly_sprites: PipelineState,
+}
+
+#[cfg(not(target_feature = "enable-renderdoc"))]
+struct DirectComposition {
+    comp_device: IDCompositionDevice,
+    comp_target: IDCompositionTarget,
+    comp_visual: IDCompositionVisual,
 }
 
 impl DirectXRenderer {
@@ -479,16 +484,17 @@ impl DirectXContext {
             (device.unwrap(), context.unwrap())
         };
         let dxgi_device: IDXGIDevice = device.cast().unwrap();
-        // let comp_device = get_comp_device(&dxgi_device)?;
-        // let swap_chain = create_swap_chain(&dxgi_factory, &device)?;
+        let comp_device = get_comp_device(&dxgi_device)?;
+        #[cfg(not(target_feature = "enable-renderdoc"))]
+        let swap_chain = create_swap_chain(&dxgi_factory, &device)?;
+        #[cfg(target_feature = "enable-renderdoc")]
         let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd)?;
-        // let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        // let comp_visual = unsafe { comp_device.CreateVisual() }?;
+        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        let comp_visual = unsafe { comp_device.CreateVisual() }?;
         unsafe {
-            // comp_visual.SetContent(&swap_chain)?;
-            // comp_target.SetRoot(&comp_visual)?;
-            // comp_device.Commit()?;
-            dxgi_factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER)?;
+            comp_visual.SetContent(&swap_chain)?;
+            comp_target.SetRoot(&comp_visual)?;
+            comp_device.Commit()?;
         }
         let back_buffer = [Some(set_render_target_view(
             &swap_chain,
@@ -497,6 +503,12 @@ impl DirectXContext {
         )?)];
         let viewport = set_viewport(&context, 1.0, 1.0);
         set_rasterizer_state(&device, &context)?;
+        #[cfg(not(target_feature = "enable-renderdoc"))]
+        let direct_composition = DirectComposition {
+            comp_device,
+            comp_target,
+            comp_visual,
+        };
 
         Ok(Self {
             dxgi_factory,
@@ -506,9 +518,8 @@ impl DirectXContext {
             swap_chain,
             back_buffer,
             viewport,
-            // comp_device,
-            // comp_target,
-            // comp_visual,
+            #[cfg(not(target_feature = "enable-renderdoc"))]
+            direct_composition,
         })
     }
 }
@@ -717,17 +728,21 @@ fn create_swap_chain(
         Scaling: DXGI_SCALING_STRETCH,
         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
         // Premultiplied alpha is the only supported format by composition swapchain.
-        AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
+        // AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
+        AlphaMode: DXGI_ALPHA_MODE_IGNORE,
         Flags: 0,
     };
     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
 }
 
+#[cfg(target_feature = "enable-renderdoc")]
 fn create_swap_chain_default(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
     hwnd: HWND,
 ) -> Result<IDXGISwapChain1> {
+    use windows::Win32::Graphics::Dxgi::DXGI_MWA_NO_ALT_ENTER;
+
     let desc = DXGI_SWAP_CHAIN_DESC1 {
         Width: 1,
         Height: 1,
@@ -739,15 +754,15 @@ fn create_swap_chain_default(
         },
         BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
         BufferCount: BUFFER_COUNT as u32,
-        Scaling: DXGI_SCALING_NONE,
+        Scaling: DXGI_SCALING_STRETCH,
         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-        // Premultiplied alpha is the only supported format by composition swapchain.
-        // AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
         AlphaMode: DXGI_ALPHA_MODE_IGNORE,
         Flags: 0,
     };
-    let x = unsafe { dxgi_factory.CreateSwapChainForHwnd(device, hwnd, &desc, None, None) }?;
-    Ok(x)
+    let swap_chain =
+        unsafe { dxgi_factory.CreateSwapChainForHwnd(device, hwnd, &desc, None, None) }?;
+    unsafe { dxgi_factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER) }?;
+    Ok(swap_chain)
 }
 
 fn set_render_target_view(
