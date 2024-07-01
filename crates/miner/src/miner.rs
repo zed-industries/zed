@@ -5,19 +5,21 @@
 
 mod database;
 mod huggingface;
+mod language_model;
 mod ollama;
+
+pub(crate) use database::*;
+use huggingface::HuggingFaceClient;
+pub(crate) use language_model::*;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use database::*;
 use fs::{Fs, RealFs};
 use futures::{lock::Mutex, stream, Stream, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{App, BackgroundExecutor};
-use huggingface::HuggingFaceClient;
 use ignore::gitignore::GitignoreBuilder;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
@@ -83,12 +85,19 @@ fn main() {
                 None,
             )) as Arc<dyn Fs>;
 
+            let language_model = Arc::new(HuggingFaceClient::new(
+                HUGGINGFACE_ENDPOINT_URL.to_string(),
+                std::env::var("HUGGINGFACE_API_KEY").expect("HUGGINGFACE_API_KEY not set"),
+                cx.background_executor().clone(),
+            )) as Arc<dyn LanguageModel>;
+
             let miner = Miner::new(
                 db_path,
                 project_path.to_path_buf(),
                 cli.num_workers,
                 fs,
                 cx.background_executor().clone(),
+                language_model,
             )
             .await?;
 
@@ -131,7 +140,7 @@ pub struct Miner {
     num_workers: usize,
     database: Database,
     tokenizer: Tokenizer,
-    client: Arc<HuggingFaceClient>,
+    language_model: Arc<dyn LanguageModel>,
     queue: Arc<Mutex<VecDeque<Entry>>>,
     _multi_progress: Arc<MultiProgress>,
     overall_progress: ProgressBar,
@@ -159,6 +168,7 @@ impl Miner {
         num_workers: usize,
         fs: Arc<dyn Fs>,
         background_executor: BackgroundExecutor,
+        language_model: Arc<dyn LanguageModel>,
     ) -> Result<Arc<Self>> {
         let database = Database::new(&db_path, &root, &background_executor).await?;
 
@@ -173,12 +183,6 @@ impl Miner {
             }),
         )
         .unwrap();
-
-        let client = Arc::new(HuggingFaceClient::new(
-            HUGGINGFACE_ENDPOINT_URL.to_string(),
-            std::env::var("HUGGINGFACE_API_KEY").expect("HUGGINGFACE_API_KEY not set"),
-            background_executor.clone(),
-        ));
 
         let queue = Arc::new(Mutex::new(VecDeque::new()));
 
@@ -222,7 +226,7 @@ impl Miner {
             num_workers,
             database,
             tokenizer,
-            client,
+            language_model,
             queue,
             _multi_progress: Arc::clone(&multi_progress),
             overall_progress,
@@ -259,6 +263,8 @@ impl Miner {
     /// and storing them in a database. This method coordinates the entire summarization
     /// process, including worker thread management and progress tracking.
     pub async fn summarize_project(self: &Arc<Self>) -> Result<()> {
+        self.reset().await;
+
         println!("Starting project summarization");
         // Populate the queue with files and directories
         let mut entries = self.walk_directory(&self.root).await?;
@@ -272,12 +278,17 @@ impl Miner {
                 let mut contents = Vec::new();
                 let mut read_dir = self.fs.read_dir(&path).await?;
                 while let Some(child_entry) = read_dir.next().await {
-                    contents.push(child_entry?);
+                    let child_entry = child_entry?;
+                    if !self.is_ignored(&child_entry).await? {
+                        contents.push(child_entry);
+                    }
                 }
-                self.queue
-                    .lock()
-                    .await
-                    .push_back(Entry::Directory(path.clone(), contents));
+                if !contents.is_empty() {
+                    self.queue
+                        .lock()
+                        .await
+                        .push_back(Entry::Directory(path.clone(), contents));
+                }
             } else {
                 println!("Enqueueing file: {:?}", path);
                 self.queue.lock().await.push_back(Entry::File(path.clone()));
@@ -318,31 +329,31 @@ impl Miner {
 
         // Remove deleted entries from the database
         println!("Removing deleted entries from the database");
-        // Read all paths from the database
-        let paths: Vec<PathBuf> = self
+
+        // Read all keys from the database
+        let keys: Vec<String> = self
             .database
-            .transact(|db, txn| {
-                db.iter(&txn)?
-                    .map(|item| Ok(PathBuf::from(item?.0)))
-                    .collect()
-            })
+            .transact(|db, txn| db.iter(&txn)?.map(|item| Ok(item?.0.to_string())).collect())
             .await?;
 
-        // Filter paths that no longer exist
-        let mut paths_to_delete = Vec::new();
-        for path in paths {
-            if !self.fs.is_file(&path).await && !self.fs.is_dir(&path).await {
-                println!("Marking for deletion: {:?}", path);
-                paths_to_delete.push(path);
+        // Filter keys that no longer exist
+        let mut keys_to_delete = Vec::new();
+        for key in keys {
+            if let Some((_, path_str)) = key.split_once(':') {
+                let path = PathBuf::from(path_str.split("::").next().unwrap_or(path_str));
+                if !self.fs.is_file(&path).await && !self.fs.is_dir(&path).await {
+                    println!("Marking for deletion: {:?}", key);
+                    keys_to_delete.push(key);
+                }
             }
         }
 
-        // Delete filtered paths from the database
+        // Delete filtered keys from the database
         self.database
             .transact(|db, mut txn| {
-                for path in paths_to_delete {
-                    println!("Deleting from database: {:?}", path);
-                    db.delete(&mut txn, &path.to_string_lossy())?;
+                for key in keys_to_delete {
+                    println!("Deleting from database: {:?}", key);
+                    db.delete(&mut txn, &key)?;
                 }
                 Ok(())
             })
@@ -360,13 +371,41 @@ impl Miner {
         Ok(())
     }
 
+    async fn reset(self: &Arc<Self>) {
+        self.queue.lock().await.clear();
+        self.summaries.lock().await.clear();
+        self.paths_loaded_from_cache.lock().await.clear();
+        self.file_progress_map.lock().await.clear();
+        self.outstanding_chunks
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        self.outstanding_symbols
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        self.total_chunks
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        self.total_symbols
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        self.processed_chunks.lock().await.clear();
+        self.processed_files.lock().await.clear();
+        self.file_progress.reset();
+        self.chunk_progress.reset();
+        self.rust_symbol_progress.reset();
+        self.overall_progress.reset();
+    }
+
+    async fn is_ignored(&self, path: &Path) -> Result<bool> {
+        let gitignore = self.build_gitignore(&self.root).await?;
+        let relative_path = path.strip_prefix(&self.root).unwrap_or(path);
+        let is_dir = self.fs.is_dir(path).await;
+        Ok(gitignore.matched(relative_path, is_dir).is_ignore())
+    }
+
     async fn walk_directory(
         &self,
         root: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<DirEntry>>>>> {
-        let gitignore = self.build_gitignore(root).await?;
         let fs = self.fs.clone();
         let root = root.to_owned();
+        let gitignore = self.build_gitignore(&root).await?;
 
         let stream = stream::unfold(
             (vec![root.clone()], fs, gitignore),
@@ -378,28 +417,30 @@ impl Miner {
                             continue;
                         }
 
+                        let relative_path = path.strip_prefix(&root).unwrap_or(&path);
+                        if gitignore
+                            .matched(relative_path, fs.is_dir(&path).await)
+                            .is_ignore()
+                        {
+                            continue;
+                        }
+
                         match fs.metadata(&path).await {
                             Ok(Some(metadata)) => {
-                                let relative_path = path.strip_prefix(&root).unwrap_or(&path);
-                                if !gitignore
-                                    .matched(relative_path, metadata.is_dir)
-                                    .is_ignore()
-                                {
-                                    let entry = DirEntry {
-                                        path: path.clone(),
-                                        metadata,
-                                    };
+                                let entry = DirEntry {
+                                    path: path.clone(),
+                                    metadata,
+                                };
 
-                                    if metadata.is_dir {
-                                        if let Ok(mut read_dir) = fs.read_dir(&path).await {
-                                            while let Some(Ok(child)) = read_dir.next().await {
-                                                stack.push(child);
-                                            }
+                                if metadata.is_dir {
+                                    if let Ok(mut read_dir) = fs.read_dir(&path).await {
+                                        while let Some(Ok(child)) = read_dir.next().await {
+                                            stack.push(child);
                                         }
                                     }
-
-                                    return Some((Ok(entry), (stack, fs, gitignore)));
                                 }
+
+                                return Some((Ok(entry), (stack, fs, gitignore)));
                             }
                             Ok(None) => {
                                 return Some((
@@ -568,7 +609,7 @@ impl Miner {
             content: combined_prompt,
         }];
 
-        let mut receiver = self.client.stream_completion(messages).await?;
+        let mut receiver = self.language_model.stream_completion(messages).await?;
         let mut combined_summary = String::new();
 
         while let Some(content) = receiver.next().await {
@@ -973,7 +1014,7 @@ impl Miner {
             ),
         }];
 
-        let mut receiver = self.client.stream_completion(messages).await?;
+        let mut receiver = self.language_model.stream_completion(messages).await?;
 
         let mut summary = String::new();
         while let Some(content) = receiver.next().await {
@@ -1007,7 +1048,7 @@ impl Miner {
             ),
         }];
 
-        let mut receiver = self.client.stream_completion(messages).await?;
+        let mut receiver = self.language_model.stream_completion(messages).await?;
 
         let mut summary = String::new();
         while let Some(content) = receiver.next().await {
@@ -1077,6 +1118,25 @@ impl Miner {
 
         if let Some(summary) = self.summaries.lock().await.get(path) {
             return Ok(Some(summary.clone()));
+        }
+
+        Ok(None)
+    }
+
+    /// Retrieves the summary for a given Rust symbol from the database.
+    pub async fn summary_for_symbol(
+        &self,
+        path: &Path,
+        symbol_name: &str,
+    ) -> Result<Option<String>> {
+        let key = format!("symbol:{}::{}", path.to_string_lossy(), symbol_name);
+        let cached_summary = self
+            .database
+            .transact(move |db, txn| Ok(db.get(&txn, &key)?))
+            .await?;
+
+        if let Some(cached) = cached_summary {
+            return Ok(Some(cached.summary));
         }
 
         Ok(None)
@@ -1303,11 +1363,194 @@ struct FileProgress {
     is_complete: bool,
 }
 
-#[derive(Debug, Serialize)]
-struct Message {
-    role: String,
-    content: String,
-}
-
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt};
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    struct FakeLanguageModel;
+
+    impl LanguageModel for FakeLanguageModel {
+        fn stream_completion(
+            &self,
+            messages: Vec<Message>,
+        ) -> BoxFuture<Result<mpsc::Receiver<String>>> {
+            let content = messages[0].content.clone();
+            let summary = if content.contains("Rust symbol") {
+                "Summary: Detailed Rust symbol summary".to_string()
+            } else {
+                "Summary: Generic file summary".to_string()
+            };
+            async move {
+                let (mut tx, rx) = mpsc::channel(1);
+                tx.send(summary).await?;
+                Ok(rx)
+            }
+            .boxed()
+        }
+    }
+
+    #[gpui::test]
+    async fn test_miner(cx: &mut TestAppContext) {
+        // Create a temporary directory for the database
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().to_path_buf();
+
+        // Set up a fake file system
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "src": {
+                    "main.rs": "fn main() { println!(\"Hello, world!\"); }",
+                    "lib.rs": "pub fn add(a: i32, b: i32) -> i32 { a + b }",
+                },
+                "tests": {
+                    "test_main.rs": "#[test] fn test_main() { assert!(true); }",
+                },
+                ".gitignore": "*.log\ntarget/",
+                "README.md": "# Project README",
+                "ignored.log": "This file should be ignored",
+                "target": {
+                    "debug": {
+                        "build": "This directory should be ignored",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        // Create a Miner instance
+        let miner = Miner::new(
+            db_path,
+            PathBuf::from("/project"),
+            4,
+            fs.clone(),
+            cx.background_executor.clone(),
+            Arc::new(FakeLanguageModel),
+        )
+        .await
+        .unwrap();
+
+        // Run the summarization
+        miner.summarize_project().await.unwrap();
+
+        // Check summaries for files and directories
+        let expected_summaries = vec![
+            "/project",
+            "/project/src",
+            "/project/src/main.rs",
+            "/project/src/lib.rs",
+            "/project/tests",
+            "/project/tests/test_main.rs",
+            "/project/README.md",
+        ];
+
+        for path in expected_summaries {
+            let summary = miner.summary_for_path(Path::new(path)).await.unwrap();
+            assert!(summary.is_some(), "Missing summary for path: {}", path);
+            let summary = summary.unwrap();
+            assert!(
+                !summary.is_empty(),
+                "Summary should not be empty for path: {}",
+                path
+            );
+        }
+
+        // Check summaries for Rust symbols
+        let expected_symbol_summaries = vec![
+            ("/project/src/main.rs", "main"),
+            ("/project/src/lib.rs", "add"),
+            ("/project/tests/test_main.rs", "test_main"),
+        ];
+
+        for (file_path, symbol_name) in expected_symbol_summaries {
+            let symbol_summary = miner
+                .summary_for_symbol(Path::new(file_path), symbol_name)
+                .await
+                .unwrap();
+            assert!(
+                symbol_summary.is_some(),
+                "Missing summary for symbol: {} in {}",
+                symbol_name,
+                file_path
+            );
+            let symbol_summary = symbol_summary.unwrap();
+            assert!(
+                !symbol_summary.is_empty(),
+                "Summary should not be empty for symbol: {} in {}",
+                symbol_name,
+                file_path
+            );
+        }
+
+        // Check that ignored files/directories don't have summaries
+        let ignored_paths = vec![
+            "/project/ignored.log",
+            "/project/target",
+            "/project/target/debug",
+            "/project/target/debug/build",
+        ];
+
+        for path in ignored_paths {
+            let summary = miner.summary_for_path(Path::new(path)).await.unwrap();
+            assert!(
+                summary.is_none(),
+                "Ignored path should not have a summary: {}",
+                path
+            );
+        }
+
+        // Delete a file and verify its summary is removed
+        fs.remove_file(Path::new("/project/src/lib.rs"), Default::default())
+            .await
+            .unwrap();
+
+        // Run the summarization again
+        miner.summarize_project().await.unwrap();
+
+        // Verify the deleted file's summary is gone
+        let deleted_file_summary = miner
+            .summary_for_path(Path::new("/project/src/lib.rs"))
+            .await
+            .unwrap();
+        assert!(
+            deleted_file_summary.is_none(),
+            "Summary for deleted file should be None"
+        );
+
+        // Verify the deleted file's symbol summary is gone
+        let deleted_symbol_summary = miner
+            .summary_for_symbol(Path::new("/project/src/lib.rs"), "add")
+            .await
+            .unwrap();
+        assert!(
+            deleted_symbol_summary.is_none(),
+            "Symbol summary for deleted file should be None"
+        );
+
+        // Verify other summaries still exist
+        let existing_file_summary = miner
+            .summary_for_path(Path::new("/project/src/main.rs"))
+            .await
+            .unwrap();
+        assert!(
+            existing_file_summary.is_some(),
+            "Summary for existing file should still be present"
+        );
+
+        let existing_symbol_summary = miner
+            .summary_for_symbol(Path::new("/project/src/main.rs"), "main")
+            .await
+            .unwrap();
+        assert!(
+            existing_symbol_summary.is_some(),
+            "Symbol summary for existing file should still be present"
+        );
+    }
+}

@@ -6687,6 +6687,7 @@ dependencies = [
  "reqwest 0.12.5",
  "serde",
  "serde_json",
+ "tempfile",
  "tokenizers",
  "tree-sitter",
  "tree-sitter-rust",

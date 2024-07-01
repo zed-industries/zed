@@ -39,3 +39,4 @@ tokenizers = { version = "0.19.1", features = ["http"] }
 collections = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
