@@ -25,7 +25,6 @@ pub struct EditorSettings {
     pub expand_excerpt_lines: u32,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
-    /// Configuration for automatic `ShowSignatureHelp` calling
     pub auto_signature_help: bool,
 }
 
@@ -220,9 +219,9 @@ pub struct EditorSettingsContent {
     /// Default: select
     pub double_click_in_multibuffer: Option<DoubleClickInMultibuffer>,
 
-    /// Configuration for automatic `ShowSignatureHelp` calling
+    /// Whether to automatically show a signature help pop-up or not.
     ///
-    /// Default: false
+    /// Default: true
     pub auto_signature_help: Option<bool>,
 }
 
