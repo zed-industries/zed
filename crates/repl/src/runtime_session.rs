@@ -254,8 +254,11 @@ impl Session {
 
                     kernel.process.kill().ok();
 
-                    this.update(&mut cx, |this, _cx| this.kernel = Kernel::Shutdown)
-                        .ok();
+                    this.update(&mut cx, |this, cx| {
+                        this.kernel = Kernel::Shutdown;
+                        cx.notify();
+                    })
+                    .ok();
                 })
                 .detach();
             }
@@ -267,6 +270,7 @@ impl Session {
                 self.kernel = Kernel::Shutdown;
             }
         }
+        cx.notify();
     }
 }
 

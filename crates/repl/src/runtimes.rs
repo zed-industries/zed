@@ -236,9 +236,9 @@ impl RunningKernel {
 
 impl Drop for RunningKernel {
     fn drop(&mut self) {
-        self.request_tx.close_channel();
-
         std::fs::remove_file(&self.connection_path).ok();
+
+        self.request_tx.close_channel();
     }
 }
 

@@ -326,14 +326,14 @@ impl Render for RuntimePanel {
 
         v_flex()
             .p_4()
-            // .child(Label::new("Runtime Panel"))
+            // .child(Label::new("Jupyter Kernels Available"))
             // .children(
             //     runtime_manager
             //         .runtime_specifications
             //         .iter()
             //         .map(|spec| div().child(spec.name.clone())),
             // )
-            .child(Label::new("Runtime Sessions").size(LabelSize::Large))
+            .child(Label::new("Jupyter Kernel Sessions").size(LabelSize::Large))
             .children(
                 self.sessions
                     .values()
