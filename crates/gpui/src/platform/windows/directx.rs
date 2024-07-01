@@ -113,8 +113,7 @@ impl DirectXRenderer {
             &self.render.global_params_buffer,
             &self.context.viewport,
             &self.context.back_buffer,
-            // [0.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0, 0.0],
             &self.render.blend_state,
             1,
         )?;
