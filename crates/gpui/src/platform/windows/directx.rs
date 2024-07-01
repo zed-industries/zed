@@ -865,21 +865,16 @@ fn build_shader_blob(entry: &str, target: &str) -> Result<ID3DBlob> {
         let mut target = target.to_owned();
         let mut compile_blob = None;
         let mut error_blob = None;
-        // let shader_path = std::path::PathBuf::from("crates/gpui/src/platform/windows/shaders.hlsl")
-        let shader_path = std::path::PathBuf::from(
-            "D:/projects/zed/crates/gpui/src/platform/windows/shaders.hlsl",
-        )
-        // let shader_path = std::path::PathBuf::from(
-        //     "D:/projects/zed/crates/gpui/src/platform/windows/test_shader.hlsl",
-        // )
-        .canonicalize()
-        .unwrap();
+        let shader_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/platform/windows/shaders.hlsl")
+            .canonicalize()
+            .unwrap();
         entry.push_str("\0");
         target.push_str("\0");
         let entry_point = PCSTR::from_raw(entry.as_ptr());
         let target_cstr = PCSTR::from_raw(target.as_ptr());
         let ret = D3DCompileFromFile(
-            &HSTRING::from(shader_path.as_os_str()),
+            &HSTRING::from(shader_path.to_str().unwrap()),
             None,
             None,
             entry_point,
