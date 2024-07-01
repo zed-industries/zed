@@ -10,7 +10,7 @@ use windows::{
     Win32::{
         Foundation::HWND,
         Graphics::{
-            Direct3D::{Fxc::*, *},
+            Direct3D::*,
             Direct3D11::*,
             Dxgi::{Common::*, *},
         },
@@ -859,74 +859,6 @@ fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceCont
     Ok(())
 }
 
-fn build_shader_blob(entry: &str, target: &str) -> Result<ID3DBlob> {
-    unsafe {
-        let mut entry = entry.to_owned();
-        let mut target = target.to_owned();
-        let mut compile_blob = None;
-        let mut error_blob = None;
-        let shader_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("src/platform/windows/shaders.hlsl")
-            .canonicalize()
-            .unwrap();
-        entry.push_str("\0");
-        target.push_str("\0");
-        let entry_point = PCSTR::from_raw(entry.as_ptr());
-        let target_cstr = PCSTR::from_raw(target.as_ptr());
-        let ret = D3DCompileFromFile(
-            &HSTRING::from(shader_path.to_str().unwrap()),
-            None,
-            None,
-            entry_point,
-            target_cstr,
-            D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
-            0,
-            &mut compile_blob,
-            Some(&mut error_blob),
-        );
-        if ret.is_err() {
-            let Some(error_blob) = error_blob else {
-                return Err(anyhow::anyhow!("{ret:?}"));
-            };
-            let string_len = error_blob.GetBufferSize();
-            let error_string_encode = Vec::from_raw_parts(
-                error_blob.GetBufferPointer() as *mut u8,
-                string_len,
-                string_len,
-            );
-            return Err(anyhow::anyhow!(
-                "Compile error: {}",
-                String::from_utf8_lossy(&error_string_encode)
-            ));
-        }
-        Ok(compile_blob.unwrap())
-    }
-}
-
-fn create_vertex_shader(device: &ID3D11Device, blob: &ID3DBlob) -> Result<ID3D11VertexShader> {
-    unsafe {
-        let mut shader = None;
-        device.CreateVertexShader(
-            std::slice::from_raw_parts(blob.GetBufferPointer() as *mut u8, blob.GetBufferSize()),
-            None,
-            Some(&mut shader),
-        )?;
-        Ok(shader.unwrap())
-    }
-}
-
-fn create_fragment_shader(device: &ID3D11Device, blob: &ID3DBlob) -> Result<ID3D11PixelShader> {
-    unsafe {
-        let mut shader = None;
-        device.CreatePixelShader(
-            std::slice::from_raw_parts(blob.GetBufferPointer() as *mut u8, blob.GetBufferSize()),
-            None,
-            Some(&mut shader),
-        )?;
-        Ok(shader.unwrap())
-    }
-}
-
 // https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_blend_desc
 fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
@@ -973,10 +905,28 @@ fn create_pipieline(
     element_size: usize,
     buffer_size: usize,
 ) -> Result<PipelineState> {
-    let vertex_shader_blob = build_shader_blob(vertex_entry, "vs_5_0")?;
-    let vertex = create_vertex_shader(device, &vertex_shader_blob)?;
-    let fragment_shader_blob = build_shader_blob(fragment_entry, "ps_5_0")?;
-    let fragment = create_fragment_shader(device, &fragment_shader_blob)?;
+    #[cfg(debug_assertions)]
+    let vertex = {
+        let shader_blob = shader_resources::build_shader_blob(vertex_entry, "vs_5_0")?;
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                shader_blob.GetBufferPointer() as *mut u8,
+                shader_blob.GetBufferSize(),
+            )
+        };
+        create_vertex_shader(device, bytes)?
+    };
+    #[cfg(debug_assertions)]
+    let fragment = {
+        let shader_blob = shader_resources::build_shader_blob(fragment_entry, "ps_5_0")?;
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                shader_blob.GetBufferPointer() as *mut u8,
+                shader_blob.GetBufferSize(),
+            )
+        };
+        create_fragment_shader(device, bytes)?
+    };
     let buffer = create_buffer(device, element_size, buffer_size)?;
     let view = create_buffer_view(device, &buffer)?;
     Ok(PipelineState {
@@ -986,6 +936,22 @@ fn create_pipieline(
         buffer_size,
         view,
     })
+}
+
+fn create_vertex_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11VertexShader> {
+    unsafe {
+        let mut shader = None;
+        device.CreateVertexShader(bytes, None, Some(&mut shader))?;
+        Ok(shader.unwrap())
+    }
+}
+
+fn create_fragment_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11PixelShader> {
+    unsafe {
+        let mut shader = None;
+        device.CreatePixelShader(bytes, None, Some(&mut shader))?;
+        Ok(shader.unwrap())
+    }
 }
 
 fn create_buffer(
@@ -1147,3 +1113,57 @@ fn draw_with_texture(
 }
 
 const BUFFER_COUNT: usize = 3;
+
+#[cfg(debug_assertions)]
+mod shader_resources {
+    use anyhow::Result;
+    use windows::Win32::Graphics::Direct3D::{
+        Fxc::{D3DCompileFromFile, D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION},
+        ID3DBlob,
+    };
+    use windows_core::{HSTRING, PCSTR};
+
+    pub(super) fn build_shader_blob(entry: &str, target: &str) -> Result<ID3DBlob> {
+        unsafe {
+            let mut entry = entry.to_owned();
+            let mut target = target.to_owned();
+            let mut compile_blob = None;
+            let mut error_blob = None;
+            let shader_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("src/platform/windows/shaders.hlsl")
+                .canonicalize()
+                .unwrap();
+            entry.push_str("\0");
+            target.push_str("\0");
+            let entry_point = PCSTR::from_raw(entry.as_ptr());
+            let target_cstr = PCSTR::from_raw(target.as_ptr());
+            let ret = D3DCompileFromFile(
+                &HSTRING::from(shader_path.to_str().unwrap()),
+                None,
+                None,
+                entry_point,
+                target_cstr,
+                D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
+                0,
+                &mut compile_blob,
+                Some(&mut error_blob),
+            );
+            if ret.is_err() {
+                let Some(error_blob) = error_blob else {
+                    return Err(anyhow::anyhow!("{ret:?}"));
+                };
+                let string_len = error_blob.GetBufferSize();
+                let error_string_encode = Vec::from_raw_parts(
+                    error_blob.GetBufferPointer() as *mut u8,
+                    string_len,
+                    string_len,
+                );
+                return Err(anyhow::anyhow!(
+                    "Compile error: {}",
+                    String::from_utf8_lossy(&error_string_encode)
+                ));
+            }
+            Ok(compile_blob.unwrap())
+        }
+    }
+}
