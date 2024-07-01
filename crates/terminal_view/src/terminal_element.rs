@@ -72,6 +72,7 @@ impl DisplayCursor {
     }
 }
 
+#[derive(Debug, Default)]
 struct LayoutCell {
     point: AlacPoint<i32, i32>,
     text: gpui::ShapedLine,
