@@ -93,7 +93,7 @@ impl CloudCompletionProvider {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        match request.model {
+        match request.model.clone() {
             LanguageModel::Cloud(CloudModel::Gpt4)
             | LanguageModel::Cloud(CloudModel::Gpt4Turbo)
             | LanguageModel::Cloud(CloudModel::Gpt4Omni)
@@ -110,24 +110,10 @@ impl CloudCompletionProvider {
                 count_open_ai_tokens(request, cx.background_executor())
             }
             LanguageModel::Cloud(CloudModel::Gemini15Pro | CloudModel::Gemini15Flash) => {
-                // TODO: Implement a proper tokenizer for Gemini models
-                // For now, use OpenAI's tokenizer as an approximation
-                count_open_ai_tokens(request, cx.background_executor())
+                self.count_tokens_with_model(request.model.id().to_string(), &request)
             }
             LanguageModel::Cloud(CloudModel::Custom(model)) => {
-                let request = self.client.request(proto::CountTokensWithLanguageModel {
-                    model,
-                    messages: request
-                        .messages
-                        .iter()
-                        .map(|message| message.to_proto())
-                        .collect(),
-                });
-                async move {
-                    let response = request.await?;
-                    Ok(response.token_count as usize)
-                }
-                .boxed()
+                self.count_tokens_with_model(model, &request)
             }
             _ => future::ready(Err(anyhow!("invalid model"))).boxed(),
         }
@@ -165,6 +151,26 @@ impl CloudCompletionProvider {
                     .boxed()
             })
             .boxed()
+    }
+
+    fn count_tokens_with_model(
+        &self,
+        model: String,
+        request: &LanguageModelRequest,
+    ) -> BoxFuture<'static, Result<usize>> {
+        let request = self.client.request(proto::CountTokensWithLanguageModel {
+            model,
+            messages: request
+                .messages
+                .iter()
+                .map(|message| message.to_proto())
+                .collect(),
+        });
+        async move {
+            let response = request.await?;
+            Ok(response.token_count as usize)
+        }
+        .boxed()
     }
 }
 
