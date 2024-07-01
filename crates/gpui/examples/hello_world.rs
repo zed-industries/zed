@@ -5,7 +5,7 @@ struct HelloWorld {
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .flex()
             .bg(rgb(0x2e7d32))

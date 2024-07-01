@@ -181,11 +181,12 @@ impl WaylandWindowState {
             handle,
             active: false,
             in_progress_window_controls: None,
+            // Assume that we can do anything, unless told otherwise
             window_controls: WindowControls {
-                fullscreen: false,
-                maximize: false,
-                minimize: false,
-                window_menu: false,
+                fullscreen: true,
+                maximize: true,
+                minimize: true,
+                window_menu: true,
             },
             client_area: None,
             requested_client_area: None,
@@ -317,7 +318,7 @@ impl WaylandWindowStatePtr {
 
     pub fn frame(&self, request_frame_callback: bool) {
         if request_frame_callback {
-            let state = self.state.borrow_mut();
+            let mut state = self.state.borrow_mut();
             state.surface.frame(&state.globals.qh, state.surface.id());
             drop(state);
         }
@@ -380,8 +381,16 @@ impl WaylandWindowStatePtr {
                 state.xdg_surface.ack_configure(serial);
                 let request_frame_callback = !state.acknowledged_first_configure;
                 state.acknowledged_first_configure = true;
-                drop(state);
-                self.frame(request_frame_callback);
+
+                if request_frame_callback {
+                    drop(state);
+                    self.frame(true);
+                } else {
+                    state.surface.commit();
+                    if let Some(area) = state.requested_client_area {
+                        state.client_area = Some(area);
+                    }
+                }
             }
             _ => {}
         }
