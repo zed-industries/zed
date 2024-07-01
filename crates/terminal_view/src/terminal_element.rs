@@ -1,10 +1,10 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, size, AnyElement, AvailableSpace, Bounds, DispatchPhase,
-    Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
-    Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId, Model,
-    ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Overflow, Pixels, Point,
-    ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
+    div, fill, point, px, relative, size, AnyElement, AvailableSpace, Bounds, ContentMask,
+    DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId,
+    HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
+    Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
     UnderlineStyle, View, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
@@ -831,89 +831,92 @@ impl Element for TerminalElement {
         layout: &mut Self::PrepaintState,
         cx: &mut WindowContext<'_>,
     ) {
-        let scroll_top = self.terminal_view.read(cx).scroll_top;
+        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+            let scroll_top = self.terminal_view.read(cx).scroll_top;
 
-        cx.paint_quad(fill(bounds, layout.background_color));
-        let origin =
-            bounds.origin + Point::new(layout.gutter, px(0.)) - Point::new(px(0.), scroll_top);
+            cx.paint_quad(fill(bounds, layout.background_color));
+            let origin =
+                bounds.origin + Point::new(layout.gutter, px(0.)) - Point::new(px(0.), scroll_top);
 
-        let terminal_input_handler = TerminalInputHandler {
-            terminal: self.terminal.clone(),
-            cursor_bounds: layout
-                .cursor
-                .as_ref()
-                .map(|cursor| cursor.bounding_rect(origin)),
-            workspace: self.workspace.clone(),
-        };
+            let terminal_input_handler = TerminalInputHandler {
+                terminal: self.terminal.clone(),
+                cursor_bounds: layout
+                    .cursor
+                    .as_ref()
+                    .map(|cursor| cursor.bounding_rect(origin)),
+                workspace: self.workspace.clone(),
+            };
 
-        self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, cx);
-        if self.can_navigate_to_selected_word && layout.last_hovered_word.is_some() {
-            cx.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
-        } else {
-            cx.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);
-        }
+            self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, cx);
+            if self.can_navigate_to_selected_word && layout.last_hovered_word.is_some() {
+                cx.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
+            } else {
+                cx.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);
+            }
 
-        let cursor = layout.cursor.take();
-        let hyperlink_tooltip = layout.hyperlink_tooltip.take();
-        let block_below_cursor_element = layout.block_below_cursor_element.take();
-        self.interactivity
-            .paint(global_id, bounds, Some(&layout.hitbox), cx, |_, cx| {
-                cx.handle_input(&self.focus, terminal_input_handler);
+            let cursor = layout.cursor.take();
+            let hyperlink_tooltip = layout.hyperlink_tooltip.take();
+            let block_below_cursor_element = layout.block_below_cursor_element.take();
+            self.interactivity
+                .paint(global_id, bounds, Some(&layout.hitbox), cx, |_, cx| {
+                    cx.handle_input(&self.focus, terminal_input_handler);
 
-                cx.on_key_event({
-                    let this = self.terminal.clone();
-                    move |event: &ModifiersChangedEvent, phase, cx| {
-                        if phase != DispatchPhase::Bubble {
-                            return;
+                    cx.on_key_event({
+                        let this = self.terminal.clone();
+                        move |event: &ModifiersChangedEvent, phase, cx| {
+                            if phase != DispatchPhase::Bubble {
+                                return;
+                            }
+
+                            let handled = this
+                                .update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
+
+                            if handled {
+                                cx.refresh();
+                            }
                         }
+                    });
 
-                        let handled =
-                            this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
+                    for rect in &layout.rects {
+                        rect.paint(origin, &layout, cx);
+                    }
 
-                        if handled {
-                            cx.refresh();
+                    for (relative_highlighted_range, color) in
+                        layout.relative_highlighted_ranges.iter()
+                    {
+                        if let Some((start_y, highlighted_range_lines)) =
+                            to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
+                        {
+                            let hr = HighlightedRange {
+                                start_y,
+                                line_height: layout.dimensions.line_height,
+                                lines: highlighted_range_lines,
+                                color: *color,
+                                corner_radius: 0.15 * layout.dimensions.line_height,
+                            };
+                            hr.paint(bounds, cx);
                         }
+                    }
+
+                    for cell in &layout.cells {
+                        cell.paint(origin, &layout, bounds, cx);
+                    }
+
+                    if self.cursor_visible {
+                        if let Some(mut cursor) = cursor {
+                            cursor.paint(origin, cx);
+                        }
+                    }
+
+                    if let Some(mut element) = block_below_cursor_element {
+                        element.paint(cx);
+                    }
+
+                    if let Some(mut element) = hyperlink_tooltip {
+                        element.paint(cx);
                     }
                 });
-
-                for rect in &layout.rects {
-                    rect.paint(origin, &layout, cx);
-                }
-
-                for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter()
-                {
-                    if let Some((start_y, highlighted_range_lines)) =
-                        to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
-                    {
-                        let hr = HighlightedRange {
-                            start_y,
-                            line_height: layout.dimensions.line_height,
-                            lines: highlighted_range_lines,
-                            color: *color,
-                            corner_radius: 0.15 * layout.dimensions.line_height,
-                        };
-                        hr.paint(bounds, cx);
-                    }
-                }
-
-                for cell in &layout.cells {
-                    cell.paint(origin, &layout, bounds, cx);
-                }
-
-                if self.cursor_visible {
-                    if let Some(mut cursor) = cursor {
-                        cursor.paint(origin, cx);
-                    }
-                }
-
-                if let Some(mut element) = block_below_cursor_element {
-                    element.paint(cx);
-                }
-
-                if let Some(mut element) = hyperlink_tooltip {
-                    element.paint(cx);
-                }
-            });
+        });
     }
 }
 
