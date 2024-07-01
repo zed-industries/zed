@@ -51,6 +51,7 @@ pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
     devices: DirectXDevices,
     context: DirectXContext,
+    globals: DirectXGlobalElements,
     render: DirectXRenderContext,
     size: Size<DevicePixels>,
 }
@@ -72,10 +73,6 @@ struct DirectXContext {
 }
 
 struct DirectXRenderContext {
-    global_params_buffer: [Option<ID3D11Buffer>; 1],
-    sampler: [Option<ID3D11SamplerState>; 1],
-    blend_state: ID3D11BlendState,
-    blend_state_for_pr: ID3D11BlendState,
     shadow_pipeline: PipelineState,
     quad_pipeline: PipelineState,
     path_raster_pipeline: PipelineState,
@@ -83,6 +80,13 @@ struct DirectXRenderContext {
     underline_pipeline: PipelineState,
     mono_sprites: PipelineState,
     poly_sprites: PipelineState,
+}
+
+struct DirectXGlobalElements {
+    global_params_buffer: [Option<ID3D11Buffer>; 1],
+    sampler: [Option<ID3D11SamplerState>; 1],
+    blend_state: ID3D11BlendState,
+    blend_state_for_pr: ID3D11BlendState,
 }
 
 #[cfg(not(target_feature = "enable-renderdoc"))]
@@ -115,15 +119,18 @@ impl DirectXDevices {
 
 impl DirectXRenderer {
     pub(crate) fn new(devices: DirectXDevices, hwnd: HWND, transparent: bool) -> Self {
+        let atlas = Arc::new(DirectXAtlas::new(
+            devices.device.clone(),
+            devices.device_context.clone(),
+        ));
         let context = DirectXContext::new(&devices, hwnd, transparent).unwrap();
+        let globals = DirectXGlobalElements::new(&devices.device).unwrap();
         let render = DirectXRenderContext::new(&devices.device).unwrap();
         DirectXRenderer {
-            atlas: Arc::new(DirectXAtlas::new(
-                devices.device.clone(),
-                devices.device_context.clone(),
-            )),
+            atlas,
             devices,
             context,
+            globals,
             render,
             size: size(1.into(), 1.into()),
         }
@@ -142,11 +149,11 @@ impl DirectXRenderer {
         };
         pre_draw(
             &self.devices.device_context,
-            &self.render.global_params_buffer,
+            &self.globals.global_params_buffer,
             &self.context.viewport,
             &self.context.back_buffer,
             [0.0, 0.0, 0.0, 0.0],
-            &self.render.blend_state,
+            &self.globals.blend_state,
         )?;
         for batch in scene.batches() {
             let ok = match batch {
@@ -245,7 +252,7 @@ impl DirectXRenderer {
             &self.devices.device_context,
             &self.render.shadow_pipeline,
             &self.context.viewport,
-            &self.render.global_params_buffer,
+            &self.globals.global_params_buffer,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
             shadows.len() as u32,
@@ -272,7 +279,7 @@ impl DirectXRenderer {
             &self.devices.device_context,
             &self.render.quad_pipeline,
             &self.context.viewport,
-            &self.render.global_params_buffer,
+            &self.globals.global_params_buffer,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
             quads.len() as u32,
@@ -323,11 +330,11 @@ impl DirectXRenderer {
             }];
             pre_draw(
                 &self.devices.device_context,
-                &self.render.global_params_buffer,
+                &self.globals.global_params_buffer,
                 &viewport,
                 &rtv,
                 [0.0, 0.0, 0.0, 1.0],
-                &self.render.blend_state_for_pr,
+                &self.globals.blend_state_for_pr,
             )
             .log_err()?;
             update_buffer_capacity(
@@ -347,7 +354,7 @@ impl DirectXRenderer {
                 &self.devices.device_context,
                 &self.render.path_raster_pipeline,
                 &viewport,
-                &self.render.global_params_buffer,
+                &self.globals.global_params_buffer,
                 D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
                 vertices.len() as u32,
                 1,
@@ -394,8 +401,8 @@ impl DirectXRenderer {
                 &self.render.paths_pipeline,
                 &texture_view,
                 &self.context.viewport,
-                &self.render.global_params_buffer,
-                &self.render.sampler,
+                &self.globals.global_params_buffer,
+                &self.globals.sampler,
                 1,
             )?;
         }
@@ -422,7 +429,7 @@ impl DirectXRenderer {
             &self.devices.device_context,
             &self.render.underline_pipeline,
             &self.context.viewport,
-            &self.render.global_params_buffer,
+            &self.globals.global_params_buffer,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
             underlines.len() as u32,
@@ -455,8 +462,8 @@ impl DirectXRenderer {
             &self.render.mono_sprites,
             &texture_view,
             &self.context.viewport,
-            &self.render.global_params_buffer,
-            &self.render.sampler,
+            &self.globals.global_params_buffer,
+            &self.globals.sampler,
             sprites.len() as u32,
         )
     }
@@ -487,8 +494,8 @@ impl DirectXRenderer {
             &self.render.poly_sprites,
             &texture_view,
             &self.context.viewport,
-            &self.render.global_params_buffer,
-            &self.render.sampler,
+            &self.globals.global_params_buffer,
+            &self.globals.sampler,
             sprites.len() as u32,
         )
     }
@@ -531,40 +538,6 @@ impl DirectXContext {
 
 impl DirectXRenderContext {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
-        let global_params_buffer = unsafe {
-            let desc = D3D11_BUFFER_DESC {
-                ByteWidth: std::mem::size_of::<GlobalParams>() as u32,
-                Usage: D3D11_USAGE_DYNAMIC,
-                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
-                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                ..Default::default()
-            };
-            let mut buffer = None;
-            device.CreateBuffer(&desc, None, Some(&mut buffer))?;
-            [buffer]
-        };
-
-        let sampler = unsafe {
-            let desc = D3D11_SAMPLER_DESC {
-                Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-                AddressU: D3D11_TEXTURE_ADDRESS_WRAP,
-                AddressV: D3D11_TEXTURE_ADDRESS_WRAP,
-                AddressW: D3D11_TEXTURE_ADDRESS_WRAP,
-                MipLODBias: 0.0,
-                MaxAnisotropy: 1,
-                ComparisonFunc: D3D11_COMPARISON_ALWAYS,
-                BorderColor: [0.0; 4],
-                MinLOD: 0.0,
-                MaxLOD: D3D11_FLOAT32_MAX,
-            };
-            let mut output = None;
-            device.CreateSamplerState(&desc, Some(&mut output))?;
-            [output]
-        };
-
-        let blend_state = create_blend_state(device)?;
-        let blend_state_for_pr = create_blend_state_for_path_raster(device)?;
-
         let shadow_pipeline = create_pipieline(
             device,
             "shadow_vertex",
@@ -616,10 +589,6 @@ impl DirectXRenderContext {
         )?;
 
         Ok(Self {
-            global_params_buffer,
-            sampler,
-            blend_state,
-            blend_state_for_pr,
             shadow_pipeline,
             quad_pipeline,
             path_raster_pipeline,
@@ -651,6 +620,51 @@ impl DirectComposition {
             self.comp_device.Commit()?;
         }
         Ok(())
+    }
+}
+
+impl DirectXGlobalElements {
+    pub fn new(device: &ID3D11Device) -> Result<Self> {
+        let global_params_buffer = unsafe {
+            let desc = D3D11_BUFFER_DESC {
+                ByteWidth: std::mem::size_of::<GlobalParams>() as u32,
+                Usage: D3D11_USAGE_DYNAMIC,
+                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                ..Default::default()
+            };
+            let mut buffer = None;
+            device.CreateBuffer(&desc, None, Some(&mut buffer))?;
+            [buffer]
+        };
+
+        let sampler = unsafe {
+            let desc = D3D11_SAMPLER_DESC {
+                Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                AddressU: D3D11_TEXTURE_ADDRESS_WRAP,
+                AddressV: D3D11_TEXTURE_ADDRESS_WRAP,
+                AddressW: D3D11_TEXTURE_ADDRESS_WRAP,
+                MipLODBias: 0.0,
+                MaxAnisotropy: 1,
+                ComparisonFunc: D3D11_COMPARISON_ALWAYS,
+                BorderColor: [0.0; 4],
+                MinLOD: 0.0,
+                MaxLOD: D3D11_FLOAT32_MAX,
+            };
+            let mut output = None;
+            device.CreateSamplerState(&desc, Some(&mut output))?;
+            [output]
+        };
+
+        let blend_state = create_blend_state(device)?;
+        let blend_state_for_pr = create_blend_state_for_path_raster(device)?;
+
+        Ok(Self {
+            global_params_buffer,
+            sampler,
+            blend_state,
+            blend_state_for_pr,
+        })
     }
 }
 
