@@ -3,22 +3,20 @@
 // todo! Estimate time remaining when progress reporting
 // todo! Add unit/integration tests
 
+mod database;
 mod huggingface;
 mod ollama;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use database::*;
 use fs::{Fs, RealFs};
 use futures::{stream, Stream, StreamExt};
 use git::GitHostingProviderRegistry;
-use heed::{
-    types::{SerdeJson, Str},
-    Database as HeedDatabase, EnvOpenOptions, RwTxn,
-};
 use huggingface::HuggingFaceClient;
 use ignore::gitignore::GitignoreBuilder;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
@@ -1221,7 +1219,7 @@ impl ParsedFile {
         String::new()
     }
 
-    fn extract_module_structure(&self, symbol_name: &str) -> String {
+    fn extract_module_structure(&self, _symbol_name: &str) -> String {
         let mut module_path = Vec::new();
         let mut current_node = self.root_node();
 
@@ -1270,12 +1268,6 @@ enum Entry {
     RustSymbol(PathBuf, String, String, Arc<ParsedFile>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct CachedSummary {
-    summary: String,
-    mtime: SystemTime,
-}
-
 struct FileProgress {
     outstanding_chunks: usize,
     outstanding_symbols: usize,
@@ -1286,65 +1278,6 @@ struct FileProgress {
 struct Message {
     role: String,
     content: String,
-}
-
-#[derive(Clone)]
-struct Database {
-    tx: mpsc::Sender<Box<dyn FnOnce(&HeedDatabase<Str, SerdeJson<CachedSummary>>, RwTxn) + Send>>,
-}
-
-impl Database {
-    async fn new(db_path: &Path, root: &Path) -> Result<Self> {
-        std::fs::create_dir_all(&db_path)?;
-        let env = unsafe {
-            EnvOpenOptions::new()
-                .map_size(1024 * 1024 * 1024)
-                .max_dbs(3000)
-                .open(db_path)?
-        };
-        let mut wtxn = env.write_txn()?;
-        let db_name = format!("summaries_{}", root.to_string_lossy());
-        let db: HeedDatabase<Str, SerdeJson<CachedSummary>> =
-            env.create_database(&mut wtxn, Some(&db_name))?;
-        wtxn.commit()?;
-
-        let (tx, mut rx) = mpsc::channel::<
-            Box<dyn FnOnce(&HeedDatabase<Str, SerdeJson<CachedSummary>>, RwTxn) + Send>,
-        >(100);
-
-        tokio::spawn(async move {
-            while let Some(f) = rx.recv().await {
-                let wtxn = env.write_txn().unwrap();
-                f(&db, wtxn);
-            }
-        });
-
-        Ok(Self { tx })
-    }
-
-    async fn transact<F, T>(&self, f: F) -> Result<T>
-    where
-        F: FnOnce(&HeedDatabase<Str, SerdeJson<CachedSummary>>, &mut RwTxn) -> Result<T>
-            + Send
-            + 'static,
-        T: 'static + Send,
-    {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.tx
-            .send(Box::new(move |db, mut txn| {
-                let result = f(db, &mut txn);
-                if result.is_ok() {
-                    if let Err(e) = txn.commit() {
-                        let _ = tx.send(Err(anyhow::Error::from(e)));
-                        return;
-                    }
-                }
-                let _ = tx.send(result);
-            }))
-            .await
-            .map_err(|_| anyhow!("database closed"))?;
-        Ok(rx.await.map_err(|_| anyhow!("transaction failed"))??)
-    }
 }
 
 #[cfg(test)]
