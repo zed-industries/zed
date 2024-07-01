@@ -264,6 +264,7 @@ impl TerminalView {
     }
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
+        self.scroll_top = px(0.);
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
     }
@@ -355,7 +356,18 @@ impl TerminalView {
     }
 
     fn scroll_page_up(&mut self, _: &ScrollPageUp, cx: &mut ViewContext<Self>) {
-        self.terminal.update(cx, |term, _| term.scroll_page_up());
+        let visible_block_lines =
+            (self.scroll_top / self.terminal.read(cx).last_content.size.line_height()) as usize;
+        let term = self.terminal.read(cx);
+        let visible_lines = term.viewport_lines() - visible_block_lines;
+
+        if visible_block_lines >= term.viewport_lines() {
+            self.scroll_top = px(0.);
+        } else {
+            self.scroll_top = px(0.);
+            self.terminal
+                .update(cx, |term, _| term.scroll_up_by(visible_lines));
+        }
         cx.notify();
     }
 

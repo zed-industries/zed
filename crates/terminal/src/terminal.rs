@@ -1011,9 +1011,19 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Delta(1)));
     }
 
+    pub fn scroll_up_by(&mut self, lines: usize) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Delta(lines as i32)));
+    }
+
     pub fn scroll_line_down(&mut self) {
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Delta(-1)));
+    }
+
+    pub fn scroll_down_by(&mut self, lines: usize) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Delta(-(lines as i32))));
     }
 
     pub fn scroll_page_up(&mut self) {
