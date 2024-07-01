@@ -110,6 +110,7 @@ pub fn create_signature_help_markdown_string(
         None
     } else {
         let highlights = highlights.into_iter().flatten().collect::<Vec<_>>();
+        let markdown = markdown.replace("<", "&lt;").replace(">", "&gt;");
         Some((markdown, highlights))
     }
 }
