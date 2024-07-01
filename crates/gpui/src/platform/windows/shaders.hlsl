@@ -60,7 +60,7 @@ static const float3 GRAYSCALE_FACTORS = float3(0.2126f, 0.7152f, 0.0722f);
 
 float4 to_device_position(float2 unit_vertex, Bounds bounds) {
     float2 position = unit_vertex * bounds.size + bounds.origin;
-    float2 device_position = position / global_viewport_size * float2(2., -2.) + float2(-1., 1.);
+    float2 device_position = position / global_viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
     return float4(device_position, 0., 1.);
 }
 
@@ -159,7 +159,8 @@ float2 to_tile_position(float2 unit_vertex, AtlasTile tile) {
 // target alpha compositing mode.
 float4 blend_color(float4 color, float alpha_factor) {
     float alpha = color.a * alpha_factor;
-    float multiplier = (global_premultiplied_alpha != 0) ? alpha : 1.0;
+    // float multiplier = (global_premultiplied_alpha != 0) ? alpha : 1.0;
+    float multiplier = (global_premultiplied_alpha != 0) ? 1.0 : alpha;
     return float4(color.rgb * multiplier, alpha);
 }
 
@@ -476,7 +477,7 @@ struct PathVertexOutput {
     float4 color: COLOR;
 };
 
-StructuredBuffer<PathSprite> path_sprites;
+StructuredBuffer<PathSprite> path_sprites: register(t1);
 
 PathVertexOutput paths_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
@@ -486,7 +487,6 @@ PathVertexOutput paths_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_
     PathVertexOutput output;
     output.position = to_device_position(unit_vertex, sprite.bounds);
     output.tile_position = to_tile_position(unit_vertex, sprite.tile);
-    // output.tile_position = float2(1., 1.);
     output.color = hsla_to_rgba(sprite.color);
     return output;
 }
@@ -494,7 +494,6 @@ PathVertexOutput paths_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_
 float4 paths_fragment(PathVertexOutput input): SV_Target {
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
     float mask = 1.0 - abs(1.0 - sample % 2.0);
-    // return blend_color(input.color, mask);
     float4 color = input.color;
     color.a *= mask;
     return color;
@@ -628,7 +627,7 @@ float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Targe
 
 /*
 **
-**              Monochrome sprites
+**              Polychrome sprites
 **
 */
 
