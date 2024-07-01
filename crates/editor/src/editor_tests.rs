@@ -6959,7 +6959,6 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
 
     cx.editor(|editor, _| {
         assert!(editor.signature_help_state.as_ref().is_some());
-        assert!(editor.bracket_content.is_some());
     });
 }
 

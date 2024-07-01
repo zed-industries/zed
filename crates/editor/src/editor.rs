@@ -504,7 +504,6 @@ pub struct Editor {
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     signature_help_task: Option<Task<()>>,
     signature_help_state: Option<SignatureHelpPopover>,
-    bracket_content: Option<String>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
@@ -1826,7 +1825,6 @@ impl Editor {
             completion_tasks: Default::default(),
             signature_help_task: None,
             signature_help_state: None,
-            bracket_content: None,
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
             completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
@@ -2415,7 +2413,7 @@ impl Editor {
             }
             self.selections_did_change(true, &old_cursor_position, request_completions, cx);
 
-            if self.should_open_signature_help_automatically(cx) {
+            if self.should_open_signature_help_automatically(&old_cursor_position, cx) {
                 self.show_signature_help(&ShowSignatureHelp, cx);
             }
         }
@@ -4009,51 +4007,43 @@ impl Editor {
         }
     }
 
-    fn should_open_signature_help_automatically(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    fn should_open_signature_help_automatically(
+        &mut self,
+        old_cursor_position: &Anchor,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
         if !EditorSettings::get_global(cx).auto_signature_help {
             return false;
         }
-
         let newest_selection = self.selections.newest::<usize>(cx);
-        if !newest_selection.is_empty() {
+        let head = newest_selection.head();
+        if !newest_selection.is_empty() || head != newest_selection.tail() {
+            self.signature_help_state = None;
             return false;
         }
+        if self.signature_help_state.is_some() {
+            return true;
+        }
 
-        let head = newest_selection.head();
-
-        let (from, until) = if self.bracket_content.is_some() {
-            if head > 0 {
-                (head - 1, head + 1)
-            } else {
-                (head, head + 1)
-            }
-        } else {
-            (head, head)
-        };
-
-        let snapshot = self.snapshot(cx);
-
-        let updated = if let Some((opening_range, closing_range)) = snapshot
-            .buffer_snapshot
-            .innermost_enclosing_bracket_ranges(from..until, None)
-        {
-            let string = snapshot.text();
-            let string = string.get(opening_range.start..closing_range.end);
-
-            if self.bracket_content.as_deref() == string {
-                false
-            } else {
-                self.bracket_content = string.map(Into::into);
-                true
-            }
-        } else if self.bracket_content.is_some() {
-            self.bracket_content = None;
-            true
-        } else {
-            false
-        };
-
-        updated || self.signature_help_state.is_some()
+        let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let previous_position = old_cursor_position.to_offset(&buffer_snapshot);
+        let previous_brackets_surround = buffer_snapshot
+            .innermost_enclosing_bracket_ranges(previous_position..previous_position, None)
+            .filter(|(start_bracket_range, end_bracket_range)| {
+                start_bracket_range.start != previous_position
+                    && end_bracket_range.end != previous_position
+            });
+        let current_brackets_surround = buffer_snapshot
+            .innermost_enclosing_bracket_ranges(head..head, None)
+            .filter(|(start_bracket_range, end_bracket_range)| {
+                start_bracket_range.start != head && end_bracket_range.end != head
+            });
+        match (previous_brackets_surround, current_brackets_surround) {
+            (None, None) => false,
+            (Some(_), None) => false,
+            (None, Some(_)) => true,
+            (Some(previous), Some(current)) => previous != current,
+        }
     }
 
     pub fn show_signature_help(&mut self, _: &ShowSignatureHelp, cx: &mut ViewContext<Self>) {
@@ -4069,33 +4059,31 @@ impl Editor {
         };
 
         self.signature_help_task = Some(cx.spawn(move |editor, mut cx| async move {
-            let markdown_task_result = editor.update(&mut cx, |editor, cx| {
-                let maybe_language = editor.language_at(position, cx);
-                let project = editor.project.clone()?;
-                let (maybe_markdown, language_registry) = project.update(cx, |project, mut cx| {
-                    let language_registry = project.languages().clone();
-                    let maybe_markdown = project
-                        .signature_help(&buffer, buffer_position, &mut cx)
-                        .map(|signature_help| {
-                            create_signature_help_markdown_string(signature_help?)
-                        });
-                    (maybe_markdown, language_registry)
-                });
-                Some((maybe_markdown, language_registry, maybe_language))
-            });
-            let maybe_signature_help_popover =
-                if let Ok(Some((markdown, language_registry, maybe_language))) =
-                    markdown_task_result
-                {
+            let markdown_task = editor
+                .update(&mut cx, |editor, cx| {
+                    let language = editor.language_at(position, cx);
+                    let project = editor.project.clone()?;
+                    let (markdown, language_registry) = project.update(cx, |project, mut cx| {
+                        let language_registry = project.languages().clone();
+                        let markdown = project
+                            .signature_help(&buffer, buffer_position, &mut cx)
+                            .map(|signature_help| {
+                                create_signature_help_markdown_string(signature_help?)
+                            });
+                        (markdown, language_registry)
+                    });
+                    Some((markdown, language_registry, language))
+                })
+                .ok()
+                .flatten();
+            let signature_help_popover =
+                if let Some((markdown, language_registry, language)) = markdown_task {
                     let markdown = markdown.await;
                     if let Some((markdown, markdown_highlights)) = markdown {
-                        let mut parsed_markdown =
-                            parse_markdown(markdown.as_str(), &language_registry, maybe_language)
-                                .await;
-                        parsed_markdown.highlights = markdown_highlights;
-                        Some(SignatureHelpPopover {
-                            parsed_content: parsed_markdown,
-                        })
+                        let mut parsed_content =
+                            parse_markdown(markdown.as_str(), &language_registry, language).await;
+                        parsed_content.highlights = markdown_highlights;
+                        Some(SignatureHelpPopover { parsed_content })
                     } else {
                         None
                     }
@@ -4104,7 +4092,7 @@ impl Editor {
                 };
             editor
                 .update(&mut cx, |editor, cx| {
-                    editor.signature_help_state = maybe_signature_help_popover;
+                    editor.signature_help_state = signature_help_popover;
                     cx.notify();
                 })
                 .ok();
