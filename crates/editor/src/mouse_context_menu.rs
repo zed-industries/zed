@@ -1,10 +1,10 @@
 use std::ops::Range;
 
 use crate::{
-    display_map, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
-    DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDefinition,
-    GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFinder, SelectMode,
-    ToDisplayPoint, ToggleCodeActions,
+    selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut, DisplayPoint,
+    DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
+    GoToTypeDefinition, Paste, Rename, RevealInFinder, SelectMode, ToDisplayPoint,
+    ToggleCodeActions,
 };
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
