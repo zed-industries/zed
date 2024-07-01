@@ -1,22 +1,22 @@
 #![allow(unused)]
 
+use crate::{BackgroundExecutor, Message};
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
+use futures::{channel::mpsc, SinkExt, StreamExt};
 use reqwest::Client;
-use tokio::sync::mpsc;
-
-use crate::Message;
 
 pub struct OllamaClient {
     client: Client,
     base_url: String,
+    executor: BackgroundExecutor,
 }
 
 impl OllamaClient {
-    pub fn new(base_url: String) -> Self {
+    pub fn new(base_url: String, executor: BackgroundExecutor) -> Self {
         Self {
             client: Client::new(),
             base_url,
+            executor,
         }
     }
 
@@ -25,7 +25,7 @@ impl OllamaClient {
         model: String,
         messages: Vec<Message>,
     ) -> Result<mpsc::Receiver<String>> {
-        let (tx, rx) = mpsc::channel(100);
+        let (mut tx, rx) = mpsc::channel(100);
 
         let request = serde_json::json!({
             "model": model,
@@ -47,20 +47,22 @@ impl OllamaClient {
             ));
         }
 
-        tokio::spawn(async move {
-            let mut stream = response.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                if let Ok(chunk) = chunk {
-                    if let Ok(text) = String::from_utf8(chunk.to_vec()) {
-                        if let Ok(response) = serde_json::from_str::<serde_json::Value>(&text) {
-                            if let Some(content) = response["message"]["content"].as_str() {
-                                let _ = tx.send(content.to_string()).await;
+        self.executor
+            .spawn(async move {
+                let mut stream = response.bytes_stream();
+                while let Some(chunk) = stream.next().await {
+                    if let Ok(chunk) = chunk {
+                        if let Ok(text) = String::from_utf8(chunk.to_vec()) {
+                            if let Ok(response) = serde_json::from_str::<serde_json::Value>(&text) {
+                                if let Some(content) = response["message"]["content"].as_str() {
+                                    let _ = tx.send(content.to_string()).await;
+                                }
                             }
                         }
                     }
                 }
-            }
-        });
+            })
+            .detach();
 
         Ok(rx)
     }

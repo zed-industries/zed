@@ -1,11 +1,15 @@
 use anyhow::{anyhow, Result};
+use futures::{
+    channel::{mpsc, oneshot},
+    SinkExt, StreamExt,
+};
+use gpui::BackgroundExecutor;
 use heed::{
     types::{SerdeJson, Str},
     Database as HeedDatabase, EnvOpenOptions, RwTxn,
 };
 use serde::{Deserialize, Serialize};
 use std::{path::Path, time::SystemTime};
-use tokio::sync::mpsc;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CachedSummary {
@@ -19,7 +23,7 @@ pub struct Database {
 }
 
 impl Database {
-    pub async fn new(db_path: &Path, root: &Path) -> Result<Self> {
+    pub async fn new(db_path: &Path, root: &Path, executor: &BackgroundExecutor) -> Result<Self> {
         std::fs::create_dir_all(&db_path)?;
         let env = unsafe {
             EnvOpenOptions::new()
@@ -37,12 +41,14 @@ impl Database {
             Box<dyn FnOnce(&HeedDatabase<Str, SerdeJson<CachedSummary>>, RwTxn) + Send>,
         >(100);
 
-        tokio::spawn(async move {
-            while let Some(f) = rx.recv().await {
-                let wtxn = env.write_txn().unwrap();
-                f(&db, wtxn);
-            }
-        });
+        executor
+            .spawn(async move {
+                while let Some(f) = rx.next().await {
+                    let wtxn = env.write_txn().unwrap();
+                    f(&db, wtxn);
+                }
+            })
+            .detach();
 
         Ok(Self { tx })
     }
@@ -54,8 +60,9 @@ impl Database {
             + 'static,
         T: 'static + Send,
     {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         self.tx
+            .clone()
             .send(Box::new(move |db, mut txn| {
                 let result = f(db, &mut txn);
                 if result.is_ok() {

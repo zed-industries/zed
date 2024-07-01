@@ -11,8 +11,9 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use database::*;
 use fs::{Fs, RealFs};
-use futures::{stream, Stream, StreamExt};
+use futures::{lock::Mutex, stream, Stream, StreamExt};
 use git::GitHostingProviderRegistry;
+use gpui::{App, BackgroundExecutor};
 use huggingface::HuggingFaceClient;
 use ignore::gitignore::GitignoreBuilder;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -21,11 +22,11 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     pin::Pin,
+    process,
     sync::{atomic::AtomicUsize, Arc},
     time::SystemTime,
 };
 use tokenizers::{tokenizer::Tokenizer, FromPretrainedParameters};
-use tokio::sync::{mpsc, Mutex};
 use tree_sitter::{Node, Tree};
 
 const CHUNK_SIZE: usize = 5000;
@@ -58,11 +59,10 @@ struct Cli {
     export: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() {
     let cli = Cli::parse();
 
-    let project_path = &cli.project_path;
+    let project_path = cli.project_path;
     if !project_path.exists() || !project_path.is_dir() {
         eprintln!("Error: The provided project path does not exist or is not a directory.");
         std::process::exit(1);
@@ -76,31 +76,54 @@ async fn main() -> Result<()> {
     println!("Using database at: {}", db_path.display());
     println!("Number of workers: {}", cli.num_workers);
 
-    let fs = Arc::new(RealFs::new(
-        Arc::new(GitHostingProviderRegistry::new()),
-        None,
-    )) as Arc<dyn Fs>;
-    let miner = Miner::new(db_path, project_path.to_path_buf(), cli.num_workers, fs).await?;
+    App::new().run(move |cx| {
+        let mine = cx.spawn(|cx| async move {
+            let fs = Arc::new(RealFs::new(
+                Arc::new(GitHostingProviderRegistry::new()),
+                None,
+            )) as Arc<dyn Fs>;
 
-    if cli.export {
-        miner.export_database().await?;
-        return Ok(());
-    }
+            let miner = Miner::new(
+                db_path,
+                project_path.to_path_buf(),
+                cli.num_workers,
+                fs,
+                cx.background_executor().clone(),
+            )
+            .await?;
 
-    miner.summarize_project().await?;
+            if cli.export {
+                miner.export_database().await?;
+                return Ok(());
+            }
 
-    println!("Finished summarization");
+            miner.summarize_project().await?;
 
-    if let Some(read_path) = cli.read {
-        let full_path = project_path.join(&read_path);
-        if let Some(summary) = miner.summary_for_path(&full_path).await? {
-            println!("<path>{}</path>", full_path.to_string_lossy());
-            println!("<summary>{}</summary>", summary);
-            println!();
-        }
-    }
+            println!("Finished summarization");
 
-    Ok(())
+            if let Some(read_path) = cli.read {
+                let full_path = project_path.join(&read_path);
+                if let Some(summary) = miner.summary_for_path(&full_path).await? {
+                    println!("<path>{}</path>", full_path.to_string_lossy());
+                    println!("<summary>{}</summary>", summary);
+                    println!();
+                }
+            }
+
+            anyhow::Ok(())
+        });
+
+        cx.spawn(|_cx| async move {
+            match mine.await {
+                Ok(()) => process::exit(0),
+                Err(error) => {
+                    eprintln!("error: {:?}", error);
+                    process::exit(1);
+                }
+            }
+        })
+        .detach();
+    });
 }
 
 pub struct Miner {
@@ -120,12 +143,13 @@ pub struct Miner {
     file_progress_map: Arc<Mutex<HashMap<PathBuf, FileProgress>>>,
     outstanding_chunks: Arc<AtomicUsize>,
     outstanding_symbols: Arc<AtomicUsize>,
-    progress_sender: mpsc::UnboundedSender<()>,
+    progress_sender: async_watch::Sender<()>,
     total_chunks: Arc<AtomicUsize>,
     total_symbols: Arc<AtomicUsize>,
     processed_chunks: Arc<Mutex<HashMap<(PathBuf, usize), bool>>>,
     processed_files: Arc<Mutex<HashSet<PathBuf>>>,
     fs: Arc<dyn Fs>,
+    background_executor: BackgroundExecutor,
 }
 
 impl Miner {
@@ -134,8 +158,9 @@ impl Miner {
         root: PathBuf,
         num_workers: usize,
         fs: Arc<dyn Fs>,
+        background_executor: BackgroundExecutor,
     ) -> Result<Arc<Self>> {
-        let database = Database::new(&db_path, &root).await?;
+        let database = Database::new(&db_path, &root, &background_executor).await?;
 
         let tokenizer = Tokenizer::from_pretrained(
             "Qwen/Qwen2-7B-Instruct",
@@ -152,6 +177,7 @@ impl Miner {
         let client = Arc::new(HuggingFaceClient::new(
             HUGGINGFACE_ENDPOINT_URL.to_string(),
             std::env::var("HUGGINGFACE_API_KEY").expect("HUGGINGFACE_API_KEY not set"),
+            background_executor.clone(),
         ));
 
         let queue = Arc::new(Mutex::new(VecDeque::new()));
@@ -187,7 +213,7 @@ impl Miner {
         let total_chunks = Arc::new(AtomicUsize::new(0));
         let total_symbols = Arc::new(AtomicUsize::new(0));
 
-        let (progress_sender, mut progress_receiver) = mpsc::unbounded_channel();
+        let (progress_sender, mut progress_receiver) = async_watch::channel(());
 
         let processed_chunks = Arc::new(Mutex::new(HashMap::new()));
 
@@ -214,14 +240,17 @@ impl Miner {
             processed_chunks,
             processed_files: Arc::new(Mutex::new(HashSet::new())),
             fs,
+            background_executor: background_executor.clone(),
         });
 
         let miner_clone = Arc::clone(&miner);
-        tokio::spawn(async move {
-            while progress_receiver.recv().await.is_some() {
-                miner_clone.do_update_progress().await;
-            }
-        });
+        background_executor
+            .spawn(async move {
+                while progress_receiver.changed().await.is_ok() {
+                    miner_clone.do_update_progress().await;
+                }
+            })
+            .detach();
 
         Ok(miner)
     }
@@ -270,7 +299,7 @@ impl Miner {
         let workers: Vec<_> = (0..self.num_workers)
             .map(|worker_id| {
                 let this = self.clone();
-                tokio::spawn(async move {
+                self.background_executor.spawn(async move {
                     println!("Worker {} starting", worker_id);
                     let result = this.worker().await;
                     println!("Worker {} finished", worker_id);
@@ -280,7 +309,7 @@ impl Miner {
             .collect();
 
         for (worker_id, worker) in workers.into_iter().enumerate() {
-            worker.await??;
+            worker.await?;
             println!("Worker {} completed successfully", worker_id);
         }
 
@@ -404,7 +433,7 @@ impl Miner {
             match entry {
                 Some(Entry::File(path)) => {
                     println!("Worker processing file: {:?}", path);
-                    let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+                    let content = self.fs.load(&path).await.unwrap_or_default();
                     if let Err(e) = self.scan_file(path.clone(), content).await {
                         eprintln!("Error processing file {:?}: {}", path, e);
                     }
@@ -542,7 +571,7 @@ impl Miner {
         let mut receiver = self.client.stream_completion(messages).await?;
         let mut combined_summary = String::new();
 
-        while let Some(content) = receiver.recv().await {
+        while let Some(content) = receiver.next().await {
             combined_summary.push_str(&content);
         }
 
@@ -947,7 +976,7 @@ impl Miner {
         let mut receiver = self.client.stream_completion(messages).await?;
 
         let mut summary = String::new();
-        while let Some(content) = receiver.recv().await {
+        while let Some(content) = receiver.next().await {
             summary.push_str(&content);
         }
 
@@ -981,7 +1010,7 @@ impl Miner {
         let mut receiver = self.client.stream_completion(messages).await?;
 
         let mut summary = String::new();
-        while let Some(content) = receiver.recv().await {
+        while let Some(content) = receiver.next().await {
             summary.push_str(&content);
         }
 

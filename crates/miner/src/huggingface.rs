@@ -1,22 +1,24 @@
 use crate::Message;
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
+use futures::{channel::mpsc, SinkExt, StreamExt};
+use gpui::BackgroundExecutor;
 use reqwest::Client;
 use serde::Deserialize;
-use tokio::sync::mpsc;
 
 pub struct HuggingFaceClient {
     client: Client,
     endpoint: String,
     api_key: String,
+    background_executor: BackgroundExecutor,
 }
 
 impl HuggingFaceClient {
-    pub fn new(endpoint: String, api_key: String) -> Self {
+    pub fn new(endpoint: String, api_key: String, background_executor: BackgroundExecutor) -> Self {
         Self {
             client: Client::new(),
             endpoint,
             api_key,
+            background_executor,
         }
     }
 
@@ -24,7 +26,7 @@ impl HuggingFaceClient {
         &self,
         messages: Vec<Message>,
     ) -> Result<mpsc::Receiver<String>> {
-        let (tx, rx) = mpsc::channel(100);
+        let (mut tx, rx) = mpsc::channel(100);
 
         let mut inputs = messages
             .iter()
@@ -56,26 +58,30 @@ impl HuggingFaceClient {
             ));
         }
 
-        tokio::spawn(async move {
-            let mut stream = response.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                if let Ok(chunk) = chunk {
-                    if let Ok(text) = String::from_utf8(chunk.to_vec()) {
-                        for line in text.lines() {
-                            if line.starts_with("data:") {
-                                let json_str = line.trim_start_matches("data:");
+        self.background_executor
+            .spawn(async move {
+                let mut stream = response.bytes_stream();
+                while let Some(chunk) = stream.next().await {
+                    if let Ok(chunk) = chunk {
+                        if let Ok(text) = String::from_utf8(chunk.to_vec()) {
+                            for line in text.lines() {
+                                if line.starts_with("data:") {
+                                    let json_str = line.trim_start_matches("data:");
 
-                                if let Ok(output) = serde_json::from_str::<StreamOutput>(json_str) {
-                                    if !output.token.special {
-                                        let _ = tx.send(output.token.text).await;
+                                    if let Ok(output) =
+                                        serde_json::from_str::<StreamOutput>(json_str)
+                                    {
+                                        if !output.token.special {
+                                            let _ = tx.send(output.token.text).await;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-        });
+            })
+            .detach();
 
         Ok(rx)
     }

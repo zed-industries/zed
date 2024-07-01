@@ -9,12 +9,22 @@ license = "GPL-3.0-or-later"
 name = "miner"
 path = "src/miner.rs"
 
+[features]
+test-support = [
+    "collections/test-support",
+    "fs/test-support",
+    "gpui/test-support",
+]
+
 [dependencies]
 anyhow.workspace = true
+async-watch.workspace = true
+collections.workspace = true
 clap.workspace = true
 futures.workspace = true
 fs.workspace = true
 git.workspace = true
+gpui.workspace = true
 heed.workspace = true
 ignore.workspace = true
 indicatif = "0.17.8"
@@ -24,4 +34,8 @@ serde_json.workspace = true
 tree-sitter.workspace = true
 tree-sitter-rust.workspace = true
 tokenizers = { version = "0.19.1", features = ["http"] }
-tokio.workspace = true
+
+[dev-dependencies]
+collections = { workspace = true, features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }

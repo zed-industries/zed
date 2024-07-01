@@ -6674,10 +6674,13 @@ name = "miner"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-watch",
  "clap 4.4.4",
+ "collections",
  "fs",
  "futures 0.3.28",
  "git",
+ "gpui",
  "heed",
  "ignore",
  "indicatif",
@@ -6685,7 +6688,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokenizers",
- "tokio",
  "tree-sitter",
  "tree-sitter-rust",
 ]
