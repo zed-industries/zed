@@ -220,12 +220,16 @@ impl DirectXRenderer {
         match background_appearance {
             WindowBackgroundAppearance::Opaque => {
                 if self.transparent {
-                    return Err(anyhow::anyhow!("Restart required."));
+                    return Err(anyhow::anyhow!(
+                        "Set opaque backgroud from transparent background, a restart is required."
+                    ));
                 }
             }
             WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
                 if !self.transparent {
-                    return Err(anyhow::anyhow!("Restart required."));
+                    return Err(anyhow::anyhow!(
+                        "Set transparent backgroud from opaque background, a restart is required."
+                    ));
                 }
             }
         }
