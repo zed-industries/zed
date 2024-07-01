@@ -557,8 +557,7 @@ impl OutlinePanel {
                     })
                 }
             }
-            excerpt_entry @ EntryOwned::Excerpt(_, excerpt_id, excerpt_range) => {
-                self.toggle_expanded(excerpt_entry, cx);
+            EntryOwned::Excerpt(_, excerpt_id, excerpt_range) => {
                 let scroll_target = multi_buffer_snapshot
                     .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start);
                 if let Some(anchor) = scroll_target {
@@ -2680,10 +2679,20 @@ impl Render for OutlinePanel {
                     h_flex()
                         .pt(Spacing::Small.rems(cx))
                         .justify_center()
-                        .child(Label::new(format!(
-                            "Toggle this panel with {}",
-                            cx.keystroke_text_for(&ToggleFocus)
-                        ))),
+                        .child({
+                            let keystroke = match self.position(cx) {
+                                DockPosition::Left => {
+                                    cx.keystroke_text_for(&workspace::ToggleLeftDock)
+                                }
+                                DockPosition::Bottom => {
+                                    cx.keystroke_text_for(&workspace::ToggleBottomDock)
+                                }
+                                DockPosition::Right => {
+                                    cx.keystroke_text_for(&workspace::ToggleRightDock)
+                                }
+                            };
+                            Label::new(format!("Toggle this panel with {keystroke}",))
+                        }),
                 )
         } else {
             h_flex()
