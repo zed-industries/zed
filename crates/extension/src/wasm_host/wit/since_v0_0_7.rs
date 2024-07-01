@@ -1,10 +1,12 @@
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
 use ::settings::Settings;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use futures::AsyncReadExt;
 use futures::{io::BufReader, FutureExt as _};
+use http::AsyncBody;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
@@ -100,6 +102,41 @@ impl HostWorktree for WasmState {
 
 #[async_trait]
 impl common::Host for WasmState {}
+
+#[async_trait]
+impl http_client::Host for WasmState {
+    async fn fetch(
+        &mut self,
+        req: http_client::HttpRequest,
+    ) -> wasmtime::Result<Result<http_client::HttpResponse, String>> {
+        maybe!(async {
+            let url = &req.url;
+
+            let mut response = self
+                .host
+                .http_client
+                .get(url, AsyncBody::default(), true)
+                .await?;
+
+            if response.status().is_client_error() || response.status().is_server_error() {
+                bail!("failed to fetch '{url}': status code {}", response.status())
+            }
+
+            let mut body = Vec::new();
+            response
+                .body_mut()
+                .read_to_end(&mut body)
+                .await
+                .with_context(|| format!("failed to read response body from '{url}'"))?;
+
+            Ok(http_client::HttpResponse {
+                body: String::from_utf8(body)?,
+            })
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
 
 #[async_trait]
 impl nodejs::Host for WasmState {
