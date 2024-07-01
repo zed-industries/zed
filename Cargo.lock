@@ -417,6 +417,7 @@ dependencies = [
  "strsim 0.11.1",
  "strum",
  "telemetry_events",
+ "terminal",
  "terminal_view",
  "theme",
  "tiktoken-rs",

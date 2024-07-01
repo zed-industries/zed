@@ -109,3 +109,27 @@ pub fn generate_content_prompt(
 
     Ok(prompt)
 }
+
+pub fn generate_terminal_assistant_prompt(
+    user_prompt: &str,
+    shell: Option<&str>,
+    working_directory: Option<&str>,
+) -> String {
+    let mut prompt = String::new();
+    writeln!(&mut prompt, "You are an expert terminal user.").unwrap();
+    writeln!(&mut prompt, "You will be given a description of a command and you need to respond with a command that matches the description.").unwrap();
+    writeln!(&mut prompt, "Do not include markdown blocks or any other text formatting in your response, always respond with a single command that can be executed in the given shell.").unwrap();
+    if let Some(shell) = shell {
+        writeln!(&mut prompt, "Current shell is '{shell}'.").unwrap();
+    }
+    if let Some(working_directory) = working_directory {
+        writeln!(
+            &mut prompt,
+            "Current working directory is '{working_directory}'."
+        )
+        .unwrap();
+    }
+    writeln!(&mut prompt, "Here is the description of the command:").unwrap();
+    prompt.push_str(user_prompt);
+    prompt
+}

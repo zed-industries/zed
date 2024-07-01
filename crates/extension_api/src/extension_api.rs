@@ -19,6 +19,7 @@ pub use wit::{
         github_release_by_tag_name, latest_github_release, GithubRelease, GithubReleaseAsset,
         GithubReleaseOptions,
     },
+    zed::extension::http_client::{fetch, HttpRequest, HttpResponse},
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
         npm_package_latest_version,

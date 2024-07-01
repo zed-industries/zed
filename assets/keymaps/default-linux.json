@@ -653,6 +653,7 @@
       "ctrl-insert": "terminal::Copy",
       "shift-ctrl-v": "terminal::Paste",
       "shift-insert": "terminal::Paste",
+      "ctrl-enter": "assistant::InlineAssist",
       "up": ["terminal::SendKeystroke", "up"],
       "pageup": ["terminal::SendKeystroke", "pageup"],
       "down": ["terminal::SendKeystroke", "down"],

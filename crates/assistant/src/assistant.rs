@@ -9,6 +9,7 @@ mod prompts;
 mod search;
 mod slash_command;
 mod streaming_diff;
+mod terminal_inline_assistant;
 
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::{AnthropicModel, AssistantSettings, CloudModel, OllamaModel, OpenAiModel};
@@ -289,6 +290,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     register_slash_commands(cx);
     assistant_panel::init(cx);
     inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
+    terminal_inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
     RustdocStore::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
