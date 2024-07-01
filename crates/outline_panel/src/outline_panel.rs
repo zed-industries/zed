@@ -40,7 +40,7 @@ use workspace::{
     item::ItemHandle,
     ui::{
         h_flex, v_flex, ActiveTheme, Color, ContextMenu, FluentBuilder, Icon, IconName, IconSize,
-        Label, LabelCommon, ListItem, Selectable, StyledTypography,
+        Label, LabelCommon, ListItem, Selectable, Spacing, StyledTypography,
     },
     OpenInTerminal, Workspace,
 };
@@ -85,6 +85,7 @@ pub struct OutlinePanel {
     selected_entry: Option<EntryOwned>,
     active_item: Option<ActiveItem>,
     _subscriptions: Vec<Subscription>,
+    loading_outlines: bool,
     update_task: Task<()>,
     outline_fetch_tasks: HashMap<(BufferId, ExcerptId), Task<()>>,
     excerpts: HashMap<BufferId, HashMap<ExcerptId, Excerpt>>,
@@ -385,6 +386,7 @@ impl OutlinePanel {
                 width: None,
                 active_item: None,
                 pending_serialization: Task::ready(None),
+                loading_outlines: false,
                 update_task: Task::ready(()),
                 outline_fetch_tasks: HashMap::default(),
                 excerpts: HashMap::default(),
@@ -1713,6 +1715,7 @@ impl OutlinePanel {
             },
         );
 
+        self.loading_outlines = true;
         self.update_task = cx.spawn(|outline_panel, mut cx| async move {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
@@ -2017,6 +2020,7 @@ impl OutlinePanel {
 
             outline_panel
                 .update(&mut cx, |outline_panel, cx| {
+                    outline_panel.loading_outlines = false;
                     outline_panel.excerpts = new_excerpts;
                     outline_panel.collapsed_entries = new_collapsed_entries;
                     outline_panel.unfolded_dirs = new_unfolded_dirs;
@@ -2668,12 +2672,27 @@ impl Render for OutlinePanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
         if self.fs_entries.is_empty() {
+            let header = if self.loading_outlines {
+                "Loading outlines"
+            } else {
+                "No outlines available"
+            };
             v_flex()
                 .id("empty-outline_panel")
+                .justify_center()
                 .size_full()
                 .p_4()
                 .track_focus(&self.focus_handle)
-                .child(Label::new("No editor outlines available"))
+                .child(h_flex().justify_center().child(Label::new(header)))
+                .child(
+                    h_flex()
+                        .pt(Spacing::Small.rems(cx))
+                        .justify_center()
+                        .child(Label::new(format!(
+                            "Toggle this panel with {}",
+                            cx.keystroke_text_for(&ToggleFocus)
+                        ))),
+                )
         } else {
             h_flex()
                 .id("outline-panel")
