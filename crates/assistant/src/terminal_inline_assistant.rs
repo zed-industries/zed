@@ -796,7 +796,9 @@ impl PromptEditor {
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         match &self.codegen.read(cx).status {
             CodegenStatus::Idle => {
-                cx.emit(PromptEditorEvent::StartRequested);
+                if !self.editor.read(cx).text(cx).trim().is_empty() {
+                    cx.emit(PromptEditorEvent::StartRequested);
+                }
             }
             CodegenStatus::Pending => {
                 cx.emit(PromptEditorEvent::DismissRequested);
