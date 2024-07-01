@@ -88,8 +88,8 @@ struct DirectComposition {
 }
 
 impl DirectXRenderer {
-    pub(crate) fn new(hwnd: HWND) -> Self {
-        let context = DirectXContext::new(hwnd).unwrap();
+    pub(crate) fn new(hwnd: HWND, transparent: bool) -> Self {
+        let context = DirectXContext::new(hwnd, transparent).unwrap();
         let render = DirectXRenderContext::new(&context.device).unwrap();
         DirectXRenderer {
             atlas: Arc::new(DirectXAtlas::new(
@@ -185,6 +185,7 @@ impl DirectXRenderer {
         background_appearance: WindowBackgroundAppearance,
     ) {
         match background_appearance {
+            // We only support setting `Transparent` and `Opaque` for now.
             WindowBackgroundAppearance::Opaque => {
                 // TODO:
             }
@@ -474,7 +475,7 @@ impl DirectXRenderer {
 }
 
 impl DirectXContext {
-    pub fn new(hwnd: HWND) -> Result<Self> {
+    pub fn new(hwnd: HWND, transparent: bool) -> Result<Self> {
         let dxgi_factory = get_dxgi_factory()?;
         let adapter = get_adapter(&dxgi_factory)?;
         let (device, context) = {
@@ -486,9 +487,9 @@ impl DirectXContext {
         let dxgi_device: IDXGIDevice = device.cast().unwrap();
         let comp_device = get_comp_device(&dxgi_device)?;
         #[cfg(not(target_feature = "enable-renderdoc"))]
-        let swap_chain = create_swap_chain(&dxgi_factory, &device)?;
+        let swap_chain = create_swap_chain(&dxgi_factory, &device, transparent)?;
         #[cfg(target_feature = "enable-renderdoc")]
-        let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd)?;
+        let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd, transparent)?;
         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
         let comp_visual = unsafe { comp_device.CreateVisual() }?;
         unsafe {
@@ -712,7 +713,13 @@ fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
 fn create_swap_chain(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
+    transparent: bool,
 ) -> Result<IDXGISwapChain1> {
+    let alpha_mode = if transparent {
+        DXGI_ALPHA_MODE_PREMULTIPLIED
+    } else {
+        DXGI_ALPHA_MODE_IGNORE
+    };
     let desc = DXGI_SWAP_CHAIN_DESC1 {
         Width: 1,
         Height: 1,
@@ -727,9 +734,7 @@ fn create_swap_chain(
         // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
         Scaling: DXGI_SCALING_STRETCH,
         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-        // Premultiplied alpha is the only supported format by composition swapchain.
-        // AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
-        AlphaMode: DXGI_ALPHA_MODE_IGNORE,
+        AlphaMode: alpha_mode,
         Flags: 0,
     };
     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
@@ -740,6 +745,7 @@ fn create_swap_chain_default(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
     hwnd: HWND,
+    _transparent: bool,
 ) -> Result<IDXGISwapChain1> {
     use windows::Win32::Graphics::Dxgi::DXGI_MWA_NO_ALT_ENTER;
 
