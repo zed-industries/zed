@@ -49,6 +49,7 @@ use crate::*;
 
 pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
+    devices: DirectXDevices,
     context: DirectXContext,
     render: DirectXRenderContext,
     size: Size<DevicePixels>,
@@ -63,7 +64,6 @@ pub(crate) struct DirectXDevices {
 }
 
 struct DirectXContext {
-    devices: DirectXDevices,
     swap_chain: IDXGISwapChain1,
     back_buffer: [Option<ID3D11RenderTargetView>; 1],
     viewport: [D3D11_VIEWPORT; 1],
@@ -114,14 +114,15 @@ impl DirectXDevices {
 }
 
 impl DirectXRenderer {
-    pub(crate) fn new(hwnd: HWND, transparent: bool) -> Self {
-        let context = DirectXContext::new(hwnd, transparent).unwrap();
-        let render = DirectXRenderContext::new(&context.device).unwrap();
+    pub(crate) fn new(devices: DirectXDevices, hwnd: HWND, transparent: bool) -> Self {
+        let context = DirectXContext::new(&devices, hwnd, transparent).unwrap();
+        let render = DirectXRenderContext::new(&devices.device).unwrap();
         DirectXRenderer {
             atlas: Arc::new(DirectXAtlas::new(
-                context.device.clone(),
-                context.context.clone(),
+                devices.device.clone(),
+                devices.device_context.clone(),
             )),
+            devices,
             context,
             render,
             size: size(1.into(), 1.into()),
@@ -140,7 +141,7 @@ impl DirectXRenderer {
             ));
         };
         pre_draw(
-            &self.context.context,
+            &self.devices.device_context,
             &self.render.global_params_buffer,
             &self.context.viewport,
             &self.context.back_buffer,
@@ -181,7 +182,7 @@ impl DirectXRenderer {
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
         self.size = new_size;
-        unsafe { self.context.context.OMSetRenderTargets(None, None) };
+        unsafe { self.devices.device_context.OMSetRenderTargets(None, None) };
         drop(self.context.back_buffer[0].take().unwrap());
         unsafe {
             self.context.swap_chain.ResizeBuffers(
@@ -194,12 +195,12 @@ impl DirectXRenderer {
         }
         let backbuffer = set_render_target_view(
             &self.context.swap_chain,
-            &self.context.device,
-            &self.context.context,
+            &self.devices.device,
+            &self.devices.device_context,
         )?;
         self.context.back_buffer[0] = Some(backbuffer);
         self.context.viewport = set_viewport(
-            &self.context.context,
+            &self.devices.device_context,
             new_size.width.0 as f32,
             new_size.height.0 as f32,
         );
@@ -232,16 +233,16 @@ impl DirectXRenderer {
             &self.render.shadow_pipeline,
             std::mem::size_of::<Shadow>(),
             shadows.len(),
-            &self.context.device,
+            &self.devices.device,
         )
         .map(|input| update_pipeline(&mut self.render.shadow_pipeline, input));
         update_buffer(
-            &self.context.context,
+            &self.devices.device_context,
             &self.render.shadow_pipeline.buffer,
             shadows,
         )?;
         draw_normal(
-            &self.context.context,
+            &self.devices.device_context,
             &self.render.shadow_pipeline,
             &self.context.viewport,
             &self.render.global_params_buffer,
@@ -259,16 +260,16 @@ impl DirectXRenderer {
             &self.render.quad_pipeline,
             std::mem::size_of::<Quad>(),
             quads.len(),
-            &self.context.device,
+            &self.devices.device,
         )
         .map(|input| update_pipeline(&mut self.render.quad_pipeline, input));
         update_buffer(
-            &self.context.context,
+            &self.devices.device_context,
             &self.render.quad_pipeline.buffer,
             quads,
         )?;
         draw_normal(
-            &self.context.context,
+            &self.devices.device_context,
             &self.render.quad_pipeline,
             &self.context.viewport,
             &self.render.global_params_buffer,
@@ -321,7 +322,7 @@ impl DirectXRenderer {
                 MaxDepth: 1.0,
             }];
             pre_draw(
-                &self.context.context,
+                &self.devices.device_context,
                 &self.render.global_params_buffer,
                 &viewport,
                 &rtv,
@@ -333,17 +334,17 @@ impl DirectXRenderer {
                 &self.render.path_raster_pipeline,
                 std::mem::size_of::<PathVertex<ScaledPixels>>(),
                 vertices.len(),
-                &self.context.device,
+                &self.devices.device,
             )
             .map(|input| update_pipeline(&mut self.render.path_raster_pipeline, input));
             update_buffer(
-                &self.context.context,
+                &self.devices.device_context,
                 &self.render.path_raster_pipeline.buffer,
                 &vertices,
             )
             .log_err()?;
             draw_normal(
-                &self.context.context,
+                &self.devices.device_context,
                 &self.render.path_raster_pipeline,
                 &viewport,
                 &self.render.global_params_buffer,
@@ -380,16 +381,16 @@ impl DirectXRenderer {
                 &self.render.paths_pipeline,
                 std::mem::size_of::<PathSprite>(),
                 1,
-                &self.context.device,
+                &self.devices.device,
             )
             .map(|input| update_pipeline(&mut self.render.paths_pipeline, input));
             update_buffer(
-                &self.context.context,
+                &self.devices.device_context,
                 &self.render.paths_pipeline.buffer,
                 &sprites,
             )?;
             draw_with_texture(
-                &self.context.context,
+                &self.devices.device_context,
                 &self.render.paths_pipeline,
                 &texture_view,
                 &self.context.viewport,
@@ -409,16 +410,16 @@ impl DirectXRenderer {
             &self.render.underline_pipeline,
             std::mem::size_of::<Underline>(),
             underlines.len(),
-            &self.context.device,
+            &self.devices.device,
         )
         .map(|input| update_pipeline(&mut self.render.underline_pipeline, input));
         update_buffer(
-            &self.context.context,
+            &self.devices.device_context,
             &self.render.underline_pipeline.buffer,
             underlines,
         )?;
         draw_normal(
-            &self.context.context,
+            &self.devices.device_context,
             &self.render.underline_pipeline,
             &self.context.viewport,
             &self.render.global_params_buffer,
@@ -441,16 +442,16 @@ impl DirectXRenderer {
             &self.render.mono_sprites,
             std::mem::size_of::<MonochromeSprite>(),
             sprites.len(),
-            &self.context.device,
+            &self.devices.device,
         )
         .map(|input| update_pipeline(&mut self.render.mono_sprites, input));
         update_buffer(
-            &self.context.context,
+            &self.devices.device_context,
             &self.render.mono_sprites.buffer,
             sprites,
         )?;
         draw_with_texture(
-            &self.context.context,
+            &self.devices.device_context,
             &self.render.mono_sprites,
             &texture_view,
             &self.context.viewport,
@@ -473,16 +474,16 @@ impl DirectXRenderer {
             &self.render.poly_sprites,
             std::mem::size_of::<PolychromeSprite>(),
             sprites.len(),
-            &self.context.device,
+            &self.devices.device,
         )
         .map(|input| update_pipeline(&mut self.render.poly_sprites, input));
         update_buffer(
-            &self.context.context,
+            &self.devices.device_context,
             &self.render.poly_sprites.buffer,
             sprites,
         )?;
         draw_with_texture(
-            &self.context.context,
+            &self.devices.device_context,
             &self.render.poly_sprites,
             &texture_view,
             &self.context.viewport,
@@ -501,38 +502,24 @@ impl DirectXRenderer {
 }
 
 impl DirectXContext {
-    pub fn new(hwnd: HWND, transparent: bool) -> Result<Self> {
-        let dxgi_factory = get_dxgi_factory()?;
-        let adapter = get_adapter(&dxgi_factory)?;
-        let (device, context) = {
-            let mut device: Option<ID3D11Device> = None;
-            let mut context: Option<ID3D11DeviceContext> = None;
-            get_device(&adapter, Some(&mut device), Some(&mut context))?;
-            (device.unwrap(), context.unwrap())
-        };
-        let dxgi_device: IDXGIDevice = device.cast().unwrap();
-        let comp_device = get_comp_device(&dxgi_device)?;
+    pub fn new(devices: &DirectXDevices, hwnd: HWND, transparent: bool) -> Result<Self> {
         #[cfg(not(target_feature = "enable-renderdoc"))]
-        let swap_chain = create_swap_chain(&dxgi_factory, &device, transparent)?;
+        let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, transparent)?;
         #[cfg(target_feature = "enable-renderdoc")]
         let swap_chain = create_swap_chain_default(&dxgi_factory, &device, hwnd, transparent)?;
         #[cfg(not(target_feature = "enable-renderdoc"))]
-        let direct_composition = DirectComposition::new(&dxgi_device, hwnd)?;
+        let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
         #[cfg(not(target_feature = "enable-renderdoc"))]
         direct_composition.set_swap_chain(&swap_chain)?;
         let back_buffer = [Some(set_render_target_view(
             &swap_chain,
-            &device,
-            &context,
+            &devices.device,
+            &devices.device_context,
         )?)];
-        let viewport = set_viewport(&context, 1.0, 1.0);
-        set_rasterizer_state(&device, &context)?;
+        let viewport = set_viewport(&devices.device_context, 1.0, 1.0);
+        set_rasterizer_state(&devices.device, &devices.device_context)?;
 
         Ok(Self {
-            dxgi_factory,
-            device,
-            dxgi_device,
-            context,
             swap_chain,
             back_buffer,
             viewport,

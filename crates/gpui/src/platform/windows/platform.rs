@@ -43,6 +43,7 @@ pub(crate) struct WindowsPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
+    directx_devices: DirectXDevices,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -91,6 +92,7 @@ impl WindowsPlatform {
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
+        let directx_devices = DirectXDevices::new().expect("Unable to init directx devices.");
 
         Self {
             state,
@@ -99,6 +101,7 @@ impl WindowsPlatform {
             background_executor,
             foreground_executor,
             text_system,
+            directx_devices,
         }
     }
 
@@ -291,6 +294,7 @@ impl Platform for WindowsPlatform {
             self.icon,
             self.foreground_executor.clone(),
             lock.current_cursor,
+            self.directx_devices.clone(),
         );
         drop(lock);
         let handle = window.get_raw_handle();
