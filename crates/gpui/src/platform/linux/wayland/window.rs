@@ -385,11 +385,6 @@ impl WaylandWindowStatePtr {
                 if request_frame_callback {
                     drop(state);
                     self.frame(true);
-                } else {
-                    state.surface.commit();
-                    if let Some(area) = state.requested_client_area {
-                        state.client_area = Some(area);
-                    }
                 }
             }
             _ => {}

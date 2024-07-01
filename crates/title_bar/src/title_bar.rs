@@ -57,6 +57,7 @@ pub struct TitleBar {
     user_store: Model<UserStore>,
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
+    should_move: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -85,6 +86,16 @@ impl Render for TitleBar {
                     this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
                 } else {
                     this.pl_2()
+                }
+            })
+            .map(|el| {
+                match decorations {
+                    Decorations::Server => el,
+                    Decorations::Client { tiling, .. } => el
+                        .when(!(tiling.top && tiling.right), |el| {
+                            el.rounded_tr(px(10.0))
+                        })
+                        .when(!(tiling.top && tiling.left), |el| el.rounded_tl(px(10.0)))
                 }
             })
             .bg(cx.theme().colors().title_bar_background)
@@ -391,12 +402,18 @@ impl Render for TitleBar {
                             })
 
                         })
-                        .on_mouse_down(gpui::MouseButton::Left, move |_ev, cx| {
-                            cx.start_window_move();
-                    })
-
-
-
+                        .on_mouse_move(cx.listener(move |this, _ev, cx| {
+                            if this.should_move {
+                                this.should_move = false;
+                                cx.start_window_move();
+                            }
+                        }))
+                        .on_mouse_down_out(cx.listener(move |this, _ev, _cx| {
+                            this.should_move = false;
+                        }))
+                        .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _ev, _cx| {
+                            this.should_move = true;
+                    }))
                 },
             )
     }
@@ -428,6 +445,7 @@ impl TitleBar {
             content: div().id(id.into()),
             children: SmallVec::new(),
             workspace: workspace.weak_handle(),
+            should_move: false,
             project,
             user_store,
             client,

@@ -32,7 +32,8 @@ use gpui::{
     AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
     EventEmitter, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, ManagedView,
     Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
-    Size, Stateful, Subscription, Task, View, WeakView, WindowBounds, WindowHandle, WindowOptions,
+    Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds, WindowHandle,
+    WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -4178,12 +4179,12 @@ impl Render for Workspace {
                 .justify_start()
                 .items_start()
                 .text_color(colors.text)
-                .bg(colors.background)
                 .overflow_hidden()
                 .children(self.titlebar_item.clone())
                 .child(
                     div()
                         .id("workspace")
+                        .bg(colors.background)
                         .relative()
                         .flex_1()
                         .w_full()
@@ -6513,7 +6514,7 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                         move |_bounds, hitbox, cx| {
                             let mouse = cx.mouse_position();
                             let size = cx.window_bounds().get_bounds().size;
-                            let Some(edge) = resize_edge(mouse, SHADOW_SIZE, size) else {
+                            let Some(edge) = resize_edge(mouse, SHADOW_SIZE, size, tiling) else {
                                 return;
                             };
                             cx.set_global(GlobalResizeEdge(edge));
@@ -6539,19 +6540,19 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                     .size_full()
                     .absolute(),
                 )
-                .when(!(tiling.top || tiling.right), |div| {
+                .when(!(tiling.top && tiling.right), |div| {
                     div.rounded_tr(ROUNDING)
                 })
-                .when(!(tiling.top || tiling.left), |div| div.rounded_tl(ROUNDING))
+                .when(!(tiling.top && tiling.left), |div| div.rounded_tl(ROUNDING))
                 .when(!tiling.top, |div| div.pt(SHADOW_SIZE))
                 .when(!tiling.bottom, |div| div.pb(SHADOW_SIZE))
                 .when(!tiling.left, |div| div.pl(SHADOW_SIZE))
                 .when(!tiling.right, |div| div.pr(SHADOW_SIZE))
-                .on_mouse_move(|e, cx| {
+                .on_mouse_move(move |e, cx| {
                     let size = cx.window_bounds().get_bounds().size;
                     let pos = e.position;
 
-                    let new_edge = resize_edge(pos, SHADOW_SIZE, size);
+                    let new_edge = resize_edge(pos, SHADOW_SIZE, size, tiling);
                     let edge = cx.try_global::<GlobalResizeEdge>();
                     if new_edge != edge.map(|edge| edge.0) {
                         cx.window_handle()
@@ -6563,7 +6564,7 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                     let size = cx.window_bounds().get_bounds().size;
                     let pos = e.position;
 
-                    let edge = match resize_edge(pos, SHADOW_SIZE, size) {
+                    let edge = match resize_edge(pos, SHADOW_SIZE, size, tiling) {
                         Some(value) => value,
                         None => return,
                     };
@@ -6589,10 +6590,10 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                     Decorations::Server => div,
                     Decorations::Client { shadows, tiling } => div
                         .border_color(grey)
-                        .when(!(tiling.top || tiling.right), |div| {
+                        .when(!(tiling.top && tiling.right), |div| {
                             div.rounded_tr(ROUNDING)
                         })
-                        .when(!(tiling.top || tiling.left), |div| div.rounded_tl(ROUNDING))
+                        .when(!(tiling.top && tiling.left), |div| div.rounded_tl(ROUNDING))
                         .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
                         .when(!tiling.bottom, |div| div.border_b(BORDER_SIZE))
                         .when(!tiling.left, |div| div.border_l(BORDER_SIZE))
@@ -6620,25 +6621,37 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
         )
 }
 
-fn resize_edge(pos: Point<Pixels>, shadow_size: Pixels, size: Size<Pixels>) -> Option<ResizeEdge> {
-    let edge = if pos.y < shadow_size && pos.x < shadow_size {
+fn resize_edge(
+    pos: Point<Pixels>,
+    shadow_size: Pixels,
+    size: Size<Pixels>,
+    tiling: Tiling,
+) -> Option<ResizeEdge> {
+
+    let above_top = !tiling.top && pos.y <shadow_size;
+    let to_left = !tiling.left && pos.x < shadow_size;
+    let to_right = !tiling.right && pos.x > size.width - shadow_size;
+    let below_bottom = !tiling.bottom && pos.y > size.height - shadow_size;
+
+    let edge = if above_top && to_left {
         ResizeEdge::TopLeft
-    } else if pos.y < shadow_size && pos.x > size.width - shadow_size {
+    } else if above_top && to_right {
         ResizeEdge::TopRight
-    } else if pos.y < shadow_size {
+    } else if above_top {
         ResizeEdge::Top
-    } else if pos.y > size.height - shadow_size && pos.x < shadow_size {
+    } else if below_bottom && to_left {
         ResizeEdge::BottomLeft
-    } else if pos.y > size.height - shadow_size && pos.x > size.width - shadow_size {
+    } else if below_bottom && to_right {
         ResizeEdge::BottomRight
-    } else if pos.y > size.height - shadow_size {
+    } else if below_bottom {
         ResizeEdge::Bottom
-    } else if pos.x < shadow_size {
+    } else if to_left {
         ResizeEdge::Left
-    } else if pos.x > size.width - shadow_size {
+    } else if to_right {
         ResizeEdge::Right
     } else {
         return None;
     };
+
     Some(edge)
 }
