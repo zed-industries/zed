@@ -677,11 +677,9 @@ float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Targe
     float distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
 
     float4 color = sample;
-    if (sprite.grayscale) {
-        float grayscale = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
-        color.r = grayscale;
-        color.g = grayscale;
-        color.b = grayscale;
+    if ((sprite.grayscale & 0xFFu) != 0u) {
+        float3 grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
+        color = float4(grayscale, sample.a);
     }
     color.a *= saturate(0.5 - distance);
     return color;
