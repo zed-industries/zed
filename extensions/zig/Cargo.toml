@@ -13,4 +13,4 @@ path = "src/zig.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.0.6"
+zed_extension_api = { path = "../../crates/extension_api" }
