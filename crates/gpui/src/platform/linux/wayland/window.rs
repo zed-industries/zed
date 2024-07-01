@@ -359,10 +359,6 @@ impl WaylandWindowStatePtr {
                                 configure.size,
                             )
                         };
-                            state.window_bounds,
-                            state.client_area,
-                            configure.size,
-                        );
 
                         if got_unmaximized {
                             configure.size = Some(state.window_bounds.size);
