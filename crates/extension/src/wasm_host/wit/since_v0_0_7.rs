@@ -4,6 +4,7 @@ use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use async_zip::base::read::stream::ZipFileReader;
 use futures::{io::BufReader, FutureExt as _};
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
@@ -373,16 +374,40 @@ impl ExtensionImports for WasmState {
                     futures::pin_mut!(body);
                     self.host.fs.create_file_with(&zip_path, body).await?;
 
-                    let unzip_status = std::process::Command::new("unzip")
-                        .current_dir(&extension_work_dir)
-                        .arg("-d")
-                        .arg(&destination_path)
-                        .arg(&zip_path)
-                        .output()?
-                        .status;
-                    if !unzip_status.success() {
-                        Err(anyhow!("failed to unzip {} archive", path.display()))?;
+                    let zip_file = smol::fs::File::open(&zip_path).await?;
+                    let mut archive = ZipFileReader::new(BufReader::new(zip_file));
+                    let parent_dir = destination_path
+                        .parent()
+                        .expect("failed to get parent directory");
+                    self.host.fs.create_dir(&parent_dir).await?;
+
+                    while let Some(mut item) = archive.next_with_entry().await? {
+                        let entry_reader = item.reader_mut();
+                        let entry = entry_reader.entry();
+                        let path = destination_path.join(entry.filename().as_str().unwrap());
+
+                        if entry.dir().unwrap() {
+                            self.host.fs.create_dir(&path).await?;
+                        } else {
+                            let parent_dir = path.parent().expect("failed to get parent directory");
+                            self.host.fs.create_dir(&parent_dir).await?;
+                            futures::pin_mut!(entry_reader);
+                            self.host.fs.create_file_with(&path, entry_reader).await?;
+                        }
+                        archive = item.skip().await?;
                     }
+
+                    // remove the zip file after extracting
+                    self.host
+                        .fs
+                        .remove_file(
+                            &zip_path,
+                            fs::RemoveOptions {
+                                recursive: false,
+                                ignore_if_not_exists: true,
+                            },
+                        )
+                        .await?;
                 }
             }
 
