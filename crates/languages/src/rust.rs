@@ -2,9 +2,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
-use gpui::AsyncAppContext;
+use gpui::{AppContext, AsyncAppContext};
 use http::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
+use language_settings::all_language_settings;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
 use project::project_settings::{BinarySettings, ProjectSettings};
@@ -407,7 +408,22 @@ impl ContextProvider for RustContextProvider {
         Ok(TaskVariables::default())
     }
 
-    fn associated_tasks(&self) -> Option<TaskTemplates> {
+    fn associated_tasks(
+        &self,
+        file: Option<Arc<dyn language::File>>,
+        cx: &AppContext,
+    ) -> Option<TaskTemplates> {
+        const DEFAULT_RUN_NAME_STR: &'static str = "RUST_DEFAULT_PACKAGE_RUN";
+        let package_to_run = all_language_settings(file.as_ref(), cx)
+            .language(Some("Rust"))
+            .tasks
+            .variables
+            .get(DEFAULT_RUN_NAME_STR);
+        let run_task_args = if let Some(package_to_run) = package_to_run {
+            vec!["run".into(), "-p".into(), package_to_run.clone()]
+        } else {
+            vec!["run".into()]
+        };
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: format!(
@@ -501,7 +517,7 @@ impl ContextProvider for RustContextProvider {
             TaskTemplate {
                 label: "cargo run".into(),
                 command: "cargo".into(),
-                args: vec!["run".into()],
+                args: run_task_args,
                 cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
