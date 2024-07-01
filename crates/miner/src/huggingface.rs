@@ -1,12 +1,16 @@
 use crate::{LanguageModel, Message};
 use anyhow::{anyhow, Result};
-use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt, StreamExt};
+use futures::{
+    channel::mpsc, future::BoxFuture, io::BufReader, AsyncBufReadExt, AsyncReadExt, FutureExt,
+    SinkExt, StreamExt,
+};
 use gpui::BackgroundExecutor;
-use reqwest::Client;
+use http::HttpClient;
 use serde::Deserialize;
+use std::sync::Arc;
 
 pub struct HuggingFaceClient {
-    client: Client,
+    client: Arc<dyn HttpClient>,
     endpoint: String,
     api_key: String,
     background_executor: BackgroundExecutor,
@@ -15,7 +19,7 @@ pub struct HuggingFaceClient {
 impl HuggingFaceClient {
     pub fn new(endpoint: String, api_key: String, background_executor: BackgroundExecutor) -> Self {
         Self {
-            client: Client::new(),
+            client: http::client(None),
             endpoint,
             api_key,
             background_executor,
@@ -45,41 +49,59 @@ impl LanguageModel for HuggingFaceClient {
                 "max_tokens": 2048
             });
 
-            let response = self
-                .client
-                .post(&self.endpoint)
+            let request = http::Request::builder()
+                .method(http::Method::POST)
+                .uri(&self.endpoint)
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
-                .json(&request)
-                .send()
-                .await?;
+                .body(http::AsyncBody::from(serde_json::to_vec(&request)?))?;
+
+            let mut response = self.client.send(request).await?;
 
             if !response.status().is_success() {
+                let mut body = Vec::new();
+                response.body_mut().read_to_end(&mut body).await?;
+                let body_str = std::str::from_utf8(&body)?;
                 return Err(anyhow!(
-                    "error streaming completion: {:?}",
-                    response.text().await?
+                    "Failed to connect to API: {} {}",
+                    response.status(),
+                    body_str
                 ));
             }
 
+            let reader = BufReader::new(response.into_body());
+            let stream = reader.lines().filter_map(|line| async move {
+                match line {
+                    Ok(line) => {
+                        let line = line.strip_prefix("data: ")?;
+                        match serde_json::from_str::<StreamOutput>(line) {
+                            Ok(output) => {
+                                if !output.token.special {
+                                    Some(Ok(output.token.text))
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(error) => Some(Err(anyhow!(error))),
+                        }
+                    }
+                    Err(error) => Some(Err(anyhow!(error))),
+                }
+            });
+
             self.background_executor
                 .spawn(async move {
-                    let mut stream = response.bytes_stream();
-                    while let Some(chunk) = stream.next().await {
-                        if let Ok(chunk) = chunk {
-                            if let Ok(text) = String::from_utf8(chunk.to_vec()) {
-                                for line in text.lines() {
-                                    if line.starts_with("data:") {
-                                        let json_str = line.trim_start_matches("data:");
-
-                                        if let Ok(output) =
-                                            serde_json::from_str::<StreamOutput>(json_str)
-                                        {
-                                            if !output.token.special {
-                                                let _ = tx.send(output.token.text).await;
-                                            }
-                                        }
-                                    }
+                    futures::pin_mut!(stream);
+                    while let Some(result) = stream.next().await {
+                        match result {
+                            Ok(text) => {
+                                if tx.send(text).await.is_err() {
+                                    break;
                                 }
+                            }
+                            Err(e) => {
+                                eprintln!("Error in stream: {:?}", e);
+                                break;
                             }
                         }
                     }

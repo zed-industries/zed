@@ -26,9 +26,9 @@ fs.workspace = true
 git.workspace = true
 gpui.workspace = true
 heed.workspace = true
+http.workspace = true
 ignore.workspace = true
 indicatif = "0.17.8"
-reqwest = { version = "0.12.5", features = ["json", "stream"] }
 serde.workspace = true
 serde_json.workspace = true
 tree-sitter.workspace = true
