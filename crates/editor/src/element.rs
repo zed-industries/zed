@@ -1654,6 +1654,27 @@ impl EditorElement {
         }
     }
 
+    fn calculate_roman_number(&self, number: &DisplayRowDelta) -> String {
+        let values = [
+            1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1
+        ];
+        let symbols = [
+            "M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"
+        ];
+
+        let mut num = number.clone();
+        let mut roman = String::with_capacity(15);  // Capacità ottimale per evitare molteplici riallocazioni
+
+        for i in 0..values.len() {
+            while num >= values[i] {
+                num -= values[i];
+                roman.push_str(symbols[i]);
+            }
+        }
+
+        roman
+    }
+
     fn calculate_relative_line_numbers(
         &self,
         snapshot: &EditorSnapshot,
@@ -1737,6 +1758,7 @@ impl EditorElement {
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
 
         let is_relative = EditorSettings::get_global(cx).relative_line_numbers;
+        let is_roman = EditorSettings::get_global(cx).roman_line_numbers;
         let relative_to = if is_relative {
             Some(newest_selection_head.row())
         } else {
@@ -1760,7 +1782,13 @@ impl EditorElement {
                 let number = relative_rows
                     .get(&DisplayRow(ix as u32 + rows.start.0))
                     .unwrap_or(&default_number);
-                write!(&mut line_number, "{number}").unwrap();
+                if !is_roman {
+                    write!(&mut line_number, "{number}").unwrap();
+                }
+                else {
+                    let roman = self.calculate_roman_number(number);
+                    write!(&mut line_number, "{roman}").unwrap();
+                }
                 let run = TextRun {
                     len: line_number.len(),
                     font: self.style.text.font(),

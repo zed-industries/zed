@@ -19,6 +19,7 @@ pub struct EditorSettings {
     pub vertical_scroll_margin: f32,
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
+    pub roman_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
@@ -188,6 +189,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 1.0
     pub scroll_sensitivity: Option<f32>,
+    /// Whether the line numbers on editors gutter are in roman format.
+    ///
+    /// Default: false
+    pub roman_line_numbers: Option<bool>,
     /// Whether the line numbers on editors gutter are relative or not.
     ///
     /// Default: false
