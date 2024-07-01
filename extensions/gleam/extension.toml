@@ -21,5 +21,5 @@ tooltip_text = "Insert Gleam project data"
 
 [slash_commands.gleam-docs]
 description = "Returns Gleam docs."
-requires_argument = false
+requires_argument = true
 tooltip_text = "Insert Gleam docs"

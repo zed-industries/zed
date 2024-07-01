@@ -168,15 +168,15 @@ impl zed::Extension for GleamExtension {
     fn run_slash_command(
         &self,
         command: SlashCommand,
-        _argument: Option<String>,
+        argument: Option<String>,
         worktree: &zed::Worktree,
     ) -> Result<SlashCommandOutput, String> {
         match command.name.as_str() {
             "gleam-docs" => {
-                let mut text = String::new();
+                let argument = argument.ok_or_else(|| "missing argument".to_string())?;
 
                 let mut docs_path = PathBuf::from_iter(["build", "dev", "docs"]);
-                docs_path.push("startest");
+                docs_path.push(argument);
                 docs_path.push("index.html");
 
                 let html = worktree.read_text_file(&docs_path.to_string_lossy())?;
@@ -195,6 +195,7 @@ impl zed::Extension for GleamExtension {
                 let markdown = convert_html_to_markdown(html.as_bytes(), &mut handlers)
                     .map_err(|err| format!("failed to convert docs to Markdown {err}"))?;
 
+                let mut text = String::new();
                 text.push_str(&markdown);
 
                 Ok(SlashCommandOutput {
