@@ -53,7 +53,6 @@ pub(crate) struct DirectXRenderer {
     context: DirectXContext,
     globals: DirectXGlobalElements,
     render: DirectXRenderContext,
-    size: Size<DevicePixels>,
 }
 
 #[derive(Clone)]
@@ -132,7 +131,6 @@ impl DirectXRenderer {
             context,
             globals,
             render,
-            size: size(1.into(), 1.into()),
         }
     }
 
@@ -188,7 +186,6 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
-        self.size = new_size;
         unsafe { self.devices.device_context.OMSetRenderTargets(None, None) };
         drop(self.context.back_buffer[0].take().unwrap());
         unsafe {
