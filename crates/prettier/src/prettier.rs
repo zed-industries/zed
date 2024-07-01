@@ -317,11 +317,14 @@ impl Prettier {
                             })
                             .collect();
 
-                        let prettier_parser = prettier_settings.parser.as_deref().or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
+                        let mut prettier_parser = prettier_settings.parser.as_deref();
+                        if buffer_path.is_none() {
+                            prettier_parser = prettier_parser.or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
+                            if prettier_parser.is_none() {
+                                log::error!("Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}");
+                                return Err(anyhow!("Cannot determine prettier parser for unsaved file"));
+                            }
 
-                        if prettier_parser.is_none() && buffer_path.is_none() {
-                            log::error!("Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}");
-                            return Err(anyhow!("Cannot determine prettier parser for unsaved file"));
                         }
 
                         log::debug!(

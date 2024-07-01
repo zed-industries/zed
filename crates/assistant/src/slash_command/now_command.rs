@@ -46,7 +46,7 @@ impl SlashCommand for NowSlashCommand {
         _cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let now = Local::now();
-        let text = format!("Today is {now}.", now = now.to_rfc3339());
+        let text = format!("Today is {now}.", now = now.to_rfc2822());
         let range = 0..text.len();
 
         Task::ready(Ok(SlashCommandOutput {
@@ -54,7 +54,7 @@ impl SlashCommand for NowSlashCommand {
             sections: vec![SlashCommandOutputSection {
                 range,
                 icon: IconName::CountdownTimer,
-                label: now.to_rfc3339().into(),
+                label: now.to_rfc2822().into(),
             }],
             run_commands_in_text: false,
         }))
