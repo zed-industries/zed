@@ -117,21 +117,21 @@ impl DirectXDevices {
 }
 
 impl DirectXRenderer {
-    pub(crate) fn new(devices: DirectXDevices, hwnd: HWND, transparent: bool) -> Self {
+    pub(crate) fn new(devices: DirectXDevices, hwnd: HWND, transparent: bool) -> Result<Self> {
         let atlas = Arc::new(DirectXAtlas::new(
             devices.device.clone(),
             devices.device_context.clone(),
         ));
-        let context = DirectXContext::new(&devices, hwnd, transparent).unwrap();
-        let globals = DirectXGlobalElements::new(&devices.device).unwrap();
-        let pipelines = DirectXRenderPipelines::new(&devices.device).unwrap();
-        DirectXRenderer {
+        let context = DirectXContext::new(&devices, hwnd, transparent)?;
+        let globals = DirectXGlobalElements::new(&devices.device)?;
+        let pipelines = DirectXRenderPipelines::new(&devices.device)?;
+        Ok(DirectXRenderer {
             atlas,
             devices,
             context,
             globals,
             pipelines,
-        }
+        })
     }
 
     pub(crate) fn spirite_atlas(&self) -> Arc<dyn PlatformAtlas> {

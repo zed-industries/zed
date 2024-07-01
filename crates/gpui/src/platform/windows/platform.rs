@@ -295,7 +295,7 @@ impl Platform for WindowsPlatform {
             self.foreground_executor.clone(),
             lock.current_cursor,
             self.directx_devices.clone(),
-        );
+        )?;
         drop(lock);
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);

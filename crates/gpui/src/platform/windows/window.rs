@@ -11,7 +11,7 @@ use std::{
 };
 
 use ::util::ResultExt;
-use anyhow::Context;
+use anyhow::{Context, Result};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use raw_window_handle as rwh;
@@ -68,7 +68,7 @@ impl WindowsWindowState {
         cs: &CREATESTRUCTW,
         current_cursor: HCURSOR,
         display: WindowsDisplay,
-    ) -> Self {
+    ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
@@ -82,7 +82,7 @@ impl WindowsWindowState {
             origin,
             size: logical_size,
         };
-        let renderer = DirectXRenderer::new(directx_devices, hwnd, transparent);
+        let renderer = DirectXRenderer::new(directx_devices, hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
@@ -90,7 +90,7 @@ impl WindowsWindowState {
         let nc_button_pressed = None;
         let fullscreen = None;
 
-        Self {
+        Ok(Self {
             origin,
             logical_size,
             fullscreen_restore_bounds,
@@ -105,7 +105,7 @@ impl WindowsWindowState {
             display,
             fullscreen,
             hwnd,
-        }
+        })
     }
 
     #[inline]
@@ -199,7 +199,7 @@ impl WindowsWindowState {
 }
 
 impl WindowsWindowStatePtr {
-    fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Rc<Self> {
+    fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsWindowState::new(
             hwnd,
             context.directx_devices.clone(),
@@ -207,15 +207,15 @@ impl WindowsWindowStatePtr {
             cs,
             context.current_cursor,
             context.display,
-        ));
+        )?);
 
-        Rc::new(Self {
+        Ok(Rc::new(Self {
             state,
             hwnd,
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             executor: context.executor.clone(),
-        })
+        }))
     }
 }
 
@@ -232,7 +232,7 @@ pub(crate) struct Callbacks {
 }
 
 struct WindowCreateContext {
-    inner: Option<Rc<WindowsWindowStatePtr>>,
+    inner: Option<Result<Rc<WindowsWindowStatePtr>>>,
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: WindowsDisplay,
@@ -250,7 +250,7 @@ impl WindowsWindow {
         executor: ForegroundExecutor,
         current_cursor: HCURSOR,
         directx_devices: DirectXDevices,
-    ) -> Self {
+    ) -> Result<Self> {
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
             .titlebar
@@ -300,7 +300,7 @@ impl WindowsWindow {
                 lpparam,
             )
         };
-        let state_ptr = Rc::clone(context.inner.as_ref().unwrap());
+        let state_ptr = context.inner.take().unwrap()?;
         register_drag_drop(state_ptr.clone());
         let wnd = Self(state_ptr);
 
@@ -325,7 +325,7 @@ impl WindowsWindow {
         }
         unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok().log_err() };
 
-        wnd
+        Ok(wnd)
     }
 }
 
@@ -883,10 +883,15 @@ unsafe extern "system" fn wnd_proc(
         let cs = unsafe { &*cs };
         let ctx = cs.lpCreateParams as *mut WindowCreateContext;
         let ctx = unsafe { &mut *ctx };
-        let state_ptr = WindowsWindowStatePtr::new(ctx, hwnd, cs);
-        let weak = Box::new(Rc::downgrade(&state_ptr));
+        let creation_result = WindowsWindowStatePtr::new(ctx, hwnd, cs);
+        if creation_result.is_err() {
+            ctx.inner = Some(creation_result);
+            return LRESULT(0);
+        }
+        let state_ptr_ref = creation_result.as_ref().unwrap();
+        let weak = Box::new(Rc::downgrade(state_ptr_ref));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
-        ctx.inner = Some(state_ptr);
+        ctx.inner = Some(creation_result);
         return LRESULT(1);
     }
     let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowStatePtr>;
