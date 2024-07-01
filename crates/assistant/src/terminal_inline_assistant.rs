@@ -116,6 +116,7 @@ impl TerminalInlineAssistant {
         let terminal_assistant = TerminalInlineAssist::new(
             assist_id,
             terminal_view,
+            assistant_panel.is_some(),
             prompt_editor,
             workspace.clone(),
             cx,
@@ -237,6 +238,22 @@ impl TerminalInlineAssistant {
             .ok()
             .flatten();
 
+        let context_request = if assist.include_context {
+            assist.workspace.as_ref().and_then(|workspace| {
+                let workspace = workspace.upgrade()?.read(cx);
+                let assistant_panel = workspace.panel::<AssistantPanel>(cx)?;
+                Some(
+                    assistant_panel
+                        .read(cx)
+                        .active_context(cx)?
+                        .read(cx)
+                        .to_completion_request(cx),
+                )
+            })
+        } else {
+            None
+        };
+
         let prompt = generate_terminal_assistant_prompt(
             &assist
                 .prompt_editor
@@ -248,10 +265,15 @@ impl TerminalInlineAssistant {
             working_directory.as_deref(),
         );
 
-        let messages = vec![LanguageModelRequestMessage {
+        let mut messages = Vec::new();
+        if let Some(context_request) = context_request {
+            messages = context_request.messages;
+        }
+
+        messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: prompt,
-        }];
+        });
 
         Ok(LanguageModelRequest {
             model,
@@ -337,6 +359,7 @@ struct TerminalInlineAssist {
     prompt_editor: Option<View<PromptEditor>>,
     codegen: Model<Codegen>,
     workspace: Option<WeakView<Workspace>>,
+    include_context: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -344,6 +367,7 @@ impl TerminalInlineAssist {
     pub fn new(
         assist_id: TerminalInlineAssistId,
         terminal: &View<TerminalView>,
+        include_context: bool,
         prompt_editor: View<PromptEditor>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
@@ -354,6 +378,7 @@ impl TerminalInlineAssist {
             prompt_editor: Some(prompt_editor.clone()),
             codegen: codegen.clone(),
             workspace: workspace.clone(),
+            include_context,
             _subscriptions: vec![
                 cx.subscribe(&prompt_editor, |prompt_editor, event, cx| {
                     TerminalInlineAssistant::update_global(cx, |this, cx| {
