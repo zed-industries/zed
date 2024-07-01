@@ -130,6 +130,7 @@ pub struct RunningKernel {
     shell_task: Task<anyhow::Result<()>>,
     #[allow(unused)]
     iopub_task: Task<anyhow::Result<()>>,
+    connection_path: PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
     pub kernel_info: Option<KernelInfoReply>,
@@ -222,6 +223,7 @@ impl RunningKernel {
                     request_tx,
                     shell_task,
                     iopub_task,
+                    connection_path,
                     // Technically a third secret thing -- unknown
                     execution_state: ExecutionState::Busy,
                     kernel_info: None,
@@ -229,6 +231,14 @@ impl RunningKernel {
                 messages_rx,
             ))
         })
+    }
+}
+
+impl Drop for RunningKernel {
+    fn drop(&mut self) {
+        self.request_tx.close_channel();
+
+        std::fs::remove_file(&self.connection_path).ok();
     }
 }
 
