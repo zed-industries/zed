@@ -307,6 +307,7 @@ pub enum ExecutionStatus {
     Unknown,
     #[allow(unused)]
     ConnectingToKernel,
+    Queued,
     Executing,
     Finished,
     ShuttingDown,
@@ -460,6 +461,7 @@ impl Render for ExecutionView {
                 ExecutionStatus::Shutdown => {
                     return div().child("Kernel shutdown").into_any_element()
                 }
+                ExecutionStatus::Queued => return div().child("Queued").into_any_element(),
             }
         }
 

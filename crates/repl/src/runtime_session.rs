@@ -124,7 +124,7 @@ impl Session {
 
         let status = match &self.kernel {
             // Technically this is probably more like queued. Later Status messages will update it
-            Kernel::RunningKernel(_) => ExecutionStatus::Executing,
+            Kernel::RunningKernel(_) => ExecutionStatus::Queued,
             Kernel::StartingKernel(_) => ExecutionStatus::ConnectingToKernel,
             // todo!(): Be more fine grained
             Kernel::ErroredLaunch(_) => ExecutionStatus::Unknown,
@@ -173,7 +173,28 @@ impl Session {
         self.blocks
             .insert(message.header.msg_id.clone(), editor_block);
 
-        self.send(&message, cx).ok();
+        match &self.kernel {
+            Kernel::RunningKernel(_) => {
+                self.send(&message, cx).ok();
+            }
+            Kernel::StartingKernel(task) => {
+                let task = task.clone();
+                let message = message.clone();
+
+                cx.spawn(|this, mut cx| async move {
+                    task.await;
+                    this.update(&mut cx, |this, cx| {
+                        this.send(&message, cx).ok();
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            Kernel::ErroredLaunch(_) => {
+                // todo!(): Show error message for this run
+            }
+            _ => {}
+        }
     }
 
     fn route(&mut self, message: JupyterMessage, cx: &mut ViewContext<Self>) {
