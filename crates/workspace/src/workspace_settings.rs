@@ -14,6 +14,7 @@ pub struct WorkspaceSettings {
     pub restore_on_startup: RestoreOnStartupBehaviour,
     pub drop_target_size: f32,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
+    pub open_new_workspace_in_current_window: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -83,6 +84,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: auto ("on" on macOS, "off" otherwise)
     pub when_closing_with_no_tabs: Option<CloseWindowWhenNoItems>,
+    /// Whether to open new workspace in current window
+    ///
+    /// Default: false
+    pub open_new_workspace_in_current_window: Option<bool>,
 }
 
 #[derive(Deserialize)]

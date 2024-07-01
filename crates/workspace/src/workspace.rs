@@ -1589,7 +1589,11 @@ impl Workspace {
 
             if let Some(task) = this
                 .update(&mut cx, |this, cx| {
-                    this.open_workspace_for_paths(false, paths, cx)
+                    this.open_workspace_for_paths(
+                        WorkspaceSettings::get_global(cx).open_new_workspace_in_current_window,
+                        paths,
+                        cx,
+                    )
                 })
                 .log_err()
             {
