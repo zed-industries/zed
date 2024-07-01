@@ -9,8 +9,8 @@ use client::{Client, UserStore};
 use collab::render_color_ribbon;
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
-    Interactivity, IntoElement, Model, ParentElement, Render, Stateful, StatefulInteractiveElement,
-    Styled, Subscription, ViewContext, VisualContext, WeakView,
+    Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
+    StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
@@ -123,7 +123,7 @@ impl Render for TitleBar {
                                 .children(self.render_project_host(cx))
                                 .child(self.render_project_name(cx))
                                 .children(self.render_project_branch(cx))
-                                .on_mouse_move(|_, cx| cx.stop_propagation()),
+                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                         )
                         .child(
                             h_flex()
@@ -155,7 +155,7 @@ impl Render for TitleBar {
 
                                         this.children(current_user_face_pile.map(|face_pile| {
                                             v_flex()
-                                                .on_mouse_move(|_, cx| cx.stop_propagation())
+                                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                                                 .child(face_pile)
                                                 .child(render_color_ribbon(player_colors.local().cursor))
                                         }))
@@ -218,7 +218,7 @@ impl Render for TitleBar {
                             h_flex()
                                 .gap_1()
                                 .pr_1()
-                                .on_mouse_move(|_, cx| cx.stop_propagation())
+                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                                 .when_some(room, |this, room| {
                                     let room = room.read(cx);
                                     let project = self.project.read(cx);

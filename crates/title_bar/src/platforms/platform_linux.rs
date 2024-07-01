@@ -117,7 +117,7 @@ impl RenderOnce for TitlebarButton {
 
         let should_round_top_corner = match cx.window_decorations() {
             gpui::Decorations::Server => false,
-            gpui::Decorations::Client { tiling, ..} => !(tiling.right && tiling.top)
+            gpui::Decorations::Client { tiling, .. } => !(tiling.right && tiling.top),
         };
 
         h_flex()
@@ -133,18 +133,21 @@ impl RenderOnce for TitlebarButton {
 
                 style.bg(active_color)
             })
-            .when(self.icon == TitlebarButtonType::Close && should_round_top_corner, |div| {
-                // Matches how it is set in the workspace.
-                // Patch around the lack of support for non-rectangular clipping masks in GPUI
-                div.rounded_tr(px(10.0))
-            })
+            .when(
+                self.icon == TitlebarButtonType::Close && should_round_top_corner,
+                |div| {
+                    // Matches how it is set in the workspace.
+                    // Patch around the lack of support for non-rectangular clipping masks in GPUI
+                    div.rounded_tr(px(10.0))
+                },
+            )
             .child(Icon::new(match self.icon {
                 TitlebarButtonType::Minimize => IconName::Dash,
                 TitlebarButtonType::Restore => IconName::Minimize,
                 TitlebarButtonType::Maximize => IconName::Maximize,
                 TitlebarButtonType::Close => IconName::Close,
             }))
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.prevent_default())
+            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             .on_click(move |_, cx| {
                 cx.stop_propagation();
                 match self.icon {
