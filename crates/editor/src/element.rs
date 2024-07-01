@@ -1663,7 +1663,7 @@ impl EditorElement {
         ];
 
         let mut num = number.clone();
-        let mut roman = String::with_capacity(15);  // Capacità ottimale per evitare molteplici riallocazioni
+        let mut roman = String::with_capacity(15);
 
         for i in 0..values.len() {
             while num >= values[i] {
