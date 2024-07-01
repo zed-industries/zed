@@ -688,6 +688,7 @@
       "cmd-c": "terminal::Copy",
       "cmd-v": "terminal::Paste",
       "cmd-k": "terminal::Clear",
+      "ctrl-enter": "assistant::InlineAssist",
       // Some nice conveniences
       "cmd-backspace": ["terminal::SendText", "\u0015"],
       "cmd-right": ["terminal::SendText", "\u0005"],
