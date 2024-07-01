@@ -1,7 +1,7 @@
 use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
 
 use ::util::ResultExt;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use collections::FxHasher;
 use windows::{
     core::*,
@@ -154,7 +154,7 @@ impl DirectXRenderer {
             &self.globals.blend_state,
         )?;
         for batch in scene.batches() {
-            let ok = match batch {
+            match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
                 PrimitiveBatch::Quads(quads) => self.draw_quads(quads),
                 PrimitiveBatch::Paths(paths) => self.draw_paths(paths, &path_tiles),
@@ -168,18 +168,14 @@ impl DirectXRenderer {
                     sprites,
                 } => self.draw_polychrome_sprites(texture_id, sprites),
                 PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(surfaces),
-            };
-            if ok.is_err() {
-                log::error!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+            }.context(format!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
                     scene.paths.len(),
                     scene.shadows.len(),
                     scene.quads.len(),
                     scene.underlines.len(),
                     scene.monochrome_sprites.len(),
                     scene.polychrome_sprites.len(),
-                    scene.surfaces.len(),);
-                return ok;
-            }
+                    scene.surfaces.len(),))?;
         }
         unsafe { self.context.swap_chain.Present(0, 0) }.ok()?;
         Ok(())
