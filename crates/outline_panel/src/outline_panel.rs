@@ -19,7 +19,7 @@ use editor::{
     DisplayPoint, Editor, EditorEvent, ExcerptId, ExcerptRange,
 };
 use file_icons::FileIcons;
-use fuzzy::{match_strings, StringMatchCandidate};
+use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, px, uniform_list, Action, AnyElement, AppContext,
     AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId,
@@ -41,8 +41,9 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
     ui::{
-        h_flex, v_flex, ActiveTheme, Color, ContextMenu, FluentBuilder, Icon, IconName, IconSize,
-        Label, LabelCommon, ListItem, Selectable, Spacing, StyledExt, StyledTypography,
+        h_flex, v_flex, ActiveTheme, Color, ContextMenu, FluentBuilder, HighlightedLabel, Icon,
+        IconName, IconSize, Label, LabelCommon, ListItem, Selectable, Spacing, StyledExt,
+        StyledTypography,
     },
     OpenInTerminal, Workspace,
 };
@@ -91,8 +92,15 @@ pub struct OutlinePanel {
     cached_entries_update_task: Task<()>,
     outline_fetch_tasks: HashMap<(BufferId, ExcerptId), Task<()>>,
     excerpts: HashMap<BufferId, HashMap<ExcerptId, Excerpt>>,
-    cached_entries_with_depth: Vec<(usize, EntryOwned)>,
+    cached_entries_with_depth: Vec<CachedEntry>,
     query_editor: View<Editor>,
+}
+
+#[derive(Clone, Debug)]
+struct CachedEntry {
+    depth: usize,
+    string_match: Option<StringMatch>,
+    entry: EntryOwned,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -614,7 +622,7 @@ impl OutlinePanel {
         if let Some(entry_to_select) = self.selected_entry.clone().and_then(|selected_entry| {
             self.cached_entries_with_depth
                 .iter()
-                .map(|(_, entry)| entry)
+                .map(|cached_entry| &cached_entry.entry)
                 .skip_while(|entry| entry != &&selected_entry)
                 .skip(1)
                 .next()
@@ -633,7 +641,7 @@ impl OutlinePanel {
             self.cached_entries_with_depth
                 .iter()
                 .rev()
-                .map(|(_, entry)| entry)
+                .map(|cached_entry| &cached_entry.entry)
                 .skip_while(|entry| entry != &&selected_entry)
                 .skip(1)
                 .next()
@@ -653,7 +661,7 @@ impl OutlinePanel {
                 .cached_entries_with_depth
                 .iter()
                 .rev()
-                .map(|(_, entry)| entry)
+                .map(|cached_entry| &cached_entry.entry)
                 .skip_while(|entry| entry != &&selected_entry)
                 .skip(1);
             match &selected_entry {
@@ -731,8 +739,8 @@ impl OutlinePanel {
     }
 
     fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
-        if let Some((_, first_entry)) = self.cached_entries_with_depth.iter().next() {
-            self.selected_entry = Some(first_entry.clone());
+        if let Some(first_entry) = self.cached_entries_with_depth.iter().next() {
+            self.selected_entry = Some(first_entry.entry.clone());
             self.autoscroll(cx);
             cx.notify();
         }
@@ -743,7 +751,7 @@ impl OutlinePanel {
             .cached_entries_with_depth
             .iter()
             .rev()
-            .map(|(_, entry)| entry)
+            .map(|cached_entry| &cached_entry.entry)
             .next()
         {
             self.selected_entry = Some(new_selection.clone());
@@ -757,7 +765,7 @@ impl OutlinePanel {
             let index = self
                 .cached_entries_with_depth
                 .iter()
-                .position(|(_, entry)| entry == &selected_entry);
+                .position(|cached_entry| cached_entry.entry == selected_entry);
             if let Some(index) = index {
                 self.scroll_handle.scroll_to_item(index);
                 cx.notify();
@@ -1020,7 +1028,7 @@ impl OutlinePanel {
         let new_entries = self
             .cached_entries_with_depth
             .iter()
-            .flat_map(|(_, entry)| match entry {
+            .flat_map(|cached_entry| match &cached_entry.entry {
                 EntryOwned::Entry(FsEntry::Directory(worktree_id, entry)) => {
                     Some(CollapsedEntry::Dir(*worktree_id, entry.id))
                 }
@@ -1326,6 +1334,7 @@ impl OutlinePanel {
         excerpt_id: ExcerptId,
         rendered_outline: &Outline,
         depth: usize,
+        string_match: Option<&StringMatch>,
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
         let (item_id, label_element) = (
@@ -1333,7 +1342,14 @@ impl OutlinePanel {
                 "{buffer_id:?}|{excerpt_id:?}{:?}|{:?}",
                 rendered_outline.range, &rendered_outline.text,
             ))),
-            language::render_item(&rendered_outline, None, cx).into_any_element(),
+            language::render_item(
+                &rendered_outline,
+                string_match
+                    .map(|string_match| string_match.ranges().collect::<Vec<_>>())
+                    .unwrap_or_default(),
+                cx,
+            )
+            .into_any_element(),
         );
         let is_active = match &self.selected_entry {
             Some(EntryOwned::Outline(selected_buffer_id, selected_excerpt_id, selected_entry)) => {
@@ -1363,6 +1379,7 @@ impl OutlinePanel {
         &self,
         rendered_entry: &FsEntry,
         depth: usize,
+        string_match: Option<&StringMatch>,
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
@@ -1383,10 +1400,14 @@ impl OutlinePanel {
                 };
                 (
                     ElementId::from(entry.id.to_proto() as usize),
-                    Label::new(name)
-                        .single_line()
-                        .color(color)
-                        .into_any_element(),
+                    HighlightedLabel::new(
+                        name,
+                        string_match
+                            .map(|string_match| string_match.positions.clone())
+                            .unwrap_or_default(),
+                    )
+                    .color(color)
+                    .into_any_element(),
                     icon.unwrap_or_else(empty_icon),
                 )
             }
@@ -1407,10 +1428,14 @@ impl OutlinePanel {
                 .map(|icon| icon.color(color).into_any_element());
                 (
                     ElementId::from(entry.id.to_proto() as usize),
-                    Label::new(name)
-                        .single_line()
-                        .color(color)
-                        .into_any_element(),
+                    HighlightedLabel::new(
+                        name,
+                        string_match
+                            .map(|string_match| string_match.positions.clone())
+                            .unwrap_or_default(),
+                    )
+                    .color(color)
+                    .into_any_element(),
                     icon.unwrap_or_else(empty_icon),
                 )
             }
@@ -1435,10 +1460,14 @@ impl OutlinePanel {
                 };
                 (
                     ElementId::from(buffer_id.to_proto() as usize),
-                    Label::new(name)
-                        .single_line()
-                        .color(color)
-                        .into_any_element(),
+                    HighlightedLabel::new(
+                        name,
+                        string_match
+                            .map(|string_match| string_match.positions.clone())
+                            .unwrap_or_default(),
+                    )
+                    .color(color)
+                    .into_any_element(),
                     icon.unwrap_or_else(empty_icon),
                 )
             }
@@ -1460,6 +1489,7 @@ impl OutlinePanel {
         worktree_id: WorktreeId,
         dir_entries: &[Entry],
         depth: usize,
+        string_match: Option<&StringMatch>,
         cx: &mut ViewContext<OutlinePanel>,
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
@@ -1470,13 +1500,7 @@ impl OutlinePanel {
             _ => false,
         };
         let (item_id, label_element, icon) = {
-            let name = dir_entries.iter().fold(String::new(), |mut name, entry| {
-                if !name.is_empty() {
-                    name.push(std::path::MAIN_SEPARATOR)
-                }
-                name.push_str(&self.entry_name(&worktree_id, entry, cx));
-                name
-            });
+            let name = self.dir_names_string(dir_entries, worktree_id, cx);
 
             let is_expanded = dir_entries.iter().all(|dir| {
                 !self
@@ -1500,10 +1524,14 @@ impl OutlinePanel {
                         .map(|entry| entry.id.to_proto())
                         .unwrap_or_else(|| worktree_id.to_proto()) as usize,
                 ),
-                Label::new(name)
-                    .single_line()
-                    .color(color)
-                    .into_any_element(),
+                HighlightedLabel::new(
+                    name,
+                    string_match
+                        .map(|string_match| string_match.positions.clone())
+                        .unwrap_or_default(),
+                )
+                .color(color)
+                .into_any_element(),
                 icon.unwrap_or_else(empty_icon),
             )
         };
@@ -1582,12 +1610,7 @@ impl OutlinePanel {
             })
     }
 
-    fn entry_name(
-        &self,
-        worktree_id: &WorktreeId,
-        entry: &Entry,
-        cx: &ViewContext<OutlinePanel>,
-    ) -> String {
+    fn entry_name(&self, worktree_id: &WorktreeId, entry: &Entry, cx: &AppContext) -> String {
         let name = match self.project.read(cx).worktree_for_id(*worktree_id, cx) {
             Some(worktree) => {
                 let worktree = worktree.read(cx);
@@ -2147,31 +2170,30 @@ impl OutlinePanel {
 
         let closest_container = match outline_item {
             Some(outline) => EntryOwned::Outline(buffer_id, excerpt_id, outline),
-            None => {
-                self.cached_entries_with_depth
-                    .iter()
-                    .rev()
-                    .find_map(|(_, entry)| match entry {
-                        EntryOwned::Excerpt(entry_buffer_id, entry_excerpt_id, _) => {
-                            if entry_buffer_id == &buffer_id && entry_excerpt_id == &excerpt_id {
-                                Some(entry.clone())
-                            } else {
-                                None
-                            }
+            None => self
+                .cached_entries_with_depth
+                .iter()
+                .rev()
+                .find_map(|cached_entry| match &cached_entry.entry {
+                    EntryOwned::Excerpt(entry_buffer_id, entry_excerpt_id, _) => {
+                        if entry_buffer_id == &buffer_id && entry_excerpt_id == &excerpt_id {
+                            Some(cached_entry.entry.clone())
+                        } else {
+                            None
                         }
-                        EntryOwned::Entry(
-                            FsEntry::ExternalFile(file_buffer_id, file_excerpts)
-                            | FsEntry::File(_, _, file_buffer_id, file_excerpts),
-                        ) => {
-                            if file_buffer_id == &buffer_id && file_excerpts.contains(&excerpt_id) {
-                                Some(entry.clone())
-                            } else {
-                                None
-                            }
+                    }
+                    EntryOwned::Entry(
+                        FsEntry::ExternalFile(file_buffer_id, file_excerpts)
+                        | FsEntry::File(_, _, file_buffer_id, file_excerpts),
+                    ) => {
+                        if file_buffer_id == &buffer_id && file_excerpts.contains(&excerpt_id) {
+                            Some(cached_entry.entry.clone())
+                        } else {
+                            None
                         }
-                        _ => None,
-                    })?
-            }
+                    }
+                    _ => None,
+                })?,
         };
         Some(closest_container)
     }
@@ -2268,8 +2290,8 @@ impl OutlinePanel {
     > {
         self.cached_entries_with_depth.iter().fold(
             HashMap::default(),
-            |mut excerpts_to_fetch, (_, entry)| {
-                match entry {
+            |mut excerpts_to_fetch, cached_entry| {
+                match &cached_entry.entry {
                     EntryOwned::Entry(FsEntry::File(_, _, buffer_id, file_excerpts))
                     | EntryOwned::Entry(FsEntry::ExternalFile(buffer_id, file_excerpts)) => {
                         let excerpts = self.excerpts.get(&buffer_id);
@@ -2408,9 +2430,10 @@ impl OutlinePanel {
         is_singleton: bool,
         query: Option<String>,
         cx: &mut ViewContext<'_, Self>,
-    ) -> Task<Vec<(usize, EntryOwned)>> {
+    ) -> Task<Vec<CachedEntry>> {
         cx.spawn(|outline_panel, mut cx| async move {
             let mut entries = Vec::new();
+            // TODO kb this does not consider folded contents
             let mut match_candidates = Vec::new();
 
             let Ok(()) = outline_panel.update(&mut cx, |outline_panel, cx| {
@@ -2607,8 +2630,7 @@ impl OutlinePanel {
             let Some(query) = query else {
                 return entries;
             };
-            // TODO kb use highlights too
-            let matched_ids = match_strings(
+            let mut matched_ids = match_strings(
                 &match_candidates,
                 &query,
                 true,
@@ -2618,12 +2640,18 @@ impl OutlinePanel {
             )
             .await
             .into_iter()
-            .map(|string_match| string_match.candidate_id)
-            .collect::<HashSet<_>>();
+            .map(|string_match| (string_match.candidate_id, string_match))
+            .collect::<HashMap<_, _>>();
 
             let mut id = 0;
-            entries.retain(|_| {
-                let retain = matched_ids.contains(&id);
+            entries.retain_mut(|cached_entry| {
+                let retain = match matched_ids.remove(&id) {
+                    Some(string_match) => {
+                        cached_entry.string_match = Some(string_match);
+                        true
+                    }
+                    None => false,
+                };
                 id += 1;
                 retain
             });
@@ -2634,7 +2662,7 @@ impl OutlinePanel {
 
     fn push_entry(
         &self,
-        entries: &mut Vec<(usize, EntryOwned)>,
+        entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
         track_matches: bool,
         entry: EntryOwned,
@@ -2646,12 +2674,7 @@ impl OutlinePanel {
             match &entry {
                 EntryOwned::Entry(fs_entry) => {
                     if let Some(file_name) =
-                        self.relative_path(fs_entry, cx)
-                            .as_deref()
-                            .and_then(|path| {
-                                let file_name = path.file_name()?;
-                                Some(file_name.to_string_lossy())
-                            })
+                        self.relative_path(fs_entry, cx).as_deref().map(file_name)
                     {
                         match_candidates.push(StringMatchCandidate {
                             id,
@@ -2660,16 +2683,13 @@ impl OutlinePanel {
                         });
                     }
                 }
-                EntryOwned::FoldedDirs(_, entries) => {
-                    if let Some(file_name) = entries
-                        .last()
-                        .and_then(|entry| entry.path.file_name())
-                        .map(|file_name| file_name.to_string_lossy())
+                EntryOwned::FoldedDirs(worktree_id, entries) => {
+                    let dir_names = self.dir_names_string(entries, *worktree_id, cx);
                     {
                         match_candidates.push(StringMatchCandidate {
                             id,
-                            string: file_name.to_string(),
-                            char_bag: file_name.chars().collect(),
+                            string: dir_names.to_string(),
+                            char_bag: dir_names.chars().collect(),
                         });
                     }
                 }
@@ -2681,8 +2701,24 @@ impl OutlinePanel {
                 EntryOwned::Excerpt(..) => {}
             }
         }
+        entries.push(CachedEntry {
+            depth,
+            entry,
+            string_match: None,
+        });
+    }
 
-        entries.push((depth, entry));
+    fn dir_names_string(
+        &self,
+        entries: &[Entry],
+        worktree_id: WorktreeId,
+        cx: &AppContext,
+    ) -> String {
+        let dir_names_segment = entries
+            .iter()
+            .map(|entry| self.entry_name(&worktree_id, entry, cx))
+            .collect::<PathBuf>();
+        dir_names_segment.to_string_lossy().to_string()
     }
 
     fn query(&self, cx: &AppContext) -> Option<String> {
@@ -2867,7 +2903,7 @@ impl Render for OutlinePanel {
                                             cx.keystroke_text_for(&workspace::ToggleRightDock)
                                         }
                                     };
-                                    Label::new(format!("Toggle this panel with {keystroke}",))
+                                    Label::new(format!("Toggle this panel with {keystroke}"))
                                 }),
                         ),
                 )
@@ -2931,26 +2967,39 @@ impl Render for OutlinePanel {
                                 .map(|entries| entries.to_vec())
                                 .unwrap_or_default()
                                 .into_iter()
-                                .filter_map(|(depth, entry)| match entry {
-                                    EntryOwned::Entry(entry) => {
-                                        Some(outline_panel.render_entry(&entry, depth, cx))
-                                    }
+                                .filter_map(|cached_entry| match cached_entry.entry {
+                                    EntryOwned::Entry(entry) => Some(outline_panel.render_entry(
+                                        &entry,
+                                        cached_entry.depth,
+                                        cached_entry.string_match.as_ref(),
+                                        cx,
+                                    )),
                                     EntryOwned::FoldedDirs(worktree_id, entries) => {
                                         Some(outline_panel.render_folded_dirs(
                                             worktree_id,
                                             &entries,
-                                            depth,
+                                            cached_entry.depth,
+                                            cached_entry.string_match.as_ref(),
                                             cx,
                                         ))
                                     }
                                     EntryOwned::Excerpt(buffer_id, excerpt_id, excerpt) => {
                                         outline_panel.render_excerpt(
-                                            buffer_id, excerpt_id, &excerpt, depth, cx,
+                                            buffer_id,
+                                            excerpt_id,
+                                            &excerpt,
+                                            cached_entry.depth,
+                                            cx,
                                         )
                                     }
                                     EntryOwned::Outline(buffer_id, excerpt_id, outline) => {
                                         Some(outline_panel.render_outline(
-                                            buffer_id, excerpt_id, &outline, depth, cx,
+                                            buffer_id,
+                                            excerpt_id,
+                                            &outline,
+                                            cached_entry.depth,
+                                            cached_entry.string_match.as_ref(),
+                                            cx,
                                         ))
                                     }
                                 })
