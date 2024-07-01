@@ -6949,7 +6949,7 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
         active_signature: Some(0),
         active_parameter: Some(0),
     };
-    handle_signature_help_request(&mut cx, mocked_response).await;
+    handle_signature_help_request(&mut cx, mocked_response.clone()).await;
     cx.condition(|editor, _| editor.signature_help_state.is_some())
         .await;
     cx.editor(|editor, _| {
@@ -6970,6 +6970,56 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     "});
     cx.editor(|editor, _| {
         assert!(editor.signature_help_state.as_ref().is_none());
+    });
+
+    // Restore the popover with more parameter input
+    cx.set_state(indoc! {"
+        fn main() {
+            sample(param1, param2ˇ);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+
+    handle_signature_help_request(&mut cx, mocked_response.clone()).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_some())
+        .await;
+
+    // When selecting a range, the popover is gone.
+    // Avoid using `cx.set_state` to not actually edit the document, just change its selections.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(1, 25)..Point::new(1, 19)));
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            sample(param1, «ˇparam2»);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+    cx.editor(|editor, _| {
+        assert!(editor.signature_help_state.as_ref().is_none());
+    });
+    // When unselecting again, the popover is back if within the brackets.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(1, 19)..Point::new(1, 19)));
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            sample(param1, ˇparam2);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+    handle_signature_help_request(&mut cx, mocked_response).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_some())
+        .await;
+    cx.editor(|editor, _| {
+        assert!(editor.signature_help_state.as_ref().is_some());
     });
 }
 

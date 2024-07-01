@@ -4045,7 +4045,9 @@ impl Editor {
                 false
             }
             (None, Some(_)) => true,
-            (Some(previous), Some(current)) => previous != current,
+            (Some(previous), Some(current)) => {
+                previous != current || self.signature_help_state.is_none()
+            }
         }
     }
 
