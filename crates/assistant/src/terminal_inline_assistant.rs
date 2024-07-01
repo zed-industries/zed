@@ -188,7 +188,15 @@ impl TerminalInlineAssistant {
             self.prompt_history.pop_front();
         }
 
-        assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
+        assist
+            .terminal
+            .update(cx, |terminal, cx| {
+                terminal
+                    .terminal()
+                    .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.to_string()));
+            })
+            .log_err();
+
         let codegen = assist.codegen.clone();
         let Some(request) = self.request_for_inline_assist(assist_id, cx).log_err() else {
             return;
