@@ -8,12 +8,12 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
     FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
-    MouseDownEvent, Pixels, Render, Styled, Subscription, Task, View, VisualContext, WeakView,
+    MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, View,
+    VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, Fs, LocalWorktree, Metadata, Project};
-use settings::SettingsStore;
 use task::TerminalWorkDir;
 use terminal::{
     alacritty_terminal::{
@@ -44,6 +44,7 @@ use settings::Settings;
 use smol::Timer;
 
 use std::{
+    cmp,
     ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::Arc,
@@ -106,6 +107,7 @@ pub struct TerminalView {
     workspace_id: Option<WorkspaceId>,
     show_title: bool,
     block_below_cursor: Option<Arc<BlockProperties>>,
+    scroll_top: Pixels,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -183,6 +185,7 @@ impl TerminalView {
             workspace_id,
             show_title: TerminalSettings::get_global(cx).toolbar.title,
             block_below_cursor: None,
+            scroll_top: Pixels::ZERO,
             _subscriptions: vec![
                 focus_in,
                 focus_out,
@@ -263,6 +266,29 @@ impl TerminalView {
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
+    }
+
+    fn scroll_wheel(
+        &mut self,
+        event: &ScrollWheelEvent,
+        origin: gpui::Point<Pixels>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let terminal_content = self.terminal.read(cx).last_content();
+
+        if terminal_content.display_offset == 0 {
+            if let Some(block) = self.block_below_cursor.as_ref() {
+                let line_height = terminal_content.size.line_height;
+                let max_scroll_top = block.height as f32 * line_height;
+                let pixels = event.delta.pixel_delta(line_height).y;
+                self.scroll_top = cmp::max(self.scroll_top + pixels, max_scroll_top);
+                cx.notify();
+                return;
+            }
+        }
+
+        self.terminal
+            .update(cx, |term, _| term.scroll_wheel(event, origin));
     }
 
     fn scroll_line_up(&mut self, _: &ScrollLineUp, cx: &mut ViewContext<Self>) {
@@ -357,6 +383,7 @@ impl TerminalView {
 
     pub fn clear_block_below_cursor(&mut self, cx: &mut ViewContext<Self>) {
         self.block_below_cursor = None;
+        self.scroll_top = Pixels::ZERO;
         cx.notify();
     }
 
@@ -784,6 +811,7 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let terminal_handle = self.terminal.clone();
+        let terminal_view_handle = cx.view().clone();
 
         let focused = self.focus_handle.is_focused(cx);
 
@@ -819,6 +847,7 @@ impl Render for TerminalView {
                 // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
                 div().size_full().child(TerminalElement::new(
                     terminal_handle,
+                    terminal_view_handle,
                     self.workspace.clone(),
                     self.focus_handle.clone(),
                     focused,

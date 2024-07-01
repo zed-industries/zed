@@ -5,7 +5,7 @@ use gpui::{
     Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId, Model,
     ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
     StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle,
-    WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    View, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -30,7 +30,7 @@ use workspace::Workspace;
 use std::{fmt::Debug, ops::RangeInclusive};
 use std::{mem, sync::Arc};
 
-use crate::{BlockContext, BlockProperties};
+use crate::{BlockContext, BlockProperties, TerminalView};
 
 /// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
@@ -149,6 +149,7 @@ impl LayoutRect {
 /// We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: Model<Terminal>,
+    terminal_view: View<TerminalView>,
     workspace: WeakView<Workspace>,
     focus: FocusHandle,
     focused: bool,
@@ -169,6 +170,7 @@ impl StatefulInteractiveElement for TerminalElement {}
 impl TerminalElement {
     pub fn new(
         terminal: Model<Terminal>,
+        terminal_view: View<TerminalView>,
         workspace: WeakView<Workspace>,
         focus: FocusHandle,
         focused: bool,
@@ -178,6 +180,7 @@ impl TerminalElement {
     ) -> TerminalElement {
         TerminalElement {
             terminal,
+            terminal_view,
             workspace,
             focused,
             focus: focus.clone(),
@@ -497,12 +500,14 @@ impl TerminalElement {
             ),
         );
         self.interactivity.on_scroll_wheel({
-            let terminal = terminal.clone();
+            let terminal_view = self.terminal_view.downgrade();
             move |e, cx| {
-                terminal.update(cx, |terminal, cx| {
-                    terminal.scroll_wheel(e, origin);
-                    cx.notify();
-                })
+                terminal_view
+                    .update(cx, |terminal_view, cx| {
+                        terminal_view.scroll_wheel(e, origin, cx);
+                        cx.notify();
+                    })
+                    .ok();
             }
         });
 
@@ -823,6 +828,13 @@ impl Element for TerminalElement {
         layout: &mut Self::PrepaintState,
         cx: &mut WindowContext<'_>,
     ) {
+        let content = &self.terminal.read(cx).last_content;
+        dbg!(
+            content.size.bottommost_line(),
+            content.cursor.point.line,
+            content.display_offset
+        );
+
         cx.paint_quad(fill(bounds, layout.background_color));
         let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
