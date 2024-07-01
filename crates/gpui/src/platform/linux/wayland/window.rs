@@ -351,19 +351,16 @@ impl WaylandWindowStatePtr {
                         state.fullscreen = configure.fullscreen;
                         state.maximized = configure.maximized;
                         state.tiling = configure.tiling;
-                        configure.size = if configure.maximized {
-                            configure.size
-                        } else {
-                            compute_outer_size(
+                        if got_unmaximized {
+                            configure.size = Some(state.window_bounds.size);
+                        } else if !configure.maximized {
+                            configure.size = compute_outer_size(
                                 state.window_bounds,
                                 state.client_area,
                                 configure.size,
-                            )
-                        };
-
-                        if got_unmaximized {
-                            configure.size = Some(state.window_bounds.size);
-                        } else if !configure.fullscreen && !configure.maximized {
+                            );
+                        }
+                        if !configure.fullscreen && !configure.maximized {
                             if let Some(size) = configure.size {
                                 state.window_bounds = Bounds {
                                     origin: Point::default(),
