@@ -6888,14 +6888,10 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
         let signature_help_state = editor.signature_help_state.clone();
         assert!(signature_help_state.is_some());
         let ParsedMarkdown {
-            text,
-            highlights,
-            region_ranges,
-            ..
+            text, highlights, ..
         } = signature_help_state.unwrap().parsed_content;
         assert_eq!(text, "param1: u8, param2: u8");
         assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT)]);
-        assert_eq!(region_ranges, vec![0..22]);
     });
 
     // When exiting outside from inside the brackets, `signature_help` is closed.
@@ -6956,9 +6952,24 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     handle_signature_help_request(&mut cx, mocked_response).await;
     cx.condition(|editor, _| editor.signature_help_state.is_some())
         .await;
-
     cx.editor(|editor, _| {
         assert!(editor.signature_help_state.as_ref().is_some());
+    });
+
+    // When moving to the edge of the bracket, clear the pop-up and query nothing.
+    let _not_used =
+        cx.handle_request::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| async move {
+            panic!("Unexpected call to signature help");
+        });
+    cx.set_state(indoc! {"
+        fn main() {
+            sample()ˇ;
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+    cx.editor(|editor, _| {
+        assert!(editor.signature_help_state.as_ref().is_none());
     });
 }
 

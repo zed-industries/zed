@@ -4021,9 +4021,6 @@ impl Editor {
             self.signature_help_state = None;
             return false;
         }
-        if self.signature_help_state.is_some() {
-            return true;
-        }
 
         let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
         let previous_position = old_cursor_position.to_offset(&buffer_snapshot);
@@ -4039,8 +4036,14 @@ impl Editor {
                 start_bracket_range.start != head && end_bracket_range.end != head
             });
         match (previous_brackets_surround, current_brackets_surround) {
-            (None, None) => false,
-            (Some(_), None) => false,
+            (None, None) => {
+                self.signature_help_state = None;
+                false
+            }
+            (Some(_), None) => {
+                self.signature_help_state = None;
+                false
+            }
             (None, Some(_)) => true,
             (Some(previous), Some(current)) => previous != current,
         }
