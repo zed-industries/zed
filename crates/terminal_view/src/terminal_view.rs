@@ -433,9 +433,8 @@ impl TerminalView {
     }
 
     pub fn set_block_below_cursor(&mut self, block: BlockProperties, cx: &mut ViewContext<Self>) {
-        let line_height = self.terminal.read(cx).last_content().size.line_height;
-        self.scroll_top = cmp::min(block.height as f32 * line_height, self.max_scroll_top(cx));
         self.block_below_cursor = Some(Arc::new(block));
+        self.scroll_to_bottom(&ScrollToBottom, cx);
         cx.notify();
     }
 
