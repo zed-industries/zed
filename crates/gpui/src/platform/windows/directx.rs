@@ -1108,4 +1108,3 @@ fn draw_with_texture(
 }
 
 const BUFFER_COUNT: usize = 3;
-const BUFFER_SIZE: usize = 2 * 1024 * 1024;
