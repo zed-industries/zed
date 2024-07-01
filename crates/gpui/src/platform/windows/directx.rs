@@ -115,7 +115,6 @@ impl DirectXRenderer {
             &self.context.back_buffer,
             [0.0, 0.0, 0.0, 0.0],
             &self.render.blend_state,
-            1,
         )?;
         for batch in scene.batches() {
             let ok = match batch {
@@ -296,7 +295,6 @@ impl DirectXRenderer {
                 &rtv,
                 [0.0, 0.0, 0.0, 1.0],
                 &self.render.blend_state_for_pr,
-                0,
             )
             .log_err()?;
             update_buffer_capacity(
@@ -621,8 +619,7 @@ impl DirectXRenderContext {
 #[repr(C)]
 struct GlobalParams {
     viewport_size: [f32; 2],
-    premultiplied_alpha: u32,
-    _pad: u32,
+    _pad: u64,
 }
 
 struct PipelineState {
@@ -992,15 +989,13 @@ fn pre_draw(
     render_target_view: &[Option<ID3D11RenderTargetView>; 1],
     clear_color: [f32; 4],
     blend_state: &ID3D11BlendState,
-    premultiplied_alpha: u32,
 ) -> Result<()> {
     update_global_params(
         device_context,
         global_params_buffer,
         GlobalParams {
             viewport_size: [view_port[0].Width, view_port[0].Height],
-            premultiplied_alpha,
-            _pad: 0,
+            ..Default::default()
         },
     )?;
     unsafe {

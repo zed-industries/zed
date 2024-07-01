@@ -1,7 +1,6 @@
 cbuffer GlobalParams: register(b0) {
     float2 global_viewport_size;
-    uint global_premultiplied_alpha;
-    uint _pad;
+    uint2 _global_pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -153,15 +152,6 @@ float2 to_tile_position(float2 unit_vertex, AtlasTile tile) {
     float2 atlas_size;
     t_sprite.GetDimensions(atlas_size.x, atlas_size.y);
     return (float2(tile.bounds.origin) + unit_vertex * float2(tile.bounds.size)) / atlas_size;
-}
-
-// Abstract away the final color transformation based on the
-// target alpha compositing mode.
-float4 blend_color(float4 color, float alpha_factor) {
-    float alpha = color.a * alpha_factor;
-    // float multiplier = (global_premultiplied_alpha != 0) ? alpha : 1.0;
-    float multiplier = (global_premultiplied_alpha != 0) ? 1.0 : alpha;
-    return float4(color.rgb * multiplier, alpha);
 }
 
 float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds, 
