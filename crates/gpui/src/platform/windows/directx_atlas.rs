@@ -46,14 +46,10 @@ impl DirectXAtlas {
         }))
     }
 
-    pub(crate) fn texture_info(
+    pub(crate) fn get_texture_drawing_info(
         &self,
         id: AtlasTextureId,
-    ) -> (
-        Size<f32>,
-        [Option<ID3D11RenderTargetView>; 1],
-        [Option<ID3D11ShaderResourceView>; 1],
-    ) {
+    ) -> (Size<f32>, [Option<ID3D11RenderTargetView>; 1]) {
         let lock = self.0.lock();
         let tex = lock.texture(id);
         let size = tex.allocator.size();
@@ -63,8 +59,16 @@ impl DirectXAtlas {
                 height: size.height as f32,
             },
             tex.rtv.clone(),
-            tex.view.clone(),
         )
+    }
+
+    pub(crate) fn get_texture_view(
+        &self,
+        id: AtlasTextureId,
+    ) -> [Option<ID3D11ShaderResourceView>; 1] {
+        let lock = self.0.lock();
+        let tex = lock.texture(id);
+        tex.view.clone()
     }
 
     pub(crate) fn allocate(

@@ -280,7 +280,7 @@ impl DirectXRenderer {
         }
 
         for (texture_id, vertices) in vertices_by_texture_id {
-            let (texture_size, rtv, _) = self.atlas.texture_info(texture_id);
+            let (texture_size, rtv) = self.atlas.get_texture_drawing_info(texture_id);
             let viewport = [D3D11_VIEWPORT {
                 TopLeftX: 0.0,
                 TopLeftY: 0.0,
@@ -336,7 +336,7 @@ impl DirectXRenderer {
         }
         for path in paths {
             let tile = &path_tiles[&path.id];
-            let (_, _, texture) = self.atlas.texture_info(tile.texture_id);
+            let texture_view = self.atlas.get_texture_view(tile.texture_id);
             let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
             let sprites = [PathSprite {
                 bounds: Bounds {
@@ -361,7 +361,7 @@ impl DirectXRenderer {
             draw_with_texture(
                 &self.context.context,
                 &self.render.paths_pipeline,
-                &texture,
+                &texture_view,
                 &self.context.viewport,
                 &self.render.global_params_buffer,
                 &self.render.sampler,
@@ -406,7 +406,7 @@ impl DirectXRenderer {
         if sprites.is_empty() {
             return Ok(());
         }
-        let (_, _, texture) = self.atlas.texture_info(texture_id);
+        let texture_view = self.atlas.get_texture_view(texture_id);
         update_buffer_capacity(
             &self.render.mono_sprites,
             std::mem::size_of::<MonochromeSprite>(),
@@ -422,7 +422,7 @@ impl DirectXRenderer {
         draw_with_texture(
             &self.context.context,
             &self.render.mono_sprites,
-            &texture,
+            &texture_view,
             &self.context.viewport,
             &self.render.global_params_buffer,
             &self.render.sampler,
@@ -438,7 +438,7 @@ impl DirectXRenderer {
         if sprites.is_empty() {
             return Ok(());
         }
-        let (_, _, texture) = self.atlas.texture_info(texture_id);
+        let texture_view = self.atlas.get_texture_view(texture_id);
         update_buffer_capacity(
             &self.render.poly_sprites,
             std::mem::size_of::<PolychromeSprite>(),
@@ -454,7 +454,7 @@ impl DirectXRenderer {
         draw_with_texture(
             &self.context.context,
             &self.render.poly_sprites,
-            &texture,
+            &texture_view,
             &self.context.viewport,
             &self.render.global_params_buffer,
             &self.render.sampler,
