@@ -4,7 +4,7 @@ use std::{
     cmp,
     ops::Range,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
 
@@ -18,6 +18,7 @@ use editor::{
     DisplayPoint, Editor, EditorEvent, ExcerptId, ExcerptRange,
 };
 use file_icons::FileIcons;
+use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, px, uniform_list, Action, AnyElement, AppContext,
     AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId,
@@ -1121,9 +1122,7 @@ impl OutlinePanel {
             .as_ref()
             .and_then(|entry| match entry {
                 EntryOwned::Entry(entry) => self.relative_path(&entry, cx),
-                EntryOwned::FoldedDirs(_, dirs) => {
-                    dirs.last().map(|entry| entry.path.to_path_buf())
-                }
+                EntryOwned::FoldedDirs(_, dirs) => dirs.last().map(|entry| entry.path.clone()),
                 EntryOwned::Excerpt(..) | EntryOwned::Outline(..) => None,
             })
             .map(|p| p.to_string_lossy().to_string())
@@ -2369,13 +2368,14 @@ impl OutlinePanel {
         }
     }
 
-    fn relative_path(&self, entry: &FsEntry, cx: &AppContext) -> Option<PathBuf> {
+    fn relative_path(&self, entry: &FsEntry, cx: &AppContext) -> Option<Arc<Path>> {
         match entry {
-            FsEntry::ExternalFile(buffer_id, _) => self
-                .buffer_snapshot_for_id(*buffer_id, cx)
-                .and_then(|buffer_snapshot| Some(buffer_snapshot.file()?.path().to_path_buf())),
-            FsEntry::Directory(_, entry) => Some(entry.path.to_path_buf()),
-            FsEntry::File(_, entry, ..) => Some(entry.path.to_path_buf()),
+            FsEntry::ExternalFile(buffer_id, _) => {
+                let buffer_snapshot = self.buffer_snapshot_for_id(*buffer_id, cx)?;
+                Some(buffer_snapshot.file()?.path().clone())
+            }
+            FsEntry::Directory(_, entry) => Some(entry.path.clone()),
+            FsEntry::File(_, entry, ..) => Some(entry.path.clone()),
         }
     }
 
@@ -2389,13 +2389,17 @@ impl OutlinePanel {
         };
         self.cached_entries_update_task = cx.spawn(|outline_panel, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+            let Some(new_cached_entries) = outline_panel
+                .update(&mut cx, |outline_panel, cx| {
+                    outline_panel.generate_cached_entries(is_singleton, filter_text, cx)
+                })
+                .ok()
+            else {
+                return;
+            };
+            let new_cached_entries = new_cached_entries.await;
             outline_panel
                 .update(&mut cx, |outline_panel, cx| {
-                    let new_cached_entries = outline_panel.generate_cached_entries(
-                        is_singleton,
-                        filter_text.as_deref(),
-                        cx,
-                    );
                     outline_panel.cached_entries_with_depth = new_cached_entries;
                     cx.notify();
                 })
@@ -2406,140 +2410,283 @@ impl OutlinePanel {
     fn generate_cached_entries(
         &self,
         is_singleton: bool,
-        // TODO kb do text search as in the assistant panel
-        filter_text: Option<&str>,
-        cx: &AppContext,
-    ) -> Vec<(usize, EntryOwned)> {
-        let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
-        let mut folded_dirs_entry = None::<(usize, WorktreeId, Vec<Entry>)>;
-        let mut entries = Vec::new();
+        query: Option<String>,
+        cx: &mut ViewContext<'_, Self>,
+    ) -> Task<Vec<(usize, EntryOwned)>> {
+        cx.spawn(|outline_panel, mut cx| async move {
+            let mut entries = Vec::new();
+            let mut match_candidates = Vec::new();
 
-        for entry in &self.fs_entries {
-            let depth = match entry {
-                FsEntry::Directory(worktree_id, dir_entry) => {
-                    let depth = self
-                        .fs_entries_depth
-                        .get(&(*worktree_id, dir_entry.id))
-                        .copied()
-                        .unwrap_or(0);
-                    if auto_fold_dirs {
-                        let folded = self
-                            .unfolded_dirs
-                            .get(worktree_id)
-                            .map_or(true, |unfolded_dirs| !unfolded_dirs.contains(&dir_entry.id));
-                        if folded {
-                            if let Some((folded_depth, folded_worktree_id, mut folded_dirs)) =
-                                folded_dirs_entry.take()
-                            {
-                                if worktree_id == &folded_worktree_id
-                                    && dir_entry.path.parent()
-                                        == folded_dirs.last().map(|entry| entry.path.as_ref())
-                                {
-                                    folded_dirs.push(dir_entry.clone());
-                                    folded_dirs_entry =
-                                        Some((folded_depth, folded_worktree_id, folded_dirs))
-                                } else {
-                                    entries.push((
+            let Ok(()) = outline_panel.update(&mut cx, |outline_panel, cx| {
+                let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
+                let mut folded_dirs_entry = None::<(usize, WorktreeId, Vec<Entry>)>;
+                let track_matches = query.is_some();
+
+                for entry in &outline_panel.fs_entries {
+                    let depth = match entry {
+                        FsEntry::Directory(worktree_id, dir_entry) => {
+                            let depth = outline_panel
+                                .fs_entries_depth
+                                .get(&(*worktree_id, dir_entry.id))
+                                .copied()
+                                .unwrap_or(0);
+                            if auto_fold_dirs {
+                                let folded = outline_panel
+                                    .unfolded_dirs
+                                    .get(worktree_id)
+                                    .map_or(true, |unfolded_dirs| {
+                                        !unfolded_dirs.contains(&dir_entry.id)
+                                    });
+                                if folded {
+                                    if let Some((
                                         folded_depth,
-                                        EntryOwned::FoldedDirs(folded_worktree_id, folded_dirs),
-                                    ));
-                                    folded_dirs_entry =
-                                        Some((depth, *worktree_id, vec![dir_entry.clone()]))
+                                        folded_worktree_id,
+                                        mut folded_dirs,
+                                    )) = folded_dirs_entry.take()
+                                    {
+                                        if worktree_id == &folded_worktree_id
+                                            && dir_entry.path.parent()
+                                                == folded_dirs
+                                                    .last()
+                                                    .map(|entry| entry.path.as_ref())
+                                        {
+                                            folded_dirs.push(dir_entry.clone());
+                                            folded_dirs_entry = Some((
+                                                folded_depth,
+                                                folded_worktree_id,
+                                                folded_dirs,
+                                            ))
+                                        } else {
+                                            outline_panel.push_entry(
+                                                &mut entries,
+                                                &mut match_candidates,
+                                                track_matches,
+                                                EntryOwned::FoldedDirs(
+                                                    folded_worktree_id,
+                                                    folded_dirs,
+                                                ),
+                                                folded_depth,
+                                                cx,
+                                            );
+                                            folded_dirs_entry =
+                                                Some((depth, *worktree_id, vec![dir_entry.clone()]))
+                                        }
+                                    } else {
+                                        folded_dirs_entry =
+                                            Some((depth, *worktree_id, vec![dir_entry.clone()]))
+                                    }
+
+                                    continue;
                                 }
-                            } else {
-                                folded_dirs_entry =
-                                    Some((depth, *worktree_id, vec![dir_entry.clone()]))
                             }
-
-                            continue;
+                            depth
                         }
-                    }
-                    depth
-                }
-                FsEntry::ExternalFile(..) => 0,
-                FsEntry::File(worktree_id, file_entry, ..) => self
-                    .fs_entries_depth
-                    .get(&(*worktree_id, file_entry.id))
-                    .copied()
-                    .unwrap_or(0),
-            };
-            if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take() {
-                entries.push((
-                    folded_depth,
-                    EntryOwned::FoldedDirs(worktree_id, folded_dirs),
-                ));
-            }
-
-            entries.push((depth, EntryOwned::Entry(entry.clone())));
-
-            let excerpts_to_consider = match entry {
-                FsEntry::File(worktree_id, _, buffer_id, entry_excerpts) => {
-                    if is_singleton
-                        || !self
-                            .collapsed_entries
-                            .contains(&CollapsedEntry::File(*worktree_id, *buffer_id))
+                        FsEntry::ExternalFile(..) => 0,
+                        FsEntry::File(worktree_id, file_entry, ..) => outline_panel
+                            .fs_entries_depth
+                            .get(&(*worktree_id, file_entry.id))
+                            .copied()
+                            .unwrap_or(0),
+                    };
+                    if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take()
                     {
-                        Some((*buffer_id, entry_excerpts))
-                    } else {
-                        None
+                        outline_panel.push_entry(
+                            &mut entries,
+                            &mut match_candidates,
+                            track_matches,
+                            EntryOwned::FoldedDirs(worktree_id, folded_dirs),
+                            folded_depth,
+                            cx,
+                        );
+                    }
+
+                    outline_panel.push_entry(
+                        &mut entries,
+                        &mut match_candidates,
+                        track_matches,
+                        EntryOwned::Entry(entry.clone()),
+                        depth,
+                        cx,
+                    );
+
+                    let excerpts_to_consider = match entry {
+                        FsEntry::File(worktree_id, _, buffer_id, entry_excerpts) => {
+                            if is_singleton
+                                || !outline_panel
+                                    .collapsed_entries
+                                    .contains(&CollapsedEntry::File(*worktree_id, *buffer_id))
+                            {
+                                Some((*buffer_id, entry_excerpts))
+                            } else {
+                                None
+                            }
+                        }
+                        FsEntry::ExternalFile(buffer_id, entry_excerpts) => {
+                            if is_singleton
+                                || !outline_panel
+                                    .collapsed_entries
+                                    .contains(&CollapsedEntry::ExternalFile(*buffer_id))
+                            {
+                                Some((*buffer_id, entry_excerpts))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
+                        if let Some(excerpts) = outline_panel.excerpts.get(&buffer_id) {
+                            for &entry_excerpt in entry_excerpts {
+                                let Some(excerpt) = excerpts.get(&entry_excerpt) else {
+                                    continue;
+                                };
+                                let excerpt_depth = depth + 1;
+                                outline_panel.push_entry(
+                                    &mut entries,
+                                    &mut match_candidates,
+                                    track_matches,
+                                    EntryOwned::Excerpt(
+                                        buffer_id,
+                                        entry_excerpt,
+                                        excerpt.range.clone(),
+                                    ),
+                                    excerpt_depth,
+                                    cx,
+                                );
+
+                                let mut outline_base_depth = excerpt_depth + 1;
+                                if is_singleton {
+                                    outline_base_depth = 0;
+                                    entries.clear();
+                                    match_candidates.clear();
+                                } else if outline_panel
+                                    .collapsed_entries
+                                    .contains(&CollapsedEntry::Excerpt(buffer_id, entry_excerpt))
+                                {
+                                    continue;
+                                }
+
+                                for outline in excerpt.iter_outlines() {
+                                    outline_panel.push_entry(
+                                        &mut entries,
+                                        &mut match_candidates,
+                                        track_matches,
+                                        EntryOwned::Outline(
+                                            buffer_id,
+                                            entry_excerpt,
+                                            outline.clone(),
+                                        ),
+                                        outline_base_depth + outline.depth,
+                                        cx,
+                                    );
+                                }
+                                if is_singleton && entries.is_empty() {
+                                    outline_panel.push_entry(
+                                        &mut entries,
+                                        &mut match_candidates,
+                                        track_matches,
+                                        EntryOwned::Entry(entry.clone()),
+                                        0,
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
-                FsEntry::ExternalFile(buffer_id, entry_excerpts) => {
-                    if is_singleton
-                        || !self
-                            .collapsed_entries
-                            .contains(&CollapsedEntry::ExternalFile(*buffer_id))
-                    {
-                        Some((*buffer_id, entry_excerpts))
-                    } else {
-                        None
-                    }
+                if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take() {
+                    outline_panel.push_entry(
+                        &mut entries,
+                        &mut match_candidates,
+                        track_matches,
+                        EntryOwned::FoldedDirs(worktree_id, folded_dirs),
+                        folded_depth,
+                        cx,
+                    );
                 }
-                _ => None,
+            }) else {
+                return Vec::new();
             };
-            if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
-                if let Some(excerpts) = self.excerpts.get(&buffer_id) {
-                    for &entry_excerpt in entry_excerpts {
-                        let Some(excerpt) = excerpts.get(&entry_excerpt) else {
-                            continue;
-                        };
-                        let excerpt_depth = depth + 1;
-                        entries.push((
-                            excerpt_depth,
-                            EntryOwned::Excerpt(buffer_id, entry_excerpt, excerpt.range.clone()),
-                        ));
 
-                        let mut outline_base_depth = excerpt_depth + 1;
-                        if is_singleton {
-                            outline_base_depth = 0;
-                            entries.clear();
-                        } else if self
-                            .collapsed_entries
-                            .contains(&CollapsedEntry::Excerpt(buffer_id, entry_excerpt))
-                        {
-                            continue;
-                        }
+            let Some(query) = query else {
+                return entries;
+            };
+            // TODO kb use highlights too
+            let matched_ids = match_strings(
+                &match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &AtomicBool::default(),
+                cx.background_executor().clone(),
+            )
+            .await
+            .into_iter()
+            .map(|string_match| string_match.candidate_id)
+            .collect::<HashSet<_>>();
 
-                        for outline in excerpt.iter_outlines() {
-                            entries.push((
-                                outline_base_depth + outline.depth,
-                                EntryOwned::Outline(buffer_id, entry_excerpt, outline.clone()),
-                            ));
-                        }
-                        if is_singleton && entries.is_empty() {
-                            entries.push((0, EntryOwned::Entry(entry.clone())));
-                        }
+            let mut id = 0;
+            entries.retain(|_| {
+                let retain = matched_ids.contains(&id);
+                id += 1;
+                retain
+            });
+
+            entries
+        })
+    }
+
+    fn push_entry(
+        &self,
+        entries: &mut Vec<(usize, EntryOwned)>,
+        match_candidates: &mut Vec<StringMatchCandidate>,
+        track_matches: bool,
+        entry: EntryOwned,
+        depth: usize,
+        cx: &AppContext,
+    ) {
+        if track_matches {
+            let id = entries.len();
+            match &entry {
+                EntryOwned::Entry(fs_entry) => {
+                    if let Some(file_name) =
+                        self.relative_path(fs_entry, cx)
+                            .as_deref()
+                            .and_then(|path| {
+                                let file_name = path.file_name()?;
+                                Some(file_name.to_string_lossy())
+                            })
+                    {
+                        match_candidates.push(StringMatchCandidate {
+                            id,
+                            string: file_name.to_string(),
+                            char_bag: file_name.chars().collect(),
+                        });
                     }
                 }
+                EntryOwned::FoldedDirs(_, entries) => {
+                    if let Some(file_name) = entries
+                        .last()
+                        .and_then(|entry| entry.path.file_name())
+                        .map(|file_name| file_name.to_string_lossy())
+                    {
+                        match_candidates.push(StringMatchCandidate {
+                            id,
+                            string: file_name.to_string(),
+                            char_bag: file_name.chars().collect(),
+                        });
+                    }
+                }
+                EntryOwned::Outline(_, _, outline) => match_candidates.push(StringMatchCandidate {
+                    id,
+                    string: outline.text.clone(),
+                    char_bag: outline.text.chars().collect(),
+                }),
+                EntryOwned::Excerpt(..) => {}
             }
         }
-        if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take() {
-            entries.push((
-                folded_depth,
-                EntryOwned::FoldedDirs(worktree_id, folded_dirs),
-            ));
-        }
-        entries
+
+        entries.push((depth, entry));
     }
 }
 
