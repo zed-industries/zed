@@ -22,8 +22,9 @@ use windows::{
                 D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD,
                 D3D11_BLEND_SRC_ALPHA, D3D11_BUFFER_DESC, D3D11_COLOR_WRITE_ENABLE_ALL,
                 D3D11_COMPARISON_ALWAYS, D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                D3D11_CREATE_DEVICE_DEBUG, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_FLOAT32_MAX,
-                D3D11_MAP_WRITE_DISCARD, D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, D3D11_SAMPLER_DESC,
+                D3D11_CREATE_DEVICE_DEBUG, D3D11_CULL_NONE, D3D11_FILL_SOLID,
+                D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_FLOAT32_MAX, D3D11_MAP_WRITE_DISCARD,
+                D3D11_RASTERIZER_DESC, D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, D3D11_SAMPLER_DESC,
                 D3D11_SDK_VERSION, D3D11_TEXTURE_ADDRESS_WRAP, D3D11_USAGE_DYNAMIC, D3D11_VIEWPORT,
             },
             DirectComposition::{
@@ -424,6 +425,7 @@ impl DirectXContext {
             &context,
         )?)];
         let viewport = set_viewport(&context, 1.0, 1.0);
+        set_rasterizer_state(&device, &context)?;
 
         Ok(Self {
             dxgi_factory,
@@ -685,6 +687,28 @@ fn set_viewport(
     }];
     unsafe { device_context.RSSetViewports(Some(&viewport)) };
     viewport
+}
+
+fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceContext) -> Result<()> {
+    let desc = D3D11_RASTERIZER_DESC {
+        FillMode: D3D11_FILL_SOLID,
+        CullMode: D3D11_CULL_NONE,
+        FrontCounterClockwise: false.into(),
+        DepthBias: 0,
+        DepthBiasClamp: 0.0,
+        SlopeScaledDepthBias: 0.0,
+        DepthClipEnable: true.into(),
+        ScissorEnable: false.into(),
+        MultisampleEnable: false.into(),
+        AntialiasedLineEnable: false.into(),
+    };
+    let rasterizer_state = unsafe {
+        let mut state = None;
+        device.CreateRasterizerState(&desc, Some(&mut state))?;
+        state.unwrap()
+    };
+    unsafe { device_context.RSSetState(&rasterizer_state) };
+    Ok(())
 }
 
 fn build_shader_blob(entry: &str, target: &str) -> Result<ID3DBlob> {
