@@ -52,7 +52,7 @@ pub(crate) struct DirectXRenderer {
     devices: DirectXDevices,
     context: DirectXContext,
     globals: DirectXGlobalElements,
-    render: DirectXRenderContext,
+    pipelines: DirectXRenderPipelines,
 }
 
 #[derive(Clone)]
@@ -71,7 +71,7 @@ struct DirectXContext {
     direct_composition: DirectComposition,
 }
 
-struct DirectXRenderContext {
+struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState,
     quad_pipeline: PipelineState,
     path_raster_pipeline: PipelineState,
@@ -124,13 +124,13 @@ impl DirectXRenderer {
         ));
         let context = DirectXContext::new(&devices, hwnd, transparent).unwrap();
         let globals = DirectXGlobalElements::new(&devices.device).unwrap();
-        let render = DirectXRenderContext::new(&devices.device).unwrap();
+        let pipelines = DirectXRenderPipelines::new(&devices.device).unwrap();
         DirectXRenderer {
             atlas,
             devices,
             context,
             globals,
-            render,
+            pipelines,
         }
     }
 
@@ -234,20 +234,20 @@ impl DirectXRenderer {
             return Ok(());
         }
         update_buffer_capacity(
-            &self.render.shadow_pipeline,
+            &self.pipelines.shadow_pipeline,
             std::mem::size_of::<Shadow>(),
             shadows.len(),
             &self.devices.device,
         )
-        .map(|input| update_pipeline(&mut self.render.shadow_pipeline, input));
+        .map(|input| update_pipeline(&mut self.pipelines.shadow_pipeline, input));
         update_buffer(
             &self.devices.device_context,
-            &self.render.shadow_pipeline.buffer,
+            &self.pipelines.shadow_pipeline.buffer,
             shadows,
         )?;
         draw_normal(
             &self.devices.device_context,
-            &self.render.shadow_pipeline,
+            &self.pipelines.shadow_pipeline,
             &self.context.viewport,
             &self.globals.global_params_buffer,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
@@ -261,20 +261,20 @@ impl DirectXRenderer {
             return Ok(());
         }
         update_buffer_capacity(
-            &self.render.quad_pipeline,
+            &self.pipelines.quad_pipeline,
             std::mem::size_of::<Quad>(),
             quads.len(),
             &self.devices.device,
         )
-        .map(|input| update_pipeline(&mut self.render.quad_pipeline, input));
+        .map(|input| update_pipeline(&mut self.pipelines.quad_pipeline, input));
         update_buffer(
             &self.devices.device_context,
-            &self.render.quad_pipeline.buffer,
+            &self.pipelines.quad_pipeline.buffer,
             quads,
         )?;
         draw_normal(
             &self.devices.device_context,
-            &self.render.quad_pipeline,
+            &self.pipelines.quad_pipeline,
             &self.context.viewport,
             &self.globals.global_params_buffer,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
@@ -335,21 +335,21 @@ impl DirectXRenderer {
             )
             .log_err()?;
             update_buffer_capacity(
-                &self.render.path_raster_pipeline,
+                &self.pipelines.path_raster_pipeline,
                 std::mem::size_of::<PathVertex<ScaledPixels>>(),
                 vertices.len(),
                 &self.devices.device,
             )
-            .map(|input| update_pipeline(&mut self.render.path_raster_pipeline, input));
+            .map(|input| update_pipeline(&mut self.pipelines.path_raster_pipeline, input));
             update_buffer(
                 &self.devices.device_context,
-                &self.render.path_raster_pipeline.buffer,
+                &self.pipelines.path_raster_pipeline.buffer,
                 &vertices,
             )
             .log_err()?;
             draw_normal(
                 &self.devices.device_context,
-                &self.render.path_raster_pipeline,
+                &self.pipelines.path_raster_pipeline,
                 &viewport,
                 &self.globals.global_params_buffer,
                 D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
@@ -382,20 +382,20 @@ impl DirectXRenderer {
                 tile: (*tile).clone(),
             }];
             update_buffer_capacity(
-                &self.render.paths_pipeline,
+                &self.pipelines.paths_pipeline,
                 std::mem::size_of::<PathSprite>(),
                 1,
                 &self.devices.device,
             )
-            .map(|input| update_pipeline(&mut self.render.paths_pipeline, input));
+            .map(|input| update_pipeline(&mut self.pipelines.paths_pipeline, input));
             update_buffer(
                 &self.devices.device_context,
-                &self.render.paths_pipeline.buffer,
+                &self.pipelines.paths_pipeline.buffer,
                 &sprites,
             )?;
             draw_with_texture(
                 &self.devices.device_context,
-                &self.render.paths_pipeline,
+                &self.pipelines.paths_pipeline,
                 &texture_view,
                 &self.context.viewport,
                 &self.globals.global_params_buffer,
@@ -411,20 +411,20 @@ impl DirectXRenderer {
             return Ok(());
         }
         update_buffer_capacity(
-            &self.render.underline_pipeline,
+            &self.pipelines.underline_pipeline,
             std::mem::size_of::<Underline>(),
             underlines.len(),
             &self.devices.device,
         )
-        .map(|input| update_pipeline(&mut self.render.underline_pipeline, input));
+        .map(|input| update_pipeline(&mut self.pipelines.underline_pipeline, input));
         update_buffer(
             &self.devices.device_context,
-            &self.render.underline_pipeline.buffer,
+            &self.pipelines.underline_pipeline.buffer,
             underlines,
         )?;
         draw_normal(
             &self.devices.device_context,
-            &self.render.underline_pipeline,
+            &self.pipelines.underline_pipeline,
             &self.context.viewport,
             &self.globals.global_params_buffer,
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
@@ -443,20 +443,20 @@ impl DirectXRenderer {
         }
         let texture_view = self.atlas.get_texture_view(texture_id);
         update_buffer_capacity(
-            &self.render.mono_sprites,
+            &self.pipelines.mono_sprites,
             std::mem::size_of::<MonochromeSprite>(),
             sprites.len(),
             &self.devices.device,
         )
-        .map(|input| update_pipeline(&mut self.render.mono_sprites, input));
+        .map(|input| update_pipeline(&mut self.pipelines.mono_sprites, input));
         update_buffer(
             &self.devices.device_context,
-            &self.render.mono_sprites.buffer,
+            &self.pipelines.mono_sprites.buffer,
             sprites,
         )?;
         draw_with_texture(
             &self.devices.device_context,
-            &self.render.mono_sprites,
+            &self.pipelines.mono_sprites,
             &texture_view,
             &self.context.viewport,
             &self.globals.global_params_buffer,
@@ -475,20 +475,20 @@ impl DirectXRenderer {
         }
         let texture_view = self.atlas.get_texture_view(texture_id);
         update_buffer_capacity(
-            &self.render.poly_sprites,
+            &self.pipelines.poly_sprites,
             std::mem::size_of::<PolychromeSprite>(),
             sprites.len(),
             &self.devices.device,
         )
-        .map(|input| update_pipeline(&mut self.render.poly_sprites, input));
+        .map(|input| update_pipeline(&mut self.pipelines.poly_sprites, input));
         update_buffer(
             &self.devices.device_context,
-            &self.render.poly_sprites.buffer,
+            &self.pipelines.poly_sprites.buffer,
             sprites,
         )?;
         draw_with_texture(
             &self.devices.device_context,
-            &self.render.poly_sprites,
+            &self.pipelines.poly_sprites,
             &texture_view,
             &self.context.viewport,
             &self.globals.global_params_buffer,
@@ -533,7 +533,7 @@ impl DirectXContext {
     }
 }
 
-impl DirectXRenderContext {
+impl DirectXRenderPipelines {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
         let shadow_pipeline = create_pipieline(
             device,
