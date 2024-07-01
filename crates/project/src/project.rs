@@ -11544,9 +11544,9 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     }
 
     async fn read_text_file(&self, path: PathBuf) -> Result<String> {
-        if self.worktree.entry_for_path(&path).is_none() {
-            return Err(anyhow!("no such path {path:?}"));
-        }
+        // if self.worktree.entry_for_path(&path).is_none() {
+        //     return Err(anyhow!("no such path {path:?}"));
+        // }
         let path = self.worktree.absolutize(path.as_ref())?;
         let content = self.fs.load(&path).await?;
         Ok(content)

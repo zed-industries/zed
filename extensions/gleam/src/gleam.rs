@@ -1,6 +1,7 @@
 use html_to_markdown::{convert_html_to_markdown, TagHandler};
 use std::cell::RefCell;
 use std::fs;
+use std::path::PathBuf;
 use std::rc::Rc;
 use zed::lsp::CompletionKind;
 use zed::{
@@ -174,10 +175,11 @@ impl zed::Extension for GleamExtension {
             "gleam-docs" => {
                 let mut text = String::new();
 
-                let docs = std::fs::read_to_string(
-                    "/Users/maxdeviant/projects/startest/build/dev/docs/startest/index.html",
-                )
-                .map_err(|err| format!("failed to open docs {err}"))?;
+                let mut docs_path = PathBuf::from_iter(["build", "dev", "docs"]);
+                docs_path.push("startest");
+                docs_path.push("index.html");
+
+                let html = worktree.read_text_file(&docs_path.to_string_lossy())?;
 
                 let mut handlers: Vec<TagHandler> = vec![
                     Rc::new(RefCell::new(
@@ -190,7 +192,7 @@ impl zed::Extension for GleamExtension {
                     Rc::new(RefCell::new(html_to_markdown::markdown::StyledTextHandler)),
                 ];
 
-                let markdown = convert_html_to_markdown(docs.as_bytes(), &mut handlers)
+                let markdown = convert_html_to_markdown(html.as_bytes(), &mut handlers)
                     .map_err(|err| format!("failed to convert docs to Markdown {err}"))?;
 
                 text.push_str(&markdown);
