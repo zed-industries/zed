@@ -168,6 +168,7 @@ impl InteractiveElement for TerminalElement {
 impl StatefulInteractiveElement for TerminalElement {}
 
 impl TerminalElement {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         terminal: Model<Terminal>,
         terminal_view: View<TerminalView>,
@@ -784,23 +785,30 @@ impl Element for TerminalElement {
                 };
 
                 let block_below_cursor_element = if let Some(block) = &self.block_below_cursor {
-                    let target_line = self.terminal.read(cx).last_content.cursor.point.line.0 + 1;
-                    let render = &block.render;
-                    let mut block_cx = BlockContext {
-                        context: cx,
-                        dimensions,
-                    };
-                    let element = render(&mut block_cx);
-                    let mut element = div().occlude().child(element).into_any_element();
-                    let available_space = size(
-                        AvailableSpace::Definite(dimensions.width() + gutter),
-                        AvailableSpace::Definite(block.height as f32 * dimensions.line_height()),
-                    );
-                    let origin = bounds.origin
-                        + point(px(0.), target_line as f32 * dimensions.line_height())
-                        - point(px(0.), scroll_top);
-                    element.prepaint_as_root(origin, available_space, cx);
-                    Some(element)
+                    let terminal = self.terminal.read(cx);
+                    if terminal.last_content.display_offset == 0 {
+                        let target_line = terminal.last_content.cursor.point.line.0 + 1;
+                        let render = &block.render;
+                        let mut block_cx = BlockContext {
+                            context: cx,
+                            dimensions,
+                        };
+                        let element = render(&mut block_cx);
+                        let mut element = div().occlude().child(element).into_any_element();
+                        let available_space = size(
+                            AvailableSpace::Definite(dimensions.width() + gutter),
+                            AvailableSpace::Definite(
+                                block.height as f32 * dimensions.line_height(),
+                            ),
+                        );
+                        let origin = bounds.origin
+                            + point(px(0.), target_line as f32 * dimensions.line_height())
+                            - point(px(0.), scroll_top);
+                        element.prepaint_as_root(origin, available_space, cx);
+                        Some(element)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 };

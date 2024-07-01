@@ -325,11 +325,31 @@ impl TerminalView {
     }
 
     fn scroll_line_up(&mut self, _: &ScrollLineUp, cx: &mut ViewContext<Self>) {
+        let terminal_content = self.terminal.read(cx).last_content();
+        if self.block_below_cursor.is_some()
+            && terminal_content.display_offset == 0
+            && self.scroll_top > Pixels::ZERO
+        {
+            let line_height = terminal_content.size.line_height;
+            self.scroll_top = cmp::max(self.scroll_top - line_height, Pixels::ZERO);
+            return;
+        }
+
         self.terminal.update(cx, |term, _| term.scroll_line_up());
         cx.notify();
     }
 
     fn scroll_line_down(&mut self, _: &ScrollLineDown, cx: &mut ViewContext<Self>) {
+        let terminal_content = self.terminal.read(cx).last_content();
+        if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
+            let max_scroll_top = self.max_scroll_top(cx);
+            if self.scroll_top < max_scroll_top {
+                let line_height = terminal_content.size.line_height;
+                self.scroll_top = cmp::min(self.scroll_top + line_height, max_scroll_top);
+            }
+            return;
+        }
+
         self.terminal.update(cx, |term, _| term.scroll_line_down());
         cx.notify();
     }
@@ -351,6 +371,9 @@ impl TerminalView {
 
     fn scroll_to_bottom(&mut self, _: &ScrollToBottom, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.scroll_to_bottom());
+        if self.block_below_cursor.is_some() {
+            self.scroll_top = self.max_scroll_top(cx);
+        }
         cx.notify();
     }
 
