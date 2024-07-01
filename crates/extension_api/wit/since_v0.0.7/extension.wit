@@ -2,6 +2,7 @@ package zed:extension;
 
 world extension {
     import github;
+    import http-client;
     import platform;
     import nodejs;
 
