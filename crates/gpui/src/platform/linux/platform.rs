@@ -446,7 +446,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 TrayIcon::Name(name) => dbus::dbusmenu::Icon::Name(name.to_owned()),
             };
             let options = StatusNotifierItemOptions::new()
-                .title(item.title.clone())
+                .title(item.title)
                 .icon(icon)
                 .tooltip(
                     ToolTip::new()
