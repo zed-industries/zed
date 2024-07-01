@@ -356,23 +356,31 @@ impl TerminalView {
     }
 
     fn scroll_page_up(&mut self, _: &ScrollPageUp, cx: &mut ViewContext<Self>) {
-        let visible_block_lines =
-            (self.scroll_top / self.terminal.read(cx).last_content.size.line_height()) as usize;
-        let term = self.terminal.read(cx);
-        let visible_lines = term.viewport_lines() - visible_block_lines;
-
-        if visible_block_lines >= term.viewport_lines() {
-            self.scroll_top = px(0.);
+        if self.scroll_top == Pixels::ZERO {
+            self.terminal.update(cx, |term, _| term.scroll_page_up());
         } else {
-            self.scroll_top = px(0.);
-            self.terminal
-                .update(cx, |term, _| term.scroll_up_by(visible_lines));
+            let line_height = self.terminal.read(cx).last_content.size.line_height();
+            let visible_block_lines = (self.scroll_top / line_height) as usize;
+            let viewport_lines = self.terminal.read(cx).viewport_lines();
+            let visible_content_lines = viewport_lines - visible_block_lines;
+
+            if visible_block_lines >= viewport_lines {
+                self.scroll_top = ((visible_block_lines - viewport_lines) as f32) * line_height;
+            } else {
+                self.scroll_top = px(0.);
+                self.terminal
+                    .update(cx, |term, _| term.scroll_up_by(visible_content_lines));
+            }
         }
         cx.notify();
     }
 
     fn scroll_page_down(&mut self, _: &ScrollPageDown, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.scroll_page_down());
+        let terminal = self.terminal.read(cx);
+        if terminal.last_content().display_offset < terminal.viewport_lines() {
+            self.scroll_top = self.max_scroll_top(cx);
+        }
         cx.notify();
     }
 
