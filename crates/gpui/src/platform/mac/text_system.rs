@@ -1,17 +1,19 @@
 use crate::{
-    point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun,
-    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
+    point, px, size, Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics,
+    FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
     RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::{BTreeSet, HashMap};
 use core_foundation::{
+    array::CFArray,
     attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},
     number::CFNumber,
     string::CFString,
 };
+use core_foundation_sys::locale::CFLocaleCopyPreferredLanguages;
 use core_graphics::{
     base::{kCGImageAlphaPremultipliedLast, CGGlyph},
     color_space::CGColorSpace,
@@ -43,7 +45,7 @@ use pathfinder_geometry::{
 use smallvec::SmallVec;
 use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
 
-use super::open_type;
+use super::open_type::apply_features_and_fallbacks;
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -54,9 +56,11 @@ pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
 struct FontKey {
     font_family: SharedString,
     font_features: FontFeatures,
+    font_fallbacks: FontFallbacks,
 }
 
 struct MacTextSystemState {
+    pref_langs: CFArray<CFString>,
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
@@ -66,9 +70,13 @@ struct MacTextSystemState {
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
+unsafe impl Send for MacTextSystemState {}
+unsafe impl Sync for MacTextSystemState {}
+
 impl MacTextSystem {
     pub(crate) fn new() -> Self {
         Self(RwLock::new(MacTextSystemState {
+            pref_langs: get_pref_langs(),
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
@@ -123,11 +131,12 @@ impl PlatformTextSystem for MacTextSystem {
             let font_key = FontKey {
                 font_family: font.family.clone(),
                 font_features: font.features.clone(),
+                font_fallbacks: font.fallbacks.clone(),
             };
             let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
                 font_ids.as_slice()
             } else {
-                let font_ids = lock.load_family(&font.family, &font.features)?;
+                let font_ids = lock.load_family(&font.family, &font.features, &font.fallbacks)?;
                 lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
                 lock.font_ids_by_font_key[&font_key].as_ref()
             };
@@ -212,6 +221,7 @@ impl MacTextSystemState {
         &mut self,
         name: &str,
         features: &FontFeatures,
+        fallbacks: &FontFallbacks,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let name = if name == ".SystemUIFont" {
             ".AppleSystemUIFont"
@@ -227,8 +237,7 @@ impl MacTextSystemState {
         for font in family.fonts() {
             let mut font = font.load()?;
 
-            open_type::apply_features(&mut font, features);
-
+            apply_features_and_fallbacks(&mut font, features, fallbacks, &self.pref_langs)?;
             // This block contains a precautionary fix to guard against loading fonts
             // that might cause panics due to `.unwrap()`s up the chain.
             {
@@ -457,6 +466,7 @@ impl MacTextSystemState {
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
 
                 let font: &FontKitFont = &self.fonts[run.font_id.0];
+
                 unsafe {
                     string.set_attribute(
                         cf_range,
@@ -631,6 +641,14 @@ impl From<FontStyle> for FontkitStyle {
             FontStyle::Italic => FontkitStyle::Italic,
             FontStyle::Oblique => FontkitStyle::Oblique,
         }
+    }
+}
+
+fn get_pref_langs() -> CFArray<CFString> {
+    unsafe {
+        let array = CFLocaleCopyPreferredLanguages();
+        let ret: CFArray<CFString> = CFArray::wrap_under_get_rule(array);
+        ret
     }
 }
 

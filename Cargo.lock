@@ -4866,6 +4866,7 @@ dependencies = [
  "cocoa",
  "collections",
  "core-foundation",
+ "core-foundation-sys 0.8.6",
  "core-graphics",
  "core-text",
  "cosmic-text",
