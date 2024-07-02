@@ -14,7 +14,7 @@ use language::Point;
 use project::Fs;
 use settings::{Settings as _, SettingsStore};
 use std::{ops::Range, sync::Arc};
-use ui::prelude::*;
+use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
 use workspace::{
     dock::{Panel, PanelEvent},
     Workspace,
@@ -321,16 +321,63 @@ impl FocusableView for RuntimePanel {
 }
 
 impl Render for RuntimePanel {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        // When there are no kernel specifications, show a link to the Zed docs explaining how to
+        // install kernels. It can be assumed they don't have a running kernel if we have no
+        // specifications.
+        if self.kernel_specifications.is_empty() {
+            return v_flex()
+                .p_4()
+                .size_full()
+                .gap_2()
+                        .child(Label::new("No Jupyter Kernels Available").size(LabelSize::Large))
+                        .child(
+                            Label::new("To start interactively running code in your editor, you need to install and configure Jupyter kernels.")
+                                .size(LabelSize::Default),
+                        )
+                        .child(
+                            h_flex().w_full().p_4().justify_center().gap_2().child(
+                                ButtonLike::new("install-kernels")
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Large)
+                                    .layer(ElevationIndex::ModalSurface)
+                                    .child(Label::new("Install Kernels"))
+                                    .on_click(move |_, cx| {
+                                        cx.open_url(
+                                        "https://docs.jupyter.org/en/latest/install/kernels.html",
+                                    )
+                                    }),
+                            ),
+                        )
+                .into_any_element();
+        }
+
+        // When there are no sessions, show the command to run code in an editor
+
+        if self.sessions.is_empty() {
+            return v_flex()
+                .p_4()
+                .size_full()
+                .gap_2()
+                .child(Label::new("No Jupyter Kernel Sessions").size(LabelSize::Large))
+                .child(
+                    v_flex().child(
+                        Label::new("To run code in a Jupyter kernel, select some code and use the 'repl::Run' command.")
+                            .size(LabelSize::Default)
+                    )
+                    .children(
+                            KeyBinding::for_action(&Run, cx)
+                            .map(|binding|
+                                binding.into_any_element()
+                            )
+                    )
+                )
+
+                .into_any_element();
+        }
+
         v_flex()
             .p_4()
-            // .child(Label::new("Jupyter Kernels Available"))
-            // .children(
-            //    self
-            //         .kernel_specifications
-            //         .iter()
-            //         .map(|spec| div().child(spec.name.clone())),
-            // )
             .child(Label::new("Jupyter Kernel Sessions").size(LabelSize::Large))
             .children(
                 self.sessions
