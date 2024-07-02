@@ -39,7 +39,7 @@ pub struct RichText {
     pub link_urls: Arc<[String]>,
 
     pub custom_ranges: Vec<Range<usize>>,
-    custom_ranges_tooltip_fn:
+    pub custom_ranges_tooltip_fn:
         Option<Arc<dyn Fn(usize, Range<usize>, &mut WindowContext) -> Option<AnyView>>>,
 }
 
