@@ -61,7 +61,7 @@ impl HostKeyValueStore for WasmState {
     }
 
     fn drop(&mut self, _worktree: Resource<ExtensionKeyValueStore>) -> Result<()> {
-        // We only ever hand out borrows of worktrees.
+        // We only ever hand out borrows of key-value stores.
         Ok(())
     }
 }
