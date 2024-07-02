@@ -231,7 +231,9 @@
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
     // Whether to show fold buttons in the gutter.
-    "folds": true
+    "folds": true,
+    // Line numbers style
+    "line_numbers_style": "arabic"
   },
   "indent_guides": {
     /// Whether to show indent guides in the editor.
@@ -261,8 +263,6 @@
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
-  // Convert line numbers to roman numeral system
-  "roman_line_numbers": false,
   "relative_line_numbers": false,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:

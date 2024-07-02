@@ -1,4 +1,4 @@
-use crate::editor_settings::ScrollBeyondLastLine;
+use crate::editor_settings::{NumeralStyle, ScrollBeyondLastLine};
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     display_map::{
@@ -1654,7 +1654,7 @@ impl EditorElement {
         }
     }
 
-    fn calculate_roman_number(&self, number: &DisplayRowDelta) -> String {
+    fn calculate_roman_numeral(&self, number: &DisplayRowDelta) -> String {
         let values = [
             1000000, 900000, 500000, 400000, 100000, 90000, 50000, 40000, 10000, 9000, 5000, 4000,
             1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1,
@@ -1760,14 +1760,17 @@ impl EditorElement {
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
 
         let is_relative = EditorSettings::get_global(cx).relative_line_numbers;
-        let is_roman = EditorSettings::get_global(cx).roman_line_numbers;
         let relative_to = if is_relative {
             Some(newest_selection_head.row())
         } else {
             None
         };
+
+        let numeral_style = EditorSettings::get_global(cx).gutter.line_numbers_style;
+
         let relative_rows = self.calculate_relative_line_numbers(snapshot, &rows, relative_to);
         let mut line_number = String::new();
+
         buffer_rows
             .into_iter()
             .enumerate()
@@ -1781,15 +1784,16 @@ impl EditorElement {
                 };
                 line_number.clear();
                 let default_number = multibuffer_row.0 + 1;
-                let number = relative_rows
+                let raw_number = relative_rows
                     .get(&DisplayRow(ix as u32 + rows.start.0))
                     .unwrap_or(&default_number);
-                if !is_roman {
-                    write!(&mut line_number, "{number}").unwrap();
-                } else {
-                    let roman = self.calculate_roman_number(number);
-                    write!(&mut line_number, "{roman}").unwrap();
-                }
+                let number = match numeral_style {
+                    NumeralStyle::Arabic => raw_number.to_string(),
+                    NumeralStyle::Roman => self.calculate_roman_numeral(raw_number),
+                    //NumeralStyle::Aegean => self.calculate_aegean_numeral(raw_number),
+                    _ => raw_number.to_string(),
+                };
+                write!(&mut line_number, "{number}").unwrap();
                 let run = TextRun {
                     len: line_number.len(),
                     font: self.style.text.font(),
@@ -3818,23 +3822,29 @@ impl EditorElement {
             .log10()
             .floor() as usize
             + 1;
-        let is_roman = EditorSettings::get_global(cx).roman_line_numbers;
 
-        if is_roman {
-            let last_row = snapshot.max_buffer_row().as_f32();
-            digit_count = match last_row as i32 {
-                0..=10 => 4,
-                11..=20 => 5,
-                21..=30 => 6,
-                31..=50 => 7,
-                51..=100 => 8,
-                101..=500 => 9,
-                501..=1000 => 12,
-                1001..=5000 => 15,
-                5001..=10000 => 20,
-                _ => 20,
-            };
-        }
+        let numeral_style = EditorSettings::get_global(cx).gutter.line_numbers_style;
+
+        digit_count = match numeral_style {
+            NumeralStyle::Arabic => digit_count,
+            NumeralStyle::Roman => {
+                let last_row = snapshot.max_buffer_row().as_f32();
+                match last_row as i32 {
+                    0..=10 => 4,
+                    11..=20 => 5,
+                    21..=30 => 6,
+                    31..=50 => 7,
+                    51..=100 => 8,
+                    101..=500 => 9,
+                    501..=1000 => 12,
+                    1001..=5000 => 15,
+                    5001..=10000 => 20,
+                    _ => 20,
+                }
+            }
+            _ => digit_count,
+        };
+
         self.column_pixels(digit_count, cx)
     }
 }
