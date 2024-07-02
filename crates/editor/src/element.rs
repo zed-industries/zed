@@ -382,6 +382,7 @@ impl EditorElement {
                 cx.propagate();
             }
         });
+        register_action(view, cx, Editor::show_signature_help);
         register_action(view, cx, Editor::next_inline_completion);
         register_action(view, cx, Editor::previous_inline_completion);
         register_action(view, cx, Editor::show_inline_completion);
@@ -2626,6 +2627,59 @@ impl EditorElement {
 
                 current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
             }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_signature_help(
+        &self,
+        hitbox: &Hitbox,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        display_point: Option<DisplayPoint>,
+        start_row: DisplayRow,
+        line_layouts: &[LineWithInvisibles],
+        line_height: Pixels,
+        em_width: Pixels,
+        cx: &mut WindowContext,
+    ) {
+        let Some(display_point) = display_point else {
+            return;
+        };
+
+        let Some(cursor_row_layout) =
+            line_layouts.get(display_point.row().minus(start_row) as usize)
+        else {
+            return;
+        };
+
+        let start_x = cursor_row_layout.x_for_index(display_point.column() as usize)
+            - scroll_pixel_position.x
+            + content_origin.x;
+        let start_y =
+            display_point.row().as_f32() * line_height + content_origin.y - scroll_pixel_position.y;
+
+        let max_size = size(
+            (120. * em_width) // Default size
+                .min(hitbox.size.width / 2.) // Shrink to half of the editor width
+                .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
+            (16. * line_height) // Default size
+                .min(hitbox.size.height / 2.) // Shrink to half of the editor height
+                .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
+        );
+
+        let maybe_element = self.editor.update(cx, |editor, cx| {
+            if let Some(popover) = &mut editor.signature_help_state {
+                let element = popover.render(max_size, cx);
+                Some(element)
+            } else {
+                None
+            }
+        });
+        if let Some(mut element) = maybe_element {
+            let size = element.layout_as_root(Size::<AvailableSpace>::default(), cx);
+            let point = point(start_x, start_y - size.height);
+            cx.defer_draw(element, point, 1)
         }
     }
 
@@ -5057,6 +5111,18 @@ impl Element for EditorElement {
                     } else {
                         vec![]
                     };
+
+                    self.layout_signature_help(
+                        &hitbox,
+                        content_origin,
+                        scroll_pixel_position,
+                        newest_selection_head,
+                        start_row,
+                        &line_layouts,
+                        line_height,
+                        em_width,
+                        cx,
+                    );
 
                     if !cx.has_active_drag() {
                         self.layout_hover_popovers(

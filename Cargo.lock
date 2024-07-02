@@ -3608,6 +3608,7 @@ dependencies = [
  "project",
  "rand 0.8.5",
  "release_channel",
+ "rich_text",
  "rpc",
  "schemars",
  "serde",

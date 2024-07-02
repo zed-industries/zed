@@ -255,7 +255,10 @@ message Envelope {
         TaskTemplates task_templates = 206;
 
         LinkedEditingRange linked_editing_range = 209;
-        LinkedEditingRangeResponse linked_editing_range_response = 210; // current max
+        LinkedEditingRangeResponse linked_editing_range_response = 210;
+
+        GetSignatureHelp get_signature_help = 211;
+        GetSignatureHelpResponse get_signature_help_response = 212; // current max
     }
 
     reserved 158 to 161;
@@ -926,6 +929,14 @@ message GetCodeActionsResponse {
     repeated CodeAction actions = 1;
     repeated VectorClockEntry version = 2;
 }
+
+message GetSignatureHelp {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 5;
+}
+
+message GetSignatureHelpResponse {}
 
 message GetHover {
     uint64 project_id = 1;

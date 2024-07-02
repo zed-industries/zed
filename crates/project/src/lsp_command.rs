@@ -6,6 +6,7 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
+use clock::Global;
 use futures::future;
 use gpui::{AppContext, AsyncAppContext, Model};
 use language::{
@@ -15,11 +16,13 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
+use lsp::request::Request;
 use lsp::{
     CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
     DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
-    OneOf, ServerCapabilities,
+    OneOf, ServerCapabilities, SignatureHelp,
 };
+use rpc::proto::RequestMessage;
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
@@ -118,6 +121,11 @@ pub(crate) struct GetReferences {
 }
 
 pub(crate) struct GetDocumentHighlights {
+    pub position: PointUtf16,
+}
+
+#[derive(Clone)]
+pub(crate) struct GetSignatureHelp {
     pub position: PointUtf16,
 }
 
@@ -1222,6 +1230,90 @@ impl LspCommand for GetDocumentHighlights {
 
     fn buffer_id_from_proto(message: &proto::GetDocumentHighlights) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetSignatureHelp {
+    type Response = Option<SignatureHelp>;
+    type LspRequest = lsp::request::SignatureHelpRequest;
+    type ProtoRequest = proto::GetSignatureHelp;
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> <Self::LspRequest as Request>::Params {
+        let url_result = lsp::Url::from_file_path(path);
+        if url_result.is_err() {
+            log::error!("an invalid file path has been specified");
+        }
+
+        lsp::SignatureHelpParams {
+            context: None,
+            text_document_position_params: lsp::TextDocumentPositionParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: url_result.expect("invalid file path"),
+                },
+                position: point_to_lsp(self.position),
+            },
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: <Self::LspRequest as Request>::Result,
+        _: Model<Project>,
+        _: Model<Buffer>,
+        _: LanguageServerId,
+        _: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        Ok(message)
+    }
+
+    fn to_proto(&self, _: u64, _: &Buffer) -> Self::ProtoRequest {
+        // TODO: Handle cases that are not local later
+        unimplemented!("GetSignatureHelp::to_proto is unimplemented")
+    }
+
+    async fn from_proto(
+        _: Self::ProtoRequest,
+        _: Model<Project>,
+        _: Model<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Self> {
+        // TODO: Handle cases that are not local later
+        anyhow::bail!("GetSignatureHelp::from_proto is unimplemented")
+    }
+
+    fn response_to_proto(
+        _: Self::Response,
+        _: &mut Project,
+        _: PeerId,
+        _: &Global,
+        _: &mut AppContext,
+    ) -> <Self::ProtoRequest as RequestMessage>::Response {
+        // TODO: Handle cases that are not local later
+        unimplemented!("GetSignatureHelp::response_to_proto is unimplemented")
+    }
+
+    async fn response_from_proto(
+        self,
+        _: <Self::ProtoRequest as RequestMessage>::Response,
+        _: Model<Project>,
+        _: Model<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        // TODO: Handle cases that are not local later
+        anyhow::bail!("GetSignatureHelp::response_from_proto is unimplemented")
+    }
+
+    fn buffer_id_from_proto(_: &Self::ProtoRequest) -> Result<BufferId> {
+        // TODO: Handle cases that are not local later
+        anyhow::bail!("GetSignatureHelp::buffer_id_from_proto is unimplemented")
     }
 }
 

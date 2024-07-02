@@ -39,8 +39,10 @@ pub mod tasks;
 
 #[cfg(test)]
 mod editor_tests;
+mod signature_help_popover;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+
 use ::git::diff::{DiffHunk, DiffHunkStatus};
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 pub(crate) use actions::*;
@@ -151,6 +153,7 @@ use workspace::{
 use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
+use crate::signature_help_popover::{create_signature_help_popover, SignatureHelpPopover};
 
 pub const FILE_HEADER_HEIGHT: u8 = 1;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u8 = 1;
@@ -498,6 +501,9 @@ pub struct Editor {
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
+    signature_help_task: Option<Task<()>>,
+    signature_help_state: Option<SignatureHelpPopover>,
+    signature_help_hidden_by_selection: bool,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
@@ -1817,6 +1823,9 @@ impl Editor {
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
             completion_tasks: Default::default(),
+            signature_help_task: None,
+            signature_help_state: None,
+            signature_help_hidden_by_selection: false,
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
             completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
@@ -2404,6 +2413,10 @@ impl Editor {
                 self.request_autoscroll(autoscroll, cx);
             }
             self.selections_did_change(true, &old_cursor_position, request_completions, cx);
+
+            if self.should_open_signature_help_automatically(&old_cursor_position, cx) {
+                self.show_signature_help(&ShowSignatureHelp, cx);
+            }
         }
 
         result
@@ -2856,6 +2869,10 @@ impl Editor {
         }
 
         if hide_hover(self, cx) {
+            return true;
+        }
+
+        if self.hide_signature_help(cx) {
             return true;
         }
 
@@ -3990,6 +4007,114 @@ impl Editor {
         }))
     }
 
+    fn hide_signature_help(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if self.signature_help_state.is_some() {
+            self.signature_help_state = None;
+            self.signature_help_task = None;
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn should_open_signature_help_automatically(
+        &mut self,
+        old_cursor_position: &Anchor,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        if !EditorSettings::get_global(cx).auto_signature_help {
+            return false;
+        }
+        let newest_selection = self.selections.newest::<usize>(cx);
+        let head = newest_selection.head();
+        if !newest_selection.is_empty() || head != newest_selection.tail() {
+            self.signature_help_state = None;
+            self.signature_help_hidden_by_selection = head != newest_selection.tail();
+            return false;
+        }
+
+        let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let previous_position = old_cursor_position.to_offset(&buffer_snapshot);
+        let previous_brackets_surround = buffer_snapshot
+            .innermost_enclosing_bracket_ranges(previous_position..previous_position, None)
+            .filter(|(start_bracket_range, end_bracket_range)| {
+                start_bracket_range.start != previous_position
+                    && end_bracket_range.end != previous_position
+            });
+        let current_brackets_surround = buffer_snapshot
+            .innermost_enclosing_bracket_ranges(head..head, None)
+            .filter(|(start_bracket_range, end_bracket_range)| {
+                start_bracket_range.start != head && end_bracket_range.end != head
+            });
+        match (previous_brackets_surround, current_brackets_surround) {
+            (None, None) => {
+                self.signature_help_state = None;
+                false
+            }
+            (Some(_), None) => {
+                self.signature_help_state = None;
+                false
+            }
+            (None, Some(_)) => {
+                self.signature_help_hidden_by_selection = false; // Reset the flag
+                true
+            }
+            (Some(previous), Some(current)) => {
+                if self.signature_help_hidden_by_selection {
+                    self.signature_help_hidden_by_selection = false;
+                    true
+                } else {
+                    previous != current
+                        || (previous == current && self.signature_help_state.is_some())
+                }
+            }
+        }
+    }
+
+    pub fn show_signature_help(&mut self, _: &ShowSignatureHelp, cx: &mut ViewContext<Self>) {
+        if self.pending_rename.is_some() {
+            return;
+        }
+
+        let position = self.selections.newest_anchor().head();
+        let Some((buffer, buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(position, cx)
+        else {
+            return;
+        };
+
+        self.signature_help_task = Some(cx.spawn(move |editor, mut cx| async move {
+            let signature_help_popover_task = editor
+                .update(&mut cx, |editor, cx| {
+                    let project = editor.project.clone()?;
+                    let code_background = cx.theme().colors().surface_background;
+                    let signature_help_popover = project.update(cx, move |project, mut cx| {
+                        project
+                            .signature_help(&buffer, buffer_position, &mut cx)
+                            .map(move |signature_help| {
+                                create_signature_help_popover(signature_help?, code_background)
+                            })
+                    });
+                    Some(signature_help_popover)
+                })
+                .ok()
+                .flatten();
+            let signature_help_popover =
+                if let Some(signature_help_popover) = signature_help_popover_task {
+                    signature_help_popover.await
+                } else {
+                    None
+                };
+            editor
+                .update(&mut cx, |editor, cx| {
+                    editor.signature_help_state = signature_help_popover;
+                    cx.notify();
+                })
+                .ok();
+        }));
+    }
+
     pub fn show_completions(&mut self, options: &ShowCompletions, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
@@ -4298,6 +4423,13 @@ impl Editor {
             true,
             cx,
         );
+
+        if EditorSettings::get_global(cx).auto_signature_help {
+            // After the code completion is finished, users often want to know what signatures are needed.
+            // so we should automatically call signature_help
+            self.show_signature_help(&ShowSignatureHelp, cx);
+        }
+
         Some(cx.foreground_executor().spawn(async move {
             apply_edits.await?;
             Ok(())

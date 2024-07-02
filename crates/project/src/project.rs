@@ -5733,6 +5733,37 @@ impl Project {
         }
     }
 
+    pub fn signature_help<T: ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<lsp::SignatureHelp>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.signature_help_impl(buffer, position, cx)
+    }
+
+    fn signature_help_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<lsp::SignatureHelp>> {
+        if self.is_local() {
+            let all_actions_task = self.request_multiple_lsp_locally(
+                buffer,
+                Some(position),
+                |server_capabilities| server_capabilities.signature_help_provider.is_some(),
+                GetSignatureHelp { position },
+                cx,
+            );
+            cx.spawn(|_, _| async move { all_actions_task.await.into_iter().flatten().next() })
+        } else {
+            // TODO: Handle cases that are not local later
+            Task::ready(None)
+        }
+    }
+
     fn hover_impl(
         &self,
         buffer: &Model<Buffer>,
