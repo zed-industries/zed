@@ -753,6 +753,12 @@ fn init_stdout_logger() {
             if let Some(path) = record.module_path() {
                 write!(buf, " {path}")?;
             }
+            write!(
+                buf,
+                "{}:{}",
+                record.file().unwrap_or("unknown"),
+                record.line().unwrap_or(0)
+            );
             write!(buf, "{}", subtle.value("]"))?;
             writeln!(buf, " {}", record.args())
         })

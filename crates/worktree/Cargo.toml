@@ -33,6 +33,7 @@ gpui.workspace = true
 ignore.workspace = true
 language.workspace = true
 log.workspace = true
+node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 postage.workspace = true
@@ -43,6 +44,7 @@ serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
+tempfile.workspace = true
 text.workspace = true
 util.workspace = true
 
