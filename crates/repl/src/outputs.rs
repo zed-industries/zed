@@ -321,10 +321,10 @@ pub struct ExecutionView {
 }
 
 impl ExecutionView {
-    pub fn new(_cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(status: ExecutionStatus, _cx: &mut ViewContext<Self>) -> Self {
         Self {
             outputs: Default::default(),
-            status: ExecutionStatus::Unknown,
+            status,
         }
     }
 
@@ -434,11 +434,6 @@ impl ExecutionView {
         let mut new_terminal = TerminalOutput::new();
         new_terminal.append_text(text);
         Some(OutputType::Stream(new_terminal))
-    }
-
-    pub fn set_status(&mut self, status: ExecutionStatus, cx: &mut ViewContext<Self>) {
-        self.status = status;
-        cx.notify();
     }
 }
 
