@@ -22,7 +22,7 @@ use client::{
 use clock::ReplicaId;
 use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use dap::{
-    client::{DebugAdapterClient, DebugAdapterClientId, TransportType},
+    client::{DebugAdapterClient, DebugAdapterClientId},
     transport::Events,
     SourceBreakpoint,
 };

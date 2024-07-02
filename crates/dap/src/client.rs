@@ -16,7 +16,7 @@ use futures::{
     AsyncBufRead, AsyncReadExt, AsyncWrite, SinkExt as _, StreamExt,
 };
 use gpui::{AppContext, AsyncAppContext};
-use serde_json::Value;
+use serde_json::{json, Value};
 use smol::{
     io::BufReader,
     net::TcpStream,
@@ -29,12 +29,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
+use task::{DebugAdapterConfig, TransportType};
 use util::ResultExt;
-
-pub enum TransportType {
-    TCP,
-    STDIO,
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -46,14 +42,14 @@ pub struct DebugAdapterClient {
     server_tx: UnboundedSender<Payload>,
     request_count: AtomicU64,
     capabilities: Option<dap_types::Capabilities>,
+    config: DebugAdapterConfig,
 }
 
 impl DebugAdapterClient {
     pub async fn new<F>(
-        transport_type: TransportType,
+        config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
-        port: u16,
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
         event_handler: F,
@@ -61,20 +57,21 @@ impl DebugAdapterClient {
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
-        match transport_type {
+        match config.transport {
             TransportType::TCP => {
-                Self::create_tcp_client(command, args, port, project_path, cx, event_handler).await
+                Self::create_tcp_client(config, command, args, project_path, cx, event_handler)
+                    .await
             }
             TransportType::STDIO => {
-                Self::create_stdio_client(command, args, port, project_path, cx).await
+                Self::create_stdio_client(config, command, args, project_path, cx).await
             }
         }
     }
 
     async fn create_tcp_client<F>(
+        config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
-        port: u16,
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
         event_handler: F,
@@ -100,11 +97,12 @@ impl DebugAdapterClient {
             .timer(Duration::from_millis(1000))
             .await;
 
-        let address = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port);
+        let address = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), config.port);
 
         let (rx, tx) = TcpStream::connect(address).await?.split();
 
         Self::handle_transport(
+            config,
             Box::new(BufReader::new(rx)),
             Box::new(tx),
             None,
@@ -115,9 +113,9 @@ impl DebugAdapterClient {
     }
 
     async fn create_stdio_client(
+        config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
-        port: u16,
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
@@ -125,6 +123,7 @@ impl DebugAdapterClient {
     }
 
     pub fn handle_transport<F>(
+        config: DebugAdapterConfig,
         rx: Box<dyn AsyncBufRead + Unpin + Send>,
         tx: Box<dyn AsyncWrite + Unpin + Send>,
         err: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
@@ -143,6 +142,7 @@ impl DebugAdapterClient {
             _process: process,
             request_count: AtomicU64::new(0),
             capabilities: None,
+            config,
         };
 
         cx.spawn(move |cx| Self::handle_events(client_rx, event_handler, cx))
@@ -245,9 +245,16 @@ impl DebugAdapterClient {
         Ok(capabilities)
     }
 
-    pub async fn launch(&self, custom: Value) -> Result<()> {
-        self.request::<Launch>(LaunchRequestArguments { raw: custom })
-            .await
+    pub async fn launch(&self) -> Result<()> {
+        self.request::<Launch>(LaunchRequestArguments {
+            raw: self
+                .config
+                .launch_config
+                .clone()
+                .and_then(|c| Some(c.config))
+                .unwrap_or(Value::Null),
+        })
+        .await
     }
 
     pub async fn resume(&self, thread_id: u64) {
@@ -321,6 +328,12 @@ impl DebugAdapterClient {
         path: PathBuf,
         breakpoints: Option<Vec<SourceBreakpoint>>,
     ) -> Result<SetBreakpointsResponse> {
+        let adapter_data = self
+            .config
+            .launch_config
+            .clone()
+            .and_then(|c| Some(c.config));
+
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
                 path: Some(String::from(path.to_string_lossy())),
@@ -329,7 +342,7 @@ impl DebugAdapterClient {
                 presentation_hint: None,
                 origin: None,
                 sources: None,
-                adapter_data: None,
+                adapter_data,
                 checksums: None,
             },
             breakpoints,

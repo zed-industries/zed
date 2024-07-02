@@ -3275,6 +3275,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "smol",
+ "task",
  "util",
 ]
 

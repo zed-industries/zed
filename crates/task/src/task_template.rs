@@ -1,10 +1,9 @@
-use std::{default, path::PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{bail, Context};
 use collections::{HashMap, HashSet};
 use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
-use serde_json_lenient::Value;
 use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
@@ -70,12 +69,26 @@ pub enum TaskType {
     Debug,
 }
 
+/// Represents the type of the debugger adapter connection
+#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportType {
+    /// Connect to the debug adapter via TCP
+    #[default]
+    TCP,
+    /// Connect to the debug adapter via STDIO
+    STDIO,
+}
+
 /// Represents the configuration for the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugAdapterConfig {
     /// The port that the debug adapter is listening on
     pub port: u16,
+    /// The type of connection the adapter should use
+    #[serde(default)]
+    pub transport: TransportType,
     /// The configuration options that are send with the launch request
     /// to the debug adapter
     pub launch_config: Option<DebugLaunchConfig>,
