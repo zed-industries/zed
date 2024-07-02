@@ -26,7 +26,10 @@ use std::{
     net::{Ipv4Addr, SocketAddrV4},
     path::PathBuf,
     process::Stdio,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 use task::{DebugAdapterConfig, TransportType};
@@ -43,24 +46,20 @@ pub struct DebugAdapterClient {
     request_count: AtomicU64,
     capabilities: Option<dap_types::Capabilities>,
     config: DebugAdapterConfig,
+    client_rx: Arc<Mutex<UnboundedReceiver<Payload>>>,
 }
 
 impl DebugAdapterClient {
-    pub async fn new<F>(
+    pub async fn new(
         config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
-        event_handler: F,
-    ) -> Result<Self>
-    where
-        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
-    {
+    ) -> Result<Self> {
         match config.transport {
             TransportType::TCP => {
-                Self::create_tcp_client(config, command, args, project_path, cx, event_handler)
-                    .await
+                Self::create_tcp_client(config, command, args, project_path, cx).await
             }
             TransportType::STDIO => {
                 Self::create_stdio_client(config, command, args, project_path, cx).await
@@ -68,17 +67,13 @@ impl DebugAdapterClient {
         }
     }
 
-    async fn create_tcp_client<F>(
+    async fn create_tcp_client(
         config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
-        event_handler: F,
-    ) -> Result<Self>
-    where
-        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
-    {
+    ) -> Result<Self> {
         let mut command = process::Command::new(command);
         command
             .current_dir(project_path)
@@ -108,7 +103,6 @@ impl DebugAdapterClient {
             None,
             Some(process),
             cx,
-            event_handler,
         )
     }
 
@@ -122,20 +116,18 @@ impl DebugAdapterClient {
         todo!("not implemented")
     }
 
-    pub fn handle_transport<F>(
+    pub fn handle_transport(
         config: DebugAdapterConfig,
         rx: Box<dyn AsyncBufRead + Unpin + Send>,
         tx: Box<dyn AsyncWrite + Unpin + Send>,
         err: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
         process: Option<Child>,
         cx: &mut AsyncAppContext,
-        event_handler: F,
-    ) -> Result<Self>
-    where
-        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
-    {
+    ) -> Result<Self> {
         let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
         let (client_tx, client_rx) = unbounded::<Payload>();
+
+        let client_rx = Arc::new(Mutex::new(client_rx));
 
         let client = Self {
             server_tx: server_tx.clone(),
@@ -143,25 +135,27 @@ impl DebugAdapterClient {
             request_count: AtomicU64::new(0),
             capabilities: None,
             config,
+            client_rx,
         };
 
         cx.spawn(move |_| Self::handle_recv(server_rx, server_tx, client_tx))
             .detach();
 
-        cx.spawn(move |cx| Self::handle_events(client_rx, event_handler, cx))
-            .detach();
-
         Ok(client)
     }
 
-    async fn handle_events<F>(
-        mut client_rx: UnboundedReceiver<Payload>,
+    pub async fn handle_events<F>(
+        client: Arc<Self>,
         mut event_handler: F,
         cx: AsyncAppContext,
     ) -> Result<()>
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
+        let mut client_rx = client
+            .client_rx
+            .lock()
+            .expect("Client should not be locked by any other thread/task");
         while let Some(payload) = client_rx.next().await {
             cx.update(|cx| match payload {
                 Payload::Event(event) => event_handler(*event, cx),

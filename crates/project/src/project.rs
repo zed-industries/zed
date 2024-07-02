@@ -23,7 +23,7 @@ use clock::ReplicaId;
 use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use dap::{
     client::{DebugAdapterClient, DebugAdapterClientId},
-    transport::Events,
+    transport::{self, Events},
     SourceBreakpoint,
 };
 use debounced_delay::DebouncedDelay;
@@ -1089,23 +1089,12 @@ impl Project {
         let args = debug_template.args.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
-            let this2 = this.clone();
             let mut client = DebugAdapterClient::new(
                 adapter_config,
                 &command,
                 args.iter().map(|ele| &ele[..]).collect(),
                 cwd.into(),
                 &mut cx,
-                move |event, cx| {
-                    this2
-                        .update(cx, |_, cx| {
-                            cx.emit(Event::DebugClientEvent {
-                                client_id: id,
-                                event,
-                            })
-                        })
-                        .log_err();
-                },
             )
             .await
             .log_err()?;
@@ -1126,6 +1115,28 @@ impl Project {
                 *handle = DebugAdapterClientState::Running(client.clone());
 
                 cx.emit(Event::DebugClientStarted(id));
+
+                // call handle events
+                cx.spawn({
+                    let client = client.clone();
+                    move |project, cx| {
+                        DebugAdapterClient::handle_events(
+                            client,
+                            move |event, cx| {
+                                project
+                                    .update(cx, |_, cx| {
+                                        cx.emit(Event::DebugClientEvent {
+                                            client_id: id,
+                                            event,
+                                        })
+                                    })
+                                    .log_err();
+                            },
+                            cx,
+                        )
+                    }
+                })
+                .detach_and_log_err(cx);
 
                 anyhow::Ok(())
             })
