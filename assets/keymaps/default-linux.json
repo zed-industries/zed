@@ -153,7 +153,7 @@
       //   }
       // ],
       "ctrl->": "assistant::QuoteSelection",
-      "ctrl-<": "assistant::InsertSelection",
+      "ctrl-<": "assistant::InsertIntoEditor",
       "ctrl-alt-e": "editor::SelectEnclosingSymbol"
     }
   },
@@ -547,7 +547,7 @@
       "ctrl-enter": "assistant::Assist",
       "ctrl-s": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
-      "ctrl-<": "assistant::InsertSelection",
+      "ctrl-<": "assistant::InsertIntoEditor",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",

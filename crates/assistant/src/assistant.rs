@@ -42,7 +42,7 @@ actions!(
         Split,
         CycleMessageRole,
         QuoteSelection,
-        InsertSelection,
+        InsertIntoEditor,
         ToggleFocus,
         ResetKey,
         InlineAssist,

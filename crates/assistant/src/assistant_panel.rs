@@ -8,7 +8,7 @@ use crate::{
         SlashCommandRegistry,
     },
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, ContextStore, CycleMessageRole,
-    InlineAssist, InlineAssistant, InsertSelection, LanguageModelRequest,
+    InlineAssist, InlineAssistant, InsertIntoEditor, LanguageModelRequest,
     LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus, ModelSelector,
     QuoteSelection, ResetKey, Role, SavedContext, SavedContextMetadata, SavedMessage, Split,
     ToggleFocus, ToggleHistory, ToggleModelSelector,
@@ -2918,7 +2918,7 @@ impl ContextEditor {
 
     fn insert_selection(
         workspace: &mut Workspace,
-        _: &InsertSelection,
+        _: &InsertIntoEditor,
         cx: &mut ViewContext<Workspace>,
     ) {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
