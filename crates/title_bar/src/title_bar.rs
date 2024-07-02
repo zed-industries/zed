@@ -1,6 +1,7 @@
 mod call_controls;
 mod collab;
 mod platforms;
+mod window_controls;
 
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
@@ -70,9 +71,10 @@ impl Render for TitleBar {
         let close_action = Box::new(workspace::CloseWindow);
 
         let platform_supported = cfg!(target_os = "macos");
+
         let height = Self::height(cx);
 
-        h_flex()
+        let mut title_bar = h_flex()
             .id("titlebar")
             .w_full()
             .pt(Self::top_padding(cx))
@@ -371,28 +373,34 @@ impl Render for TitleBar {
                                     }
                                 }),
                         )
-            )
-            .when(
-                self.platform_style == PlatformStyle::Windows && !cx.is_fullscreen(),
-                |title_bar| title_bar.child(platform_windows::WindowsWindowControls::new(height)),
-            )
-            .when(
-                self.platform_style == PlatformStyle::Linux
-                    && !cx.is_fullscreen()
-                    && cx.should_render_window_controls(),
-                |title_bar| {
-                    title_bar
-                        .child(platform_linux::LinuxWindowControls::new(height, close_action))
-                        .on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
-                            cx.show_window_menu(ev.position)
-                        })
-                        .on_mouse_move(move |ev, cx| {
-                            if ev.dragging() {
-                                cx.start_system_move();
-                            }
-                        })
-                },
-            )
+            );
+
+        // Windows Window Controls
+        title_bar = title_bar.when(
+            self.platform_style == PlatformStyle::Windows && !cx.is_fullscreen(),
+            |title_bar| title_bar.child(platform_windows::WindowsWindowControls::new(height)),
+        );
+
+        // Linux Window Controls
+        title_bar = title_bar.when(
+            self.platform_style == PlatformStyle::Linux
+                && !cx.is_fullscreen()
+                && cx.should_render_window_controls(),
+            |title_bar| {
+                title_bar
+                    .child(platform_linux::LinuxWindowControls::new(close_action))
+                    .on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
+                        cx.show_window_menu(ev.position)
+                    })
+                    .on_mouse_move(move |ev, cx| {
+                        if ev.dragging() {
+                            cx.start_system_move();
+                        }
+                    })
+            },
+        );
+
+        title_bar
     }
 }
 
