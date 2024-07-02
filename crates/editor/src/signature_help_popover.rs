@@ -60,7 +60,7 @@ pub fn create_signature_help_popover(
         .map(|parameters| parameters.len())
         .unwrap_or(0);
     let mut highlight_start = 0;
-    let (markdown, mut highlights): (Vec<_>, Vec<_>) = signature_information
+    let (text, mut highlights): (Vec<_>, Vec<_>) = signature_information
         .parameters
         .as_ref()?
         .iter()
@@ -102,27 +102,27 @@ pub fn create_signature_help_popover(
             result
         })
         .unzip();
-    let markdown = markdown.join(str_for_join);
-    let markdown = if function_options_count >= 2 {
+    let text = text.join(str_for_join);
+    let text = if function_options_count >= 2 {
         let suffix = format!("(+{} overload)", function_options_count - 1);
-        let highlight_start = markdown.len() + 1;
+        let highlight_start = text.len() + 1;
         let mut highlight_style = SIGNATURE_HELP_OVERLOAD_HIGHLIGHT_STYLE;
         highlight_style.background_color = Some(background_color);
         highlights.push(Some((
             highlight_start..(highlight_start + suffix.len()),
             Highlight::Highlight(highlight_style),
         )));
-        format!("{markdown} {suffix}")
+        format!("{text} {suffix}")
     } else {
-        markdown
+        text
     };
 
-    if markdown.is_empty() {
+    if text.is_empty() {
         None
     } else {
         let highlights = highlights.into_iter().flatten().collect::<Vec<_>>();
         let text = RichText {
-            text: markdown.into(),
+            text: text.into(),
             highlights,
             link_ranges: Vec::new(),
             link_urls: Arc::new([]),
