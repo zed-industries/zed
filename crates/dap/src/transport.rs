@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Context, Result};
 use dap_types::{
-    BreakpointEvent, CapabilitiesEvent, ContinuedEvent, ExitedEvent, InvalidatedEvent,
-    LoadedSourceEvent, MemoryEvent, ModuleEvent, OutputEvent, ProcessEvent, ProgressEndEvent,
-    ProgressStartEvent, ProgressUpdateEvent, StoppedEvent, TerminatedEvent, ThreadEvent,
+    BreakpointEvent, Capabilities, CapabilitiesEvent, ContinuedEvent, ExitedEvent,
+    InvalidatedEvent, LoadedSourceEvent, MemoryEvent, ModuleEvent, OutputEvent, ProcessEvent,
+    ProgressEndEvent, ProgressStartEvent, ProgressUpdateEvent, StoppedEvent, TerminatedEvent,
+    ThreadEvent,
 };
 use futures::{
     channel::mpsc::{unbounded, Sender, UnboundedReceiver, UnboundedSender},
@@ -28,7 +29,7 @@ pub enum Payload {
 #[serde(tag = "event", content = "body")]
 #[serde(rename_all = "camelCase")]
 pub enum Events {
-    Initialized,
+    Initialized(Option<Capabilities>),
     Stopped(StoppedEvent),
     Continued(ContinuedEvent),
     Exited(ExitedEvent),
