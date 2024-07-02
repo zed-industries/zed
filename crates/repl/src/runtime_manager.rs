@@ -40,11 +40,11 @@ impl RuntimeManager {
         .detach_and_log_err(cx);
     }
 
-    pub fn kernelspec(&self, language_name: Arc<str>) -> Option<RuntimeSpecification> {
+    pub fn kernelspec(&self, language_name: &str) -> Option<RuntimeSpecification> {
         self.runtime_specifications
             .iter()
             .find(|runtime_specification| {
-                runtime_specification.kernelspec.language == language_name.to_string()
+                runtime_specification.kernelspec.language.as_str() == language_name
             })
             .cloned()
     }

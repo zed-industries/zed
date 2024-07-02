@@ -29,23 +29,16 @@ pub struct RuntimeSpecification {
 
 impl RuntimeSpecification {
     #[must_use]
-    fn command(&self, connection_path: &PathBuf) -> Result<Command> {
+    fn command(&self, connection_path: &PathBuf) -> anyhow::Result<Command> {
         let argv = &self.kernelspec.argv;
 
-        if argv.is_empty() {
-            return Err(anyhow::anyhow!("Empty argv in kernelspec {}", self.name));
-        }
-
-        if argv.len() < 2 {
-            return Err(anyhow::anyhow!("Invalid argv in kernelspec {}", self.name));
-        }
-
-        if !argv.contains(&"{connection_file}".to_string()) {
-            return Err(anyhow::anyhow!(
-                "Missing 'connection_file' in argv in kernelspec {}",
-                self.name
-            ));
-        }
+        anyhow::ensure!(!argv.is_empty(), "Empty argv in kernelspec {}", self.name);
+        anyhow::ensure!(argv.len() >= 2, "Invalid argv in kernelspec {}", self.name);
+        anyhow::ensure!(
+            argv.iter().any(|arg| arg == "{connection_file}"),
+            "Missing 'connection_file' in argv in kernelspec {}",
+            self.name
+        );
 
         let mut cmd = Command::new(&argv[0]);
 
@@ -172,8 +165,7 @@ impl RunningKernel {
                 kernel_name: Some(format!("zed-{}", runtime_specification.name)),
             };
 
-            let connection_path =
-                dirs::runtime_dir().join(format!("kernel-zed-{}.json", entity_id));
+            let connection_path = dirs::runtime_dir().join(format!("kernel-zed-{entity_id}.json"));
             let content = serde_json::to_string(&connection_info)?;
             // write out file to disk for kernel
             fs.atomic_write(connection_path.clone(), content).await?;
@@ -286,17 +278,17 @@ async fn read_kernelspec_at(
     // Path should be a directory to a jupyter kernelspec, as in
     // /usr/local/share/jupyter/kernels/python3
     kernel_dir: PathBuf,
-    fs: Arc<dyn Fs>,
+    fs: &dyn Fs,
 ) -> anyhow::Result<RuntimeSpecification> {
     let path = kernel_dir;
     let kernel_name = if let Some(kernel_name) = path.file_name() {
         kernel_name.to_string_lossy().to_string()
     } else {
-        return Err(anyhow::anyhow!("Invalid kernelspec directory: {:?}", path));
+        anyhow::bail!("Invalid kernelspec directory: {path:?}");
     };
 
     if !fs.is_dir(path.as_path()).await {
-        return Err(anyhow::anyhow!("Not a directory: {:?}", path));
+        anyhow::bail!("Not a directory: {path:?}");
     }
 
     let expected_kernel_json = path.join("kernel.json");
@@ -311,10 +303,7 @@ async fn read_kernelspec_at(
 }
 
 /// Read a directory of kernelspec directories
-async fn read_kernels_dir(
-    path: PathBuf,
-    fs: Arc<dyn Fs>,
-) -> anyhow::Result<Vec<RuntimeSpecification>> {
+async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> anyhow::Result<Vec<RuntimeSpecification>> {
     let mut kernelspec_dirs = fs.read_dir(&path).await?;
 
     let mut valid_kernelspecs = Vec::new();
@@ -322,15 +311,12 @@ async fn read_kernels_dir(
         match path {
             Ok(path) => {
                 if fs.is_dir(path.as_path()).await {
-                    let fs = fs.clone();
                     if let Ok(kernelspec) = read_kernelspec_at(path, fs).await {
                         valid_kernelspecs.push(kernelspec);
                     }
                 }
             }
-            Err(err) => {
-                log::warn!("Error reading kernelspec directory: {:?}", err);
-            }
+            Err(err) => log::warn!("Error reading kernelspec directory: {err:?}"),
         }
     }
 
@@ -344,7 +330,7 @@ pub async fn get_runtime_specifications(
     let kernel_dirs = data_dirs
         .iter()
         .map(|dir| dir.join("kernels"))
-        .map(|path| read_kernels_dir(path, fs.clone()))
+        .map(|path| read_kernels_dir(path, fs.as_ref()))
         .collect::<Vec<_>>();
 
     let kernel_dirs = futures::future::join_all(kernel_dirs).await;
@@ -402,7 +388,7 @@ mod test {
         )
         .await;
 
-        let mut kernels = read_kernels_dir(PathBuf::from("/jupyter/kernels"), fs)
+        let mut kernels = read_kernels_dir(PathBuf::from("/jupyter/kernels"), fs.as_ref())
             .await
             .unwrap();
 

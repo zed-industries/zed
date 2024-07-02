@@ -1,8 +1,8 @@
 use crate::{runtime_settings::JupyterSettings, RuntimeManager, Session};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_dispatcher::{set_dispatcher, Dispatcher, Runnable};
 use collections::HashMap;
-use editor::{Anchor, Editor};
+use editor::{Anchor, Editor, RangeToAnchorExt};
 use gpui::{
     actions, prelude::*, AppContext, AsyncWindowContext, Entity, EntityId, EventEmitter,
     FocusHandle, FocusOutEvent, FocusableView, Model, PlatformDispatcher, Subscription, Task, View,
@@ -20,7 +20,7 @@ use workspace::{
 
 actions!(repl, [Run, ToggleFocus]);
 
-pub fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
+fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
     struct ZedDispatcher {
         dispatcher: Arc<dyn PlatformDispatcher>,
     }
@@ -86,7 +86,7 @@ impl RuntimePanel {
 
                     let fs = workspace.app_state().fs.clone();
 
-                    let runtime_manager = cx.new_model(|cx| RuntimeManager::new(fs.clone(), cx));
+                    let runtime_manager = cx.new_model(|cx| RuntimeManager::new(fs, cx));
                     RuntimeManager::set_global(runtime_manager.clone(), cx);
 
                     let subscriptions = vec![
@@ -106,7 +106,7 @@ impl RuntimePanel {
                     Self {
                         width: None,
                         focus_handle,
-                        runtime_manager: runtime_manager.clone(),
+                        runtime_manager,
                         sessions: Default::default(),
                         workspace: workspace.weak_handle(),
                         _subscriptions: subscriptions,
@@ -123,7 +123,7 @@ impl RuntimePanel {
         })
     }
 
-    pub fn handle_update(&mut self, _model: Model<RuntimeManager>, cx: &mut ViewContext<Self>) {
+    fn handle_update(&mut self, _model: Model<RuntimeManager>, cx: &mut ViewContext<Self>) {
         cx.notify();
     }
 
@@ -136,20 +136,23 @@ impl RuntimePanel {
     }
 
     // Gets the active selection in the editor or the current line
-    pub fn selection(&self, editor: View<Editor>, cx: &mut ViewContext<Self>) -> Range<Anchor> {
+    fn selection(&self, editor: View<Editor>, cx: &mut ViewContext<Self>) -> Range<Anchor> {
         let editor = editor.read(cx);
         let selection = editor.selections.newest::<usize>(cx);
-        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
 
         let range = if selection.is_empty() {
             let cursor = selection.head();
 
-            let line_start = buffer.offset_to_point(cursor).row;
-            let mut start_offset = buffer.point_to_offset(Point::new(line_start, 0));
+            let line_start = multi_buffer_snapshot.offset_to_point(cursor).row;
+            let mut start_offset = multi_buffer_snapshot.point_to_offset(Point::new(line_start, 0));
 
             // Iterate backwards to find the start of the line
             while start_offset > 0 {
-                let ch = buffer.chars_at(start_offset - 1).next().unwrap_or('\0');
+                let ch = multi_buffer_snapshot
+                    .chars_at(start_offset - 1)
+                    .next()
+                    .unwrap_or('\0');
                 if ch == '\n' {
                     break;
                 }
@@ -159,8 +162,11 @@ impl RuntimePanel {
             let mut end_offset = cursor;
 
             // Iterate forwards to find the end of the line
-            while end_offset < buffer.len() {
-                let ch = buffer.chars_at(end_offset).next().unwrap_or('\0');
+            while end_offset < multi_buffer_snapshot.len() {
+                let ch = multi_buffer_snapshot
+                    .chars_at(end_offset)
+                    .next()
+                    .unwrap_or('\0');
                 if ch == '\n' {
                     break;
                 }
@@ -173,8 +179,7 @@ impl RuntimePanel {
             selection.range()
         };
 
-        let anchor_range = buffer.anchor_before(range.start)..buffer.anchor_after(range.end);
-        anchor_range
+        range.to_anchors(&multi_buffer_snapshot)
     }
 
     pub fn snippet(
@@ -182,9 +187,8 @@ impl RuntimePanel {
         editor: View<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> Option<(String, Arc<str>, Range<Anchor>)> {
-        let anchor_range = self.selection(editor.clone(), cx);
-
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let anchor_range = self.selection(editor, cx);
 
         let selected_text = buffer
             .text_for_range(anchor_range.clone())
@@ -196,19 +200,13 @@ impl RuntimePanel {
         let language_name = if start_language == end_language {
             start_language
                 .map(|language| language.code_fence_block_name())
-                .filter(|lang| **lang != *"markdown")
+                .filter(|lang| **lang != *"markdown")?
         } else {
             // If the selection spans multiple languages, don't run it
             return None;
         };
 
-        let language_name = if let Some(language_name) = language_name {
-            language_name
-        } else {
-            return None;
-        };
-
-        return Some((selected_text, language_name, anchor_range));
+        Some((selected_text, language_name, anchor_range))
     }
 
     pub fn run(
@@ -219,17 +217,16 @@ impl RuntimePanel {
     ) -> anyhow::Result<()> {
         let (selected_text, language_name, anchor_range) = match self.snippet(editor.clone(), cx) {
             Some(snippet) => snippet,
-            None => return anyhow::Ok(()),
+            None => return Ok(()),
         };
 
         let entity_id = editor.entity_id();
 
-        let runtime_manager = self.runtime_manager.clone();
-        let runtime_manager = runtime_manager.read(cx);
-
-        let runtime_specification = runtime_manager
-            .kernelspec(language_name.clone())
-            .ok_or_else(|| anyhow::anyhow!("No kernel found for language: {}", language_name))?;
+        let runtime_specification = self
+            .runtime_manager
+            .read(cx)
+            .kernelspec(&language_name)
+            .with_context(|| format!("No kernel found for language: {language_name}"))?;
 
         let session = self.sessions.entry(entity_id).or_insert_with(|| {
             let view = cx.new_view(|cx| Session::new(editor, fs, runtime_specification, cx));
