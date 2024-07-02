@@ -159,6 +159,7 @@ pub struct Miner {
     processed_files: Arc<Mutex<HashSet<PathBuf>>>,
     fs: Arc<dyn Fs>,
     background_executor: BackgroundExecutor,
+    gitignore_cache: Arc<Mutex<Option<ignore::gitignore::Gitignore>>>,
 }
 
 impl Miner {
@@ -245,6 +246,7 @@ impl Miner {
             processed_files: Arc::new(Mutex::new(HashSet::new())),
             fs,
             background_executor: background_executor.clone(),
+            gitignore_cache: Arc::new(Mutex::new(None)),
         });
 
         let miner_clone = Arc::clone(&miner);
@@ -267,7 +269,7 @@ impl Miner {
 
         println!("Starting project summarization");
         // Populate the queue with files and directories
-        let mut entries = self.walk_directory(&self.root).await?;
+        let mut entries = self.walk_root().await?;
 
         while let Some(entry) = entries.next().await {
             let entry = entry?;
@@ -393,7 +395,7 @@ impl Miner {
     }
 
     async fn is_ignored(&self, path: &Path) -> Result<bool> {
-        let gitignore = self.build_gitignore(&self.root).await?;
+        let gitignore = self.build_gitignore().await?;
         let relative_path = path.strip_prefix(&self.root).unwrap_or(path);
         let is_dir = self.fs.is_dir(path).await;
         if path.file_name().map_or(false, |name| name == ".git") {
@@ -402,13 +404,10 @@ impl Miner {
         Ok(gitignore.matched(relative_path, is_dir).is_ignore())
     }
 
-    async fn walk_directory(
-        &self,
-        root: &Path,
-    ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<DirEntry>>>>> {
+    async fn walk_root(&self) -> Result<Pin<Box<dyn Send + Stream<Item = Result<DirEntry>>>>> {
         let fs = self.fs.clone();
-        let root = root.to_owned();
-        let gitignore = self.build_gitignore(&root).await?;
+        let root = self.root.to_owned();
+        let gitignore = self.build_gitignore().await?;
 
         let stream = stream::unfold(
             (vec![root.clone()], fs, gitignore),
@@ -1369,17 +1368,24 @@ impl Miner {
     /// This method traverses the directory tree, reading .gitignore files
     /// and constructing a gitignore matcher that can be used to filter files
     /// and directories based on gitignore rules.
-    async fn build_gitignore(&self, root: &Path) -> Result<ignore::gitignore::Gitignore> {
-        let mut builder = GitignoreBuilder::new(root);
+    async fn build_gitignore(&self) -> Result<ignore::gitignore::Gitignore> {
+        let mut cache = self.gitignore_cache.lock().await;
+        if let Some(ref gitignore) = *cache {
+            return Ok(gitignore.clone());
+        }
 
-        let mut dir_stack = vec![root.to_path_buf()];
-        while let Some(dir) = dir_stack.pop() {
+        let mut builder = GitignoreBuilder::new(&self.root);
+        let mut gitignore = builder.build()?;
+        let mut stack = vec![self.root.clone()];
+
+        while let Some(dir) = stack.pop() {
             let gitignore_path = dir.join(".gitignore");
             if self.fs.is_file(&gitignore_path).await {
                 if let Ok(content) = self.fs.load(&gitignore_path).await {
                     for line in content.lines() {
                         builder.add_line(Some(gitignore_path.clone()), line)?;
                     }
+                    gitignore = builder.build()?;
                 }
             }
 
@@ -1387,12 +1393,16 @@ impl Miner {
             while let Some(entry) = read_dir.next().await {
                 let entry = entry?;
                 if self.fs.is_dir(&entry).await {
-                    dir_stack.push(entry);
+                    let relative_path = entry.strip_prefix(&self.root).unwrap_or(&entry);
+                    if !gitignore.matched(relative_path, true).is_ignore() {
+                        stack.push(entry.to_path_buf());
+                    }
                 }
             }
         }
 
-        Ok(builder.build()?)
+        *cache = Some(gitignore.clone());
+        Ok(gitignore)
     }
 }
 
