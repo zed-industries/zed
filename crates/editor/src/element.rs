@@ -2657,9 +2657,7 @@ impl EditorElement {
             - scroll_pixel_position.x
             + content_origin.x;
         let start_y =
-            display_point.row().next_row().as_f32() * line_height - scroll_pixel_position.y;
-
-        let point = point(start_x, start_y);
+            display_point.row().as_f32() * line_height + content_origin.y - scroll_pixel_position.y;
 
         let max_size = size(
             (120. * em_width) // Default size
@@ -2684,7 +2682,8 @@ impl EditorElement {
             }
         });
         if let Some(mut element) = maybe_element {
-            element.layout_as_root(Size::<AvailableSpace>::default(), cx);
+            let size = element.layout_as_root(Size::<AvailableSpace>::default(), cx);
+            let point = point(start_x, start_y - size.height);
             cx.defer_draw(element, point, 1)
         }
     }
