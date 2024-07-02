@@ -124,11 +124,9 @@ impl Session {
         let message: JupyterMessage = execute_request.into();
 
         let status = match &self.kernel {
-            // Technically this is probably more like queued. Later Status messages will update it
             Kernel::RunningKernel(_) => ExecutionStatus::Queued,
             Kernel::StartingKernel(_) => ExecutionStatus::ConnectingToKernel,
-            // todo!(): Be more fine grained
-            Kernel::ErroredLaunch(_) => ExecutionStatus::Unknown,
+            Kernel::ErroredLaunch(error) => ExecutionStatus::KernelErrored(error.clone()),
             Kernel::ShuttingDown => ExecutionStatus::ShuttingDown,
             Kernel::Shutdown => ExecutionStatus::Shutdown,
         };
