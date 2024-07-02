@@ -228,14 +228,14 @@ impl DebugAdapterClient {
             supports_variable_type: Some(true),
             supports_variable_paging: Some(false),
             supports_run_in_terminal_request: Some(false), // TODO: we should support this
-            supports_memory_references: Some(false),
-            supports_progress_reporting: Some(false),
+            supports_memory_references: Some(true),
+            supports_progress_reporting: Some(true),
             supports_invalidated_event: Some(false),
             lines_start_at1: Some(true),
             columns_start_at1: Some(true),
-            supports_memory_event: None,
+            supports_memory_event: Some(true),
             supports_args_can_be_interpreted_by_shell: None,
-            supports_start_debugging_request: None,
+            supports_start_debugging_request: Some(true),
         };
 
         let capabilities = self.request::<Initialize>(args).await?;
