@@ -10703,6 +10703,7 @@ dependencies = [
  "parking_lot",
  "schemars",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "sha2 0.10.7",
  "shellexpand 2.1.2",

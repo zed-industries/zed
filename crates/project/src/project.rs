@@ -1077,14 +1077,18 @@ impl Project {
     ) {
         let id = DebugAdapterClientId(1);
         let debug_template = debug_task.original_task();
-        let command = debug_template.command.clone();
         let cwd = debug_template
             .cwd
             .clone()
             .expect("Debug tasks need to know what directory to open");
-        let mut args = debug_template.args.clone();
+        let adapter_config = debug_task
+            .debug_adapter_config()
+            .expect("Debug taks need to specify adapter configuration");
 
-        args.push("--server=8131".to_string().clone());
+        let command = debug_template.command.clone();
+        let args = debug_template.args.clone();
+        let port = adapter_config.port.clone();
+        let launch_config = adapter_config.launch_config.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
             let this2 = this.clone();
@@ -1092,7 +1096,7 @@ impl Project {
                 TransportType::TCP,
                 &command,
                 args.iter().map(|ele| &ele[..]).collect(),
-                8131,
+                port,
                 cwd.into(),
                 &mut cx,
                 move |event, cx| {
@@ -1118,7 +1122,14 @@ impl Project {
             client.configuration_done().await.log_err()?;
 
             // launch/attach request
-            client.launch(json!({"noDebug": false})).await.log_err()?;
+            client
+                .launch(
+                    launch_config
+                        .and_then(|c| Some(c.config))
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .await
+                .log_err()?;
 
             let client = Arc::new(client);
 

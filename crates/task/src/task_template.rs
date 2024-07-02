@@ -4,6 +4,7 @@ use anyhow::{bail, Context};
 use collections::{HashMap, HashSet};
 use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
+use serde_json_lenient::Value;
 use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
@@ -48,6 +49,10 @@ pub struct TaskTemplate {
     /// If this task should start a debugger or not
     #[serde(default)]
     pub task_type: TaskType,
+    /// Specific configuration for the debug adapter
+    /// This is only used if `task_type` is `Debug`
+    #[serde(default)]
+    pub debug_adapter: Option<DebugAdapterConfig>,
 
     /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
     #[serde(default)]
@@ -55,7 +60,7 @@ pub struct TaskTemplate {
 }
 
 /// Represents the type of task that is being ran
-#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Copy, Clone, Debug)]
+#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskType {
     /// Act like a typically task that runs commands
@@ -63,6 +68,24 @@ pub enum TaskType {
     Script,
     /// This task starts the debugger for a language
     Debug,
+}
+
+/// Represents the configuration for the debug adapter
+#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
+pub struct DebugAdapterConfig {
+    /// The port that the debug adapter is listening on
+    pub port: u16,
+    /// The configuration options that are send with the launch request
+    /// to the debug adapter
+    pub launch_config: Option<DebugLaunchConfig>,
+}
+
+/// Represents the configuration for the debug adapter that is send with the launch request
+#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[serde(transparent)]
+pub struct DebugLaunchConfig {
+    pub config: serde_json::Value,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
