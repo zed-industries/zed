@@ -3834,6 +3834,8 @@ impl Workspace {
                 })
                 .ok();
 
+            // TODO: Start background task to delete all editor_contents
+
             Ok(opened_items)
         })
     }

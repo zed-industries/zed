@@ -29,6 +29,7 @@ use std::{
     ops::Range,
     path::Path,
     sync::Arc,
+    time::Duration,
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
@@ -873,18 +874,58 @@ impl Item for Editor {
             }
         }
 
+        fn serialize_edited_buffer(
+            buffer: Model<Buffer>,
+            workspace_id: WorkspaceId,
+            item_id: ItemId,
+            cx: &mut AppContext,
+        ) -> Task<()> {
+            let snapshot = buffer.read(cx).snapshot();
+            cx.background_executor().spawn(async move {
+                let contents = snapshot.text();
+                DB.save_contents(item_id, workspace_id, contents)
+                    .await
+                    .log_err();
+            })
+        }
+
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             serialize(buffer.clone(), workspace_id, item_id, cx);
 
             cx.subscribe(&buffer, |this, buffer, event, cx| {
                 if let Some((_, Some(workspace_id))) = this.workspace.as_ref() {
-                    if let language::Event::FileHandleChanged = event {
-                        serialize(
-                            buffer,
-                            *workspace_id,
-                            cx.view().item_id().as_u64() as ItemId,
-                            cx,
-                        );
+                    match event {
+                        language::Event::FileHandleChanged => {
+                            serialize(
+                                buffer,
+                                *workspace_id,
+                                cx.view().item_id().as_u64() as ItemId,
+                                cx,
+                            );
+                        }
+                        language::Event::Edited => {
+                            let workspace_id = *workspace_id;
+                            let item_id = cx.view().item_id().as_u64() as ItemId;
+                            this.serialize_unsaved_buffer_debounce.lock().fire_new(
+                                Duration::from_millis(100),
+                                cx,
+                                move |_, cx| {
+                                    serialize_edited_buffer(buffer, workspace_id, item_id, cx)
+                                },
+                            );
+                        }
+                        language::Event::Saved => {
+                            let item_id = cx.view().item_id().as_u64() as ItemId;
+                            cx.background_executor()
+                                .spawn({
+                                    let workspace_id = *workspace_id;
+                                    async move {
+                                        DB.delete_contents(workspace_id, item_id).await.log_err()
+                                    }
+                                })
+                                .detach();
+                        }
+                        _ => {}
                     }
                 }
             })
@@ -937,41 +978,84 @@ impl Item for Editor {
         item_id: ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<Result<View<Self>>> {
-        let project_item: Result<_> = project.update(cx, |project, cx| {
-            // Look up the path with this key associated, create a self with that path
-            let path = DB
-                .get_path(item_id, workspace_id)?
-                .context("No path stored for this editor")?;
+        // Look up the path with this key associated, create a self with that path
+        let path = match DB
+            .get_path(item_id, workspace_id)
+            .context("Failed to query editor state")
+        {
+            Ok(path) => path,
+            Err(error) => {
+                return Task::ready(Err(error));
+            }
+        };
 
-            let (worktree, path) = project
-                .find_local_worktree(&path, cx)
-                .with_context(|| format!("No worktree for path: {path:?}"))?;
-            let project_path = ProjectPath {
-                worktree_id: worktree.read(cx).id(),
-                path: path.into(),
-            };
+        let contents = match DB
+            .get_contents(item_id, workspace_id)
+            .context("Failed to query editor content")
+        {
+            Ok(contents) => contents,
+            Err(error) => {
+                return Task::ready(Err(error));
+            }
+        };
 
-            Ok(project.open_path(project_path, cx))
-        });
+        match (path, contents) {
+            (None, Some(contents)) => {
+                let buffer = cx.new_model(|cx| {
+                    let mut buffer = Buffer::local("", cx);
+                    buffer.set_text(contents, cx);
+                    buffer
+                });
+                let view = cx.new_view(|cx| {
+                    let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+                    editor.read_scroll_position_from_db(item_id, workspace_id, cx);
+                    editor
+                });
+                Task::ready(Ok(view))
+            }
+            (Some(path), contents) => {
+                let project_item = project.update(cx, |project, cx| {
+                    let (worktree, path) = project
+                        .find_local_worktree(&path, cx)
+                        .with_context(|| format!("No worktree for path: {path:?}"))?;
+                    let project_path = ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: path.into(),
+                    };
 
-        project_item
-            .map(|project_item| {
-                cx.spawn(|pane, mut cx| async move {
-                    let (_, project_item) = project_item.await?;
-                    let buffer = project_item
-                        .downcast::<Buffer>()
-                        .map_err(|_| anyhow!("Project item at stored path was not a buffer"))?;
-                    pane.update(&mut cx, |_, cx| {
-                        cx.new_view(|cx| {
-                            let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+                    Ok(project.open_path(project_path, cx))
+                });
 
-                            editor.read_scroll_position_from_db(item_id, workspace_id, cx);
-                            editor
+                project_item
+                    .map(|project_item| {
+                        cx.spawn(|pane, mut cx| async move {
+                            let (_, project_item) = project_item.await?;
+                            let buffer = project_item.downcast::<Buffer>().map_err(|_| {
+                                anyhow!("Project item at stored path was not a buffer")
+                            })?;
+
+                            // TODO: This is a bit wasteful: we're loading the whole buffer from
+                            // disk and then overwrite
+                            if let Some(contents) = contents {
+                                buffer.update(&mut cx, |buffer, cx| {
+                                    buffer.set_text(contents, cx);
+                                })?;
+                            }
+
+                            pane.update(&mut cx, |_, cx| {
+                                cx.new_view(|cx| {
+                                    let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+
+                                    editor.read_scroll_position_from_db(item_id, workspace_id, cx);
+                                    editor
+                                })
+                            })
                         })
                     })
-                })
-            })
-            .unwrap_or_else(|error| Task::ready(Err(error)))
+                    .unwrap_or_else(|error| Task::ready(Err(error)))
+            }
+            (None, None) => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
+        }
     }
 }
 

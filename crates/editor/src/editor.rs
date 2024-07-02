@@ -558,6 +558,7 @@ pub struct Editor {
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     file_header_size: u8,
     breadcrumb_header: Option<String>,
+    serialize_unsaved_buffer_debounce: Arc<Mutex<DebouncedDelay>>,
 }
 
 #[derive(Clone)]
@@ -1892,6 +1893,7 @@ impl Editor {
             linked_edit_ranges: Default::default(),
             previous_search_ranges: None,
             breadcrumb_header: None,
+            serialize_unsaved_buffer_debounce: Arc::new(Mutex::new(DebouncedDelay::new())),
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
