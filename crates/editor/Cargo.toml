@@ -49,6 +49,7 @@ lazy_static.workspace = true
 linkify.workspace = true
 log.workspace = true
 lsp.workspace = true
+markdown.workspace = true
 multi_buffer.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true

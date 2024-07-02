@@ -1,89 +1,24 @@
 use assets::Assets;
-use gpui::{prelude::*, App, KeyBinding, Length, Rems, StyleRefinement, Task, View, WindowOptions};
+use gpui::*;
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::FakeNodeRuntime;
 use settings::SettingsStore;
 use std::sync::Arc;
 use theme::LoadThemes;
+use ui::div;
 use ui::prelude::*;
-use ui::{div, WindowContext};
 
 const MARKDOWN_EXAMPLE: &'static str = r#"
-# Markdown Example Document
+this text should be selectable
 
-## Headings
-Headings are created by adding one or more `#` symbols before your heading text. The number of `#` you use will determine the size of the heading.
+wow so cool
 
-## Emphasis
-Emphasis can be added with italics or bold. *This text will be italic*. _This will also be italic_
-
-## Lists
-
-### Unordered Lists
-Unordered lists use asterisks `*`, plus `+`, or minus `-` as list markers.
-
-* Item 1
-* Item 2
-  * Item 2a
-  * Item 2b
-
-### Ordered Lists
-Ordered lists use numbers followed by a period.
-
-1. Item 1
-2. Item 2
-3. Item 3
-   1. Item 3a
-   2. Item 3b
-
-## Links
-Links are created using the format [http://zed.dev](https://zed.dev).
-
-They can also be detected automatically, for example https://zed.dev/blog.
-
-## Images
-Images are like links, but with an exclamation mark `!` in front.
-
-```todo!
-![This is an image](/images/logo.png)
-```
-
-## Code
-Inline `code` can be wrapped with backticks `` ` ``.
-
-```markdown
-Inline `code` has `back-ticks around` it.
-```
-
-Code blocks can be created by indenting lines by four spaces or with triple backticks ```.
-
-```javascript
-function test() {
-  console.log("notice the blank line before this function?");
-}
-```
-
-## Blockquotes
-Blockquotes are created with `>`.
-
-> This is a blockquote.
-
-## Horizontal Rules
-Horizontal rules are created using three or more asterisks `***`, dashes `---`, or underscores `___`.
-
-## Line breaks
-This is a
-\
-line break!
-
----
-
-Remember, markdown processors may have slight differences and extensions, so always refer to the specific documentation or guides relevant to your platform or editor for the best practices and additional features.
+## Heading 2
 "#;
-
 pub fn main() {
     env_logger::init();
+
     App::new().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
@@ -103,16 +38,17 @@ pub fn main() {
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
-        cx.open_window(WindowOptions::default(), |cx| {
+        let _ = cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|cx| {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
-                        font_family: "Zed Plex Mono".into(),
+                        font_family: "Zed Mono".into(),
+                        color: cx.theme().colors().text,
                         ..Default::default()
                     },
                     code_block: StyleRefinement {
                         text: Some(gpui::TextStyleRefinement {
-                            font_family: Some("Zed Plex Mono".into()),
+                            font_family: Some("Zed Mono".into()),
                             background_color: Some(cx.theme().colors().editor_background),
                             ..Default::default()
                         }),
@@ -126,7 +62,6 @@ pub fn main() {
                     },
                     inline_code: gpui::TextStyleRefinement {
                         font_family: Some("Zed Mono".into()),
-                        color: Some(cx.theme().colors().editor_foreground),
                         background_color: Some(cx.theme().colors().editor_background),
                         ..Default::default()
                     },
@@ -153,45 +88,32 @@ pub fn main() {
                     },
                     break_style: Default::default(),
                 };
+                let markdown = cx.new_view(|cx| {
+                    Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, cx)
+                });
 
-                MarkdownExample::new(
-                    MARKDOWN_EXAMPLE.to_string(),
-                    markdown_style,
-                    language_registry,
-                    cx,
-                )
+                HelloWorld { markdown }
             })
-        })
-        .unwrap();
+        });
     });
 }
-
-struct MarkdownExample {
+struct HelloWorld {
     markdown: View<Markdown>,
 }
 
-impl MarkdownExample {
-    pub fn new(
-        text: String,
-        style: MarkdownStyle,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut WindowContext,
-    ) -> Self {
-        let markdown = cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), cx));
-        Self { markdown }
-    }
-}
-
-impl Render for MarkdownExample {
+impl Render for HelloWorld {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
-            .id("markdown-example")
-            .debug_selector(|| "foo".into())
-            .relative()
-            .bg(gpui::white())
-            .size_full()
-            .p_4()
-            .overflow_y_scroll()
-            .child(self.markdown.clone())
+            .flex()
+            .bg(rgb(0x2e7d32))
+            .size(Length::Definite(Pixels(700.0).into()))
+            .justify_center()
+            .items_center()
+            .shadow_lg()
+            .border_1()
+            .border_color(rgb(0x0000ff))
+            .text_xl()
+            .text_color(rgb(0xffffff))
+            .child(div().child(self.markdown.clone()).p_20())
     }
 }
