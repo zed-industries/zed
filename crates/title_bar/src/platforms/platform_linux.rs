@@ -2,6 +2,8 @@ use gpui::{prelude::*, Action, Rgba, WindowAppearance};
 
 use ui::prelude::*;
 
+use crate::window_controls::WindowControlType;
+
 #[derive(IntoElement)]
 pub struct LinuxWindowControls {
     button_height: Pixels,
@@ -51,41 +53,33 @@ impl RenderOnce for LinuxWindowControls {
             .min_h(self.button_height)
             .child(TitlebarButton::new(
                 "minimize",
-                TitlebarButtonType::Minimize,
+                WindowControlType::Minimize,
                 button_hover_color,
                 self.close_window_action.boxed_clone(),
             ))
             .child(TitlebarButton::new(
                 "maximize-or-restore",
                 if cx.is_maximized() {
-                    TitlebarButtonType::Restore
+                    WindowControlType::Restore
                 } else {
-                    TitlebarButtonType::Maximize
+                    WindowControlType::Maximize
                 },
                 button_hover_color,
                 self.close_window_action.boxed_clone(),
             ))
             .child(TitlebarButton::new(
                 "close",
-                TitlebarButtonType::Close,
+                WindowControlType::Close,
                 close_button_hover_color,
                 self.close_window_action,
             ))
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-enum TitlebarButtonType {
-    Minimize,
-    Restore,
-    Maximize,
-    Close,
-}
-
 #[derive(IntoElement)]
 struct TitlebarButton {
     id: ElementId,
-    icon: TitlebarButtonType,
+    icon: WindowControlType,
     hover_background_color: Rgba,
     close_window_action: Box<dyn Action>,
 }
@@ -93,7 +87,7 @@ struct TitlebarButton {
 impl TitlebarButton {
     pub fn new(
         id: impl Into<ElementId>,
-        icon: TitlebarButtonType,
+        icon: WindowControlType,
         hover_background_color: Rgba,
         close_window_action: Box<dyn Action>,
     ) -> Self {
@@ -123,20 +117,15 @@ impl RenderOnce for TitlebarButton {
 
                 style.bg(active_color)
             })
-            .child(Icon::new(match self.icon {
-                TitlebarButtonType::Minimize => IconName::Dash,
-                TitlebarButtonType::Restore => IconName::Minimize,
-                TitlebarButtonType::Maximize => IconName::Maximize,
-                TitlebarButtonType::Close => IconName::Close,
-            }))
+            .child(Icon::new(self.icon.icon()))
             .on_mouse_move(|_, cx| cx.stop_propagation())
             .on_click(move |_, cx| {
                 cx.stop_propagation();
                 match self.icon {
-                    TitlebarButtonType::Minimize => cx.minimize_window(),
-                    TitlebarButtonType::Restore => cx.zoom_window(),
-                    TitlebarButtonType::Maximize => cx.zoom_window(),
-                    TitlebarButtonType::Close => {
+                    WindowControlType::Minimize => cx.minimize_window(),
+                    WindowControlType::Restore => cx.zoom_window(),
+                    WindowControlType::Maximize => cx.zoom_window(),
+                    WindowControlType::Close => {
                         cx.dispatch_action(self.close_window_action.boxed_clone())
                     }
                 }

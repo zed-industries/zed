@@ -1,8 +1,9 @@
 mod call_controls;
 mod collab;
 mod platforms;
+mod window_controls;
 
-use crate::platforms::{platform_linux, platform_mac, platform_windows};
+use crate::platforms::{platform_generic, platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation};
 use client::{Client, UserStore};
