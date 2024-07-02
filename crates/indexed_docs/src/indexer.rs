@@ -9,6 +9,17 @@ use crate::{
 };
 
 #[async_trait]
+pub trait IndexDocs {
+    /// Indexes the package with the given name.
+    async fn index(
+        &self,
+        package: PackageName,
+        database: Arc<IndexedDocsDatabase>,
+        provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
+    ) -> Result<()>;
+}
+
+#[async_trait]
 pub trait IndexedDocsProvider {
     async fn fetch_page(
         &self,
@@ -24,29 +35,24 @@ struct RustdocItemWithHistory {
     pub history: Vec<String>,
 }
 
-pub(crate) struct DocsIndexer {
-    database: Arc<IndexedDocsDatabase>,
-    provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
-}
+pub(crate) struct RustdocIndexer;
 
-impl DocsIndexer {
-    pub fn new(
+#[async_trait]
+impl IndexDocs for RustdocIndexer {
+    async fn index(
+        &self,
+        package: PackageName,
         database: Arc<IndexedDocsDatabase>,
         provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
-    ) -> Self {
-        Self { database, provider }
-    }
-
-    /// Indexes the package with the given name.
-    pub async fn index(&self, package: PackageName) -> Result<()> {
-        let Some(package_root_content) = self.provider.fetch_page(&package, None).await? else {
+    ) -> Result<()> {
+        let Some(package_root_content) = provider.fetch_page(&package, None).await? else {
             return Ok(());
         };
 
         let (crate_root_markdown, items) =
             convert_rustdoc_to_markdown(package_root_content.as_bytes())?;
 
-        self.database
+        database
             .insert(package.clone(), None, crate_root_markdown)
             .await?;
 
@@ -61,8 +67,7 @@ impl DocsIndexer {
         while let Some(item_with_history) = items_to_visit.pop_front() {
             let item = &item_with_history.item;
 
-            let Some(result) = self
-                .provider
+            let Some(result) = provider
                 .fetch_page(&package, Some(&item))
                 .await
                 .with_context(|| {
@@ -85,7 +90,7 @@ impl DocsIndexer {
 
             let (markdown, referenced_items) = convert_rustdoc_to_markdown(result.as_bytes())?;
 
-            self.database
+            database
                 .insert(package.clone(), Some(item), markdown)
                 .await?;
 

@@ -15,7 +15,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::indexer::{DocsIndexer, IndexedDocsProvider};
+use crate::indexer::{IndexDocs, IndexedDocsProvider, RustdocIndexer};
 use crate::{IndexedDocsRegistry, RustdocItem};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
@@ -30,6 +30,7 @@ impl ProviderId {
 pub struct Provider {
     pub id: ProviderId,
     pub database_path: PathBuf,
+    pub indexer: Box<dyn IndexDocs + Send + Sync + 'static>,
 }
 
 impl Provider {
@@ -37,6 +38,7 @@ impl Provider {
         Self {
             id: ProviderId("rustdoc".into()),
             database_path: paths::support_dir().join("docs/rust/rustdoc-db.1.mdb"),
+            indexer: Box::new(RustdocIndexer),
         }
     }
 }
@@ -56,6 +58,7 @@ pub struct IndexedDocsStore {
     executor: BackgroundExecutor,
     database_future:
         Shared<BoxFuture<'static, Result<Arc<IndexedDocsDatabase>, Arc<anyhow::Error>>>>,
+    indexer: Box<dyn IndexDocs + Send + Sync + 'static>,
     indexing_tasks_by_package:
         RwLock<HashMap<PackageName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
 }
@@ -81,6 +84,7 @@ impl IndexedDocsStore {
         Self {
             executor,
             database_future,
+            indexer: provider.indexer,
             indexing_tasks_by_package: RwLock::new(HashMap::default()),
         }
     }
@@ -132,9 +136,9 @@ impl IndexedDocsStore {
                             .clone()
                             .await
                             .map_err(|err| anyhow!(err))?;
-                        let indexer = DocsIndexer::new(database, provider);
-
-                        indexer.index(package.clone()).await
+                        this.indexer
+                            .index(package.clone(), database, provider)
+                            .await
                     };
 
                     index_task.await.map_err(Arc::new)
@@ -192,7 +196,7 @@ impl IndexedDocsStore {
 #[derive(Debug, PartialEq, Eq, Clone, Display, Serialize, Deserialize)]
 pub struct MarkdownDocs(pub String);
 
-pub(crate) struct IndexedDocsDatabase {
+pub struct IndexedDocsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
     entries: Database<SerdeBincode<String>, SerdeBincode<MarkdownDocs>>,
