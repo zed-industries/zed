@@ -27,7 +27,7 @@ use dap::{
     SourceBreakpoint,
 };
 use debounced_delay::DebouncedDelay;
-use debugger_inventory::{DebuggerConfigSourceKind, DebuggerInventory};
+use debugger_inventory::DebuggerInventory;
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver},
@@ -1087,16 +1087,13 @@ impl Project {
 
         let command = debug_template.command.clone();
         let args = debug_template.args.clone();
-        let port = adapter_config.port.clone();
-        let launch_config = adapter_config.launch_config.clone();
 
         let task = cx.spawn(|this, mut cx| async move {
             let this2 = this.clone();
             let mut client = DebugAdapterClient::new(
-                TransportType::TCP,
+                adapter_config,
                 &command,
                 args.iter().map(|ele| &ele[..]).collect(),
-                port,
                 cwd.into(),
                 &mut cx,
                 move |event, cx| {
@@ -1113,23 +1110,11 @@ impl Project {
             .await
             .log_err()?;
 
-            // initialize
+            // initialize request
             client.initialize().await.log_err()?;
 
-            // TODO: fetch all old breakpoints and send them to the debug adapter
-
-            // configuration done
-            client.configuration_done().await.log_err()?;
-
-            // launch/attach request
-            client
-                .launch(
-                    launch_config
-                        .and_then(|c| Some(c.config))
-                        .unwrap_or(serde_json::Value::Null),
-                )
-                .await
-                .log_err()?;
+            // launch request
+            client.launch().await.log_err()?;
 
             let client = Arc::new(client);
 

@@ -1,9 +1,9 @@
 use anyhow::Result;
-use dap::requests::{Scopes, StackTrace, Variables};
+use dap::requests::{BreakpointLocations, Scopes, StackTrace, Variables};
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
-    Scope, ScopesArguments, StackFrame, StackTraceArguments, ThreadEventReason, Variable,
-    VariablesArguments,
+    BreakpointLocationsArguments, Scope, ScopesArguments, StackFrame, StackTraceArguments,
+    ThreadEventReason, Variable, VariablesArguments,
 };
 use gpui::{
     actions, list, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
@@ -59,19 +59,22 @@ impl DebugPanel {
 
             let _subscriptions = vec![cx.subscribe(&project, {
                 move |this: &mut Self, model, event, cx| {
-                    if let project::Event::DebugClientStarted(client_id) = event {
-                        dbg!(&event, &client_id);
-                    }
-
                     if let project::Event::DebugClientEvent { client_id, event } = event {
                         match event {
-                            Events::Initialized(_) => return,
+                            Events::Initialized(_) => {
+                                let client = this.debug_adapter(cx);
+                                cx.spawn(|_, _| async move {
+                                    // TODO: send all the current breakpoints
+                                    client.configuration_done().await
+                                })
+                                .detach_and_log_err(cx);
+                            }
                             Events::Stopped(event) => {
                                 if let Some(thread_id) = event.thread_id {
                                     let client = this.debug_adapter(cx);
 
                                     cx.spawn(|this, mut cx| async move {
-                                        let res = client
+                                        let stack_trace_response = client
                                             .request::<StackTrace>(StackTraceArguments {
                                                 thread_id,
                                                 start_frame: None,
@@ -84,7 +87,9 @@ impl DebugPanel {
                                         let mut variables: HashMap<u64, Vec<Variable>> =
                                             HashMap::new();
 
-                                        for stack_frame in res.stack_frames.clone().into_iter() {
+                                        for stack_frame in
+                                            stack_trace_response.stack_frames.clone().into_iter()
+                                        {
                                             let scope_response = client
                                                 .request::<Scopes>(ScopesArguments {
                                                     frame_id: stack_frame.id,
@@ -120,16 +125,14 @@ impl DebugPanel {
                                             {
                                                 this.current_thread_id = Some(thread_id);
 
-                                                this.current_stack_frame_id =
-                                                    res.stack_frames.clone().first().map(|f| f.id);
+                                                this.current_stack_frame_id = stack_trace_response
+                                                    .stack_frames
+                                                    .clone()
+                                                    .first()
+                                                    .map(|f| f.id);
 
-                                                let mut stack_frames = Vec::new();
-
-                                                for stack_frame in res.stack_frames.clone() {
-                                                    stack_frames.push(stack_frame);
-                                                }
-
-                                                entry.stack_frames = stack_frames;
+                                                entry.stack_frames =
+                                                    stack_trace_response.stack_frames.clone();
                                                 entry.scopes = scopes;
                                                 entry.variables = variables;
 
@@ -145,9 +148,9 @@ impl DebugPanel {
                                     .detach();
                                 };
                             }
-                            Events::Continued(_) => todo!(),
-                            Events::Exited(_) => todo!(),
-                            Events::Terminated(_) => todo!(),
+                            Events::Continued(_) => {}
+                            Events::Exited(_) => {}
+                            Events::Terminated(_) => {}
                             Events::Thread(event) => {
                                 if event.reason == ThreadEventReason::Started {
                                     this.thread_state.insert(
@@ -167,17 +170,17 @@ impl DebugPanel {
 
                                 cx.notify();
                             }
-                            Events::Output(_) => todo!(),
-                            Events::Breakpoint(_) => todo!(),
-                            Events::Module(_) => todo!(),
-                            Events::LoadedSource(_) => todo!(),
-                            Events::Capabilities(_) => todo!(),
-                            Events::Memory(_) => todo!(),
-                            Events::Process(_) => todo!(),
-                            Events::ProgressEnd(_) => todo!(),
-                            Events::ProgressStart(_) => todo!(),
-                            Events::ProgressUpdate(_) => todo!(),
-                            Events::Invalidated(_) => todo!(),
+                            Events::Output(_) => {}
+                            Events::Breakpoint(_) => {}
+                            Events::Module(_) => {}
+                            Events::LoadedSource(_) => {}
+                            Events::Capabilities(_) => {}
+                            Events::Memory(_) => {}
+                            Events::Process(_) => {}
+                            Events::ProgressEnd(_) => {}
+                            Events::ProgressStart(_) => {}
+                            Events::ProgressUpdate(_) => {}
+                            Events::Invalidated(_) => {}
                         }
                     }
                 }
