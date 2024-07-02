@@ -33,7 +33,7 @@ pub enum Events {
     Stopped(StoppedEvent),
     Continued(ContinuedEvent),
     Exited(ExitedEvent),
-    Terminated(TerminatedEvent),
+    Terminated(Option<TerminatedEvent>),
     Thread(ThreadEvent),
     Output(OutputEvent),
     Breakpoint(BreakpointEvent),
