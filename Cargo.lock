@@ -13840,7 +13840,7 @@ dependencies = [
 
 [[package]]
 name = "zed_prisma"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "zed_extension_api 0.0.4",
 ]
