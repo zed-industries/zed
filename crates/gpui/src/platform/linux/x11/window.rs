@@ -597,7 +597,6 @@ impl X11Window {
     }
 
     fn send_moveresize(&self, flag: u32) {
-        dbg!("send_moveresize");
         let state = self.0.state.borrow();
 
         self.0

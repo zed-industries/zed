@@ -138,7 +138,7 @@ impl RenderOnce for TitlebarButton {
                 |div| {
                     // Matches how it is set in the workspace.
                     // Patch around the lack of support for non-rectangular clipping masks in GPUI
-                    div.rounded_tr(px(10.0))
+                    div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 },
             )
             .child(Icon::new(match self.icon {

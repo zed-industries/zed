@@ -27,7 +27,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, rgb, size,
+    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyElement, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
     EventEmitter, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, ManagedView,
@@ -6484,8 +6484,6 @@ mod tests {
 }
 
 pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext) -> Stateful<Div> {
-    const ROUNDING: Pixels = px(10.0);
-    const SHADOW_SIZE: Pixels = px(10.0);
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = cx.window_decorations();
 
@@ -6513,7 +6511,12 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                         move |_bounds, hitbox, cx| {
                             let mouse = cx.mouse_position();
                             let size = cx.window_bounds().get_bounds().size;
-                            let Some(edge) = resize_edge(mouse, SHADOW_SIZE, size, tiling) else {
+                            let Some(edge) = resize_edge(
+                                mouse,
+                                theme::CLIENT_SIDE_DECORATION_SHADOW,
+                                size,
+                                tiling,
+                            ) else {
                                 return;
                             };
                             cx.set_global(GlobalResizeEdge(edge));
@@ -6540,24 +6543,35 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                     .absolute(),
                 )
                 .when(!(tiling.top && tiling.right), |div| {
-                    div.rounded_tr(ROUNDING)
+                    div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
-                .when(!(tiling.top && tiling.left), |div| div.rounded_tl(ROUNDING))
+                .when(!(tiling.top && tiling.left), |div| {
+                    div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                })
                 .when(!(tiling.bottom && tiling.right), |div| {
-                    div.rounded_br(ROUNDING)
+                    div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
                 .when(!(tiling.bottom && tiling.left), |div| {
-                    div.rounded_bl(ROUNDING)
+                    div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
-                .when(!tiling.top, |div| div.pt(SHADOW_SIZE))
-                .when(!tiling.bottom, |div| div.pb(SHADOW_SIZE))
-                .when(!tiling.left, |div| div.pl(SHADOW_SIZE))
-                .when(!tiling.right, |div| div.pr(SHADOW_SIZE))
+                .when(!tiling.top, |div| {
+                    div.pt(theme::CLIENT_SIDE_DECORATION_SHADOW)
+                })
+                .when(!tiling.bottom, |div| {
+                    div.pb(theme::CLIENT_SIDE_DECORATION_SHADOW)
+                })
+                .when(!tiling.left, |div| {
+                    div.pl(theme::CLIENT_SIDE_DECORATION_SHADOW)
+                })
+                .when(!tiling.right, |div| {
+                    div.pr(theme::CLIENT_SIDE_DECORATION_SHADOW)
+                })
                 .on_mouse_move(move |e, cx| {
                     let size = cx.window_bounds().get_bounds().size;
                     let pos = e.position;
 
-                    let new_edge = resize_edge(pos, SHADOW_SIZE, size, tiling);
+                    let new_edge =
+                        resize_edge(pos, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling);
                     let edge = cx.try_global::<GlobalResizeEdge>();
                     if new_edge != edge.map(|edge| edge.0) {
                         cx.window_handle()
@@ -6569,7 +6583,12 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                     let size = cx.window_bounds().get_bounds().size;
                     let pos = e.position;
 
-                    let edge = match resize_edge(pos, SHADOW_SIZE, size, tiling) {
+                    let edge = match resize_edge(
+                        pos,
+                        theme::CLIENT_SIDE_DECORATION_SHADOW,
+                        size,
+                        tiling,
+                    ) {
                         Some(value) => value,
                         None => return,
                     };
@@ -6586,14 +6605,16 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                     Decorations::Client { shadows, tiling } => div
                         .border_color(cx.theme().colors().border)
                         .when(!(tiling.top && tiling.right), |div| {
-                            div.rounded_tr(ROUNDING)
+                            div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
-                        .when(!(tiling.top && tiling.left), |div| div.rounded_tl(ROUNDING))
+                        .when(!(tiling.top && tiling.left), |div| {
+                            div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                        })
                         .when(!(tiling.bottom && tiling.right), |div| {
-                            div.rounded_br(ROUNDING)
+                            div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
                         .when(!(tiling.bottom && tiling.left), |div| {
-                            div.rounded_bl(ROUNDING)
+                            div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
                         .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
                         .when(!tiling.bottom, |div| div.border_b(BORDER_SIZE))
@@ -6607,7 +6628,7 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                                     l: 0.,
                                     a: 0.4,
                                 },
-                                blur_radius: SHADOW_SIZE / 2.,
+                                blur_radius: theme::CLIENT_SIDE_DECORATION_SHADOW / 2.,
                                 spread_radius: px(0.),
                                 offset: point(px(0.0), px(0.0)),
                             }])
@@ -6620,38 +6641,105 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                 .size_full()
                 .child(element),
         )
+        .map(|div| match decorations {
+            Decorations::Server => div,
+            Decorations::Client { tiling, .. } => div.child(
+                canvas(
+                    |_bounds, cx| {
+                        cx.insert_hitbox(
+                            Bounds::new(
+                                point(px(0.0), px(0.0)),
+                                cx.window_bounds().get_bounds().size,
+                            ),
+                            false,
+                        )
+                    },
+                    move |_bounds, hitbox, cx| {
+                        let mouse = cx.mouse_position();
+                        let size = cx.window_bounds().get_bounds().size;
+                        let Some(edge) =
+                            resize_edge(mouse, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling)
+                        else {
+                            return;
+                        };
+                        cx.set_global(GlobalResizeEdge(edge));
+                        cx.set_cursor_style(
+                            match edge {
+                                ResizeEdge::Top | ResizeEdge::Bottom => CursorStyle::ResizeUpDown,
+                                ResizeEdge::Left | ResizeEdge::Right => {
+                                    CursorStyle::ResizeLeftRight
+                                }
+                                ResizeEdge::TopLeft | ResizeEdge::BottomRight => {
+                                    CursorStyle::ResizeUpLeftDownRight
+                                }
+                                ResizeEdge::TopRight | ResizeEdge::BottomLeft => {
+                                    CursorStyle::ResizeUpRightDownLeft
+                                }
+                            },
+                            &hitbox,
+                        );
+                    },
+                )
+                .size_full()
+                .absolute(),
+            ),
+        })
 }
 
 fn resize_edge(
     pos: Point<Pixels>,
     shadow_size: Pixels,
-    size: Size<Pixels>,
+    window_size: Size<Pixels>,
     tiling: Tiling,
 ) -> Option<ResizeEdge> {
-    let above_top = !tiling.top && pos.y < shadow_size;
-    let to_left = !tiling.left && pos.x < shadow_size;
-    let to_right = !tiling.right && pos.x > size.width - shadow_size;
-    let below_bottom = !tiling.bottom && pos.y > size.height - shadow_size;
-
-    let edge = if above_top && to_left {
-        ResizeEdge::TopLeft
-    } else if above_top && to_right {
-        ResizeEdge::TopRight
-    } else if above_top {
-        ResizeEdge::Top
-    } else if below_bottom && to_left {
-        ResizeEdge::BottomLeft
-    } else if below_bottom && to_right {
-        ResizeEdge::BottomRight
-    } else if below_bottom {
-        ResizeEdge::Bottom
-    } else if to_left {
-        ResizeEdge::Left
-    } else if to_right {
-        ResizeEdge::Right
-    } else {
+    let mut bounds = Bounds::new(Point::default(), window_size);
+    bounds.inset(shadow_size * 1.5);
+    if bounds.contains(&pos) {
         return None;
-    };
+    }
 
-    Some(edge)
+    let corner_size = size(shadow_size * 1.5, shadow_size * 1.5);
+    let top_left_bounds = Bounds::new(Point::new(px(0.), px(0.)), corner_size);
+    if top_left_bounds.contains(&pos) {
+        return Some(ResizeEdge::TopLeft);
+    }
+
+    let top_right_bounds = Bounds::new(
+        Point::new(window_size.width - corner_size.width, px(0.)),
+        corner_size,
+    );
+    if top_right_bounds.contains(&pos) {
+        return Some(ResizeEdge::TopRight);
+    }
+
+    let bottom_left_bounds = Bounds::new(
+        Point::new(px(0.), window_size.height - corner_size.height),
+        corner_size,
+    );
+    if bottom_left_bounds.contains(&pos) {
+        return Some(ResizeEdge::BottomLeft);
+    }
+
+    let bottom_right_bounds = Bounds::new(
+        Point::new(
+            window_size.width - corner_size.width,
+            window_size.height - corner_size.height,
+        ),
+        corner_size,
+    );
+    if bottom_right_bounds.contains(&pos) {
+        return Some(ResizeEdge::BottomRight);
+    }
+
+    if !tiling.top && pos.y < shadow_size {
+        Some(ResizeEdge::Top)
+    } else if !tiling.bottom && pos.y > window_size.height - shadow_size {
+        Some(ResizeEdge::Bottom)
+    } else if !tiling.left && pos.x < shadow_size {
+        Some(ResizeEdge::Left)
+    } else if !tiling.right && pos.x > window_size.width - shadow_size {
+        Some(ResizeEdge::Right)
+    } else {
+        None
+    }
 }

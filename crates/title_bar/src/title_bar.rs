@@ -93,9 +93,9 @@ impl Render for TitleBar {
                     Decorations::Server => el,
                     Decorations::Client { tiling, .. } => el
                         .when(!(tiling.top && tiling.right), |el| {
-                            el.rounded_tr(px(10.0))
+                            el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
-                        .when(!(tiling.top && tiling.left), |el| el.rounded_tl(px(10.0)))
+                        .when(!(tiling.top && tiling.left), |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING))
                 }
             })
             .bg(cx.theme().colors().title_bar_background)
