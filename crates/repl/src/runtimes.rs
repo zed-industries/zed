@@ -318,9 +318,7 @@ async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> anyhow::Result<Vec<Runt
     Ok(valid_kernelspecs)
 }
 
-pub async fn get_runtime_specifications(
-    fs: Arc<dyn Fs>,
-) -> anyhow::Result<Vec<RuntimeSpecification>> {
+pub async fn kernel_specifications(fs: Arc<dyn Fs>) -> anyhow::Result<Vec<RuntimeSpecification>> {
     let data_dirs = dirs::data_dirs();
     let kernel_dirs = data_dirs
         .iter()

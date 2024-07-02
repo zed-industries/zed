@@ -1,11 +1,15 @@
-use crate::{runtime_settings::JupyterSettings, RuntimeManager, Session};
+use crate::{
+    runtime_settings::JupyterSettings,
+    runtimes::{kernel_specifications, RuntimeSpecification},
+    Session,
+};
 use anyhow::{Context as _, Result};
 use async_dispatcher::{set_dispatcher, Dispatcher, Runnable};
 use collections::HashMap;
 use editor::{Anchor, Editor, RangeToAnchorExt};
 use gpui::{
     actions, prelude::*, AppContext, AsyncWindowContext, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusOutEvent, FocusableView, Model, PlatformDispatcher, Subscription, Task, View,
+    FocusHandle, FocusOutEvent, FocusableView, PlatformDispatcher, Subscription, Task, View,
     WeakView,
 };
 use language::Point;
@@ -60,11 +64,12 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct RuntimePanel {
+    fs: Arc<dyn Fs>,
     enabled: bool,
     focus_handle: FocusHandle,
     width: Option<Pixels>,
     sessions: HashMap<EntityId, View<Session>>,
-    runtime_manager: Model<RuntimeManager>,
+    runtime_specifications: Vec<RuntimeSpecification>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -80,13 +85,9 @@ impl RuntimePanel {
 
                     let fs = workspace.app_state().fs.clone();
 
-                    let runtime_manager = cx.new_model(|cx| RuntimeManager::new(fs, cx));
-                    RuntimeManager::set_global(runtime_manager.clone(), cx);
-
                     let subscriptions = vec![
                         cx.on_focus_in(&focus_handle, Self::focus_in),
                         cx.on_focus_out(&focus_handle, Self::focus_out),
-                        cx.observe(&runtime_manager, Self::handle_update),
                         cx.observe_global::<SettingsStore>(move |this, cx| {
                             let settings = JupyterSettings::get_global(cx);
                             this.set_enabled(settings.enabled, cx);
@@ -96,9 +97,10 @@ impl RuntimePanel {
                     let enabled = JupyterSettings::get_global(cx).enabled;
 
                     Self {
+                        fs,
                         width: None,
                         focus_handle,
-                        runtime_manager,
+                        runtime_specifications: Vec::new(),
                         sessions: Default::default(),
                         _subscriptions: subscriptions,
                         enabled,
@@ -106,10 +108,8 @@ impl RuntimePanel {
                 })
             })?;
 
-            view.update(&mut cx, |this, cx| {
-                this.runtime_manager
-                    .update(cx, |runtime_manager, cx| runtime_manager.load(cx))
-            })?;
+            view.update(&mut cx, |this, cx| this.refresh_kernelspecs(cx))?
+                .await?;
 
             Ok(view)
         })
@@ -120,10 +120,6 @@ impl RuntimePanel {
             self.enabled = enabled;
             cx.notify();
         }
-    }
-
-    fn handle_update(&mut self, _model: Model<RuntimeManager>, cx: &mut ViewContext<Self>) {
-        cx.notify();
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
@@ -208,6 +204,27 @@ impl RuntimePanel {
         Some((selected_text, language_name, anchor_range))
     }
 
+    pub fn refresh_kernelspecs(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
+        let kernel_specifications = kernel_specifications(self.fs.clone());
+        cx.spawn(|this, mut cx| async move {
+            let kernel_specifications = kernel_specifications.await?;
+
+            this.update(&mut cx, |this, cx| {
+                this.runtime_specifications = kernel_specifications;
+                cx.notify();
+            })
+        })
+    }
+
+    pub fn kernelspec(&self, language_name: &str) -> Option<RuntimeSpecification> {
+        self.runtime_specifications
+            .iter()
+            .find(|runtime_specification| {
+                runtime_specification.kernelspec.language.as_str() == language_name
+            })
+            .cloned()
+    }
+
     pub fn run(
         &mut self,
         editor: View<Editor>,
@@ -226,8 +243,6 @@ impl RuntimePanel {
         let entity_id = editor.entity_id();
 
         let runtime_specification = self
-            .runtime_manager
-            .read(cx)
             .kernelspec(&language_name)
             .with_context(|| format!("No kernel found for language: {language_name}"))?;
 
@@ -303,7 +318,6 @@ impl Panel for RuntimePanel {
             return None;
         }
 
-        // todo!(): get an icon for runtime panel
         Some(IconName::Code)
     }
 
@@ -326,13 +340,11 @@ impl FocusableView for RuntimePanel {
 
 impl Render for RuntimePanel {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        // let runtime_manager = self.runtime_manager.read(cx);
-
         v_flex()
             .p_4()
             // .child(Label::new("Jupyter Kernels Available"))
             // .children(
-            //     runtime_manager
+            //    self
             //         .runtime_specifications
             //         .iter()
             //         .map(|spec| div().child(spec.name.clone())),
