@@ -168,7 +168,7 @@ impl Session {
         let editor_block = EditorBlock {
             code_range: anchor_range,
             block_id,
-            execution_view,
+            execution_view: execution_view.clone(),
         };
 
         self.blocks
@@ -179,6 +179,7 @@ impl Session {
                 self.send(&message, cx).ok();
             }
             Kernel::StartingKernel(task) => {
+                // Queue up the execution as a task to run after the kernel starts
                 let task = task.clone();
                 let message = message.clone();
 
@@ -191,8 +192,10 @@ impl Session {
                 })
                 .detach();
             }
-            Kernel::ErroredLaunch(_) => {
-                // todo!(): Show error message for this run
+            Kernel::ErroredLaunch(error) => {
+                execution_view.update(cx, |execution_view, cx| {
+                    execution_view.set_status(ExecutionStatus::KernelErrored(error.clone()), cx);
+                });
             }
             _ => {}
         }

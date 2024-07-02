@@ -107,9 +107,6 @@ impl Kernel {
             Kernel::RunningKernel(running_kernel) => {
                 running_kernel.execution_state = status.clone();
             }
-            Kernel::StartingKernel(_task) => {
-                //
-            }
             _ => {}
         }
     }
