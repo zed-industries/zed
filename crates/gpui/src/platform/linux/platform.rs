@@ -84,6 +84,16 @@ pub(crate) struct PlatformHandlers {
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
 
+pub trait QuitSignal {
+    fn quit(&mut self);
+}
+
+impl QuitSignal for LoopSignal {
+    fn quit(&mut self) {
+        self.stop();
+    }
+}
+
 pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
@@ -91,12 +101,12 @@ pub(crate) struct LinuxCommon {
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
-    pub(crate) signal: LoopSignal,
+    pub(crate) signal: Box<dyn QuitSignal>,
     pub(crate) menus: Vec<OwnedMenu>,
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
+    pub fn new(signal: Box<dyn QuitSignal>) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
@@ -146,7 +156,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn quit(&self) {
-        self.with_common(|common| common.signal.stop());
+        self.with_common(|common| common.signal.quit());
     }
 
     fn compositor_name(&self) -> &'static str {
