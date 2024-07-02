@@ -3190,6 +3190,7 @@ mod tests {
             outline_panel::init((), cx);
             terminal_view::init(cx);
             assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+            repl::init(cx);
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             app_state

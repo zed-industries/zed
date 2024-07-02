@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use ui::Pixels;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum JupyterDockPosition {
     Left,
@@ -73,5 +73,57 @@ impl Settings for JupyterSettings {
         }
 
         Ok(settings)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{AppContext, UpdateGlobal};
+    use settings::SettingsStore;
+
+    use super::*;
+
+    #[gpui::test]
+    fn test_deserialize_jupyter_settings(cx: &mut AppContext) {
+        let store = settings::SettingsStore::test(cx);
+        cx.set_global(store);
+
+        JupyterSettings::register(cx);
+
+        assert_eq!(JupyterSettings::get_global(cx).enabled, false);
+        assert_eq!(
+            JupyterSettings::get_global(cx).dock,
+            JupyterDockPosition::Right
+        );
+        assert_eq!(
+            JupyterSettings::get_global(cx).default_width,
+            Pixels::from(640.0)
+        );
+
+        // Setting a custom setting through user settings
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{
+                        "jupyter": {
+                            "enabled": true,
+                            "dock": "left",
+                            "default_width": 800.0
+                        }
+                    }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        assert_eq!(JupyterSettings::get_global(cx).enabled, true);
+        assert_eq!(
+            JupyterSettings::get_global(cx).dock,
+            JupyterDockPosition::Left
+        );
+        assert_eq!(
+            JupyterSettings::get_global(cx).default_width,
+            Pixels::from(800.0)
+        );
     }
 }
