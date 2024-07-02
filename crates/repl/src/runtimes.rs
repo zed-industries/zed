@@ -1,8 +1,8 @@
 use anyhow::{Context as _, Result};
 use futures::{
-    channel::mpsc,
+    channel::mpsc::{self, Receiver},
     future::Shared,
-    stream::{self, StreamExt},
+    stream::{self, SelectAll, StreamExt},
     SinkExt as _,
 };
 use gpui::{AppContext, EntityId, Task};
@@ -141,10 +141,7 @@ pub struct RunningKernel {
     pub kernel_info: Option<KernelInfoReply>,
 }
 
-type JupyterMessageChannel = stream::Select<
-    mpsc::Receiver<JupyterMessage>,
-    stream::Select<mpsc::Receiver<JupyterMessage>, mpsc::Receiver<JupyterMessage>>,
->;
+type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 
 impl Debug for RunningKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -204,8 +201,10 @@ impl RunningKernel {
             let (mut control_reply_tx, control_reply_rx) = futures::channel::mpsc::channel(100);
             let (mut shell_reply_tx, shell_reply_rx) = futures::channel::mpsc::channel(100);
 
-            let reply_rx = stream::select(control_reply_rx, shell_reply_rx);
-            let messages_rx = stream::select(iosub, reply_rx);
+            let mut messages_rx = SelectAll::new();
+            messages_rx.push(iosub);
+            messages_rx.push(control_reply_rx);
+            messages_rx.push(shell_reply_rx);
 
             let iopub_task = cx.background_executor().spawn({
                 async move {
@@ -220,7 +219,6 @@ impl RunningKernel {
                 futures::channel::mpsc::channel(100);
             let (mut shell_request_tx, mut shell_request_rx) = futures::channel::mpsc::channel(100);
 
-            // Route on request to the proper shell_request or control_request
             let routing_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = request_rx.next().await {
