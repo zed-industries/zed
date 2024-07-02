@@ -536,7 +536,17 @@ impl Miner {
                     summaries.push(cached_summary.summary);
                 }
                 None => {
-                    pending_entries.push(entry_path);
+                    // Check if the file has been processed in chunks
+                    let is_processed = self.is_file_processed(&entry_path).await?;
+                    if is_processed {
+                        if let Some(summary) = self.get_combined_chunk_summary(&entry_path).await? {
+                            summaries.push(summary);
+                        } else {
+                            pending_entries.push(entry_path);
+                        }
+                    } else {
+                        pending_entries.push(entry_path);
+                    }
                 }
             }
         }
@@ -575,6 +585,37 @@ impl Miner {
 
         println!("Finished processing and summarizing directory: {:?}", path);
         Ok(())
+    }
+
+    async fn is_file_processed(&self, path: &Path) -> Result<bool> {
+        let file_progress = self.file_progress_map.lock().await;
+        Ok(file_progress
+            .get(path)
+            .map(|progress| progress.is_complete)
+            .unwrap_or(false))
+    }
+
+    async fn get_combined_chunk_summary(&self, path: &Path) -> Result<Option<String>> {
+        let prefix = format!("chunk:{}", path.to_string_lossy());
+        let combined_summary = self
+            .database
+            .transact(move |db, txn| {
+                let iter = db.prefix_iter(&txn, &prefix)?;
+                let mut combined_summary = String::new();
+                for item in iter {
+                    let (_, value) = item?;
+                    combined_summary.push_str(&value.summary);
+                    combined_summary.push('\n');
+                }
+                Ok(combined_summary)
+            })
+            .await?;
+
+        if combined_summary.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(combined_summary))
+        }
     }
 
     /// Combines multiple summaries into a single summary.
