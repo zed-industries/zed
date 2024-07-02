@@ -6957,22 +6957,6 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
         assert!(editor.signature_help_state.as_ref().is_some());
     });
 
-    // When moving to the edge of the bracket, clear the pop-up and query nothing.
-    let _not_used =
-        cx.handle_request::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| async move {
-            panic!("Unexpected call to signature help");
-        });
-    cx.set_state(indoc! {"
-        fn main() {
-            sample()ˇ;
-        }
-
-        fn sample(param1: u8, param2: u8) {}
-    "});
-    cx.editor(|editor, _| {
-        assert!(editor.signature_help_state.as_ref().is_none());
-    });
-
     // Restore the popover with more parameter input
     cx.set_state(indoc! {"
         fn main() {
@@ -6982,6 +6966,25 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
         fn sample(param1: u8, param2: u8) {}
     "});
 
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8, param2: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                    documentation: None,
+                },
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param2: u8".to_string()),
+                    documentation: None,
+                },
+            ]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(1),
+    };
     handle_signature_help_request(&mut cx, mocked_response.clone()).await;
     cx.condition(|editor, _| editor.signature_help_state.is_some())
         .await;

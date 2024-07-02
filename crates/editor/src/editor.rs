@@ -503,6 +503,7 @@ pub struct Editor {
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     signature_help_task: Option<Task<()>>,
     signature_help_state: Option<SignatureHelpPopover>,
+    signature_help_hidden_by_selection: bool,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
@@ -1824,6 +1825,7 @@ impl Editor {
             completion_tasks: Default::default(),
             signature_help_task: None,
             signature_help_state: None,
+            signature_help_hidden_by_selection: false,
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
             completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
@@ -4018,6 +4020,7 @@ impl Editor {
         let head = newest_selection.head();
         if !newest_selection.is_empty() || head != newest_selection.tail() {
             self.signature_help_state = None;
+            self.signature_help_hidden_by_selection = head != newest_selection.tail();
             return false;
         }
 
@@ -4043,9 +4046,18 @@ impl Editor {
                 self.signature_help_state = None;
                 false
             }
-            (None, Some(_)) => true,
+            (None, Some(_)) => {
+                self.signature_help_hidden_by_selection = false; // Reset the flag
+                true
+            }
             (Some(previous), Some(current)) => {
-                previous != current || (previous == current && self.signature_help_state.is_some())
+                if self.signature_help_hidden_by_selection {
+                    self.signature_help_hidden_by_selection = false;
+                    true
+                } else {
+                    previous != current
+                        || (previous == current && self.signature_help_state.is_some())
+                }
             }
         }
     }
