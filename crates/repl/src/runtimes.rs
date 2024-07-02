@@ -115,16 +115,11 @@ impl Kernel {
 }
 
 pub struct RunningKernel {
-    #[allow(unused)]
     pub process: smol::process::Child,
-    #[allow(unused)]
-    shell_task: Task<anyhow::Result<()>>,
-    #[allow(unused)]
-    iopub_task: Task<anyhow::Result<()>>,
-    #[allow(unused)]
-    control_task: Task<anyhow::Result<()>>,
-    #[allow(unused)]
-    routing_task: Task<anyhow::Result<()>>,
+    _shell_task: Task<anyhow::Result<()>>,
+    _iopub_task: Task<anyhow::Result<()>>,
+    _control_task: Task<anyhow::Result<()>>,
+    _routing_task: Task<anyhow::Result<()>>,
     connection_path: PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
@@ -195,7 +190,7 @@ impl RunningKernel {
             messages_rx.push(control_reply_rx);
             messages_rx.push(shell_reply_rx);
 
-            let iopub_task = cx.background_executor().spawn({
+            let _iopub_task = cx.background_executor().spawn({
                 async move {
                     while let Ok(message) = iopub_socket.read().await {
                         iopub.send(message).await?;
@@ -208,7 +203,7 @@ impl RunningKernel {
                 futures::channel::mpsc::channel(100);
             let (mut shell_request_tx, mut shell_request_rx) = futures::channel::mpsc::channel(100);
 
-            let routing_task = cx.background_executor().spawn({
+            let _routing_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = request_rx.next().await {
                         match message.content {
@@ -226,7 +221,7 @@ impl RunningKernel {
                 }
             });
 
-            let shell_task = cx.background_executor().spawn({
+            let _shell_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = shell_request_rx.next().await {
                         shell_socket.send(message).await.ok();
@@ -237,7 +232,7 @@ impl RunningKernel {
                 }
             });
 
-            let control_task = cx.background_executor().spawn({
+            let _control_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = control_request_rx.next().await {
                         control_socket.send(message).await.ok();
@@ -252,10 +247,10 @@ impl RunningKernel {
                 Self {
                     process,
                     request_tx,
-                    shell_task,
-                    iopub_task,
-                    control_task,
-                    routing_task,
+                    _shell_task,
+                    _iopub_task,
+                    _control_task,
+                    _routing_task,
                     connection_path,
                     execution_state: ExecutionState::Busy,
                     kernel_info: None,

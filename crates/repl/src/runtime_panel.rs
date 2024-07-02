@@ -60,8 +60,6 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct RuntimePanel {
-    #[allow(unused)]
-    workspace: WeakView<Workspace>,
     enabled: bool,
     focus_handle: FocusHandle,
     width: Option<Pixels>,
@@ -102,7 +100,6 @@ impl RuntimePanel {
                         focus_handle,
                         runtime_manager,
                         sessions: Default::default(),
-                        workspace: workspace.weak_handle(),
                         _subscriptions: subscriptions,
                         enabled,
                     }

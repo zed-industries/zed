@@ -305,7 +305,6 @@ impl From<&MimeBundle> for OutputType {
 pub enum ExecutionStatus {
     #[default]
     Unknown,
-    #[allow(unused)]
     ConnectingToKernel,
     Queued,
     Executing,

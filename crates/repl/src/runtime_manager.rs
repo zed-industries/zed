@@ -1,11 +1,7 @@
 use gpui::{AppContext, Global, Model, ModelContext};
 use project::Fs;
 
-#[allow(unused)]
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 
 use crate::runtimes::{get_runtime_specifications, RuntimeSpecification};
 
