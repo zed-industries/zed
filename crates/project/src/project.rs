@@ -58,10 +58,11 @@ use language::{
 };
 use log::error;
 use lsp::{
-    CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, Edit, FileSystemWatcher, InsertTextFormat, LanguageServer,
-    LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, OneOf,
-    ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
+    CompletionContext, CompletionItem, DiagnosticSeverity, DiagnosticTag,
+    DidChangeWatchedFilesRegistrationOptions, DocumentHighlightKind, Edit, FileSystemWatcher,
+    InsertTextFormat, LanguageServer, LanguageServerBinary, LanguageServerId, LspRequestFuture,
+    MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus, ServerStatus, TextEdit,
+    WorkDoneProgressCancelParams,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -5917,6 +5918,7 @@ impl Project {
                 let mut tasks = Vec::with_capacity(server_ids.len());
                 this.update(&mut cx, |this, cx| {
                     for server_id in server_ids {
+                        println!("requesting lsp: server_id: {:?}", server_id);
                         let lsp_adapter = this.language_server_adapter_for_id(server_id);
                         tasks.push((
                             lsp_adapter,
@@ -6000,9 +6002,10 @@ impl Project {
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Vec<usize>>> {
         let client = self.client();
         let language_registry = self.languages().clone();
+        let language = buffer.read(cx).language().cloned();
 
         let is_remote = self.is_remote();
         let project_id = self.remote_id();
@@ -6011,7 +6014,7 @@ impl Project {
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         cx.spawn(move |this, mut cx| async move {
-            let mut did_resolve = false;
+            let mut completions_resolved = Vec::new();
             if is_remote {
                 let project_id =
                     project_id.ok_or_else(|| anyhow!("Remote project without remote_id"))?;
@@ -6024,12 +6027,18 @@ impl Project {
                             continue;
                         }
 
-                        did_resolve = true;
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
 
                         (server_id, completion)
                     };
+
+                    let lsp_adapter = this
+                        .read_with(&mut cx, |project, _| {
+                            project.language_server_adapter_for_id(server_id)
+                        })
+                        .ok()
+                        .flatten();
 
                     Self::resolve_completion_remote(
                         project_id,
@@ -6039,6 +6048,8 @@ impl Project {
                         completion_index,
                         completion,
                         client.clone(),
+                        lsp_adapter,
+                        language.clone(),
                         language_registry.clone(),
                     )
                     .await;
@@ -6058,41 +6069,51 @@ impl Project {
                         (server_id, completion)
                     };
 
-                    let server = this
-                        .read_with(&mut cx, |project, _| {
-                            project.language_server_for_id(server_id)
-                        })
-                        .ok()
-                        .flatten();
-                    let Some(server) = server else {
-                        continue;
+                    let (server, lsp_adapter) = match this.read_with(&mut cx, |project, _| {
+                        (
+                            project.language_server_for_id(server_id),
+                            project.language_server_adapter_for_id(server_id),
+                        )
+                    }) {
+                        Ok((server, lsp_adapter)) => match server {
+                            Some(server) => (server, lsp_adapter),
+                            None => continue,
+                        },
+                        Err(_) => continue,
                     };
 
-                    did_resolve = true;
-                    Self::resolve_completion_local(
+                    let resolved = Self::resolve_completion_local(
                         server,
                         &buffer_snapshot,
+                        language.clone(),
+                        lsp_adapter,
                         completions.clone(),
                         completion_index,
                         completion,
                         language_registry.clone(),
                     )
                     .await;
+                    if resolved {
+                        completions_resolved.push(completion_index);
+                    }
                 }
             }
 
-            Ok(did_resolve)
+            Ok(completions_resolved)
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn resolve_completion_local(
         server: Arc<lsp::LanguageServer>,
         snapshot: &BufferSnapshot,
+        language: Option<Arc<Language>>,
+        lsp_adapter: Option<Arc<CachedLspAdapter>>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
         language_registry: Arc<LanguageRegistry>,
-    ) {
+    ) -> bool {
         let can_resolve = server
             .capabilities()
             .completion_provider
@@ -6100,56 +6121,64 @@ impl Project {
             .and_then(|options| options.resolve_provider)
             .unwrap_or(false);
         if !can_resolve {
-            return;
+            return false;
         }
 
         let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
-        let Some(completion_item) = request.await.log_err() else {
-            return;
+
+        let Some(lsp_completion) = request.await.log_err() else {
+            return false;
         };
 
-        if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
+        let label = if let Some((lsp_adapter, language)) = lsp_adapter.zip(language.as_ref()) {
+            lsp_adapter
+                .adapter
+                .label_for_resolved_completion(&lsp_completion, language)
+                .await
+        } else {
+            None
+        };
+
+        let documentation = if let Some(lsp_documentation) = lsp_completion.documentation.as_ref() {
             let documentation = language::prepare_completion_documentation(
                 lsp_documentation,
                 &language_registry,
-                None, // TODO: Try to reasonably work out which language the completion is for
+                language.clone(),
             )
             .await;
-
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(documentation);
+            Some(documentation)
         } else {
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
-        }
+            Some(Documentation::Undocumented)
+        };
 
-        if let Some(text_edit) = completion_item.text_edit.as_ref() {
-            // Technically we don't have to parse the whole `text_edit`, since the only
-            // language server we currently use that does update `text_edit` in `completionItem/resolve`
-            // is `typescript-language-server` and they only update `text_edit.new_text`.
-            // But we should not rely on that.
-            let edit = parse_completion_text_edit(text_edit, snapshot);
-
-            if let Some((old_range, mut new_text)) = edit {
+        let text_edit = lsp_completion
+            .text_edit
+            .as_ref()
+            .and_then(|edit| parse_completion_text_edit(edit, snapshot))
+            .map(|(old_range, mut new_text)| {
                 LineEnding::normalize(&mut new_text);
+                (old_range, new_text)
+            });
 
-                let mut completions = completions.write();
-                let completion = &mut completions[completion_index];
-
-                completion.new_text = new_text;
-                completion.old_range = old_range;
-            }
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
+        completion.documentation = documentation;
+        if let Some(label) = label {
+            completion.label = label;
         }
-        if completion_item.insert_text_format == Some(InsertTextFormat::SNIPPET) {
+        if let Some((old_range, new_text)) = text_edit {
+            completion.new_text = new_text;
+            completion.old_range = old_range;
+        }
+        if lsp_completion.insert_text_format == Some(InsertTextFormat::SNIPPET) {
             // vtsls might change the type of completion after resolution.
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            if completion_item.insert_text_format != completion.lsp_completion.insert_text_format {
-                completion.lsp_completion.insert_text_format = completion_item.insert_text_format;
+            if lsp_completion.insert_text_format != completion.lsp_completion.insert_text_format {
+                completion.lsp_completion.insert_text_format = lsp_completion.insert_text_format;
             }
         }
+        completion.lsp_completion = lsp_completion;
+
+        true
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6161,6 +6190,8 @@ impl Project {
         completion_index: usize,
         completion: lsp::CompletionItem,
         client: Arc<Client>,
+        lsp_adapter: Option<Arc<CachedLspAdapter>>,
+        language: Option<Arc<Language>>,
         language_registry: Arc<LanguageRegistry>,
     ) {
         let request = proto::ResolveCompletionDocumentation {
@@ -6191,14 +6222,34 @@ impl Project {
             Documentation::MultiLinePlainText(response.documentation)
         };
 
-        let mut completions = completions.write();
-        let completion = &mut completions[completion_index];
-        completion.documentation = Some(documentation);
+        let label = if let Some((lsp_adapter, language)) = lsp_adapter.zip(language.as_ref()) {
+            match serde_json::from_slice(&response.lsp_completion)
+                .as_ref()
+                .ok()
+            {
+                Some(lsp_completion) => {
+                    lsp_adapter
+                        .adapter
+                        .label_for_resolved_completion(lsp_completion, language)
+                        .await
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
 
         let old_range = response
             .old_start
             .and_then(deserialize_anchor)
             .zip(response.old_end.and_then(deserialize_anchor));
+
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
+        completion.documentation = Some(documentation);
+        if let Some(label) = label {
+            completion.label = label;
+        }
         if let Some((old_start, old_end)) = old_range {
             if !response.new_text.is_empty() {
                 completion.new_text = response.new_text;
@@ -9484,16 +9535,17 @@ impl Project {
         envelope: TypedEnvelope<proto::ResolveCompletionDocumentation>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ResolveCompletionDocumentationResponse> {
-        let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
+        let lsp_completion: CompletionItem =
+            serde_json::from_slice(&envelope.payload.lsp_completion)?;
 
+        let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
         let completion = this
             .read_with(&mut cx, |this, _| {
-                let id = LanguageServerId(envelope.payload.language_server_id as usize);
-                let Some(server) = this.language_server_for_id(id) else {
-                    return Err(anyhow!("No language server {id}"));
+                let Some(server) = this.language_server_for_id(server_id) else {
+                    return Err(anyhow!("No language server {server_id}"));
                 };
 
-                Ok(server.request::<lsp::request::ResolveCompletionItem>(lsp_completion))
+                Ok(server.request::<lsp::request::ResolveCompletionItem>(lsp_completion.clone()))
             })??
             .await?;
 
@@ -9543,6 +9595,8 @@ impl Project {
             old_start,
             old_end,
             new_text,
+            lsp_completion: serde_json::to_vec(&lsp_completion).unwrap(),
+            server_id: server_id.0 as u64,
         })
     }
 

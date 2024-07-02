@@ -70,8 +70,8 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         _completion_indices: Vec<usize>,
         _completions: Arc<RwLock<Box<[Completion]>>>,
         _cx: &mut ViewContext<Editor>,
-    ) -> Task<anyhow::Result<bool>> {
-        Task::ready(Ok(false))
+    ) -> Task<anyhow::Result<Vec<usize>>> {
+        Task::ready(Ok(Vec::new()))
     }
 
     fn apply_additional_edits_for_completion(

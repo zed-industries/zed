@@ -9061,7 +9061,11 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.update_editor(|editor, _| {
         if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                menu.matches
+                    .read()
+                    .iter()
+                    .map(|m| &m.string)
+                    .collect::<Vec<_>>(),
                 &["bg-red", "bg-blue", "bg-yellow"]
             );
         } else {
@@ -9074,7 +9078,11 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.update_editor(|editor, _| {
         if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                menu.matches
+                    .read()
+                    .iter()
+                    .map(|m| &m.string)
+                    .collect::<Vec<_>>(),
                 &["bg-blue", "bg-yellow"]
             );
         } else {
@@ -9090,7 +9098,11 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.update_editor(|editor, _| {
         if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
             assert_eq!(
-                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                menu.matches
+                    .read()
+                    .iter()
+                    .map(|m| &m.string)
+                    .collect::<Vec<_>>(),
                 &["bg-yellow"]
             );
         } else {

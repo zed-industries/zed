@@ -439,6 +439,14 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
+    async fn label_for_resolved_completion(
+        &self,
+        completion_item: &lsp::CompletionItem,
+        language: &Arc<Language>,
+    ) -> Option<CodeLabel> {
+        self.label_for_completion(completion_item, language).await
+    }
+
     async fn labels_for_symbols(
         self: Arc<Self>,
         symbols: &[(String, lsp::SymbolKind)],
