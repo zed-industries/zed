@@ -323,6 +323,8 @@ impl Miner {
 
         let mut paths_to_expand = VecDeque::new();
         paths_to_expand.push_back(self.root.clone());
+        let mut expanded_paths = HashSet::new();
+        expanded_paths.insert(self.root.clone());
 
         while !paths_to_expand.is_empty() {
             let current_paths: Vec<_> = paths_to_expand
@@ -387,8 +389,9 @@ impl Miner {
             for path in &response.paths {
                 for current_path in &current_paths {
                     let full_path = current_path.join(path);
-                    if !paths_to_expand.contains(&full_path) {
-                        paths_to_expand.push_back(full_path);
+                    if !expanded_paths.contains(&full_path) {
+                        paths_to_expand.push_back(full_path.clone());
+                        expanded_paths.insert(full_path);
                     }
                 }
             }
@@ -397,6 +400,29 @@ impl Miner {
         }
 
         println!("Expansion complete");
+
+        println!("Expanded paths and their summaries:");
+        for path in expanded_paths {
+            if let Some(summary) = self.summary_for_path(&path).await? {
+                println!("Path: {}", path.display());
+                println!("Summary: {}", summary);
+
+                // If it's a Rust file, print symbols
+                if path.extension().map_or(false, |ext| ext == "rs") {
+                    println!("Symbols:");
+                    if let Ok(symbols) = self.get_file_symbols(&path).await {
+                        for symbol in symbols {
+                            if let Ok(Some(summary)) = self.summary_for_symbol(&path, &symbol).await
+                            {
+                                println!("  {}: {}", symbol, summary);
+                            }
+                        }
+                    }
+                }
+                println!(); // Add a blank line between entries
+            }
+        }
+
         Ok(())
     }
 
