@@ -193,6 +193,7 @@
         }
       ],
       "cmd->": "assistant::QuoteSelection",
+      "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol"
     }
   },
@@ -238,6 +239,7 @@
       "cmd-enter": "assistant::Assist",
       "cmd-s": "workspace::Save",
       "cmd->": "assistant::QuoteSelection",
+      "cmd-<": "assistant::InsertIntoEditor",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",

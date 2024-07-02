@@ -9,9 +9,10 @@ use crate::{
     },
     terminal_inline_assistant::TerminalInlineAssistant,
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, ContextStore, CycleMessageRole,
-    InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, MessageId,
-    MessageMetadata, MessageStatus, ModelSelector, QuoteSelection, ResetKey, Role, SavedContext,
-    SavedContextMetadata, SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleModelSelector,
+    InlineAssist, InlineAssistant, InsertIntoEditor, LanguageModelRequest,
+    LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus, ModelSelector,
+    QuoteSelection, ResetKey, Role, SavedContext, SavedContextMetadata, SavedMessage, Split,
+    ToggleFocus, ToggleHistory, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
@@ -86,7 +87,8 @@ pub fn init(cx: &mut AppContext) {
                     workspace.toggle_panel_focus::<AssistantPanel>(cx);
                 })
                 .register_action(AssistantPanel::inline_assist)
-                .register_action(ContextEditor::quote_selection);
+                .register_action(ContextEditor::quote_selection)
+                .register_action(ContextEditor::insert_selection);
         },
     )
     .detach();
@@ -2973,6 +2975,42 @@ impl ContextEditor {
             let ids = editor.insert_blocks(new_blocks, None, cx);
             self.blocks = HashSet::from_iter(ids);
         });
+    }
+
+    fn insert_selection(
+        workspace: &mut Workspace,
+        _: &InsertIntoEditor,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+        let Some(context_editor_view) = panel.read(cx).active_context_editor().cloned() else {
+            return;
+        };
+        let Some(active_editor_view) = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+        else {
+            return;
+        };
+
+        let context_editor = context_editor_view.read(cx).editor.read(cx);
+        let anchor = context_editor.selections.newest_anchor();
+        let text = context_editor
+            .buffer()
+            .read(cx)
+            .read(cx)
+            .text_for_range(anchor.range())
+            .collect::<String>();
+
+        // If nothing is selected, don't delete the current selection; instead, be a no-op.
+        if !text.is_empty() {
+            active_editor_view.update(cx, |editor, cx| {
+                editor.insert(&text, cx);
+                editor.focus(cx);
+            })
+        }
     }
 
     fn quote_selection(
