@@ -109,9 +109,12 @@ pub(crate) struct MetalRenderer {
 
 impl MetalRenderer {
     pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Self {
-        let device: metal::Device = if let Some(device) = metal::Device::system_default() {
-            device
-        } else {
+        // Prefer low‐power integrated GPUs on Intel Mac. On Apple
+        // Silicon, there is only ever one GPU, so this is equivalent to
+        // `metal::Device::system_default()`.
+        let mut devices = metal::Device::all();
+        devices.sort_by_key(|device| (!device.is_removable(), device.is_low_power()));
+        let Some(device) = devices.pop() else {
             log::error!("unable to access a compatible graphics device");
             std::process::exit(1);
         };
