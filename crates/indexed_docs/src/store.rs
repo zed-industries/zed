@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use collections::HashMap;
 use derive_more::{Deref, Display};
 use futures::future::{self, BoxFuture, Shared};
@@ -15,7 +16,6 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::indexer::{IndexDocs, IndexedDocsProvider, RustdocIndexer};
 use crate::IndexedDocsRegistry;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
@@ -33,16 +33,6 @@ pub struct Provider {
     pub indexer: Box<dyn IndexDocs + Send + Sync + 'static>,
 }
 
-impl Provider {
-    pub fn rustdoc() -> Self {
-        Self {
-            id: ProviderId("rustdoc".into()),
-            database_path: paths::support_dir().join("docs/rust/rustdoc-db.1.mdb"),
-            indexer: Box::new(RustdocIndexer),
-        }
-    }
-}
-
 /// The name of a package.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
 pub struct PackageName(Arc<str>);
@@ -51,6 +41,12 @@ impl From<&str> for PackageName {
     fn from(value: &str) -> Self {
         Self(value.into())
     }
+}
+
+#[async_trait]
+pub trait IndexDocs {
+    /// Indexes the package with the given name.
+    async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()>;
 }
 
 /// A store for indexed docs.
@@ -116,7 +112,6 @@ impl IndexedDocsStore {
     pub fn index(
         self: Arc<Self>,
         package: PackageName,
-        provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
     ) -> Shared<Task<Result<(), Arc<anyhow::Error>>>> {
         if let Some(existing_task) = self.indexing_tasks_by_package.read().get(&package) {
             return existing_task.clone();
@@ -142,9 +137,7 @@ impl IndexedDocsStore {
                             .clone()
                             .await
                             .map_err(|err| anyhow!(err))?;
-                        this.indexer
-                            .index(package.clone(), database, provider)
-                            .await
+                        this.indexer.index(package, database).await
                     };
 
                     index_task.await.map_err(Arc::new)

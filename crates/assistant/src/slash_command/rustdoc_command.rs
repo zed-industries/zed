@@ -9,8 +9,8 @@ use futures::AsyncReadExt;
 use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{
-    convert_rustdoc_to_markdown, IndexedDocsStore, LocalProvider, PackageName, ProviderId,
-    RustdocSource,
+    convert_rustdoc_to_markdown, IndexedDocsRegistry, IndexedDocsStore, LocalProvider, PackageName,
+    Provider, ProviderId, RustdocIndexer, RustdocSource,
 };
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
@@ -90,6 +90,47 @@ impl RustdocSlashCommand {
             project.read(cx).absolute_path(&path, cx)?.as_path(),
         ))
     }
+
+    /// Ensures that the rustdoc provider is registered.
+    ///
+    /// Ideally we would do this sooner, but we need to wait until we're able to
+    /// access the workspace so we can read the project.
+    fn ensure_rustdoc_provider_is_registered(
+        &self,
+        workspace: Option<WeakView<Workspace>>,
+        cx: &mut AppContext,
+    ) {
+        let indexed_docs_registry = IndexedDocsRegistry::global(cx);
+        if indexed_docs_registry
+            .get_provider_store(ProviderId::rustdoc())
+            .is_none()
+        {
+            let index_provider_deps = maybe!({
+                let workspace = workspace.ok_or_else(|| anyhow!("no workspace"))?;
+                let workspace = workspace
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("workspace was dropped"))?;
+                let project = workspace.read(cx).project().clone();
+                let fs = project.read(cx).fs().clone();
+                let cargo_workspace_root = Self::path_to_cargo_toml(project, cx)
+                    .and_then(|path| path.parent().map(|path| path.to_path_buf()))
+                    .ok_or_else(|| anyhow!("no Cargo workspace root found"))?;
+
+                anyhow::Ok((fs, cargo_workspace_root))
+            });
+
+            if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
+                indexed_docs_registry.register_provider(Provider {
+                    id: ProviderId::rustdoc(),
+                    database_path: paths::support_dir().join("docs/rust/rustdoc-db.1.mdb"),
+                    indexer: Box::new(RustdocIndexer::new(Box::new(LocalProvider::new(
+                        fs,
+                        cargo_workspace_root,
+                    )))),
+                });
+            }
+        }
+    }
 }
 
 impl SlashCommand for RustdocSlashCommand {
@@ -116,32 +157,17 @@ impl SlashCommand for RustdocSlashCommand {
         workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
-        let index_provider_deps = maybe!({
-            let workspace = workspace.ok_or_else(|| anyhow!("no workspace"))?;
-            let workspace = workspace
-                .upgrade()
-                .ok_or_else(|| anyhow!("workspace was dropped"))?;
-            let project = workspace.read(cx).project().clone();
-            let fs = project.read(cx).fs().clone();
-            let cargo_workspace_root = Self::path_to_cargo_toml(project, cx)
-                .and_then(|path| path.parent().map(|path| path.to_path_buf()))
-                .ok_or_else(|| anyhow!("no Cargo workspace root found"))?;
+        self.ensure_rustdoc_provider_is_registered(workspace, cx);
 
-            anyhow::Ok((fs, cargo_workspace_root))
-        });
-
-        let store = IndexedDocsStore::try_global(ProviderId("gleam-hexdocs".into()), cx);
+        let store = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx);
         cx.background_executor().spawn(async move {
             let store = store?;
 
             if let Some((crate_name, rest)) = query.split_once(':') {
                 if rest.is_empty() {
-                    if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
-                        let provider = Box::new(LocalProvider::new(fs, cargo_workspace_root));
-                        // We don't need to hold onto this task, as the `RustdocStore` will hold it
-                        // until it completes.
-                        let _ = store.clone().index(crate_name.into(), provider);
-                    }
+                    // We don't need to hold onto this task, as the `IndexedDocsStore` will hold it
+                    // until it completes.
+                    let _ = store.clone().index(crate_name.into());
                 }
             }
 
@@ -180,8 +206,7 @@ impl SlashCommand for RustdocSlashCommand {
         let item_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
 
         let text = cx.background_executor().spawn({
-            let rustdoc_store =
-                IndexedDocsStore::try_global(ProviderId("gleam-hexdocs".into()), cx);
+            let rustdoc_store = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx);
             let crate_name = crate_name.clone();
             let item_path = item_path.clone();
             async move {
