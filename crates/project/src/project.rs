@@ -1198,7 +1198,7 @@ impl Project {
                         .set_breakpoints(
                             abs_path.clone(),
                             Some(vec![SourceBreakpoint {
-                                line: row as u64,
+                                line: (row + 1) as u64,
                                 condition: None,
                                 hit_condition: None,
                                 log_message: None,
