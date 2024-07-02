@@ -145,10 +145,10 @@ impl DebugAdapterClient {
             config,
         };
 
-        cx.spawn(move |cx| Self::handle_events(client_rx, event_handler, cx))
+        cx.spawn(move |_| Self::handle_recv(server_rx, server_tx, client_tx))
             .detach();
 
-        cx.spawn(move |_| Self::handle_recv(server_rx, server_tx, client_tx))
+        cx.spawn(move |cx| Self::handle_events(client_rx, event_handler, cx))
             .detach();
 
         Ok(client)
