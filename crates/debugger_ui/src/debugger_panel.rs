@@ -65,7 +65,7 @@ impl DebugPanel {
 
                     if let project::Event::DebugClientEvent { client_id, event } = event {
                         match event {
-                            Events::Initialized => return,
+                            Events::Initialized(_) => return,
                             Events::Stopped(event) => {
                                 if let Some(thread_id) = event.thread_id {
                                     let client = this.debug_adapter(cx);
