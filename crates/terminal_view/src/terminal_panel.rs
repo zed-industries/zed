@@ -350,24 +350,39 @@ impl TerminalPanel {
         let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
         let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone() {
-            Shell::System => std::env::var("SHELL").ok().map(|shell| (shell, Vec::new())),
+            Shell::System => Shell::retrieve_system_shell().map(|shell| (shell, Vec::new())),
             Shell::Program(shell) => Some((shell, Vec::new())),
             Shell::WithArguments { program, args } => Some((program, args)),
         }) else {
             return;
         };
 
-        spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+        #[cfg(not(target_os = "windows"))]
+        {
+            spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label);
+        }
+        #[cfg(target_os = "windows")]
+        let windows_shell = shell.clone();
         let task_command = std::mem::replace(&mut spawn_task.command, shell);
         let task_args = std::mem::take(&mut spawn_task.args);
         let combined_command = task_args
             .into_iter()
             .fold(task_command, |mut command, arg| {
                 command.push(' ');
+                #[cfg(not(target_os = "windows"))]
                 command.push_str(&arg);
+                #[cfg(target_os = "windows")]
+                command.push_str(&task::to_windows_variable(&windows_shell, arg));
                 command
             });
+        #[cfg(not(target_os = "windows"))]
         user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
+        #[cfg(target_os = "windows")]
+        user_args.extend(["-C".to_owned(), combined_command]);
         spawn_task.args = user_args;
         let spawn_task = spawn_task;
 

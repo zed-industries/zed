@@ -268,6 +268,24 @@ pub enum Shell {
     },
 }
 
+impl Shell {
+    pub fn retrieve_system_shell() -> Option<String> {
+        #[cfg(not(target_os = "windows"))]
+        {
+            use anyhow::Context;
+            use util::ResultExt;
+
+            return std::env::var("SHELL")
+                .context("Error finding SHELL in env.")
+                .log_err();
+        }
+        // `alacritty_terminal` uses this as default on Windows. See:
+        // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
+        #[cfg(target_os = "windows")]
+        return Some("powershell".to_owned());
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AlternateScroll {
