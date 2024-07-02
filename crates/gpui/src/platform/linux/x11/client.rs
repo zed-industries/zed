@@ -6,8 +6,6 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Context;
-
 use async_task::Runnable;
 use calloop::channel::Channel;
 
@@ -131,16 +129,9 @@ pub struct X11ClientState {
     pub(crate) clipboard_item: Option<ClipboardItem>,
 
     poll: Option<mio::Poll>,
-    waker: Arc<Waker>,
-
     quit_signal_rx: oneshot::Receiver<()>,
     runnables: Channel<Runnable>,
-
     xdp_event_source: XDPEventSource,
-
-    xim_callback_count: usize,
-    keypress_count: usize,
-    begin: Instant,
 }
 
 #[derive(Clone)]
@@ -310,8 +301,7 @@ impl X11Client {
 
         X11Client(Rc::new(RefCell::new(X11ClientState {
             poll: Some(poll),
-            waker,
-
+            // waker,
             runnables,
 
             xdp_event_source,
@@ -348,10 +338,6 @@ impl X11Client {
 
             clipboard,
             clipboard_item: None,
-
-            keypress_count: 0,
-            xim_callback_count: 0,
-            begin: Instant::now(),
         })))
     }
 
@@ -431,14 +417,14 @@ impl X11Client {
             let xim_connected = xim_handler.connected;
             drop(state);
 
-            let xim_filtered = false;
-            // match ximc.filter_event(&event, &mut xim_handler) {
-            //     Ok(handled) => handled,
-            //     Err(err) => {
-            //         log::error!("XIMClientError: {}", err);
-            //         false
-            //     }
-            // };
+            // let xim_filtered = false;
+            let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
+                Ok(handled) => handled,
+                Err(err) => {
+                    log::error!("XIMClientError: {}", err);
+                    false
+                }
+            };
             let xim_callback_event = xim_handler.last_callback_event.take();
 
             let mut state = self.0.borrow_mut();
@@ -446,12 +432,6 @@ impl X11Client {
             state.xim_handler = Some(xim_handler);
 
             if let Some(event) = xim_callback_event {
-                state.xim_callback_count += 1;
-                println!(
-                    "{:?}: handle_xim_callback_event {}",
-                    state.begin.elapsed(),
-                    state.xim_callback_count
-                );
                 drop(state);
                 self.handle_xim_callback_event(event);
             } else {
@@ -462,7 +442,7 @@ impl X11Client {
                 continue;
             }
 
-            if false {
+            if xim_connected {
                 self.xim_handle_event(event);
             } else {
                 self.handle_event(event);
@@ -550,7 +530,6 @@ impl X11Client {
                 }
             }
             Event::KeyPress(event) => {
-                let now = Instant::now();
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
 
@@ -904,39 +883,7 @@ impl X11Client {
         Some(())
     }
 
-    fn send_window_expose_events(
-        &self,
-        x_windows: impl IntoIterator<Item = xproto::Window>,
-    ) -> anyhow::Result<()> {
-        let state = self.0.borrow_mut();
-
-        for x_window in x_windows.into_iter() {
-            state
-                .xcb_connection
-                .send_event(
-                    false,
-                    x_window,
-                    xproto::EventMask::EXPOSURE,
-                    xproto::ExposeEvent {
-                        response_type: xproto::EXPOSE_EVENT,
-                        sequence: 0,
-                        window: x_window,
-                        x: 0,
-                        y: 0,
-                        width: 0,
-                        height: 0,
-                        count: 1,
-                    },
-                )
-                .context("failed to send ExposeEvent for window")?;
-        }
-
-        state
-            .xcb_connection
-            .flush()
-            .context("failed to flush XCB connection after sending ExposeEvent")
-    }
-
+    #[profiling::function]
     fn consume_x11_events(&self) -> (HashSet<u32>, Vec<Event>) {
         let mut events = Vec::new();
         let mut windows_to_refresh = HashSet::new();
@@ -1219,19 +1166,20 @@ impl LinuxClient for X11Client {
             if let Ok(Some(())) = state.quit_signal_rx.try_recv() {
                 return;
             }
+
             // Redraw windows
             let now = Instant::now();
             if now > next_refresh_needed {
                 print!(".");
                 if now > next_refresh_needed + Duration::from_millis(1) {
-                    println!("({:?} late)", now - next_refresh_needed);
+                    println!("({:?} late, now_before_poll.elapsed(): {:?}, now.elapsed(): {:?}, time_to_wait: {:?})", now - next_refresh_needed, now_before_poll.elapsed(), now.elapsed(), time_to_wait);
                 }
 
                 // This will be pulled down to 16ms (or less) if a window is open
                 let mut frame_length = Duration::from_millis(100);
 
                 let mut windows = vec![];
-                for (x_window, window_ref) in state.windows.iter() {
+                for (_, window_ref) in state.windows.iter() {
                     frame_length = frame_length.min(window_ref.window.refresh_rate());
                     windows.push(window_ref.window.clone());
                 }
@@ -1242,7 +1190,7 @@ impl LinuxClient for X11Client {
                 }
                 state = self.0.borrow_mut();
 
-                // In the case that we're looping a bit too fast, slow
+                // In the case that we're looping a bit too fast, slow down
                 next_refresh_needed = now.max(next_refresh_needed) + frame_length;
             }
 
@@ -1251,8 +1199,10 @@ impl LinuxClient for X11Client {
             // X11 events
             loop {
                 let (windows, events) = self.consume_x11_events();
-                for window in windows {
-                    // ignore for now.
+                for x_window in windows {
+                    if let Some(window) = self.get_window(x_window) {
+                        window.refresh();
+                    }
                 }
 
                 if events.len() == 0 {
