@@ -1204,10 +1204,12 @@ impl LinuxClient for X11Client {
 
         let mut events = mio::Events::with_capacity(1024);
         let mut next_refresh_needed = Instant::now();
-        let mut start = Instant::now();
 
         'run_loop: loop {
-            let time_to_wait = next_refresh_needed - Instant::now();
+            let now_before_poll = Instant::now();
+            // We rounding the time_to_wait down so `mio` doesn't round it up to the next higher milliseconds
+            let time_to_wait =
+                Duration::from_millis((next_refresh_needed - Instant::now()).as_millis() as u64);
             if time_to_wait >= Duration::from_millis(1) {
                 let _ = poll.poll(&mut events, Some(time_to_wait));
             };
@@ -1219,8 +1221,7 @@ impl LinuxClient for X11Client {
             }
             // Redraw windows
             let now = Instant::now();
-
-            if now + Duration::from_millis(1) > next_refresh_needed {
+            if now > next_refresh_needed {
                 print!(".");
                 if now > next_refresh_needed + Duration::from_millis(1) {
                     println!("({:?} late)", now - next_refresh_needed);
