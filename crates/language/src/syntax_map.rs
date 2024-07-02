@@ -1252,20 +1252,28 @@ fn get_injections(
             prev_match = Some((mat.pattern_index, content_range.clone()));
             let combined = config.patterns[mat.pattern_index].combined;
 
-            let mut language_name = None;
             let mut step_range = content_range.clone();
-            if let Some(name) = config.patterns[mat.pattern_index].language.as_ref() {
-                language_name = Some(Cow::Borrowed(name.as_ref()))
-            } else if let Some(language_node) = config
-                .language_capture_ix
-                .and_then(|ix| mat.nodes_for_capture_index(ix).next())
-            {
-                step_range.start = cmp::min(content_range.start, language_node.start_byte());
-                step_range.end = cmp::max(content_range.end, language_node.end_byte());
-                language_name = Some(Cow::Owned(
-                    text.text_for_range(language_node.byte_range()).collect(),
-                ))
-            };
+            let language_name =
+                if let Some(name) = config.patterns[mat.pattern_index].language.as_ref() {
+                    Some(Cow::Borrowed(name.as_ref()))
+                } else if let Some(language_node) = config
+                    .language_capture_ix
+                    .and_then(|ix| mat.nodes_for_capture_index(ix).next())
+                {
+                    step_range.start = cmp::min(content_range.start, language_node.start_byte());
+                    step_range.end = cmp::max(content_range.end, language_node.end_byte());
+                    let language_name: String =
+                        text.text_for_range(language_node.byte_range()).collect();
+
+                    // Enable paths ending in a language extension to represent a language name: e.g. "foo/bar/baz.rs"
+                    if let Some(last_dot_pos) = language_name.rfind('.') {
+                        Some(Cow::Owned(language_name[last_dot_pos + 1..].to_string()))
+                    } else {
+                        Some(Cow::Owned(language_name))
+                    }
+                } else {
+                    None
+                };
 
             if let Some(language_name) = language_name {
                 let language = language_registry
