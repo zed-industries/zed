@@ -440,30 +440,19 @@ impl ExecutionView {
 impl Render for ExecutionView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if self.outputs.len() == 0 {
-            match &self.status {
-                ExecutionStatus::ConnectingToKernel => {
-                    return div().child("Connecting to kernel...").into_any_element()
-                }
-                ExecutionStatus::Executing => {
-                    return div().child("Executing...").into_any_element()
-                }
-                ExecutionStatus::Finished => {
-                    return div().child(Icon::new(IconName::Check)).into_any_element()
-                }
-                ExecutionStatus::Unknown => return div().child("...").into_any_element(),
-                ExecutionStatus::ShuttingDown => {
-                    return div().child("Kernel shutting down...").into_any_element()
-                }
-                ExecutionStatus::Shutdown => {
-                    return div().child("Kernel shutdown").into_any_element()
-                }
-                ExecutionStatus::Queued => return div().child("Queued").into_any_element(),
+            return match &self.status {
+                ExecutionStatus::ConnectingToKernel => div().child("Connecting to kernel..."),
+                ExecutionStatus::Executing => div().child("Executing..."),
+                ExecutionStatus::Finished => div().child(Icon::new(IconName::Check)),
+                ExecutionStatus::Unknown => div().child("..."),
+                ExecutionStatus::ShuttingDown => div().child("Kernel shutting down..."),
+                ExecutionStatus::Shutdown => div().child("Kernel shutdown"),
+                ExecutionStatus::Queued => div().child("Queued"),
                 ExecutionStatus::KernelErrored(error) => {
-                    return div()
-                        .child(format!("Kernel error: {}", error))
-                        .into_any_element()
+                    div().child(format!("Kernel error: {}", error))
                 }
             }
+            .into_any_element();
         }
 
         div()

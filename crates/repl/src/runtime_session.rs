@@ -38,7 +38,7 @@ struct EditorBlock {
 }
 
 impl EditorBlock {
-    pub fn new(
+    fn new(
         editor: View<Editor>,
         code_range: Range<Anchor>,
         status: ExecutionStatus,
@@ -66,12 +66,10 @@ impl EditorBlock {
         }
     }
 
-    pub fn handle_message(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Session>) {
+    fn handle_message(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Session>) {
         self.execution_view.update(cx, |execution_view, cx| {
             execution_view.push_message(&message.content, cx);
         });
-
-        let execution_view = self.execution_view.clone();
 
         self.editor.update(cx, |editor, cx| {
             let mut replacements = HashMap::default();
@@ -79,14 +77,14 @@ impl EditorBlock {
                 self.block_id,
                 (
                     Some(self.execution_view.num_lines(cx).saturating_add(1)),
-                    Self::create_output_area_render(execution_view),
+                    Self::create_output_area_render(self.execution_view.clone()),
                 ),
             );
             editor.replace_blocks(replacements, None, cx);
         })
     }
 
-    pub fn create_output_area_render(execution_view: View<ExecutionView>) -> RenderBlock {
+    fn create_output_area_render(execution_view: View<ExecutionView>) -> RenderBlock {
         let render = move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
             let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
@@ -140,7 +138,7 @@ impl Session {
                             this.kernel = Kernel::RunningKernel(kernel);
 
                             // todo!(): await the kernel info reply, with a timeout duration
-                            this.send(&KernelInfoRequest {}.into(), cx).ok();
+                            this.send(KernelInfoRequest {}.into(), cx).ok();
 
                             // todo!(): Clear queue of pending executions
                             this.messaging_task = cx.spawn(|session, mut cx| async move {
@@ -174,14 +172,10 @@ impl Session {
         };
     }
 
-    pub fn send(
-        &mut self,
-        message: &JupyterMessage,
-        _cx: &mut ViewContext<Self>,
-    ) -> anyhow::Result<()> {
+    fn send(&mut self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
         match &mut self.kernel {
             Kernel::RunningKernel(kernel) => {
-                kernel.request_tx.try_send(message.clone()).ok();
+                kernel.request_tx.try_send(message).ok();
             }
             Kernel::StartingKernel(_kernel_task) => {
                 // todo!(): Queue up the execution
@@ -235,7 +229,7 @@ impl Session {
 
         match &self.kernel {
             Kernel::RunningKernel(_) => {
-                self.send(&message, cx).ok();
+                self.send(message, cx).ok();
             }
             Kernel::StartingKernel(task) => {
                 // Queue up the execution as a task to run after the kernel starts
@@ -245,7 +239,7 @@ impl Session {
                 cx.spawn(|this, mut cx| async move {
                     task.await;
                     this.update(&mut cx, |this, cx| {
-                        this.send(&message, cx).ok();
+                        this.send(message, cx).ok();
                     })
                     .ok();
                 })
@@ -257,7 +251,7 @@ impl Session {
 
     fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
         let parent_message_id = match message.parent_header.as_ref() {
-            Some(header) => header.msg_id.clone(),
+            Some(header) => &header.msg_id,
             None => return,
         };
 
@@ -273,16 +267,16 @@ impl Session {
             _ => {}
         }
 
-        if let Some(block) = self.blocks.get_mut(&parent_message_id) {
+        if let Some(block) = self.blocks.get_mut(parent_message_id) {
             block.handle_message(&message, cx);
             return;
         }
     }
 
-    pub fn interrupt(&mut self, cx: &mut ViewContext<Self>) {
+    fn interrupt(&mut self, cx: &mut ViewContext<Self>) {
         match &mut self.kernel {
             Kernel::RunningKernel(_kernel) => {
-                self.send(&InterruptRequest {}.into(), cx).ok();
+                self.send(InterruptRequest {}.into(), cx).ok();
             }
             Kernel::StartingKernel(_task) => {
                 // todo!(): Drop all queued executions
@@ -291,7 +285,7 @@ impl Session {
         }
     }
 
-    pub fn shutdown(&mut self, cx: &mut ViewContext<Self>) {
+    fn shutdown(&mut self, cx: &mut ViewContext<Self>) {
         let kernel = std::mem::replace(&mut self.kernel, Kernel::ShuttingDown);
         // todo!(): emit event for the runtime panel to remove this session once in shutdown state
 
