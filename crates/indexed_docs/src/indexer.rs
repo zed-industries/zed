@@ -9,7 +9,7 @@ use futures::AsyncReadExt;
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 
 use crate::{
-    convert_rustdoc_to_markdown, CrateName, IndexedDocsDatabase, RustdocItem, RustdocItemKind,
+    convert_rustdoc_to_markdown, IndexedDocsDatabase, PackageName, RustdocItem, RustdocItemKind,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -26,7 +26,7 @@ pub enum RustdocSource {
 pub trait IndexedDocsProvider {
     async fn fetch_page(
         &self,
-        crate_name: &CrateName,
+        package: &PackageName,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>>;
 }
@@ -49,7 +49,7 @@ impl LocalProvider {
 impl IndexedDocsProvider for LocalProvider {
     async fn fetch_page(
         &self,
-        crate_name: &CrateName,
+        crate_name: &PackageName,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>> {
         let mut local_cargo_doc_path = self.cargo_workspace_root.join("target/doc");
@@ -82,7 +82,7 @@ impl DocsDotRsProvider {
 impl IndexedDocsProvider for DocsDotRsProvider {
     async fn fetch_page(
         &self,
-        crate_name: &CrateName,
+        crate_name: &PackageName,
         item: Option<&RustdocItem>,
     ) -> Result<Option<String>> {
         let version = "latest";
@@ -141,17 +141,17 @@ impl DocsIndexer {
         Self { database, provider }
     }
 
-    /// Indexes the crate with the given name.
-    pub async fn index(&self, crate_name: CrateName) -> Result<()> {
-        let Some(crate_root_content) = self.provider.fetch_page(&crate_name, None).await? else {
+    /// Indexes the package with the given name.
+    pub async fn index(&self, package: PackageName) -> Result<()> {
+        let Some(package_root_content) = self.provider.fetch_page(&package, None).await? else {
             return Ok(());
         };
 
         let (crate_root_markdown, items) =
-            convert_rustdoc_to_markdown(crate_root_content.as_bytes())?;
+            convert_rustdoc_to_markdown(package_root_content.as_bytes())?;
 
         self.database
-            .insert(crate_name.clone(), None, crate_root_markdown)
+            .insert(package.clone(), None, crate_root_markdown)
             .await?;
 
         let mut seen_items = HashSet::from_iter(items.clone());
@@ -167,7 +167,7 @@ impl DocsIndexer {
 
             let Some(result) = self
                 .provider
-                .fetch_page(&crate_name, Some(&item))
+                .fetch_page(&package, Some(&item))
                 .await
                 .with_context(|| {
                     #[cfg(debug_assertions)]
@@ -190,7 +190,7 @@ impl DocsIndexer {
             let (markdown, referenced_items) = convert_rustdoc_to_markdown(result.as_bytes())?;
 
             self.database
-                .insert(crate_name.clone(), Some(item), markdown)
+                .insert(package.clone(), Some(item), markdown)
                 .await?;
 
             let parent_item = item;

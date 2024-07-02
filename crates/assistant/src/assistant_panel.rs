@@ -39,7 +39,7 @@ use gpui::{
     Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
-use indexed_docs::{CrateName, IndexedDocsStore, ProviderId};
+use indexed_docs::{IndexedDocsStore, PackageName, ProviderId};
 use language::{
     language_settings::SoftWrap, AnchorRangeExt as _, AutoindentMode, Buffer, LanguageRegistry,
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
@@ -3422,7 +3422,7 @@ fn render_rustdoc_slash_command_trailer(
         return Empty.into_any();
     };
 
-    let crate_name = CrateName::from(crate_name);
+    let crate_name = PackageName::from(crate_name);
     if !rustdoc_store.is_indexing(&crate_name) {
         return Empty.into_any();
     }

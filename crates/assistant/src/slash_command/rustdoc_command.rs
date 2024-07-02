@@ -9,7 +9,7 @@ use futures::AsyncReadExt;
 use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{
-    convert_rustdoc_to_markdown, CrateName, IndexedDocsStore, LocalProvider, ProviderId,
+    convert_rustdoc_to_markdown, IndexedDocsStore, LocalProvider, PackageName, ProviderId,
     RustdocSource,
 };
 use language::LspAdapterDelegate;
@@ -24,7 +24,7 @@ impl RustdocSlashCommand {
     async fn build_message(
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
-        crate_name: CrateName,
+        crate_name: PackageName,
         module_path: Vec<String>,
         path_to_cargo_toml: Option<&Path>,
     ) -> Result<(RustdocSource, String)> {
@@ -174,7 +174,7 @@ impl SlashCommand for RustdocSlashCommand {
             .next()
             .ok_or_else(|| anyhow!("missing crate name"))
         {
-            Ok(crate_name) => CrateName::from(crate_name),
+            Ok(crate_name) => PackageName::from(crate_name),
             Err(err) => return Task::ready(Err(err)),
         };
         let item_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
@@ -197,7 +197,7 @@ impl SlashCommand for RustdocSlashCommand {
                     .await;
 
                 if let Ok(item_docs) = item_docs {
-                    anyhow::Ok((RustdocSource::Index, item_docs.docs().to_owned()))
+                    anyhow::Ok((RustdocSource::Index, item_docs.to_string()))
                 } else {
                     Self::build_message(
                         fs,
