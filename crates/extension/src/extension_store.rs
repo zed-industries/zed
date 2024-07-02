@@ -34,7 +34,7 @@ use gpui::{
     WeakModel,
 };
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
-use indexed_docs::{IndexedDocsRegistry, Provider, ProviderId};
+use indexed_docs::{IndexedDocsRegistry, ProviderId};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
@@ -1200,24 +1200,17 @@ impl ExtensionStore {
                         );
                     }
 
-                    for (provider_name, _provider) in &manifest.indexed_docs_providers {
-                        this.indexed_docs_registry.register_provider(Provider {
-                            id: ProviderId(provider_name.clone()),
-                            database_path: {
-                                let mut database_path = this.wasm_host.work_dir.clone();
-                                database_path.push(manifest.id.as_ref());
-                                database_path.push("docs");
-                                database_path.push(format!("{provider_name}.0.mdb"));
-                                database_path
-                            },
-                            indexer: Box::new(ExtensionDocsIndexer {
+                    for (provider_id, _provider) in &manifest.indexed_docs_providers {
+                        this.indexed_docs_registry.register_provider(Box::new(
+                            ExtensionDocsIndexer {
                                 extension: wasm_extension.clone(),
                                 host: this.wasm_host.clone(),
-                                name: provider_name.clone(),
-                            }),
-                        });
+                                id: ProviderId(provider_id.clone()),
+                            },
+                        ));
                     }
                 }
+
                 this.wasm_extensions.extend(wasm_extensions);
                 ThemeSettings::reload_current_theme(cx)
             })

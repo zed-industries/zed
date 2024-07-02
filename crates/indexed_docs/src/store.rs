@@ -27,12 +27,6 @@ impl ProviderId {
     }
 }
 
-pub struct Provider {
-    pub id: ProviderId,
-    pub database_path: PathBuf,
-    pub indexer: Box<dyn IndexDocs + Send + Sync + 'static>,
-}
-
 /// The name of a package.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
 pub struct PackageName(Arc<str>);
@@ -44,7 +38,13 @@ impl From<&str> for PackageName {
 }
 
 #[async_trait]
-pub trait IndexDocs {
+pub trait IndexedDocsProvider {
+    /// Returns the ID of this provider.
+    fn id(&self) -> ProviderId;
+
+    /// Returns the path to the database for this provider.
+    fn database_path(&self) -> PathBuf;
+
     /// Indexes the package with the given name.
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()>;
 }
@@ -54,7 +54,7 @@ pub struct IndexedDocsStore {
     executor: BackgroundExecutor,
     database_future:
         Shared<BoxFuture<'static, Result<Arc<IndexedDocsDatabase>, Arc<anyhow::Error>>>>,
-    indexer: Box<dyn IndexDocs + Send + Sync + 'static>,
+    provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
     indexing_tasks_by_package:
         RwLock<HashMap<PackageName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
 }
@@ -67,11 +67,15 @@ impl IndexedDocsStore {
             .ok_or_else(|| anyhow!("no indexed docs store found for {provider}"))
     }
 
-    pub fn new(provider: Provider, executor: BackgroundExecutor) -> Self {
+    pub fn new(
+        provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
+        executor: BackgroundExecutor,
+    ) -> Self {
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
-                async move { IndexedDocsDatabase::new(provider.database_path, executor) }
+                let database_path = provider.database_path();
+                async move { IndexedDocsDatabase::new(database_path, executor) }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
             .boxed()
@@ -80,7 +84,7 @@ impl IndexedDocsStore {
         Self {
             executor,
             database_future,
-            indexer: provider.indexer,
+            provider,
             indexing_tasks_by_package: RwLock::new(HashMap::default()),
         }
     }
@@ -137,7 +141,7 @@ impl IndexedDocsStore {
                             .clone()
                             .await
                             .map_err(|err| anyhow!(err))?;
-                        this.indexer.index(package, database).await
+                        this.provider.index(package, database).await
                     };
 
                     index_task.await.map_err(Arc::new)

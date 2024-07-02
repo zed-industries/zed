@@ -10,7 +10,7 @@ use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{
     convert_rustdoc_to_markdown, IndexedDocsRegistry, IndexedDocsStore, LocalProvider, PackageName,
-    Provider, ProviderId, RustdocIndexer, RustdocSource,
+    ProviderId, RustdocIndexer, RustdocSource,
 };
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
@@ -120,14 +120,9 @@ impl RustdocSlashCommand {
             });
 
             if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
-                indexed_docs_registry.register_provider(Provider {
-                    id: ProviderId::rustdoc(),
-                    database_path: paths::support_dir().join("docs/rust/rustdoc-db.1.mdb"),
-                    indexer: Box::new(RustdocIndexer::new(Box::new(LocalProvider::new(
-                        fs,
-                        cargo_workspace_root,
-                    )))),
-                });
+                indexed_docs_registry.register_provider(Box::new(RustdocIndexer::new(Box::new(
+                    LocalProvider::new(fs, cargo_workspace_root),
+                ))));
             }
         }
     }

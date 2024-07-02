@@ -4,7 +4,7 @@ use collections::HashMap;
 use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, UpdateGlobal};
 use parking_lot::RwLock;
 
-use crate::{IndexedDocsStore, Provider, ProviderId};
+use crate::{IndexedDocsProvider, IndexedDocsStore, ProviderId};
 
 struct GlobalIndexedDocsRegistry(Arc<IndexedDocsRegistry>);
 
@@ -34,9 +34,12 @@ impl IndexedDocsRegistry {
         }
     }
 
-    pub fn register_provider(&self, provider: Provider) {
+    pub fn register_provider(
+        &self,
+        provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
+    ) {
         self.stores_by_provider.write().insert(
-            provider.id.clone(),
+            provider.id(),
             Arc::new(IndexedDocsStore::new(provider, self.executor.clone())),
         );
     }

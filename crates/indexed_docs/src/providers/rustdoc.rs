@@ -1,7 +1,6 @@
 mod item;
 mod to_markdown;
 
-use collections::{HashSet, VecDeque};
 pub use item::*;
 pub use to_markdown::convert_rustdoc_to_markdown;
 
@@ -10,11 +9,12 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
+use collections::{HashSet, VecDeque};
 use fs::Fs;
 use futures::AsyncReadExt;
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 
-use crate::{IndexDocs, IndexedDocsDatabase, PackageName};
+use crate::{IndexedDocsDatabase, IndexedDocsProvider, PackageName, ProviderId};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RustdocSource {
@@ -53,7 +53,15 @@ impl RustdocIndexer {
 }
 
 #[async_trait]
-impl IndexDocs for RustdocIndexer {
+impl IndexedDocsProvider for RustdocIndexer {
+    fn id(&self) -> ProviderId {
+        ProviderId::rustdoc()
+    }
+
+    fn database_path(&self) -> PathBuf {
+        paths::support_dir().join("docs/rust/rustdoc-db.1.mdb")
+    }
+
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
         let Some(package_root_content) = self.provider.fetch_page(&package, None).await? else {
             return Ok(());
