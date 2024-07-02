@@ -641,7 +641,10 @@ fn handle_calc_client_size(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar || state_ptr.state.borrow().is_fullscreen() || wparam.0 == 0 {
+    if (state_ptr.title_bar && !state_ptr.transparent_title_bar)
+        || state_ptr.state.borrow().is_fullscreen()
+        || wparam.0 == 0
+    {
         return None;
     }
 
@@ -668,7 +671,7 @@ fn handle_activate_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let activated = wparam.loword() > 0;
-    if state_ptr.hide_title_bar {
+    if state_ptr.transparent_title_bar {
         if let Some(titlebar_rect) = state_ptr.state.borrow().get_titlebar_rect().log_err() {
             unsafe {
                 InvalidateRect(handle, Some(&titlebar_rect), FALSE)
@@ -700,7 +703,7 @@ fn handle_create_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Opti
     let width = size_rect.right - size_rect.left;
     let height = size_rect.bottom - size_rect.top;
 
-    if state_ptr.hide_title_bar {
+    if state_ptr.transparent_title_bar {
         unsafe {
             SetWindowPos(
                 handle,
@@ -794,7 +797,7 @@ fn handle_hit_test_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar {
+    if state_ptr.title_bar && !state_ptr.transparent_title_bar {
         return None;
     }
 
@@ -832,20 +835,23 @@ fn handle_hit_test_msg(
         return Some(HTTOP as _);
     }
 
-    let titlebar_rect = state_ptr.state.borrow().get_titlebar_rect();
-    if let Ok(titlebar_rect) = titlebar_rect {
-        if cursor_point.y < titlebar_rect.bottom {
-            let caption_btn_width = (state_ptr.state.borrow().caption_button_width().0
-                * state_ptr.state.borrow().scale_factor) as i32;
-            if cursor_point.x >= titlebar_rect.right - caption_btn_width {
-                return Some(HTCLOSE as _);
-            } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 2 {
-                return Some(HTMAXBUTTON as _);
-            } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 3 {
-                return Some(HTMINBUTTON as _);
-            }
+    if state_ptr.transparent_title_bar {
+        let titlebar_rect = state_ptr.state.borrow().get_titlebar_rect();
+        if let Ok(titlebar_rect) = titlebar_rect {
+            if cursor_point.y < titlebar_rect.bottom {
+                let caption_btn_width = (state_ptr.state.borrow().caption_button_width().0
+                    * state_ptr.state.borrow().scale_factor)
+                    as i32;
+                if cursor_point.x >= titlebar_rect.right - caption_btn_width {
+                    return Some(HTCLOSE as _);
+                } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 2 {
+                    return Some(HTMAXBUTTON as _);
+                } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 3 {
+                    return Some(HTMINBUTTON as _);
+                }
 
-            return Some(HTCAPTION as _);
+                return Some(HTCAPTION as _);
+            }
         }
     }
 
@@ -857,7 +863,7 @@ fn handle_nc_mouse_move_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar {
+    if !state_ptr.transparent_title_bar {
         return None;
     }
 
@@ -895,7 +901,7 @@ fn handle_nc_mouse_down_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar {
+    if !state_ptr.transparent_title_bar {
         return None;
     }
 
@@ -952,7 +958,7 @@ fn handle_nc_mouse_up_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar {
+    if !state_ptr.transparent_title_bar {
         return None;
     }
 
