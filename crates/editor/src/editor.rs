@@ -96,7 +96,6 @@ use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
-use language::markdown::parse_markdown;
 pub use lsp::CompletionContext;
 use lsp::{CompletionTriggerKind, DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
@@ -154,7 +153,7 @@ use workspace::{
 use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
-use crate::signature_help_popover::{create_signature_help_markdown_string, SignatureHelpPopover};
+use crate::signature_help_popover::{create_signature_help_popover, SignatureHelpPopover};
 
 pub const FILE_HEADER_HEIGHT: u8 = 1;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u8 = 1;
@@ -4064,34 +4063,24 @@ impl Editor {
         };
 
         self.signature_help_task = Some(cx.spawn(move |editor, mut cx| async move {
-            let markdown_task = editor
+            let signature_help_popover_task = editor
                 .update(&mut cx, |editor, cx| {
-                    let language = editor.language_at(position, cx);
                     let project = editor.project.clone()?;
-                    let (markdown, language_registry) = project.update(cx, |project, mut cx| {
-                        let language_registry = project.languages().clone();
-                        let markdown = project
+                    let code_background = cx.theme().colors().surface_background;
+                    let signature_help_popover = project.update(cx, move |project, mut cx| {
+                        project
                             .signature_help(&buffer, buffer_position, &mut cx)
-                            .map(|signature_help| {
-                                create_signature_help_markdown_string(signature_help?)
-                            });
-                        (markdown, language_registry)
+                            .map(move |signature_help| {
+                                create_signature_help_popover(signature_help?, code_background)
+                            })
                     });
-                    Some((markdown, language_registry, language))
+                    Some(signature_help_popover)
                 })
                 .ok()
                 .flatten();
             let signature_help_popover =
-                if let Some((markdown, language_registry, language)) = markdown_task {
-                    let markdown = markdown.await;
-                    if let Some((markdown, markdown_highlights)) = markdown {
-                        let mut parsed_content =
-                            parse_markdown(markdown.as_str(), &language_registry, language).await;
-                        parsed_content.highlights = markdown_highlights;
-                        Some(SignatureHelpPopover { parsed_content })
-                    } else {
-                        None
-                    }
+                if let Some(signature_help_popover) = signature_help_popover_task {
+                    signature_help_popover.await
                 } else {
                     None
                 };

@@ -1,5 +1,4 @@
 use super::*;
-use crate::signature_help_popover::SIGNATURE_HELP_HIGHLIGHT;
 use crate::{
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -22,13 +21,14 @@ use language::{
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher, Override,
-    ParsedMarkdown, Point,
+    Point,
 };
 use language_settings::IndentGuideSettings;
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
+use rich_text::RichText;
 use serde_json::{self, json};
 use std::sync::atomic;
 use std::sync::atomic::AtomicUsize;
@@ -6887,11 +6887,12 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     cx.editor(|editor, _| {
         let signature_help_state = editor.signature_help_state.clone();
         assert!(signature_help_state.is_some());
-        let ParsedMarkdown {
+        let RichText {
             text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
-        assert_eq!(text, "param1: u8, param2: u8");
-        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT)]);
+        } = signature_help_state.unwrap().text;
+        assert_eq!(text, "param1: u8,  param2: u8");
+        let (highlight_range, _): (Vec<_>, Vec<_>) = highlights.into_iter().unzip();
+        assert_eq!(highlight_range, vec![0..10]);
     });
 
     // When exiting outside from inside the brackets, `signature_help` is closed.
