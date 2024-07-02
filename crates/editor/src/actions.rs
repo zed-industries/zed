@@ -258,7 +258,7 @@ gpui::actions!(
         RedoSelection,
         Rename,
         RestartLanguageServer,
-        RevealInFinder,
+        RevealInFileManager,
         ReverseLines,
         RevertSelectedHunks,
         ScrollCursorBottom,

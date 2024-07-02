@@ -174,7 +174,7 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 #### Editor
 
 | **Command**                      | **Target** | **Default Shortcut**            |
-| -------------------------------- | ---------- | ------------------------------- |
+|----------------------------------| ---------- | ------------------------------- |
 | Add selection above              | Editor     | `⌘ + Alt + Up`                  |
 | Add selection above              | Editor     | `⌘ + Control + P`               |
 | Add selection below              | Editor     | `⌘ + Alt + Down`                |
@@ -267,7 +267,7 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 | Redo                             | Editor     | `⌘ + Shift + Z`                 |
 | Redo selection                   | Editor     | `⌘ + Shift + U`                 |
 | Rename                           | Editor     | `F2`                            |
-| Reveal in finder                 | Editor     | `Alt + ⌘ + R`                   |
+| Reveal in File Manager           | Editor     | `Alt + ⌘ + R`                   |
 | Revert selected hunks            | Editor     | `⌘ + Alt + Z`                   |
 | Select all                       | Editor     | `⌘ + A`                         |
 | Select all matches               | Editor     | `⌘ + Shift + L`                 |
@@ -465,7 +465,7 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 #### Project Panel
 
 | **Command**             | **Target**    | **Default Shortcut**  |
-| ----------------------- | ------------- | --------------------- |
+|-------------------------| ------------- | --------------------- |
 | Collapse selected entry | Project Panel | `Left`                |
 | Copy                    | Project Panel | `⌘ + C`               |
 | Copy path               | Project Panel | `⌘ + Alt + C`         |
@@ -483,7 +483,7 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 | Paste                   | Project Panel | `⌘ + V`               |
 | Rename                  | Project Panel | `Enter`               |
 | Rename                  | Project Panel | `F2`                  |
-| Reveal in finder        | Project Panel | `Alt + ⌘ + R`         |
+| Reveal in File Manager  | Project Panel | `Alt + ⌘ + R`         |
 
 #### Project Search Bar
 
