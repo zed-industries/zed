@@ -26,6 +26,7 @@ use calloop::{EventLoop, LoopHandle, LoopSignal};
 use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
+use mio::Waker;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use util::ResultExt;
@@ -106,12 +107,15 @@ pub(crate) struct LinuxCommon {
 }
 
 impl LinuxCommon {
-    pub fn new(signal: Box<dyn QuitSignal>) -> (Self, Channel<Runnable>) {
+    pub fn new(
+        signal: Box<dyn QuitSignal>,
+        main_waker: Option<Arc<Waker>>,
+    ) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
 
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone(), main_waker));
 
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
 

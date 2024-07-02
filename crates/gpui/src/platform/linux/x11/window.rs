@@ -161,7 +161,6 @@ pub struct Callbacks {
 pub struct X11WindowState {
     pub destroyed: bool,
     pub refresh_rate: Duration,
-    refresh_queued: bool,
     pub last_refresh_at: Option<Instant>,
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
@@ -443,7 +442,6 @@ impl X11WindowState {
             handle,
             destroyed: false,
             refresh_rate,
-            refresh_queued: false,
             last_refresh_at: None,
         })
     }
@@ -649,7 +647,6 @@ impl X11WindowStatePtr {
             state.input_handler = Some(input_handler);
         }
     }
-
     pub fn handle_ime_preedit(&self, text: String) {
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
@@ -752,21 +749,8 @@ impl X11WindowStatePtr {
         }
     }
 
-    pub fn needs_refresh(&self) -> bool {
-        let state = self.state.borrow();
-
-        if state.refresh_queued {
-            return false;
-        }
-
-        let refresh_rate = state.refresh_rate;
-        state.last_refresh_at.map_or(false, |last_refresh_at| {
-            last_refresh_at.elapsed() >= refresh_rate
-        })
-    }
-
-    pub fn set_refresh_queued(&self, value: bool) {
-        self.state.borrow_mut().refresh_queued = value;
+    pub fn refresh_rate(&self) -> Duration {
+        self.state.borrow().refresh_rate
     }
 }
 
