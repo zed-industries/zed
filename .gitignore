@@ -1,3 +1,4 @@
+/.direnv
 .idea
 **/target
 **/cargo-target
