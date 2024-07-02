@@ -105,6 +105,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
+        window_decorations: Some(gpui::WindowDecorations::Client),
         window_min_size: Some(gpui::Size {
             width: px(360.0),
             height: px(240.0),

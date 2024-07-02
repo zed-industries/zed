@@ -497,6 +497,10 @@ impl X11Client {
                 let window = self.get_window(event.window)?;
                 window.configure(bounds);
             }
+            Event::PropertyNotify(event) => {
+                let window = self.get_window(event.window)?;
+                window.property_notify(event);
+            }
             Event::Expose(event) => {
                 let window = self.get_window(event.window)?;
                 window.refresh();

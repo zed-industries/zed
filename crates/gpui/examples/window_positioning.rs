@@ -52,6 +52,7 @@ fn main() {
                     is_movable: false,
                     app_id: None,
                     window_min_size: None,
+                    window_decorations: None,
                 }
             };
 

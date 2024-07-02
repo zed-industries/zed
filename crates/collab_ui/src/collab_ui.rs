@@ -10,7 +10,7 @@ use std::{rc::Rc, sync::Arc};
 pub use collab_panel::CollabPanel;
 use gpui::{
     point, AppContext, Pixels, PlatformDisplay, Size, WindowBackgroundAppearance, WindowBounds,
-    WindowKind, WindowOptions,
+    WindowDecorations, WindowKind, WindowOptions,
 };
 use panel_settings::MessageEditorSettings;
 pub use panel_settings::{
@@ -63,8 +63,9 @@ fn notification_window_options(
         kind: WindowKind::PopUp,
         is_movable: false,
         display_id: Some(screen.id()),
-        window_background: WindowBackgroundAppearance::default(),
+        window_background: WindowBackgroundAppearance::Transparent,
         app_id: Some(app_id.to_owned()),
         window_min_size: None,
+        window_decorations: Some(WindowDecorations::Client),
     }
 }
