@@ -2473,9 +2473,8 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
-        let provider = FakeCompletionProvider::default();
         cx.set_global(cx.update(SettingsStore::test));
-        cx.set_global(CompletionProvider::Fake(provider.clone()));
+        let provider = cx.update(|cx| FakeCompletionProvider::setup_test(cx));
         cx.update(language_settings::init);
 
         let text = indoc! {"
@@ -2533,8 +2532,7 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        let provider = FakeCompletionProvider::default();
-        cx.set_global(CompletionProvider::Fake(provider.clone()));
+        let provider = cx.update(|cx| FakeCompletionProvider::setup_test(cx));
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
@@ -2590,8 +2588,7 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        let provider = FakeCompletionProvider::default();
-        cx.set_global(CompletionProvider::Fake(provider.clone()));
+        let provider = cx.update(|cx| FakeCompletionProvider::setup_test(cx));
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 

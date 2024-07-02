@@ -3482,7 +3482,7 @@ mod tests {
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        FakeCompletionProvider::setup_test(cx);
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
@@ -3614,7 +3614,7 @@ mod tests {
     fn test_message_splitting(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        FakeCompletionProvider::setup_test(cx);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
@@ -3707,7 +3707,7 @@ mod tests {
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        FakeCompletionProvider::setup_test(cx);
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
@@ -3792,7 +3792,8 @@ mod tests {
     async fn test_slash_commands(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        cx.update(|cx| FakeCompletionProvider::setup_test(cx));
+
         cx.update(Project::init_settings);
         cx.update(init);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -3987,7 +3988,7 @@ mod tests {
     async fn test_serialization(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        cx.update(FakeCompletionProvider::setup_test);
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let context =
