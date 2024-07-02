@@ -260,10 +260,20 @@ impl DebugPanel {
 
         let source = stack_frame.source.clone();
 
+        let formatted_path = format!(
+            "{}:{}",
+            source.clone().and_then(|s| s.name).unwrap_or_default(),
+            stack_frame.line,
+        );
+
         v_flex()
             .rounded_md()
             .group("")
             .id(("stack-frame", stack_frame.id))
+            .tooltip({
+                let formatted_path = formatted_path.clone();
+                move |cx| Tooltip::text(formatted_path.clone(), cx)
+            })
             .p_1()
             .hover(|s| s.bg(cx.theme().colors().element_hover).cursor_pointer())
             .child(
@@ -271,11 +281,7 @@ impl DebugPanel {
                     .gap_0p5()
                     .text_ui_sm(cx)
                     .child(stack_frame.name.clone())
-                    .child(format!(
-                        "{}:{}",
-                        source.clone().and_then(|s| s.name).unwrap_or_default(),
-                        stack_frame.line,
-                    )),
+                    .child(formatted_path),
             )
             .child(
                 h_flex()
