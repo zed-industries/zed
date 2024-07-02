@@ -49,7 +49,7 @@ use std::{
     future::Future,
     mem,
     ops::{AddAssign, Deref, DerefMut, Sub},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -120,7 +120,7 @@ pub struct LocalWorktree {
     next_entry_id: Arc<AtomicUsize>,
     settings: WorktreeSettings,
     share_private_files: bool,
-    _zip_tempdir: Option<tempfile::TempDir>,
+    _root_tempdir: Option<tempfile::TempDir>,
 }
 
 struct ScanRequest {
@@ -314,6 +314,9 @@ struct BackgroundScannerState {
     removed_entry_ids: HashMap<(u64, SystemTime), ProjectEntryId>,
     changed_paths: Vec<Arc<Path>>,
     prev_snapshot: Snapshot,
+    /// Temporary directories created during scan.
+    /// We create them for .zip unpacking.
+    _tempdirs: HashMap<Arc<Path>, tempfile::TempDir>,
 }
 
 #[derive(Debug, Clone)]
@@ -372,12 +375,28 @@ static EMPTY_PATH: &str = "";
 
 impl EventEmitter<Event> for Worktree {}
 
-fn zip_path(path: &Path) -> Option<(Arc<Path>, Arc<Path>)> {
+fn zip_path(path: &Path) -> Option<&Path> {
     let path_str = path.to_str()?;
-    let (zip, inner) = path_str.split_once(".zip/")?;
-    let zip_path = PathBuf::from(format!("{}.zip", zip));
-    let inner_path = PathBuf::from(inner);
-    Some((Arc::from(zip_path), Arc::from(inner_path)))
+    let zip_end = path_str.find(".zip/")?;
+    let zip_path = &path_str[..zip_end + 4]; // ".zip" is 4 characters long
+    Some(Path::new(zip_path))
+}
+
+async fn dump_zip(path: Arc<Path>, fs: Arc<dyn Fs>) -> Result<tempfile::TempDir> {
+    let dir = tempfile::tempdir()?;
+    let contents = fs.load_bytes(&path).await?;
+    node_runtime::extract_zip(dir.path(), futures::io::Cursor::new(contents)).await?;
+    Ok(dir)
+}
+
+fn is_unpackable(child_path: &Path) -> bool {
+    child_path.components().last().map_or(false, |component| {
+        if let Component::Normal(component) = component {
+            Path::new(component).extension() == Some("zip".as_ref())
+        } else {
+            false
+        }
+    })
 }
 
 impl Worktree {
@@ -393,21 +412,21 @@ impl Worktree {
             .metadata(&abs_path)
             .await
             .context("failed to stat worktree path");
-        let mut _zip_tempdir = None;
+        let mut _root_tempdir = None;
         let mut canonical_path = None;
         if metadata.is_err() {
-            if let Some((base_zip_path, _)) = zip_path(&abs_path) {
+            if let Some(base_zip_path) = zip_path(&abs_path) {
                 // Treat this path as a zip container.
-                let dir = tempfile::tempdir()?;
-                let contents = fs.load_bytes(&base_zip_path).await?;
-                node_runtime::extract_zip(dir.path(), futures::io::Cursor::new(contents)).await?;
+                let base_zip_path: Arc<Path> = Arc::from(base_zip_path);
+                let dir = dump_zip(base_zip_path.clone(), fs.clone()).await?;
                 canonical_path = Some(dir.path().to_owned());
+
                 abs_path = base_zip_path;
                 metadata = fs
                     .metadata(&dir.path())
                     .await
                     .context("failed to stat worktree path");
-                _zip_tempdir = Some(dir);
+                _root_tempdir = Some(dir);
             }
         }
         let metadata = metadata?;
@@ -480,7 +499,7 @@ impl Worktree {
                 fs_case_sensitive,
                 visible,
                 settings,
-                _zip_tempdir,
+                _root_tempdir,
             };
             worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
             Worktree::Local(worktree)
@@ -1083,6 +1102,7 @@ impl LocalWorktree {
                         paths_to_scan: Default::default(),
                         removed_entry_ids: Default::default(),
                         changed_paths: Default::default(),
+                        _tempdirs: Default::default(),
                     }),
                     phase: BackgroundScannerPhase::InitialScan,
                     share_private_files,
@@ -1279,11 +1299,16 @@ impl LocalWorktree {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
+        dbg!(&abs_path);
         let entry = self.refresh_entry(path.clone(), None, cx);
         let is_private = self.is_path_private(path.as_ref());
 
         cx.spawn(|this, mut cx| async move {
             let abs_path = abs_path?;
+            let entry = entry.await?;
+            if let Some(entry) = entry.as_ref() {
+                dbg!(&entry.canonical_path, &entry.path);
+            }
             let text = fs.load(&abs_path).await?;
             let mut index_task = None;
             let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
@@ -1323,7 +1348,7 @@ impl LocalWorktree {
             let worktree = this
                 .upgrade()
                 .ok_or_else(|| anyhow!("worktree was dropped"))?;
-            let file = match entry.await? {
+            let file = match entry {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
                     let metadata = fs
@@ -1762,9 +1787,9 @@ impl LocalWorktree {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
             let new_entry = this.update(&mut cx, |this, _| {
-                this.entry_for_path(path)
+                this.entry_for_path(path.clone())
                     .cloned()
-                    .ok_or_else(|| anyhow!("failed to read path after update"))
+                    .ok_or_else(|| anyhow!("failed to read path `{path:?}` after update"))
             })??;
             Ok(Some(new_entry))
         })
@@ -3670,6 +3695,7 @@ impl BackgroundScanner {
                               "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
                             );
                         }
+                                           dbg!("Yoo");
                         return false;
                     };
 
@@ -3680,6 +3706,7 @@ impl BackgroundScanner {
                 });
                 if !parent_dir_is_loaded {
                     log::debug!("ignoring event {relative_path:?} within unloaded directory");
+                    dbg!("Yoo");
                     return false;
                 }
 
@@ -3687,6 +3714,7 @@ impl BackgroundScanner {
                     if !is_git_related {
                         log::debug!("ignoring FS event for excluded path {relative_path:?}");
                     }
+                    dbg!("yoo");
                     return false;
                 }
 
@@ -3750,7 +3778,7 @@ impl BackgroundScanner {
             drop(scan_job_tx);
         }
         while let Some(job) = scan_job_rx.next().await {
-            self.scan_dir(&job).await.log_err();
+            self.scan_dir(&job).await.log_err().unwrap();
         }
 
         mem::take(&mut self.state.lock().paths_to_scan).len() > 0
@@ -3874,7 +3902,8 @@ impl BackgroundScanner {
         let mut child_paths = self
             .fs
             .read_dir(&job.abs_path)
-            .await?
+            .await
+            .unwrap()
             .filter_map(|entry| async {
                 match entry {
                     Ok(entry) => Some(entry),
@@ -3989,18 +4018,39 @@ impl BackgroundScanner {
                 child_entry.canonical_path = Some(canonical_path);
             }
 
-            if child_entry.is_dir() {
-                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
+            let is_unpackable = is_unpackable(&child_path);
 
+            if child_entry.is_dir() || is_unpackable {
+                child_entry.is_ignored =
+                    ignore_stack.is_abs_path_ignored(&child_abs_path, child_entry.is_dir());
+
+                if !child_entry.is_dir() {
+                    debug_assert!(is_unpackable);
+
+                    let dir = dump_zip(child_abs_path.clone(), self.fs.clone()).await?;
+                    let path: Arc<Path> = dir.path().into();
+
+                    child_entry.kind = EntryKind::PendingDir;
+                    child_entry.is_symlink = true;
+                    child_entry.canonical_path = Some(dir.path().into());
+                    self.state.lock()._tempdirs.insert(path, dir);
+                }
                 // Avoid recursing until crash in the case of a recursive symlink
                 if job.ancestor_inodes.contains(&child_entry.inode) {
                     new_jobs.push(None);
                 } else {
                     let mut ancestor_inodes = job.ancestor_inodes.clone();
                     ancestor_inodes.insert(child_entry.inode);
-
+                    let abs_path = if child_entry.is_dir() && !is_unpackable {
+                        child_abs_path.clone()
+                    } else if let Some(canonical) = &child_entry.canonical_path {
+                        dbg!(&canonical);
+                        Arc::from(canonical.as_ref())
+                    } else {
+                        unreachable!();
+                    };
                     new_jobs.push(Some(ScanJob {
-                        abs_path: child_abs_path.clone(),
+                        abs_path,
                         path: child_path,
                         is_external: child_entry.is_external,
                         ignore_stack: if child_entry.is_ignored {
@@ -4077,6 +4127,9 @@ impl BackgroundScanner {
             abs_paths
                 .iter()
                 .map(|abs_path| async move {
+                    if zip_path(abs_path).is_some() {
+                        return Ok(None);
+                    }
                     let metadata = self.fs.metadata(abs_path).await?;
                     if let Some(metadata) = metadata {
                         let canonical_path = self.fs.canonicalize(abs_path).await?;
@@ -4168,8 +4221,10 @@ impl BackgroundScanner {
                     self.remove_repo_path(path, &mut state.snapshot);
                 }
                 Err(err) => {
-                    // TODO - create a special 'error' entry in the entries tree to mark this
-                    log::error!("error reading file {abs_path:?} on event: {err:#}");
+                    if !is_unpackable(path) {
+                        // TODO - create a special 'error' entry in the entries tree to mark this
+                        log::error!("error reading file {abs_path:?} on event: {err:#}");
+                    }
                 }
             }
         }
