@@ -312,6 +312,7 @@ pub enum ExecutionStatus {
     Finished,
     ShuttingDown,
     Shutdown,
+    KernelErrored(String),
 }
 
 pub struct ExecutionView {
@@ -444,7 +445,7 @@ impl ExecutionView {
 impl Render for ExecutionView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if self.outputs.len() == 0 {
-            match self.status {
+            match &self.status {
                 ExecutionStatus::ConnectingToKernel => {
                     return div().child("Connecting to kernel...").into_any_element()
                 }
@@ -462,6 +463,11 @@ impl Render for ExecutionView {
                     return div().child("Kernel shutdown").into_any_element()
                 }
                 ExecutionStatus::Queued => return div().child("Queued").into_any_element(),
+                ExecutionStatus::KernelErrored(error) => {
+                    return div()
+                        .child(format!("Kernel error: {}", error))
+                        .into_any_element()
+                }
             }
         }
 
