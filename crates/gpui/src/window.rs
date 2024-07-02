@@ -892,6 +892,11 @@ impl<'a> WindowContext<'a> {
         self.window.handle
     }
 
+    /// Obtain a raw handle to the platform_window that belongs to this context.
+    pub fn raw_window_handle(&self) -> &dyn PlatformWindow {
+        self.window.platform_window.as_ref()
+    }
+
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn refresh(&mut self) {
         if self.window.draw_phase == DrawPhase::None {
