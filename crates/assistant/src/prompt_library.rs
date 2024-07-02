@@ -746,6 +746,7 @@ impl PromptLibrary {
                                     }],
                                     stop: Vec::new(),
                                     temperature: 1.,
+                                    cached_contents: Vec::new(),
                                 },
                                 cx,
                             )

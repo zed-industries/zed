@@ -611,6 +611,17 @@ impl Server {
             .add_request_handler({
                 let app_state = app_state.clone();
                 user_handler(move |request, response, session| {
+                    cache_language_model_content(
+                        request,
+                        response,
+                        session,
+                        app_state.config.google_ai_api_key.clone(),
+                    )
+                })
+            })
+            .add_request_handler({
+                let app_state = app_state.clone();
+                user_handler(move |request, response, session| {
                     count_tokens_with_language_model(
                         request,
                         response,
@@ -4663,6 +4674,44 @@ async fn complete_with_anthropic(
             anthropic::ResponseEvent::Ping {} => {}
         }
     }
+
+    Ok(())
+}
+
+async fn cache_language_model_content(
+    request: proto::CacheLanguageModelContent,
+    response: Response<proto::CacheLanguageModelContent>,
+    session: UserSession,
+    google_ai_api_key: Option<Arc<str>>,
+) -> Result<()> {
+    authorize_access_to_language_models(&session).await?;
+
+    if !request.model.starts_with("gemini") {
+        return Err(anyhow!(
+            "caching content for model: {:?} is not supported",
+            request.model
+        ))?;
+    }
+
+    let api_key = google_ai_api_key
+        .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
+
+    let cached_content = google_ai::create_cached_content(
+        session.http_client.as_ref(),
+        google_ai::API_URL,
+        &api_key,
+        // TODO!
+        crate::ai::cache_language_model_content_request_to_google_ai(request)?,
+    )
+    .await?;
+
+    response.send(proto::CacheLanguageModelContentResponse {
+        name: cached_content.name,
+        create_time: cached_content.create_time.timestamp() as u64,
+        update_time: cached_content.update_time.timestamp() as u64,
+        expire_time: cached_content.expire_time.map(|t| t.timestamp() as u64),
+        total_token_count: cached_content.usage_metadata.total_token_count,
+    })?;
 
     Ok(())
 }
