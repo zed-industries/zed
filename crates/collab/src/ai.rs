@@ -125,6 +125,60 @@ pub fn language_model_request_message_to_google_ai(
     })
 }
 
+pub fn cache_language_model_content_request_to_google_ai(
+    request: proto::CacheLanguageModelContent,
+) -> Result<google_ai::CreateCachedContentRequest> {
+    Ok(google_ai::CreateCachedContentRequest {
+        contents: request
+            .messages
+            .into_iter()
+            .map(language_model_request_message_to_google_ai)
+            .collect::<Result<Vec<_>>>()?,
+        tools: if request.tools.is_empty() {
+            None
+        } else {
+            Some(
+                request
+                    .tools
+                    .into_iter()
+                    .try_fold(Vec::new(), |mut acc, tool| {
+                        if let Some(variant) = tool.variant {
+                            match variant {
+                                proto::chat_completion_tool::Variant::Function(f) => {
+                                    let description = f.description.ok_or_else(|| {
+                                        anyhow!("Function tool is missing a description")
+                                    })?;
+                                    let parameters = f.parameters.ok_or_else(|| {
+                                        anyhow!("Function tool is missing parameters")
+                                    })?;
+                                    let parsed_parameters = serde_json::from_str(&parameters)
+                                        .map_err(|e| {
+                                            anyhow!("Failed to parse parameters: {}", e)
+                                        })?;
+                                    acc.push(google_ai::Tool {
+                                        function_declarations: vec![
+                                            google_ai::FunctionDeclaration {
+                                                name: f.name,
+                                                description,
+                                                parameters: parsed_parameters,
+                                            },
+                                        ],
+                                    });
+                                }
+                            }
+                        }
+                        anyhow::Ok(acc)
+                    })?,
+            )
+        },
+        ttl: request.ttl_seconds.map(|s| format!("{}s", s)),
+        display_name: None,
+        model: request.model,
+        system_instruction: None,
+        tool_config: None,
+    })
+}
+
 pub fn count_tokens_request_to_google_ai(
     request: proto::CountTokensWithLanguageModel,
 ) -> Result<google_ai::CountTokensRequest> {

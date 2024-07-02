@@ -274,10 +274,7 @@ pub async fn create_cached_content<T: HttpClient>(
     api_key: &str,
     request: CreateCachedContentRequest,
 ) -> Result<CreateCachedContentResponse> {
-    let uri = format!(
-        "{}/v1beta/models/gemini-pro:createCachedContent?key={}",
-        api_url, api_key
-    );
+    let uri = format!("{}/v1beta/cachedContents?key={}", api_url, api_key);
     let request = serde_json::to_string(&request)?;
     let mut response = client.post_json(&uri, request.into()).await?;
     let mut text = String::new();
@@ -296,18 +293,89 @@ pub async fn create_cached_content<T: HttpClient>(
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateCachedContentRequest {
-    pub cached_content: Option<CachedContent>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CachedContent {
-    pub content: String,
+    pub contents: Vec<Content>,
+    pub tools: Option<Vec<Tool>>,
+    pub ttl: Option<String>,
+    pub display_name: Option<String>,
     pub model: String,
+    pub system_instruction: Option<Content>,
+    pub tool_config: Option<ToolConfig>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateCachedContentResponse {
     pub name: String,
+    pub create_time: chrono::DateTime<chrono::Utc>,
+    pub update_time: chrono::DateTime<chrono::Utc>,
+    pub expire_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub usage_metadata: UsageMetadata,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageMetadata {
+    pub total_token_count: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tool {
+    pub function_declarations: Vec<FunctionDeclaration>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionDeclaration {
+    pub name: String,
+    pub description: String,
+    pub parameters: Schema,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Schema {
+    #[serde(rename = "type")]
+    pub schema_type: SchemaType,
+    pub format: Option<String>,
+    pub description: Option<String>,
+    pub nullable: Option<bool>,
+    pub enum_values: Option<Vec<String>>,
+    pub properties: Option<std::collections::HashMap<String, Box<Schema>>>,
+    pub required: Option<Vec<String>>,
+    pub items: Option<Box<Schema>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SchemaType {
+    TypeUnspecified,
+    String,
+    Number,
+    Integer,
+    Boolean,
+    Array,
+    Object,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolConfig {
+    pub function_calling_config: Option<FunctionCallingConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionCallingConfig {
+    pub mode: Option<FunctionCallingMode>,
+    pub allowed_function_names: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FunctionCallingMode {
+    ModeUnspecified,
+    Auto,
+    Any,
+    None,
 }
