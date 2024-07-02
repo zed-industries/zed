@@ -354,11 +354,7 @@ impl WaylandWindowStatePtr {
                         if got_unmaximized {
                             configure.size = Some(state.window_bounds.size);
                         } else if !configure.maximized {
-                            configure.size = compute_outer_size(
-                                state.window_bounds,
-                                state.inset,
-                                configure.size,
-                            );
+                            configure.size = compute_outer_size(state.inset, configure.size);
                         }
                         if !configure.fullscreen && !configure.maximized {
                             if let Some(size) = configure.size {
@@ -1058,7 +1054,6 @@ impl ResizeEdge {
 /// updating to account for the client decorations. But that's not the area we want to render
 /// to, due to our intrusize CSD. So, here we calculate the 'actual' size, by adding back in the insets
 fn compute_outer_size(
-    window_bounds: Bounds<Pixels>,
     inset: Option<Pixels>,
     new_size: Option<Size<Pixels>>,
 ) -> Option<Size<Pixels>> {

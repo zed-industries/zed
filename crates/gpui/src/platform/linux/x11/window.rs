@@ -13,7 +13,7 @@ use blade_graphics as gpu;
 use raw_window_handle as rwh;
 use util::{maybe, ResultExt};
 use x11rb::{
-    connection::{Connection, RequestConnection},
+    connection::Connection,
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
@@ -377,11 +377,13 @@ impl X11WindowState {
             .unwrap();
 
         sync::initialize(xcb_connection, 3, 1).unwrap();
-
-        let counter1 = xcb_connection.generate_id().unwrap();
-        let counter2 = xcb_connection.generate_id().unwrap();
-
-        sync::create_counter(xcb_connection, counter1, sync::Int64 { lo: 0, hi: 0 }).unwrap();
+        let sync_request_counter = xcb_connection.generate_id().unwrap();
+        sync::create_counter(
+            xcb_connection,
+            sync_request_counter,
+            sync::Int64 { lo: 0, hi: 0 },
+        )
+        .unwrap();
 
         xcb_connection
             .change_property32(
@@ -389,7 +391,7 @@ impl X11WindowState {
                 x_window,
                 atoms._NET_WM_SYNC_REQUEST_COUNTER,
                 xproto::AtomEnum::CARDINAL,
-                &[counter1 as u32],
+                &[sync_request_counter as u32],
             )
             .unwrap();
 
@@ -465,7 +467,7 @@ impl X11WindowState {
             destroyed: false,
             decorations: WindowDecorations::Server,
             inset: px(0.0),
-            counter_id: counter1,
+            counter_id: sync_request_counter,
             last_sync_counter: None,
         })
     }

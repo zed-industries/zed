@@ -6487,7 +6487,6 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
     const ROUNDING: Pixels = px(10.0);
     const SHADOW_SIZE: Pixels = px(10.0);
     const BORDER_SIZE: Pixels = px(1.0);
-    let grey = rgb(0xC8C8C8);
     let decorations = cx.window_decorations();
 
     struct GlobalResizeEdge(ResizeEdge);
@@ -6544,6 +6543,12 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                     div.rounded_tr(ROUNDING)
                 })
                 .when(!(tiling.top && tiling.left), |div| div.rounded_tl(ROUNDING))
+                .when(!(tiling.bottom && tiling.right), |div| {
+                    div.rounded_br(ROUNDING)
+                })
+                .when(!(tiling.bottom && tiling.left), |div| {
+                    div.rounded_bl(ROUNDING)
+                })
                 .when(!tiling.top, |div| div.pt(SHADOW_SIZE))
                 .when(!tiling.bottom, |div| div.pb(SHADOW_SIZE))
                 .when(!tiling.left, |div| div.pl(SHADOW_SIZE))
@@ -6579,11 +6584,17 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                 .map(|div| match decorations {
                     Decorations::Server => div,
                     Decorations::Client { shadows, tiling } => div
-                        .border_color(grey)
+                        .border_color(cx.theme().colors().border)
                         .when(!(tiling.top && tiling.right), |div| {
                             div.rounded_tr(ROUNDING)
                         })
                         .when(!(tiling.top && tiling.left), |div| div.rounded_tl(ROUNDING))
+                        .when(!(tiling.bottom && tiling.right), |div| {
+                            div.rounded_br(ROUNDING)
+                        })
+                        .when(!(tiling.bottom && tiling.left), |div| {
+                            div.rounded_bl(ROUNDING)
+                        })
                         .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
                         .when(!tiling.bottom, |div| div.border_b(BORDER_SIZE))
                         .when(!tiling.left, |div| div.border_l(BORDER_SIZE))
@@ -6605,7 +6616,7 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                 .on_mouse_move(|_e, cx| {
                     cx.stop_propagation();
                 })
-                .bg(gpui::rgb(0xCCCCFF))
+                .bg(cx.theme().colors().border)
                 .size_full()
                 .child(element),
         )
