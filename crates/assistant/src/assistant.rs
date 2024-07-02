@@ -20,7 +20,7 @@ pub(crate) use completion_provider::*;
 pub(crate) use context_store::*;
 use fs::Fs;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
-use indexed_docs::{IndexedDocsStore, Provider};
+use indexed_docs::{IndexedDocsRegistry, Provider};
 pub(crate) use inline_assistant::*;
 pub(crate) use model_selector::*;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
@@ -292,7 +292,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     assistant_panel::init(cx);
     inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
     terminal_inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
-    IndexedDocsStore::init_global(cx);
+    IndexedDocsRegistry::init_global(cx);
     register_indexed_docs_providers(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
@@ -329,7 +329,7 @@ fn register_slash_commands(cx: &mut AppContext) {
 }
 
 fn register_indexed_docs_providers(cx: &mut AppContext) {
-    let indexed_docs_registry = IndexedDocsStore::global(cx);
+    let indexed_docs_registry = IndexedDocsRegistry::global(cx);
 
     indexed_docs_registry.register_provider(Provider::rustdoc());
 }

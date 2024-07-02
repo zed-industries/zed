@@ -8,7 +8,7 @@ use derive_more::{Deref, Display};
 use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt;
 use fuzzy::StringMatchCandidate;
-use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, Task, UpdateGlobal};
+use gpui::{AppContext, BackgroundExecutor, Task};
 use heed::types::SerdeBincode;
 use heed::Database;
 use parking_lot::RwLock;
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
 use crate::indexer::{DocsIndexer, IndexedDocsProvider};
-use crate::{RustdocItem, RustdocItemKind};
+use crate::{IndexedDocsRegistry, RustdocItem, RustdocItemKind};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
 pub struct ProviderId(Arc<str>);
@@ -51,54 +51,8 @@ impl From<&str> for CrateName {
     }
 }
 
-struct GlobalIndexedDocsStore(Arc<IndexedDocsStore>);
-
-impl Global for GlobalIndexedDocsStore {}
-
-// TODO: Rename to `IndexedDocsRegistry`?
+/// A store for indexed docs.
 pub struct IndexedDocsStore {
-    executor: BackgroundExecutor,
-    stores_by_provider: RwLock<HashMap<ProviderId, Arc<IndexedDocsProviderStore>>>,
-}
-
-impl IndexedDocsStore {
-    pub fn global(cx: &AppContext) -> Arc<Self> {
-        GlobalIndexedDocsStore::global(cx).0.clone()
-    }
-
-    pub fn init_global(cx: &mut AppContext) {
-        GlobalIndexedDocsStore::set_global(
-            cx,
-            GlobalIndexedDocsStore(Arc::new(Self::new(cx.background_executor().clone()))),
-        );
-    }
-
-    pub fn new(executor: BackgroundExecutor) -> Self {
-        Self {
-            executor,
-            stores_by_provider: RwLock::new(HashMap::default()),
-        }
-    }
-
-    pub fn register_provider(&self, provider: Provider) {
-        self.stores_by_provider.write().insert(
-            provider.id.clone(),
-            Arc::new(IndexedDocsProviderStore::new(
-                provider,
-                self.executor.clone(),
-            )),
-        );
-    }
-
-    pub fn get_provider_store(
-        &self,
-        provider_id: ProviderId,
-    ) -> Option<Arc<IndexedDocsProviderStore>> {
-        self.stores_by_provider.read().get(&provider_id).cloned()
-    }
-}
-
-pub struct IndexedDocsProviderStore {
     executor: BackgroundExecutor,
     database_future:
         Shared<BoxFuture<'static, Result<Arc<IndexedDocsDatabase>, Arc<anyhow::Error>>>>,
@@ -106,7 +60,14 @@ pub struct IndexedDocsProviderStore {
         RwLock<HashMap<CrateName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
 }
 
-impl IndexedDocsProviderStore {
+impl IndexedDocsStore {
+    pub fn try_global(provider: ProviderId, cx: &AppContext) -> Result<Arc<Self>> {
+        let registry = IndexedDocsRegistry::global(cx);
+        registry
+            .get_provider_store(provider.clone())
+            .ok_or_else(|| anyhow!("no indexed docs store found for {provider}"))
+    }
+
     pub fn new(provider: Provider, executor: BackgroundExecutor) -> Self {
         let database_future = executor
             .spawn({

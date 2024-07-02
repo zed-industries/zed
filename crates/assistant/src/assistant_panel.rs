@@ -3410,9 +3410,7 @@ fn render_rustdoc_slash_command_trailer(
     command: PendingSlashCommand,
     cx: &mut WindowContext,
 ) -> AnyElement {
-    let Some(rustdoc_store) =
-        IndexedDocsStore::global(cx).get_provider_store(ProviderId::rustdoc())
-    else {
+    let Some(rustdoc_store) = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx).ok() else {
         return Empty.into_any();
     };
 

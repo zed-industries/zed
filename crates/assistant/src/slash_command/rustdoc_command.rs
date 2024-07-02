@@ -130,11 +130,9 @@ impl SlashCommand for RustdocSlashCommand {
             anyhow::Ok((fs, cargo_workspace_root))
         });
 
-        let store = IndexedDocsStore::global(cx).get_provider_store(ProviderId::rustdoc());
+        let store = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx);
         cx.background_executor().spawn(async move {
-            let Some(store) = store else {
-                return Ok(Vec::new());
-            };
+            let store = store?;
 
             if let Some((crate_name, rest)) = query.split_once(':') {
                 if rest.is_empty() {
@@ -182,12 +180,11 @@ impl SlashCommand for RustdocSlashCommand {
         let item_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
 
         let text = cx.background_executor().spawn({
-            let rustdoc_store =
-                IndexedDocsStore::global(cx).get_provider_store(ProviderId::rustdoc());
+            let rustdoc_store = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx);
             let crate_name = crate_name.clone();
             let item_path = item_path.clone();
             async move {
-                let rustdoc_store = rustdoc_store.ok_or_else(|| anyhow!("no rustdoc store"))?;
+                let rustdoc_store = rustdoc_store?;
                 let item_docs = rustdoc_store
                     .load(
                         crate_name.clone(),
