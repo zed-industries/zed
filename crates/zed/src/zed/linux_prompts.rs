@@ -30,6 +30,7 @@ pub fn fallback_prompt_renderer(
             message: message.to_string(),
             detail: detail.map(ToString::to_string),
             actions: actions.iter().map(ToString::to_string).collect(),
+            selected_action: 0,
             focus: cx.focus_handle(),
         }
     });
@@ -43,17 +44,31 @@ pub struct FallbackPromptRenderer {
     message: String,
     detail: Option<String>,
     actions: Vec<String>,
+    selected_action: usize,
     focus: FocusHandle,
 }
 impl FallbackPromptRenderer {
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        cx.emit(PromptResponse(0));
+        cx.emit(PromptResponse(self.selected_action));
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.actions.iter().position(|a| a == "Cancel") {
             cx.emit(PromptResponse(ix));
         }
+    }
+
+    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        self.selected_action = (self.selected_action + 1) % self.actions.len();
+
+        cx.notify();
+    }
+
+    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+        let last_ix = self.actions.len() - 1;
+        self.selected_action = self.selected_action.checked_sub(1).unwrap_or(last_ix);
+
+        cx.notify();
     }
 }
 impl Render for FallbackPromptRenderer {
@@ -66,6 +81,8 @@ impl Render for FallbackPromptRenderer {
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_prev))
             .elevation_3(cx)
             .w_72()
             .overflow_hidden()
@@ -91,7 +108,7 @@ impl Render for FallbackPromptRenderer {
                     ui::Button::new(ix, action.clone())
                         .label_size(LabelSize::Large)
                         .style(ButtonStyle::Filled)
-                        .when(ix == 0, |el| {
+                        .when(ix == self.selected_action, |el| {
                             el.style(ButtonStyle::Tinted(TintColor::Accent))
                         })
                         .layer(ElevationIndex::ModalSurface)
