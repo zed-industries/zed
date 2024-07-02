@@ -39,7 +39,7 @@ use gpui::{
     Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
-use indexed_docs::{CrateName, IndexedDocsStore};
+use indexed_docs::{CrateName, IndexedDocsStore, ProviderId};
 use language::{
     language_settings::SoftWrap, AnchorRangeExt as _, AutoindentMode, Buffer, LanguageRegistry,
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
@@ -3410,7 +3410,11 @@ fn render_rustdoc_slash_command_trailer(
     command: PendingSlashCommand,
     cx: &mut WindowContext,
 ) -> AnyElement {
-    let rustdoc_store = IndexedDocsStore::global(cx);
+    let Some(rustdoc_store) =
+        IndexedDocsStore::global(cx).get_provider_store(ProviderId::rustdoc())
+    else {
+        return Empty.into_any();
+    };
 
     let Some((crate_name, _)) = command
         .argument

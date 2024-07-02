@@ -18,6 +18,29 @@ use util::ResultExt;
 use crate::indexer::{DocsIndexer, IndexedDocsProvider};
 use crate::{RustdocItem, RustdocItemKind};
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
+pub struct ProviderId(Arc<str>);
+
+impl ProviderId {
+    pub fn rustdoc() -> Self {
+        Self("rustdoc".into())
+    }
+}
+
+pub struct Provider {
+    pub id: ProviderId,
+    pub database_path: PathBuf,
+}
+
+impl Provider {
+    pub fn rustdoc() -> Self {
+        Self {
+            id: ProviderId("rustdoc".into()),
+            database_path: paths::support_dir().join("docs/rust/rustdoc-db.0.mdb"),
+        }
+    }
+}
+
 /// The name of a crate.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
 pub struct CrateName(Arc<str>);
@@ -32,12 +55,10 @@ struct GlobalIndexedDocsStore(Arc<IndexedDocsStore>);
 
 impl Global for GlobalIndexedDocsStore {}
 
+// TODO: Rename to `IndexedDocsRegistry`?
 pub struct IndexedDocsStore {
     executor: BackgroundExecutor,
-    database_future:
-        Shared<BoxFuture<'static, Result<Arc<IndexedDocsDatabase>, Arc<anyhow::Error>>>>,
-    indexing_tasks_by_crate:
-        RwLock<HashMap<CrateName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
+    stores_by_provider: RwLock<HashMap<ProviderId, Arc<IndexedDocsProviderStore>>>,
 }
 
 impl IndexedDocsStore {
@@ -53,15 +74,44 @@ impl IndexedDocsStore {
     }
 
     pub fn new(executor: BackgroundExecutor) -> Self {
+        Self {
+            executor,
+            stores_by_provider: RwLock::new(HashMap::default()),
+        }
+    }
+
+    pub fn register_provider(&self, provider: Provider) {
+        self.stores_by_provider.write().insert(
+            provider.id.clone(),
+            Arc::new(IndexedDocsProviderStore::new(
+                provider,
+                self.executor.clone(),
+            )),
+        );
+    }
+
+    pub fn get_provider_store(
+        &self,
+        provider_id: ProviderId,
+    ) -> Option<Arc<IndexedDocsProviderStore>> {
+        self.stores_by_provider.read().get(&provider_id).cloned()
+    }
+}
+
+pub struct IndexedDocsProviderStore {
+    executor: BackgroundExecutor,
+    database_future:
+        Shared<BoxFuture<'static, Result<Arc<IndexedDocsDatabase>, Arc<anyhow::Error>>>>,
+    indexing_tasks_by_crate:
+        RwLock<HashMap<CrateName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
+}
+
+impl IndexedDocsProviderStore {
+    pub fn new(provider: Provider, executor: BackgroundExecutor) -> Self {
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
-                async move {
-                    IndexedDocsDatabase::new(
-                        paths::support_dir().join("docs/rust/rustdoc-db.0.mdb"),
-                        executor,
-                    )
-                }
+                async move { IndexedDocsDatabase::new(provider.database_path, executor) }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
             .boxed()

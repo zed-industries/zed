@@ -9,7 +9,8 @@ use futures::AsyncReadExt;
 use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{
-    convert_rustdoc_to_markdown, CrateName, IndexedDocsStore, LocalProvider, RustdocSource,
+    convert_rustdoc_to_markdown, CrateName, IndexedDocsStore, LocalProvider, ProviderId,
+    RustdocSource,
 };
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
@@ -129,8 +130,12 @@ impl SlashCommand for RustdocSlashCommand {
             anyhow::Ok((fs, cargo_workspace_root))
         });
 
-        let store = IndexedDocsStore::global(cx);
+        let store = IndexedDocsStore::global(cx).get_provider_store(ProviderId::rustdoc());
         cx.background_executor().spawn(async move {
+            let Some(store) = store else {
+                return Ok(Vec::new());
+            };
+
             if let Some((crate_name, rest)) = query.split_once(':') {
                 if rest.is_empty() {
                     if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
@@ -177,10 +182,12 @@ impl SlashCommand for RustdocSlashCommand {
         let item_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
 
         let text = cx.background_executor().spawn({
-            let rustdoc_store = IndexedDocsStore::global(cx);
+            let rustdoc_store =
+                IndexedDocsStore::global(cx).get_provider_store(ProviderId::rustdoc());
             let crate_name = crate_name.clone();
             let item_path = item_path.clone();
             async move {
+                let rustdoc_store = rustdoc_store.ok_or_else(|| anyhow!("no rustdoc store"))?;
                 let item_docs = rustdoc_store
                     .load(
                         crate_name.clone(),
