@@ -55,11 +55,11 @@ impl TerminalOutput {
     pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
         let theme = cx.theme();
         let buffer_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
-        let mut text_runs = self.handler.text_runs.clone();
-        text_runs.push(self.handler.current_text_run.clone());
-
-        let runs = text_runs
+        let runs = self
+            .handler
+            .text_runs
             .iter()
+            .chain(Some(&self.handler.current_text_run))
             .map(|ansi_run| {
                 let color = terminal_view::terminal_element::convert_color(&ansi_run.fg, theme);
                 let background_color = Some(terminal_view::terminal_element::convert_color(
@@ -95,9 +95,9 @@ impl LineHeight for TerminalOutput {
 
 #[derive(Clone)]
 struct AnsiTextRun {
-    pub len: usize,
-    pub fg: alacritty_terminal::vte::ansi::Color,
-    pub bg: alacritty_terminal::vte::ansi::Color,
+    len: usize,
+    fg: alacritty_terminal::vte::ansi::Color,
+    bg: alacritty_terminal::vte::ansi::Color,
 }
 
 impl AnsiTextRun {

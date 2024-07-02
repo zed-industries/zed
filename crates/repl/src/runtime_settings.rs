@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use ui::Pixels;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -15,6 +16,7 @@ pub enum RuntimesDockPosition {
 pub struct JupyterSettings {
     pub enabled: bool,
     pub dock: RuntimesDockPosition,
+    pub default_width: Pixels,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -27,6 +29,10 @@ pub struct JupyterSettingsContent {
     ///
     /// Default: `right`
     dock: Option<RuntimesDockPosition>,
+    /// Default width in pixels when the runtimes panel is docked to the left or right.
+    ///
+    /// Default: 640
+    pub default_width: Option<f32>,
 }
 
 impl Default for JupyterSettingsContent {
@@ -34,6 +40,7 @@ impl Default for JupyterSettingsContent {
         JupyterSettingsContent {
             enabled: Some(false),
             dock: Some(RuntimesDockPosition::Right),
+            default_width: Some(640.0),
         }
     }
 }
@@ -58,6 +65,10 @@ impl Settings for JupyterSettings {
             }
             if let Some(dock) = value.dock {
                 settings.dock = dock;
+            }
+
+            if let Some(default_width) = value.default_width {
+                settings.default_width = Pixels::from(default_width);
             }
         }
 
