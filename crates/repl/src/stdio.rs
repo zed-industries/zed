@@ -88,7 +88,6 @@ impl TerminalOutput {
 
 impl LineHeight for TerminalOutput {
     fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
-        // todo!(): Track this over time with our parser and just return it when needed
         self.handler.buffer.lines().count() as u8
     }
 }

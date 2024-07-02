@@ -140,7 +140,6 @@ impl Session {
                             // todo!(): await the kernel info reply, with a timeout duration
                             this.send(KernelInfoRequest {}.into(), cx).ok();
 
-                            // todo!(): Clear queue of pending executions
                             this.messaging_task = cx.spawn(|session, mut cx| async move {
                                 while let Some(message) = messages_rx.next().await {
                                     session
@@ -176,12 +175,6 @@ impl Session {
         match &mut self.kernel {
             Kernel::RunningKernel(kernel) => {
                 kernel.request_tx.try_send(message).ok();
-            }
-            Kernel::StartingKernel(_kernel_task) => {
-                // todo!(): Queue up the execution
-            }
-            Kernel::ErroredLaunch(_) => {
-                // todo!(): Show error message for this run
             }
             _ => {}
         }
@@ -279,7 +272,7 @@ impl Session {
                 self.send(InterruptRequest {}.into(), cx).ok();
             }
             Kernel::StartingKernel(_task) => {
-                // todo!(): Drop all queued executions
+                // NOTE: If we switch to a literal queue instead of chaining on to the task, clear all queued executions
             }
             _ => {}
         }

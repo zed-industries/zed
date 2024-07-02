@@ -361,14 +361,16 @@ impl ExecutionView {
                             self.outputs.push(output);
                         }
 
+                        // Comments from @rgbkrk, reach out with questions
+
                         // Set next input adds text to the next cell. Not required to support.
-                        // However, this could be implemented by
+                        // However, this could be implemented by adding text to the buffer.
                         // runtimelib::Payload::SetNextInput { text, replace } => todo!(),
 
                         // Not likely to be used in the context of Zed, where someone could just open the buffer themselves
                         // runtimelib::Payload::EditMagic { filename, line_number } => todo!(),
 
-                        //
+                        // Ask the user if they want to exit the kernel. Not required to support.
                         // runtimelib::Payload::AskExit { keepkernel } => todo!(),
                         _ => {}
                     }
