@@ -39,6 +39,7 @@ use gpui::{
     Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
+use indexed_docs::{IndexedDocsStore, PackageName, ProviderId};
 use language::{
     language_settings::SoftWrap, AnchorRangeExt as _, AutoindentMode, Buffer, LanguageRegistry,
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
@@ -47,7 +48,6 @@ use multi_buffer::MultiBufferRow;
 use paths::contexts_dir;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
-use rustdoc::{CrateName, RustdocStore};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
@@ -3410,7 +3410,9 @@ fn render_rustdoc_slash_command_trailer(
     command: PendingSlashCommand,
     cx: &mut WindowContext,
 ) -> AnyElement {
-    let rustdoc_store = RustdocStore::global(cx);
+    let Some(rustdoc_store) = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx).ok() else {
+        return Empty.into_any();
+    };
 
     let Some((crate_name, _)) = command
         .argument
@@ -3420,7 +3422,7 @@ fn render_rustdoc_slash_command_trailer(
         return Empty.into_any();
     };
 
-    let crate_name = CrateName::from(crate_name);
+    let crate_name = PackageName::from(crate_name);
     if !rustdoc_store.is_indexing(&crate_name) {
         return Empty.into_any();
     }

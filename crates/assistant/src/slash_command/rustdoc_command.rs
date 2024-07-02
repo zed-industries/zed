@@ -8,9 +8,12 @@ use fs::Fs;
 use futures::AsyncReadExt;
 use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+use indexed_docs::{
+    convert_rustdoc_to_markdown, IndexedDocsStore, LocalProvider, PackageName, ProviderId,
+    RustdocSource,
+};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
-use rustdoc::{convert_rustdoc_to_markdown, CrateName, LocalProvider, RustdocSource, RustdocStore};
 use ui::prelude::*;
 use util::{maybe, ResultExt};
 use workspace::Workspace;
@@ -21,7 +24,7 @@ impl RustdocSlashCommand {
     async fn build_message(
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
-        crate_name: CrateName,
+        crate_name: PackageName,
         module_path: Vec<String>,
         path_to_cargo_toml: Option<&Path>,
     ) -> Result<(RustdocSource, String)> {
@@ -127,8 +130,10 @@ impl SlashCommand for RustdocSlashCommand {
             anyhow::Ok((fs, cargo_workspace_root))
         });
 
-        let store = RustdocStore::global(cx);
+        let store = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx);
         cx.background_executor().spawn(async move {
+            let store = store?;
+
             if let Some((crate_name, rest)) = query.split_once(':') {
                 if rest.is_empty() {
                     if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
@@ -169,16 +174,17 @@ impl SlashCommand for RustdocSlashCommand {
             .next()
             .ok_or_else(|| anyhow!("missing crate name"))
         {
-            Ok(crate_name) => CrateName::from(crate_name),
+            Ok(crate_name) => PackageName::from(crate_name),
             Err(err) => return Task::ready(Err(err)),
         };
         let item_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
 
         let text = cx.background_executor().spawn({
-            let rustdoc_store = RustdocStore::global(cx);
+            let rustdoc_store = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx);
             let crate_name = crate_name.clone();
             let item_path = item_path.clone();
             async move {
+                let rustdoc_store = rustdoc_store?;
                 let item_docs = rustdoc_store
                     .load(
                         crate_name.clone(),
@@ -191,7 +197,7 @@ impl SlashCommand for RustdocSlashCommand {
                     .await;
 
                 if let Ok(item_docs) = item_docs {
-                    anyhow::Ok((RustdocSource::Index, item_docs.docs().to_owned()))
+                    anyhow::Ok((RustdocSource::Index, item_docs.to_string()))
                 } else {
                     Self::build_message(
                         fs,

@@ -13,8 +13,8 @@ path = "src/assistant.rs"
 doctest = false
 
 [dependencies]
-anyhow.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
+anyhow.workspace = true
 assistant_slash_command.workspace = true
 async-watch.workspace = true
 cargo_toml.workspace = true
@@ -32,6 +32,7 @@ gpui.workspace = true
 heed.workspace = true
 html_to_markdown.workspace = true
 http.workspace = true
+indexed_docs.workspace = true
 indoc.workspace = true
 language.workspace = true
 log.workspace = true
@@ -45,7 +46,6 @@ paths.workspace = true
 project.workspace = true
 regex.workspace = true
 rope.workspace = true
-rustdoc.workspace = true
 schemars.workspace = true
 search.workspace = true
 semantic_index.workspace = true
