@@ -8,11 +8,11 @@ use fs::Fs;
 use futures::AsyncReadExt;
 use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
-use language::LspAdapterDelegate;
-use project::{Project, ProjectPath};
-use rustdoc::{
+use indexed_docs::{
     convert_rustdoc_to_markdown, CrateName, IndexedDocsStore, LocalProvider, RustdocSource,
 };
+use language::LspAdapterDelegate;
+use project::{Project, ProjectPath};
 use ui::prelude::*;
 use util::{maybe, ResultExt};
 use workspace::Workspace;

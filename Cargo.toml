@@ -45,6 +45,7 @@ members = [
     "crates/html_to_markdown",
     "crates/http",
     "crates/image_viewer",
+    "crates/indexed_docs",
     "crates/inline_completion_button",
     "crates/install_cli",
     "crates/journal",
@@ -82,7 +83,6 @@ members = [
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
-    "crates/rustdoc",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
@@ -198,6 +198,7 @@ headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http = { path = "crates/http" }
 image_viewer = { path = "crates/image_viewer" }
+indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
@@ -235,7 +236,6 @@ repl = { path = "crates/repl" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
-rustdoc = { path = "crates/rustdoc" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }

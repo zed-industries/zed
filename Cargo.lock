@@ -391,6 +391,7 @@ dependencies = [
  "heed",
  "html_to_markdown 0.1.0",
  "http 0.1.0",
+ "indexed_docs",
  "indoc",
  "language",
  "log",
@@ -406,7 +407,6 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rope",
- "rustdoc",
  "schemars",
  "search",
  "semantic_index",
@@ -5494,6 +5494,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44feda355f4159a7c757171a77de25daf6411e217b4cabd03bd6650690468126"
 
 [[package]]
+name = "indexed_docs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "derive_more",
+ "fs",
+ "futures 0.3.28",
+ "fuzzy",
+ "gpui",
+ "heed",
+ "html_to_markdown 0.1.0",
+ "http 0.1.0",
+ "indexmap 1.9.3",
+ "indoc",
+ "parking_lot",
+ "paths",
+ "pretty_assertions",
+ "serde",
+ "strum",
+ "util",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9017,31 +9042,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa0f585226d2e68097d4f95d113b15b83a82e819ab25717ec0590d9584ef366"
 dependencies = [
  "semver",
-]
-
-[[package]]
-name = "rustdoc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "collections",
- "derive_more",
- "fs",
- "futures 0.3.28",
- "fuzzy",
- "gpui",
- "heed",
- "html_to_markdown 0.1.0",
- "http 0.1.0",
- "indexmap 1.9.3",
- "indoc",
- "parking_lot",
- "paths",
- "pretty_assertions",
- "serde",
- "strum",
- "util",
 ]
 
 [[package]]
