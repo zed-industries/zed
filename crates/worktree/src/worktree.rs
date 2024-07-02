@@ -1299,16 +1299,12 @@ impl LocalWorktree {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
-        dbg!(&abs_path);
         let entry = self.refresh_entry(path.clone(), None, cx);
         let is_private = self.is_path_private(path.as_ref());
 
         cx.spawn(|this, mut cx| async move {
             let abs_path = abs_path?;
-            let entry = entry.await?;
-            if let Some(entry) = entry.as_ref() {
-                dbg!(&entry.canonical_path, &entry.path);
-            }
+            let entry = entry.await.unwrap();
             let text = fs.load(&abs_path).await?;
             let mut index_task = None;
             let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
@@ -3695,7 +3691,6 @@ impl BackgroundScanner {
                               "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
                             );
                         }
-                                           dbg!("Yoo");
                         return false;
                     };
 
@@ -3706,7 +3701,6 @@ impl BackgroundScanner {
                 });
                 if !parent_dir_is_loaded {
                     log::debug!("ignoring event {relative_path:?} within unloaded directory");
-                    dbg!("Yoo");
                     return false;
                 }
 
@@ -3714,7 +3708,6 @@ impl BackgroundScanner {
                     if !is_git_related {
                         log::debug!("ignoring FS event for excluded path {relative_path:?}");
                     }
-                    dbg!("yoo");
                     return false;
                 }
 
@@ -3778,7 +3771,7 @@ impl BackgroundScanner {
             drop(scan_job_tx);
         }
         while let Some(job) = scan_job_rx.next().await {
-            self.scan_dir(&job).await.log_err().unwrap();
+            self.scan_dir(&job).await.log_err();
         }
 
         mem::take(&mut self.state.lock().paths_to_scan).len() > 0
@@ -4125,32 +4118,47 @@ impl BackgroundScanner {
     ) {
         let metadata = futures::future::join_all(
             abs_paths
-                .iter()
-                .map(|abs_path| async move {
-                    if zip_path(abs_path).is_some() {
-                        return Ok(None);
-                    }
-                    let metadata = self.fs.metadata(abs_path).await?;
-                    if let Some(metadata) = metadata {
-                        let canonical_path = self.fs.canonicalize(abs_path).await?;
+                .into_iter()
+                .map(|mut abs_path| {
+                    let root = root_abs_path.clone();
+                    async move {
+                        let as_zip = zip_path(&abs_path);
+                        if let Some(zip) = &as_zip {
+                            let state = self.state.lock();
 
-                        // If we're on a case-insensitive filesystem (default on macOS), we want
-                        // to only ignore metadata for non-symlink files if their absolute-path matches
-                        // the canonical-path.
-                        // Because if not, this might be a case-only-renaming (`mv test.txt TEST.TXT`)
-                        // and we want to ignore the metadata for the old path (`test.txt`) so it's
-                        // treated as removed.
-                        if !self.fs_case_sensitive && !metadata.is_symlink {
-                            let canonical_file_name = canonical_path.file_name();
-                            let file_name = abs_path.file_name();
-                            if canonical_file_name != file_name {
+                            let Ok(zip) = zip.strip_prefix(&root) else {
                                 return Ok(None);
+                            };
+
+                            let Some(root_entry) = state.snapshot.entry_for_path(zip) else {
+                                return Ok(None);
+                            };
+                            if let Some(canonical) = &root_entry.canonical_path {
+                                abs_path = canonical.clone();
                             }
                         }
 
-                        anyhow::Ok(Some((metadata, canonical_path)))
-                    } else {
-                        Ok(None)
+                        let metadata = self.fs.metadata(&abs_path).await?;
+                        if let Some(metadata) = metadata {
+                            let canonical_path = self.fs.canonicalize(&abs_path).await.unwrap();
+
+                            // If we're on a case-insensitive filesystem (default on macOS), we want
+                            // to only ignore metadata for non-symlink files if their absolute-path matches
+                            // the canonical-path.
+                            // Because if not, this might be a case-only-renaming (`mv test.txt TEST.TXT`)
+                            // and we want to ignore the metadata for the old path (`test.txt`) so it's
+                            // treated as removed.
+                            if !self.fs_case_sensitive && !metadata.is_symlink {
+                                let canonical_file_name = canonical_path.file_name();
+                                let file_name = abs_path.file_name();
+                                if canonical_file_name != file_name {
+                                    return Ok(None);
+                                }
+                            }
+                            anyhow::Ok(Some((metadata, canonical_path)))
+                        } else {
+                            Ok(None)
+                        }
                     }
                 })
                 .collect::<Vec<_>>(),
