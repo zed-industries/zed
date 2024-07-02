@@ -38,11 +38,11 @@
   // Set the buffer's line height.
   // May take 3 values:
   //  1. Use a line height that's comfortable for reading (1.618)
-  //         "line_height": "comfortable"
+  //         "buffer_line_height": "comfortable"
   //  2. Use a standard line height, (1.3)
-  //         "line_height": "standard",
+  //         "buffer_line_height": "standard",
   //  3. Use a custom line height
-  //         "line_height": {
+  //         "buffer_line_height": {
   //           "custom": 2
   //         },
   "buffer_line_height": "comfortable",
@@ -307,8 +307,8 @@
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
     "auto_reveal_entries": true,
-    /// Whether to fold directories automatically
-    /// when a directory has only one directory inside.
+    // Whether to fold directories automatically and show compact folders
+    // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": false,
     /// Scrollbar-related settings
     "scrollbar": {
