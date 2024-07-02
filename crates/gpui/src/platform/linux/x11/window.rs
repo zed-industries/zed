@@ -424,7 +424,6 @@ impl X11WindowState {
             .expect("Unable to find screen refresh rate");
 
         let refresh_rate = mode_refresh_rate(&mode);
-        dbg!(refresh_rate);
 
         Ok(Self {
             client,
