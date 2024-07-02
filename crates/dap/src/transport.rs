@@ -181,7 +181,7 @@ impl Transport {
         if response.success {
             Ok(response)
         } else {
-            Err(anyhow!("some error"))
+            Err(anyhow!("Received failed response"))
         }
     }
 
