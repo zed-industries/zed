@@ -9,12 +9,12 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
+use collections::{HashSet, VecDeque};
 use fs::Fs;
 use futures::AsyncReadExt;
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 
-use crate::indexer::IndexedDocsProvider;
-use crate::PackageName;
+use crate::{IndexedDocsDatabase, IndexedDocsProvider, PackageName, ProviderId};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RustdocSource {
@@ -24,6 +24,125 @@ pub enum RustdocSource {
     Local,
     /// The docs were sourced from `docs.rs`.
     DocsDotRs,
+}
+
+#[derive(Debug)]
+struct RustdocItemWithHistory {
+    pub item: RustdocItem,
+    #[cfg(debug_assertions)]
+    pub history: Vec<String>,
+}
+
+#[async_trait]
+pub trait RustdocProvider {
+    async fn fetch_page(
+        &self,
+        package: &PackageName,
+        item: Option<&RustdocItem>,
+    ) -> Result<Option<String>>;
+}
+
+pub struct RustdocIndexer {
+    provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
+}
+
+impl RustdocIndexer {
+    pub fn new(provider: Box<dyn RustdocProvider + Send + Sync + 'static>) -> Self {
+        Self { provider }
+    }
+}
+
+#[async_trait]
+impl IndexedDocsProvider for RustdocIndexer {
+    fn id(&self) -> ProviderId {
+        ProviderId::rustdoc()
+    }
+
+    fn database_path(&self) -> PathBuf {
+        paths::support_dir().join("docs/rust/rustdoc-db.1.mdb")
+    }
+
+    async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
+        let Some(package_root_content) = self.provider.fetch_page(&package, None).await? else {
+            return Ok(());
+        };
+
+        let (crate_root_markdown, items) =
+            convert_rustdoc_to_markdown(package_root_content.as_bytes())?;
+
+        database
+            .insert(package.to_string(), crate_root_markdown)
+            .await?;
+
+        let mut seen_items = HashSet::from_iter(items.clone());
+        let mut items_to_visit: VecDeque<RustdocItemWithHistory> =
+            VecDeque::from_iter(items.into_iter().map(|item| RustdocItemWithHistory {
+                item,
+                #[cfg(debug_assertions)]
+                history: Vec::new(),
+            }));
+
+        while let Some(item_with_history) = items_to_visit.pop_front() {
+            let item = &item_with_history.item;
+
+            let Some(result) = self
+                .provider
+                .fetch_page(&package, Some(&item))
+                .await
+                .with_context(|| {
+                    #[cfg(debug_assertions)]
+                    {
+                        format!(
+                            "failed to fetch {item:?}: {history:?}",
+                            history = item_with_history.history
+                        )
+                    }
+
+                    #[cfg(not(debug_assertions))]
+                    {
+                        format!("failed to fetch {item:?}")
+                    }
+                })?
+            else {
+                continue;
+            };
+
+            let (markdown, referenced_items) = convert_rustdoc_to_markdown(result.as_bytes())?;
+
+            database
+                .insert(format!("{package}::{}", item.display()), markdown)
+                .await?;
+
+            let parent_item = item;
+            for mut item in referenced_items {
+                if seen_items.contains(&item) {
+                    continue;
+                }
+
+                seen_items.insert(item.clone());
+
+                item.path.extend(parent_item.path.clone());
+                match parent_item.kind {
+                    RustdocItemKind::Mod => {
+                        item.path.push(parent_item.name.clone());
+                    }
+                    _ => {}
+                }
+
+                items_to_visit.push_back(RustdocItemWithHistory {
+                    #[cfg(debug_assertions)]
+                    history: {
+                        let mut history = item_with_history.history.clone();
+                        history.push(item.url_path());
+                        history
+                    },
+                    item,
+                });
+            }
+        }
+
+        Ok(())
+    }
 }
 
 pub struct LocalProvider {
@@ -41,7 +160,7 @@ impl LocalProvider {
 }
 
 #[async_trait]
-impl IndexedDocsProvider for LocalProvider {
+impl RustdocProvider for LocalProvider {
     async fn fetch_page(
         &self,
         crate_name: &PackageName,
@@ -74,7 +193,7 @@ impl DocsDotRsProvider {
 }
 
 #[async_trait]
-impl IndexedDocsProvider for DocsDotRsProvider {
+impl RustdocProvider for DocsDotRsProvider {
     async fn fetch_page(
         &self,
         crate_name: &PackageName,

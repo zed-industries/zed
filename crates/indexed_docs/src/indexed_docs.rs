@@ -1,4 +1,3 @@
-mod indexer;
 mod providers;
 mod registry;
 mod store;

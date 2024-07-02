@@ -3917,6 +3917,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "http 0.1.0",
+ "indexed_docs",
  "isahc",
  "language",
  "log",

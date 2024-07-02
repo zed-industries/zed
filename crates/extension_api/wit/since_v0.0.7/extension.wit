@@ -83,6 +83,12 @@ world extension {
         shell-env: func() -> env-vars;
     }
 
+    /// A key-value store.
+    resource key-value-store {
+        /// Inserts an entry under the specified key.
+        insert: func(key: string, value: string) -> result<_, string>;
+    }
+
     /// Returns the command used to start up the language server.
     export language-server-command: func(language-server-id: string, worktree: borrow<worktree>) -> result<command, string>;
 
@@ -128,4 +134,7 @@ world extension {
 
     /// Returns the output from running the provided slash command.
     export run-slash-command: func(command: slash-command, argument: option<string>, worktree: borrow<worktree>) -> result<slash-command-output, string>;
+
+    /// Indexes the docs for the specified package.
+    export index-docs: func(provider-name: string, package-name: string, database: borrow<key-value-store>) -> result<_, string>;
 }

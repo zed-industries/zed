@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use futures::AsyncReadExt;
 use futures::{io::BufReader, FutureExt as _};
 use http::AsyncBody;
+use indexed_docs::IndexedDocsDatabase;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
@@ -28,6 +29,7 @@ wasmtime::component::bindgen!({
     path: "../extension_api/wit/since_v0.0.7",
     with: {
          "worktree": ExtensionWorktree,
+         "key-value-store": ExtensionKeyValueStore
     },
 });
 
@@ -39,9 +41,29 @@ mod settings {
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
 
+pub type ExtensionKeyValueStore = Arc<IndexedDocsDatabase>;
+
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
     LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
+}
+
+#[async_trait]
+impl HostKeyValueStore for WasmState {
+    async fn insert(
+        &mut self,
+        kv_store: Resource<ExtensionKeyValueStore>,
+        key: String,
+        value: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let kv_store = self.table.get(&kv_store)?;
+        kv_store.insert(key, value).await.to_wasmtime_result()
+    }
+
+    fn drop(&mut self, _worktree: Resource<ExtensionKeyValueStore>) -> Result<()> {
+        // We only ever hand out borrows of key-value stores.
+        Ok(())
+    }
 }
 
 #[async_trait]
