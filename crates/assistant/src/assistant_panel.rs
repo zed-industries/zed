@@ -462,6 +462,11 @@ impl AssistantPanel {
                 .focus_handle(cx)
                 .contains_focused(cx)
             {
+                use feature_flags::FeatureFlagAppExt;
+                if !cx.has_flag::<feature_flags::TerminalInlineAssist>() {
+                    return None;
+                }
+
                 if let Some(terminal_view) = terminal_panel
                     .read(cx)
                     .pane()
