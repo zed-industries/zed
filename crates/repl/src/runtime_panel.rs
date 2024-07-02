@@ -1,5 +1,5 @@
 use crate::{
-    jupyter_settings::JupyterSettings,
+    jupyter_settings::{JupyterDockPosition, JupyterSettings},
     kernels::{kernel_specifications, KernelSpecification},
     session::Session,
 };
@@ -258,9 +258,12 @@ impl Panel for RuntimePanel {
         "RuntimePanel"
     }
 
-    fn position(&self, _cx: &ui::WindowContext) -> workspace::dock::DockPosition {
-        // todo!(): Pull from settings
-        workspace::dock::DockPosition::Right
+    fn position(&self, cx: &ui::WindowContext) -> workspace::dock::DockPosition {
+        match JupyterSettings::get_global(cx).dock {
+            JupyterDockPosition::Left => workspace::dock::DockPosition::Left,
+            JupyterDockPosition::Right => workspace::dock::DockPosition::Right,
+            JupyterDockPosition::Bottom => workspace::dock::DockPosition::Bottom,
+        }
     }
 
     fn position_is_valid(&self, _position: workspace::dock::DockPosition) -> bool {
@@ -269,10 +272,17 @@ impl Panel for RuntimePanel {
 
     fn set_position(
         &mut self,
-        _position: workspace::dock::DockPosition,
-        _cx: &mut ViewContext<Self>,
+        position: workspace::dock::DockPosition,
+        cx: &mut ViewContext<Self>,
     ) {
-        // todo!()
+        settings::update_settings_file::<JupyterSettings>(self.fs.clone(), cx, move |settings| {
+            let dock = match position {
+                workspace::dock::DockPosition::Left => JupyterDockPosition::Left,
+                workspace::dock::DockPosition::Right => JupyterDockPosition::Right,
+                workspace::dock::DockPosition::Bottom => JupyterDockPosition::Bottom,
+            };
+            settings.set_dock(dock);
+        })
     }
 
     fn size(&self, cx: &ui::WindowContext) -> Pixels {

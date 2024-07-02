@@ -35,6 +35,12 @@ pub struct JupyterSettingsContent {
     pub default_width: Option<f32>,
 }
 
+impl JupyterSettingsContent {
+    pub fn set_dock(&mut self, dock: JupyterDockPosition) {
+        self.dock = Some(dock);
+    }
+}
+
 impl Default for JupyterSettingsContent {
     fn default() -> Self {
         JupyterSettingsContent {
