@@ -9,7 +9,7 @@ use futures::AsyncReadExt;
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 
 use crate::{
-    convert_rustdoc_to_markdown, CrateName, RustdocDatabase, RustdocItem, RustdocItemKind,
+    convert_rustdoc_to_markdown, CrateName, IndexedDocsDatabase, RustdocItem, RustdocItemKind,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -128,14 +128,14 @@ struct RustdocItemWithHistory {
     pub history: Vec<String>,
 }
 
-pub(crate) struct RustdocIndexer {
-    database: Arc<RustdocDatabase>,
+pub(crate) struct DocsIndexer {
+    database: Arc<IndexedDocsDatabase>,
     provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
 }
 
-impl RustdocIndexer {
+impl DocsIndexer {
     pub fn new(
-        database: Arc<RustdocDatabase>,
+        database: Arc<IndexedDocsDatabase>,
         provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
     ) -> Self {
         Self { database, provider }

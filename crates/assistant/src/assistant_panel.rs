@@ -47,7 +47,7 @@ use multi_buffer::MultiBufferRow;
 use paths::contexts_dir;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
-use rustdoc::{CrateName, RustdocStore};
+use rustdoc::{CrateName, IndexedDocsStore};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
@@ -3410,7 +3410,7 @@ fn render_rustdoc_slash_command_trailer(
     command: PendingSlashCommand,
     cx: &mut WindowContext,
 ) -> AnyElement {
-    let rustdoc_store = RustdocStore::global(cx);
+    let rustdoc_store = IndexedDocsStore::global(cx);
 
     let Some((crate_name, _)) = command
         .argument

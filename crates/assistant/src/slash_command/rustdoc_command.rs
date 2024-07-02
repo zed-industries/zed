@@ -10,7 +10,9 @@ use gpui::{AppContext, Model, Task, WeakView};
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
-use rustdoc::{convert_rustdoc_to_markdown, CrateName, LocalProvider, RustdocSource, RustdocStore};
+use rustdoc::{
+    convert_rustdoc_to_markdown, CrateName, IndexedDocsStore, LocalProvider, RustdocSource,
+};
 use ui::prelude::*;
 use util::{maybe, ResultExt};
 use workspace::Workspace;
@@ -127,7 +129,7 @@ impl SlashCommand for RustdocSlashCommand {
             anyhow::Ok((fs, cargo_workspace_root))
         });
 
-        let store = RustdocStore::global(cx);
+        let store = IndexedDocsStore::global(cx);
         cx.background_executor().spawn(async move {
             if let Some((crate_name, rest)) = query.split_once(':') {
                 if rest.is_empty() {
@@ -175,7 +177,7 @@ impl SlashCommand for RustdocSlashCommand {
         let item_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
 
         let text = cx.background_executor().spawn({
-            let rustdoc_store = RustdocStore::global(cx);
+            let rustdoc_store = IndexedDocsStore::global(cx);
             let crate_name = crate_name.clone();
             let item_path = item_path.clone();
             async move {

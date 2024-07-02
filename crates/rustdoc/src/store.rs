@@ -15,7 +15,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::indexer::{RustdocIndexer, RustdocProvider};
+use crate::indexer::{DocsIndexer, RustdocProvider};
 use crate::{RustdocItem, RustdocItemKind};
 
 /// The name of a crate.
@@ -28,26 +28,27 @@ impl From<&str> for CrateName {
     }
 }
 
-struct GlobalRustdocStore(Arc<RustdocStore>);
+struct GlobalIndexedDocsStore(Arc<IndexedDocsStore>);
 
-impl Global for GlobalRustdocStore {}
+impl Global for GlobalIndexedDocsStore {}
 
-pub struct RustdocStore {
+pub struct IndexedDocsStore {
     executor: BackgroundExecutor,
-    database_future: Shared<BoxFuture<'static, Result<Arc<RustdocDatabase>, Arc<anyhow::Error>>>>,
+    database_future:
+        Shared<BoxFuture<'static, Result<Arc<IndexedDocsDatabase>, Arc<anyhow::Error>>>>,
     indexing_tasks_by_crate:
         RwLock<HashMap<CrateName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
 }
 
-impl RustdocStore {
+impl IndexedDocsStore {
     pub fn global(cx: &AppContext) -> Arc<Self> {
-        GlobalRustdocStore::global(cx).0.clone()
+        GlobalIndexedDocsStore::global(cx).0.clone()
     }
 
     pub fn init_global(cx: &mut AppContext) {
-        GlobalRustdocStore::set_global(
+        GlobalIndexedDocsStore::set_global(
             cx,
-            GlobalRustdocStore(Arc::new(Self::new(cx.background_executor().clone()))),
+            GlobalIndexedDocsStore(Arc::new(Self::new(cx.background_executor().clone()))),
         );
     }
 
@@ -56,7 +57,7 @@ impl RustdocStore {
             .spawn({
                 let executor = executor.clone();
                 async move {
-                    RustdocDatabase::new(
+                    IndexedDocsDatabase::new(
                         paths::support_dir().join("docs/rust/rustdoc-db.0.mdb"),
                         executor,
                     )
@@ -120,7 +121,7 @@ impl RustdocStore {
                             .clone()
                             .await
                             .map_err(|err| anyhow!(err))?;
-                        let indexer = RustdocIndexer::new(database, provider);
+                        let indexer = DocsIndexer::new(database, provider);
 
                         indexer.index(crate_name.clone()).await
                     };
@@ -191,13 +192,13 @@ impl RustdocDatabaseEntry {
     }
 }
 
-pub(crate) struct RustdocDatabase {
+pub(crate) struct IndexedDocsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
     entries: Database<SerdeBincode<String>, SerdeBincode<RustdocDatabaseEntry>>,
 }
 
-impl RustdocDatabase {
+impl IndexedDocsDatabase {
     pub fn new(path: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
         std::fs::create_dir_all(&path)?;
 

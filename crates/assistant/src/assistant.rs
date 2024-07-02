@@ -22,7 +22,7 @@ use fs::Fs;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 pub(crate) use inline_assistant::*;
 pub(crate) use model_selector::*;
-use rustdoc::RustdocStore;
+use rustdoc::IndexedDocsStore;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -292,7 +292,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     assistant_panel::init(cx);
     inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
     terminal_inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
-    RustdocStore::init_global(cx);
+    IndexedDocsStore::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(Assistant::NAMESPACE);
