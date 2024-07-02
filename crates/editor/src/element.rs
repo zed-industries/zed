@@ -1655,13 +1655,17 @@ impl EditorElement {
     }
 
     fn calculate_roman_number(&self, number: &DisplayRowDelta) -> String {
-        let values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
+        let values = [
+            1000000, 900000, 500000, 400000, 100000, 90000, 50000, 40000, 10000, 9000, 5000, 4000,
+            1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1,
+        ];
         let symbols = [
-            "M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I",
+            "M̅", "C̅M̅", "D̅", "C̅D̅", "C̅", "X̅C̅", "L̅", "X̅L̅", "X̅", "I̅X̅", "V̅", "I̅V̅", "M", "CM", "D", "CD",
+            "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I",
         ];
 
         let mut num = *number;
-        let mut roman = String::with_capacity(15);
+        let mut roman = String::with_capacity(20);
 
         for i in 0..values.len() {
             while num >= values[i] {
@@ -3807,13 +3811,30 @@ impl EditorElement {
     }
 
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
-        let digit_count = snapshot
+        let mut digit_count = snapshot
             .max_buffer_row()
             .next_row()
             .as_f32()
             .log10()
             .floor() as usize
             + 1;
+        let is_roman = EditorSettings::get_global(cx).roman_line_numbers;
+
+        if is_roman {
+            let last_row = snapshot.max_buffer_row().as_f32();
+            digit_count = match last_row as i32 {
+                0..=10 => 4,
+                11..=20 => 5,
+                21..=30 => 6,
+                31..=50 => 7,
+                51..=100 => 8,
+                101..=500 => 9,
+                501..=1000 => 12,
+                1001..=5000 => 15,
+                5001..=10000 => 20,
+                _ => 20,
+            };
+        }
         self.column_pixels(digit_count, cx)
     }
 }
