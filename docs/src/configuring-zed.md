@@ -506,6 +506,23 @@ To override settings for a language, add an entry for that language server's nam
 }
 ```
 
+- `binary`
+
+For Rust, Go, and Clang the binary and its arguments can be overridden. Example:
+
+```json
+"lsp": {
+  "clangd": {
+    "binary": {
+      "path": "/usr/bin/clangd",
+      "arguments": ["--log=verbose"]
+    }
+  }
+}
+```
+
+Path should be absolute.
+
 ## Format On Save
 
 - Description: Whether or not to perform a buffer format before saving.
