@@ -11,7 +11,7 @@ use heed::{
 use serde::{Deserialize, Serialize};
 use std::{path::Path, time::SystemTime};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CachedSummary {
     pub summary: String,
     pub mtime: SystemTime,

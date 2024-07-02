@@ -20,6 +20,8 @@ use git::GitHostingProviderRegistry;
 use gpui::{App, BackgroundExecutor};
 use ignore::gitignore::GitignoreBuilder;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use quick_xml::se::to_string;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
@@ -59,6 +61,54 @@ struct Cli {
     /// Export the database contents to stdout
     #[arg(long)]
     export: bool,
+
+    /// Expand the given query using Claude
+    #[arg(long)]
+    expand: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Task {
+    description: String,
+    user_query: String,
+    current_state: CurrentState,
+    instructions: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CurrentState {
+    root_directories: Vec<Directory>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Directory {
+    #[serde(rename = "@path")]
+    path: String,
+    summary: String,
+    contents: Vec<Content>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", tag = "type")]
+enum Content {
+    Directory {
+        #[serde(rename = "@path")]
+        path: String,
+        summary: String,
+    },
+    File {
+        #[serde(rename = "@path")]
+        path: String,
+        summary: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        symbols: Option<Vec<String>>,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+struct PathsToExpand {
+    #[serde(rename = "path", default)]
+    paths: Vec<String>,
 }
 
 fn main() {
@@ -103,6 +153,11 @@ fn main() {
 
             if cli.export {
                 miner.export_database().await?;
+                return Ok(());
+            }
+
+            if let Some(query) = cli.expand {
+                miner.expand(&query).await?;
                 return Ok(());
             }
 
@@ -259,6 +314,208 @@ impl Miner {
             .detach();
 
         Ok(miner)
+    }
+
+    pub async fn expand(&self, query: &str) -> Result<()> {
+        println!("Expanding context for query: {}", query);
+        let http_client = http::client(None);
+        let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY not set");
+
+        let mut paths_to_expand = VecDeque::new();
+        paths_to_expand.push_back(self.root.clone());
+
+        while !paths_to_expand.is_empty() {
+            let current_paths: Vec<_> = paths_to_expand
+                .drain(..paths_to_expand.len().min(5))
+                .collect();
+            let task = self.create_task(query, &current_paths).await?;
+            let task_xml = to_string(&task)?;
+
+            println!("Request to Anthropic:\n{task_xml}\n\n");
+
+            let request = anthropic::Request {
+                model: anthropic::Model::Claude3_5Sonnet,
+                messages: vec![anthropic::RequestMessage {
+                    role: anthropic::Role::User,
+                    content: task_xml,
+                }],
+                stream: true,
+                system: "You are a helpful assistant that expands on given queries and analyzes directory structures. Respond only with XML.".to_string(),
+                max_tokens: 1000,
+            };
+
+            let mut stream = anthropic::stream_completion(
+                http_client.as_ref(),
+                anthropic::ANTHROPIC_API_URL,
+                &api_key,
+                request,
+                None,
+            )
+            .await?;
+
+            let mut response_xml = String::new();
+            while let Some(event) = stream.next().await {
+                match event {
+                    Ok(event) => match event {
+                        anthropic::ResponseEvent::ContentBlockStart { content_block, .. } => {
+                            match content_block {
+                                anthropic::ContentBlock::Text { text } => {
+                                    response_xml.push_str(&text)
+                                }
+                            }
+                        }
+                        anthropic::ResponseEvent::ContentBlockDelta { delta, .. } => match delta {
+                            anthropic::TextDelta::TextDelta { text } => {
+                                response_xml.push_str(&text)
+                            }
+                        },
+                        _ => {}
+                    },
+                    Err(e) => eprintln!("Error: {:?}", e),
+                }
+            }
+
+            // Extract XML content
+            let xml_content = Self::extract_xml(&response_xml);
+            println!(
+                "Extracted XML from Anthropic response:\n{}\n\n",
+                xml_content
+            );
+
+            let response: PathsToExpand = quick_xml::de::from_str(&xml_content)?;
+
+            for path in &response.paths {
+                for current_path in &current_paths {
+                    let full_path = current_path.join(path);
+                    if !paths_to_expand.contains(&full_path) {
+                        paths_to_expand.push_back(full_path);
+                    }
+                }
+            }
+
+            println!("Expanded paths: {:?}", response);
+        }
+
+        println!("Expansion complete");
+        Ok(())
+    }
+
+    fn extract_xml(input: &str) -> String {
+        let start = input.find('<').unwrap_or(0);
+        let end = input.rfind('>').map(|i| i + 1).unwrap_or(input.len());
+        input[start..end].to_string()
+    }
+
+    async fn create_task(&self, query: &str, current_paths: &[PathBuf]) -> Result<Task> {
+        let mut root_directories = Vec::new();
+
+        for current_path in current_paths {
+            let contents = self.get_directory_contents(current_path).await?;
+            let summary = self
+                .summary_for_path(current_path)
+                .await?
+                .unwrap_or_default();
+
+            root_directories.push(Directory {
+                path: current_path.to_string_lossy().to_string(),
+                summary,
+                contents,
+            });
+        }
+
+        let task = Task {
+            description: "Navigate and expand directories based on the user query. Respond with paths to expand further. Expansion ends when reaching a terminal location (a symbol, a directory without files, or a file without symbols).".to_string(),
+            user_query: query.to_string(),
+            current_state: CurrentState {
+                root_directories,
+            },
+            instructions: vec![
+                "Analyze the user query and the current directory structures.".to_string(),
+                "Identify relevant paths that may contain information related to the query.".to_string(),
+                "List the paths to expand in order of relevance.".to_string(),
+                "Do not expand terminal locations (symbols, empty directories, or files without symbols).".to_string(),
+                "Provide your response as an XML list of paths to expand.".to_string(),
+                "Provide your response in the following format:\n<paths_to_expand>\n  <path>/example/directory1</path>\n  <path>/example/file1.rs</path>\n  <path>/example/directory2/file2.rs</path>\n</paths_to_expand>".to_string(),
+            ],
+        };
+
+        Ok(task)
+    }
+
+    async fn get_directory_contents(&self, path: &Path) -> Result<Vec<Content>> {
+        let mut contents = Vec::new();
+        let prefix = format!("path:{}", path.to_string_lossy());
+        let items = self
+            .database
+            .transact({
+                let prefix = prefix.clone();
+                move |db, txn| {
+                    let mut items = Vec::new();
+                    for item in db.prefix_iter(&txn, &prefix)? {
+                        let (key, value) = item?;
+                        if key.starts_with(&prefix)
+                            && key != prefix
+                            && !key.contains(
+                                &format!("{}{}:", prefix, std::path::MAIN_SEPARATOR)
+                                    [prefix.len() + 1..],
+                            )
+                        {
+                            items.push((key.to_string(), value.clone()));
+                        }
+                    }
+                    Ok(items)
+                }
+            })
+            .await?;
+
+        for item in items {
+            let (key, value) = item;
+            let entry_path = PathBuf::from(key.strip_prefix("path:").unwrap());
+            let summary = value.summary;
+
+            if self
+                .database
+                .transact(move |db, txn| {
+                    Ok(db
+                        .prefix_iter(&txn, &format!("path:{}{}:", key, std::path::MAIN_SEPARATOR))?
+                        .next()
+                        .is_some())
+                })
+                .await?
+            {
+                contents.push(Content::Directory {
+                    path: entry_path.to_string_lossy().to_string(),
+                    summary,
+                });
+            } else {
+                let symbols = self.get_file_symbols(&entry_path).await?;
+                contents.push(Content::File {
+                    path: entry_path.to_string_lossy().to_string(),
+                    summary,
+                    symbols: Some(symbols),
+                });
+            }
+        }
+
+        Ok(contents)
+    }
+
+    async fn get_file_symbols(&self, path: &Path) -> Result<Vec<String>> {
+        let prefix = format!("symbol:{}", path.to_string_lossy());
+        let symbols = self
+            .database
+            .transact(move |db, txn| {
+                let mut symbols = Vec::new();
+                for item in db.prefix_iter(&txn, &prefix)? {
+                    let (key, _) = item?;
+                    if let Some(symbol) = key.split("::").last() {
+                        symbols.push(symbol.to_string());
+                    }
+                }
+                Ok(symbols)
+            })
+            .await?;
+        Ok(symbols)
     }
 
     /// Summarizes a project by processing files and directories, generating summaries,

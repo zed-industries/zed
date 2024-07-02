@@ -17,6 +17,7 @@ test-support = [
 ]
 
 [dependencies]
+anthropic.workspace = true
 anyhow.workspace = true
 async-watch.workspace = true
 collections.workspace = true
@@ -29,6 +30,7 @@ heed.workspace = true
 http.workspace = true
 ignore.workspace = true
 indicatif = "0.17.8"
+quick-xml = { version = "0.35", features = ["serialize"] }
 serde.workspace = true
 serde_json.workspace = true
 tree-sitter.workspace = true

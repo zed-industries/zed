@@ -6558,6 +6558,7 @@ checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 name = "miner"
 version = "0.1.0"
 dependencies = [
+ "anthropic",
  "anyhow",
  "async-watch",
  "clap 4.4.4",
@@ -6570,6 +6571,7 @@ dependencies = [
  "http 0.1.0",
  "ignore",
  "indicatif",
+ "quick-xml 0.35.0",
  "serde",
  "serde_json",
  "tempfile",
@@ -8328,6 +8330,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1004a344b30a54e2ee58d66a71b32d2db2feb0a31f9a2d302bf0536f15de2a33"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86e446ed58cef1bbfe847bc2fda0e2e4ea9f0e57b90c507d4781292590d72a4e"
+dependencies = [
+ "memchr",
+ "serde",
 ]
 
 [[package]]
