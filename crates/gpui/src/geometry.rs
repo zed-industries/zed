@@ -883,6 +883,12 @@ where
         self.size.height = self.size.height.clone() + double_amount;
     }
 
+    /// inset the bounds by a specified amount
+    /// Note that this may panic if T does not support negative values
+    pub fn inset(&mut self, amount: T) {
+        self.dilate(T::default() - amount)
+    }
+
     /// Returns the center point of the bounds.
     ///
     /// Calculates the center by taking the origin's x and y coordinates and adding half the width and height

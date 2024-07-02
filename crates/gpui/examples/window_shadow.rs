@@ -18,6 +18,7 @@ impl Render for WindowShadow {
         let shadow_size = px(10.0);
         let border_size = px(1.0);
         let grey = rgb(0x808080);
+        cx.set_client_inset(shadow_size);
 
         div()
             .id("window-backdrop")
@@ -78,27 +79,15 @@ impl Render for WindowShadow {
                         let size = cx.window_bounds().get_bounds().size;
                         let pos = e.position;
 
-                        let edge = match resize_edge(pos, shadow_size, size) {
-                            Some(value) => value,
-                            None => return,
+                        match resize_edge(pos, shadow_size, size) {
+                            Some(edge) => cx.start_window_resize(edge),
+                            None => cx.start_window_move(),
                         };
-
-                        cx.start_window_resize(edge);
                     }),
             })
             .size_full()
             .child(
                 div()
-                    .child(
-                        canvas(
-                            |bounds, cx| {
-                                cx.set_client_area(bounds);
-                            },
-                            |_, _, _| {},
-                        )
-                        .size_full()
-                        .absolute(),
-                    )
                     .cursor(CursorStyle::Arrow)
                     .map(|div| match decorations {
                         Decorations::Server => div,

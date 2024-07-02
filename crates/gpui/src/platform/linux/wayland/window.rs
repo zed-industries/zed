@@ -99,8 +99,8 @@ pub struct WaylandWindowState {
     in_progress_configure: Option<InProgressConfigure>,
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
-    client_area: Option<Bounds<Pixels>>,
-    requested_client_area: Option<Bounds<Pixels>>,
+    inset: Option<Pixels>,
+    requested_inset: Option<Pixels>,
 }
 
 #[derive(Clone)]
@@ -188,8 +188,8 @@ impl WaylandWindowState {
                 minimize: true,
                 window_menu: true,
             },
-            client_area: None,
-            requested_client_area: None,
+            inset: None,
+            requested_inset: None,
         })
     }
 
@@ -356,7 +356,7 @@ impl WaylandWindowStatePtr {
                         } else if !configure.maximized {
                             configure.size = compute_outer_size(
                                 state.window_bounds,
-                                state.client_area,
+                                state.inset,
                                 configure.size,
                             );
                         }
@@ -898,8 +898,8 @@ impl PlatformWindow for WaylandWindow {
     fn completed_frame(&self) {
         let mut state = self.borrow_mut();
         state.surface.commit();
-        if let Some(area) = state.requested_client_area {
-            state.client_area = Some(area);
+        if let Some(area) = state.requested_inset {
+            state.inset = Some(area);
         }
     }
 
@@ -958,18 +958,20 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().window_controls
     }
 
-    fn set_client_area(&self, bounds: Bounds<Pixels>) {
+    fn set_client_inset(&self, inset: Pixels) {
         let mut state = self.borrow_mut();
-        if Some(bounds) != state.client_area {
-            if bounds.size.width.0 != 0.0 && bounds.size.height.0 != 0.0 {
-                state.xdg_surface.set_window_geometry(
-                    bounds.origin.x.0 as i32,
-                    bounds.origin.y.0 as i32,
-                    bounds.size.width.0 as i32,
-                    bounds.size.height.0 as i32,
-                );
-                state.requested_client_area = Some(bounds);
-            }
+        if Some(inset) != state.inset {
+            state.requested_inset = Some(inset);
+
+            let window_size = self.window_bounds().get_bounds().size.map(|v| v.0 as i32);
+            let inset = inset.0 as i32;
+
+            state.xdg_surface.set_window_geometry(
+                inset,
+                inset,
+                window_size.width - inset,
+                window_size.height - inset,
+            );
             update_window(state);
         }
     }
@@ -979,10 +981,10 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     let opaque = !state.is_transparent();
 
     state.renderer.update_transparency(!opaque);
-    let opaque_area = state
-        .client_area
-        .unwrap_or(state.window_bounds)
-        .map(|v| v.0 as i32);
+    let mut opaque_area = state.window_bounds.map(|v| v.0 as i32);
+    if let Some(inset) = state.inset {
+        opaque_area.inset(inset.0 as i32);
+    }
 
     let region = state
         .globals
@@ -1057,21 +1059,15 @@ impl ResizeEdge {
 /// to, due to our intrusize CSD. So, here we calculate the 'actual' size, by adding back in the insets
 fn compute_outer_size(
     window_bounds: Bounds<Pixels>,
-    client_area: Option<Bounds<Pixels>>,
+    inset: Option<Pixels>,
     new_size: Option<Size<Pixels>>,
 ) -> Option<Size<Pixels>> {
-    new_size
-        .zip(client_area)
-        .map(|(new_size, client_area)| {
-            let left_width = (window_bounds.left() - client_area.left()).abs();
-            let right_width = (window_bounds.right() - client_area.right()).abs();
-            let top_width = (window_bounds.top() - client_area.top()).abs();
-            let bottom_width = (window_bounds.bottom() - client_area.bottom()).abs();
+    let Some(inset) = inset else { return new_size };
 
-            size(
-                left_width + right_width + new_size.width,
-                top_width + bottom_width + new_size.height,
-            )
-        })
-        .or(new_size)
+    new_size.map(|new_size| {
+        size(
+            inset + inset + new_size.width,
+            inset + inset + new_size.height,
+        )
+    })
 }

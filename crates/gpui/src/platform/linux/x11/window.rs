@@ -13,8 +13,9 @@ use blade_graphics as gpu;
 use raw_window_handle as rwh;
 use util::{maybe, ResultExt};
 use x11rb::{
-    connection::Connection,
+    connection::{Connection, RequestConnection},
     protocol::{
+        sync,
         xinput::{self, ConnectionExt as _},
         xproto::{self, ClientMessageEvent, ConnectionExt, EventMask, TranslateCoordinatesReply},
     },
@@ -23,14 +24,8 @@ use x11rb::{
 };
 
 use std::{
-    cell::RefCell,
-    ffi::c_void,
-    mem::size_of,
-    num::NonZeroU32,
-    ops::Div,
-    ptr::NonNull,
-    rc::Rc,
-    sync::{self, Arc},
+    cell::RefCell, ffi::c_void, mem::size_of, num::NonZeroU32, ops::Div, ptr::NonNull, rc::Rc,
+    sync::Arc,
 };
 
 use super::{X11Display, XINPUT_MASTER_DEVICE};
@@ -48,9 +43,13 @@ x11rb::atom_manager! {
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
         _NET_ACTIVE_WINDOW,
+        _NET_WM_SYNC_REQUEST,
+        _NET_WM_SYNC_REQUEST_COUNTER,
+        _NET_WM_BYPASS_COMPOSITOR,
         _NET_WM_MOVERESIZE,
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
+        _NET_WM_SYNC,
         _MOTIF_WM_HINTS,
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
@@ -180,6 +179,8 @@ pub struct X11WindowState {
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
     x_root_window: xproto::Window,
+    pub(crate) counter_id: sync::Counter,
+    pub(crate) last_sync_counter: Option<sync::Int64>,
     _raw: RawWindow,
     bounds: Bounds<Pixels>,
     scale_factor: f32,
@@ -195,7 +196,7 @@ pub struct X11WindowState {
     fullscreen: bool,
     decorations: WindowDecorations,
     pub handle: AnyWindowHandle,
-    insets: [u32; 4],
+    inset: Pixels,
 }
 
 impl X11WindowState {
@@ -371,7 +372,24 @@ impl X11WindowState {
                 x_window,
                 atoms.WM_PROTOCOLS,
                 xproto::AtomEnum::ATOM,
-                &[atoms.WM_DELETE_WINDOW],
+                &[atoms.WM_DELETE_WINDOW, atoms._NET_WM_SYNC_REQUEST],
+            )
+            .unwrap();
+
+        sync::initialize(xcb_connection, 3, 1).unwrap();
+
+        let counter1 = xcb_connection.generate_id().unwrap();
+        let counter2 = xcb_connection.generate_id().unwrap();
+
+        sync::create_counter(xcb_connection, counter1, sync::Int64 { lo: 0, hi: 0 }).unwrap();
+
+        xcb_connection
+            .change_property32(
+                xproto::PropMode::REPLACE,
+                x_window,
+                atoms._NET_WM_SYNC_REQUEST_COUNTER,
+                xproto::AtomEnum::CARDINAL,
+                &[counter1 as u32],
             )
             .unwrap();
 
@@ -419,7 +437,7 @@ impl X11WindowState {
             // the sizes are immediately invalidated.
             size: query_render_extent(xcb_connection, x_window),
             // In case we have window decorations to render
-            transparent: false,
+            transparent: true,
         };
         xcb_connection.map_window(x_window).unwrap();
 
@@ -446,7 +464,9 @@ impl X11WindowState {
             background_appearance: WindowBackgroundAppearance::Opaque,
             destroyed: false,
             decorations: WindowDecorations::Server,
-            insets: [0, 0, 0, 0],
+            inset: px(0.0),
+            counter_id: counter1,
+            last_sync_counter: None,
         })
     }
 
@@ -575,8 +595,9 @@ impl X11Window {
     }
 
     fn send_moveresize(&self, flag: u32) {
+        dbg!("send_moveresize");
         let state = self.0.state.borrow();
-        
+
         self.0
             .xcb_connection
             .ungrab_pointer(x11rb::CURRENT_TIME)
@@ -599,8 +620,8 @@ impl X11Window {
                 pointer.root_x as u32,
                 pointer.root_y as u32,
                 flag,
-                1, // Left mouse button
-                1,
+                0, // Left mouse button
+                0,
             ],
         );
         self.0
@@ -612,6 +633,8 @@ impl X11Window {
                 message,
             )
             .unwrap();
+
+        self.0.xcb_connection.flush().unwrap();
     }
 }
 
@@ -789,6 +812,9 @@ impl X11WindowStatePtr {
                     DevicePixels(gpu_size.height as i32),
                 ));
                 resize_args = Some((state.content_size(), state.scale_factor));
+            }
+            if let Some(value) = state.last_sync_counter.take() {
+                sync::set_counter(&self.xcb_connection, state.counter_id, value).unwrap();
             }
         }
 
@@ -1074,7 +1100,7 @@ impl PlatformWindow for X11Window {
         inner.renderer.draw(scene);
     }
 
-    fn sprite_atlas(&self) -> sync::Arc<dyn PlatformAtlas> {
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         let inner = self.0.state.borrow();
         inner.renderer.sprite_atlas().clone()
     }
@@ -1134,28 +1160,13 @@ impl PlatformWindow for X11Window {
         }
     }
 
-    fn set_client_area(&self, bounds: Bounds<Pixels>) {
-        // TODO: add a carve out for xfwm4
-        // ref: https://source.chromium.org/chromium/chromium/src/+/main:ui/ozone/platform/x11/x11_window.cc;l=1084;drc=7b232da0f22e8cdf555d43c52b6491baeb87f729;bpv=0;bpt=1
-
-        let mut window_bounds = self.window_bounds().get_bounds();
-        // Remove global coordinates
-        window_bounds.origin.x = px(0.0);
-        window_bounds.origin.y = px(0.0);
-
-        let left_width = (window_bounds.left() - bounds.left()).abs().0 as u32;
-        let right_width = (window_bounds.right() - bounds.right()).abs().0 as u32;
-        let top_width = (window_bounds.top() - bounds.top()).abs().0 as u32;
-        let bottom_width = (window_bounds.bottom() - bounds.bottom()).abs().0 as u32;
-
+    fn set_client_inset(&self, inset: Pixels) {
         let mut state = self.0.state.borrow_mut();
 
-        // ref: https://source.chromium.org/chromium/chromium/src/+/main:ui/ozone/platform/x11/x11_window.cc;l=1421-1427;drc=7b232da0f22e8cdf555d43c52b6491baeb87f729;bpv=1;bpt=1
-        let data = [left_width, right_width, top_width, bottom_width];
-
-        if state.insets != data {
-            state.insets = data;
-
+        if state.inset != inset {
+            state.inset = inset;
+            let dp = (inset.0 * state.scale_factor) as u32;
+            let data = [dp, dp, dp, dp];
             self.0
                 .xcb_connection
                 .change_property(

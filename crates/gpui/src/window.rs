@@ -1236,9 +1236,9 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.start_window_move()
     }
 
-    /// When using client side decorations, set this to the area of the internal window (Wayland and X11)
-    pub fn set_client_area(&self, bounds: Bounds<Pixels>) {
-        self.window.platform_window.set_client_area(bounds);
+    /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
+    pub fn set_client_inset(&self, inset: Pixels) {
+        self.window.platform_window.set_client_inset(inset);
     }
 
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)

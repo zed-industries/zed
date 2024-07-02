@@ -472,7 +472,7 @@ impl X11Client {
         match event {
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
-                let [atom, ..] = event.data.as_data32();
+                let [atom, _arg1, arg2, arg3, _arg4] = event.data.as_data32();
                 let mut state = self.0.borrow_mut();
 
                 if atom == state.atoms.WM_DELETE_WINDOW {
@@ -481,6 +481,14 @@ impl X11Client {
                         // Rest of the close logic is handled in drop_window()
                         window.close();
                     }
+                } else if atom == state.atoms._NET_WM_SYNC_REQUEST {
+                    println!("sync request {:?}", arg2 as i64 + ((arg3 as i64) << 32));
+                    window.state.borrow_mut().last_sync_counter = Some(
+                        (x11rb::protocol::sync::Int64 {
+                            lo: arg2,
+                            hi: arg3 as i32,
+                        }),
+                    )
                 }
             }
             Event::ConfigureNotify(event) => {
@@ -494,6 +502,7 @@ impl X11Client {
                         height: event.height.into(),
                     },
                 };
+                println!("configure notify {:?}", bounds);
                 let window = self.get_window(event.window)?;
                 window.configure(bounds);
             }

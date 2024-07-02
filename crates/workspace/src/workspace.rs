@@ -6575,16 +6575,6 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
         .size_full()
         .child(
             div()
-                .child(
-                    canvas(
-                        |bounds, cx| {
-                            cx.set_client_area(bounds);
-                        },
-                        |_, _, _| {},
-                    )
-                    .size_full()
-                    .absolute(),
-                )
                 .cursor(CursorStyle::Arrow)
                 .map(|div| match decorations {
                     Decorations::Server => div,
@@ -6627,8 +6617,7 @@ fn resize_edge(
     size: Size<Pixels>,
     tiling: Tiling,
 ) -> Option<ResizeEdge> {
-
-    let above_top = !tiling.top && pos.y <shadow_size;
+    let above_top = !tiling.top && pos.y < shadow_size;
     let to_left = !tiling.left && pos.x < shadow_size;
     let to_right = !tiling.right && pos.x > size.width - shadow_size;
     let below_bottom = !tiling.bottom && pos.y > size.height - shadow_size;
