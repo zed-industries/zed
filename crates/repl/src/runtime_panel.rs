@@ -51,11 +51,6 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, cx| {
-                    let settings = JupyterSettings::get_global(cx);
-                    if !settings.enabled {
-                        return;
-                    }
-
                     workspace.toggle_panel_focus::<RuntimePanel>(cx);
                 })
                 .register_action(run);
@@ -67,6 +62,7 @@ pub fn init(cx: &mut AppContext) {
 pub struct RuntimePanel {
     #[allow(unused)]
     workspace: WeakView<Workspace>,
+    enabled: bool,
     focus_handle: FocusHandle,
     width: Option<Pixels>,
     sessions: HashMap<EntityId, View<Session>>,
@@ -93,15 +89,13 @@ impl RuntimePanel {
                         cx.on_focus_in(&focus_handle, Self::focus_in),
                         cx.on_focus_out(&focus_handle, Self::focus_out),
                         cx.observe(&runtime_manager, Self::handle_update),
-                        cx.observe_global::<SettingsStore>(move |_this, cx| {
+                        cx.observe_global::<SettingsStore>(move |this, cx| {
                             let settings = JupyterSettings::get_global(cx);
-                            if settings.enabled && RuntimeManager::global(cx).is_none() {
-                                // todo!(): turn panel and operations on and off
-                            } else {
-                                // todo!()
-                            }
+                            this.set_enabled(settings.enabled, cx);
                         }),
                     ];
+
+                    let enabled = JupyterSettings::get_global(cx).enabled;
 
                     Self {
                         width: None,
@@ -110,6 +104,7 @@ impl RuntimePanel {
                         sessions: Default::default(),
                         workspace: workspace.weak_handle(),
                         _subscriptions: subscriptions,
+                        enabled,
                     }
                 })
             })?;
@@ -121,6 +116,13 @@ impl RuntimePanel {
 
             Ok(view)
         })
+    }
+
+    fn set_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
+        if self.enabled != enabled {
+            self.enabled = enabled;
+            cx.notify();
+        }
     }
 
     fn handle_update(&mut self, _model: Model<RuntimeManager>, cx: &mut ViewContext<Self>) {
@@ -215,6 +217,10 @@ impl RuntimePanel {
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> anyhow::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+
         let (selected_text, language_name, anchor_range) = match self.snippet(editor.clone(), cx) {
             Some(snippet) => snippet,
             None => return Ok(()),
@@ -296,6 +302,10 @@ impl Panel for RuntimePanel {
     }
 
     fn icon(&self, _cx: &ui::WindowContext) -> Option<ui::IconName> {
+        if !self.enabled {
+            return None;
+        }
+
         // todo!(): get an icon for runtime panel
         Some(IconName::Code)
     }
