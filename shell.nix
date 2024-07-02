@@ -2,57 +2,40 @@
   pkgs ? import <nixpkgs> { },
 }:
 
-pkgs.mkShell {
-  nativeBuildInputs =
-    with pkgs;
-    [
-      copyDesktopItems
-      curl
-      perl
-      pkg-config
-      protobuf
-      rustPlatform.bindgenHook
-    ]
-    ++ lib.optionals stdenv.isDarwin [ pkgs.xcbuild.xcrun ];
+let
+  stdenv = pkgs.stdenvAdapters.useMoldLinker pkgs.llvmPackages_18.stdenv;
+in
+(pkgs.mkShell.override { inherit stdenv; }) rec {
+  nativeBuildInputs = with pkgs; [
+    copyDesktopItems
+    curl
+    perl
+    pkg-config
+    protobuf
+    rustPlatform.bindgenHook
+  ];
 
-  buildInputs =
-    with pkgs;
-    [
-      curl
-      fontconfig
-      freetype
-      libgit2
-      openssl
-      sqlite
-      zlib
-      zstd
-    ]
-    ++ lib.optionals stdenv.isLinux [
-      alsa-lib
-      libxkbcommon
-      wayland
-      xorg.libxcb
-    ]
-    ++ lib.optionals stdenv.isDarwin (
-      with darwin.apple_sdk.frameworks;
-      [
-        AppKit
-        CoreAudio
-        CoreFoundation
-        CoreGraphics
-        CoreMedia
-        CoreServices
-        CoreText
-        Foundation
-        IOKit
-        Metal
-        Security
-        SystemConfiguration
-        VideoToolbox
-      ]
-    );
+  buildInputs = with pkgs; [
+    curl
+    fontconfig
+    freetype
+    libgit2
+    openssl
+    sqlite
+    zlib
+    zstd
+
+    alsa-lib
+    libxkbcommon
+    wayland
+    xorg.libxcb
+  ];
 
   env = {
+    LD_LIBRARY_PATH = with pkgs; lib.makeLibraryPath (buildInputs ++ [
+      stdenv.cc.cc.lib
+      vulkan-loader
+    ]);
     ZSTD_SYS_USE_PKG_CONFIG = true;
     FONTCONFIG_FILE = pkgs.makeFontsConf {
       fontDirectories = [
