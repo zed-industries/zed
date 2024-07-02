@@ -1,7 +1,10 @@
+use std::ops::Range;
+
 use crate::{
-    Copy, CopyPermalinkToLine, Cut, DisplayPoint, Editor, EditorMode, FindAllReferences,
-    GoToDefinition, GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFinder,
-    SelectMode, ToggleCodeActions,
+    selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut, DisplayPoint,
+    DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
+    GoToTypeDefinition, Paste, Rename, RevealInFinder, SelectMode, ToDisplayPoint,
+    ToggleCodeActions,
 };
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
@@ -37,6 +40,23 @@ impl MouseContextMenu {
     }
 }
 
+fn display_ranges<'a>(
+    display_map: &'a DisplaySnapshot,
+    selections: &'a SelectionsCollection,
+) -> impl Iterator<Item = Range<DisplayPoint>> + 'a {
+    let pending = selections
+        .pending
+        .as_ref()
+        .map(|pending| &pending.selection);
+    selections.disjoint.iter().chain(pending).map(move |s| {
+        if s.reversed {
+            s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
+        } else {
+            s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
+        }
+    })
+}
+
 pub fn deploy_context_menu(
     editor: &mut Editor,
     position: Point<Pixels>,
@@ -65,11 +85,14 @@ pub fn deploy_context_menu(
             return;
         }
 
-        // Move the cursor to the clicked location so that dispatched actions make sense
-        editor.change_selections(None, cx, |s| {
-            s.clear_disjoint();
-            s.set_pending_display_range(point..point, SelectMode::Character);
-        });
+        let display_map = editor.selections.display_map(cx);
+        if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
+            // Move the cursor to the clicked location so that dispatched actions make sense
+            editor.change_selections(None, cx, |s| {
+                s.clear_disjoint();
+                s.set_pending_display_range(point..point, SelectMode::Character);
+            });
+        }
 
         let focus = cx.focused();
         ui::ContextMenu::build(cx, |menu, _cx| {
