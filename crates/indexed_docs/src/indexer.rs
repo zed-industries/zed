@@ -23,7 +23,7 @@ pub enum RustdocSource {
 }
 
 #[async_trait]
-pub trait RustdocProvider {
+pub trait IndexedDocsProvider {
     async fn fetch_page(
         &self,
         crate_name: &CrateName,
@@ -46,7 +46,7 @@ impl LocalProvider {
 }
 
 #[async_trait]
-impl RustdocProvider for LocalProvider {
+impl IndexedDocsProvider for LocalProvider {
     async fn fetch_page(
         &self,
         crate_name: &CrateName,
@@ -79,7 +79,7 @@ impl DocsDotRsProvider {
 }
 
 #[async_trait]
-impl RustdocProvider for DocsDotRsProvider {
+impl IndexedDocsProvider for DocsDotRsProvider {
     async fn fetch_page(
         &self,
         crate_name: &CrateName,
@@ -130,13 +130,13 @@ struct RustdocItemWithHistory {
 
 pub(crate) struct DocsIndexer {
     database: Arc<IndexedDocsDatabase>,
-    provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
+    provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
 }
 
 impl DocsIndexer {
     pub fn new(
         database: Arc<IndexedDocsDatabase>,
-        provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
+        provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
     ) -> Self {
         Self { database, provider }
     }

@@ -15,7 +15,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::indexer::{DocsIndexer, RustdocProvider};
+use crate::indexer::{DocsIndexer, IndexedDocsProvider};
 use crate::{RustdocItem, RustdocItemKind};
 
 /// The name of a crate.
@@ -95,7 +95,7 @@ impl IndexedDocsStore {
     pub fn index(
         self: Arc<Self>,
         crate_name: CrateName,
-        provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
+        provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
     ) -> Shared<Task<Result<(), Arc<anyhow::Error>>>> {
         if let Some(existing_task) = self.indexing_tasks_by_crate.read().get(&crate_name) {
             return existing_task.clone();
