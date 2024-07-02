@@ -1970,6 +1970,7 @@ message CompleteWithLanguageModel {
     float temperature = 4;
     repeated ChatCompletionTool tools = 5;
     optional string tool_choice = 6;
+    repeated string cached_contents = 7;
 }
 
 message CacheLanguageModelContent {

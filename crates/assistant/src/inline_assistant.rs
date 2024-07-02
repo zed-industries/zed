@@ -851,6 +851,7 @@ impl InlineAssistant {
                 messages,
                 stop: vec!["|END|>".to_string()],
                 temperature,
+                cached_contents: Vec::new(),
             })
         })
     }

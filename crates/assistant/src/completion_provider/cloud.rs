@@ -136,6 +136,7 @@ impl CloudCompletionProvider {
             temperature: request.temperature,
             tools: Vec::new(),
             tool_choice: None,
+            cached_contents: request.cached_contents,
         };
 
         self.client

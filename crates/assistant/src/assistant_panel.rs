@@ -1745,6 +1745,7 @@ impl Context {
             messages: messages.collect(),
             stop: vec![],
             temperature: 1.0,
+            cached_contents: Vec::new(),
         }
     }
 
@@ -1932,6 +1933,7 @@ impl Context {
                 messages: messages.collect(),
                 stop: vec![],
                 temperature: 1.0,
+                cached_contents: Vec::new(),
             };
 
             let stream = CompletionProvider::global(cx).complete(request);

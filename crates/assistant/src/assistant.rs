@@ -165,6 +165,7 @@ pub struct LanguageModelRequest {
     pub messages: Vec<LanguageModelRequestMessage>,
     pub stop: Vec<String>,
     pub temperature: f32,
+    pub cached_contents: Vec<String>,
 }
 
 impl LanguageModelRequest {
@@ -176,6 +177,7 @@ impl LanguageModelRequest {
             temperature: self.temperature,
             tool_choice: None,
             tools: Vec::new(),
+            cached_contents: self.cached_contents.clone(),
         }
     }
 

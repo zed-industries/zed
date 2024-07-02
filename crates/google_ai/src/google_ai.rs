@@ -97,6 +97,7 @@ pub struct GenerateContentRequest {
     pub contents: Vec<Content>,
     pub generation_config: Option<GenerationConfig>,
     pub safety_settings: Option<Vec<SafetySetting>>,
+    pub cached_content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -101,6 +101,7 @@ pub fn language_model_request_to_google_ai(
             .collect::<Result<Vec<_>>>()?,
         generation_config: None,
         safety_settings: None,
+        cached_content: request.cached_contents.into_iter().next(),
     })
 }
 
