@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -17,6 +19,7 @@ pub struct JupyterSettings {
     pub enabled: bool,
     pub dock: JupyterDockPosition,
     pub default_width: Pixels,
+    pub kernel_selections: HashMap<String, String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -33,6 +36,10 @@ pub struct JupyterSettingsContent {
     ///
     /// Default: 640
     pub default_width: Option<f32>,
+    /// Default kernels to select for each language.
+    ///
+    /// Default: `{}`
+    pub kernel_selections: Option<HashMap<String, String>>,
 }
 
 impl JupyterSettingsContent {
@@ -47,6 +54,7 @@ impl Default for JupyterSettingsContent {
             enabled: Some(false),
             dock: Some(JupyterDockPosition::Right),
             default_width: Some(640.0),
+            kernel_selections: Some(HashMap::new()),
         }
     }
 }
@@ -75,6 +83,12 @@ impl Settings for JupyterSettings {
 
             if let Some(default_width) = value.default_width {
                 settings.default_width = Pixels::from(default_width);
+            }
+
+            if let Some(source) = &value.kernel_selections {
+                for (k, v) in source {
+                    settings.kernel_selections.insert(k.clone(), v.clone());
+                }
             }
         }
 

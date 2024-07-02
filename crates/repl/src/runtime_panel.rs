@@ -188,11 +188,24 @@ impl RuntimePanel {
         })
     }
 
-    pub fn kernelspec(&self, language_name: &str) -> Option<KernelSpecification> {
+    pub fn kernelspec(
+        &self,
+        language_name: &str,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<KernelSpecification> {
+        let settings = JupyterSettings::get_global(cx);
+        let selected_kernel = settings.kernel_selections.get(language_name);
+
         self.kernel_specifications
             .iter()
             .find(|runtime_specification| {
-                runtime_specification.kernelspec.language.as_str() == language_name
+                if let Some(selected) = selected_kernel {
+                    // Top priority is the selected kernel
+                    &runtime_specification.name == selected
+                } else {
+                    // Otherwise, we'll try to find a kernel that matches the language
+                    runtime_specification.kernelspec.language.as_str() == language_name
+                }
             })
             .cloned()
     }
@@ -215,7 +228,7 @@ impl RuntimePanel {
         let entity_id = editor.entity_id();
 
         let kernel_specification = self
-            .kernelspec(&language_name)
+            .kernelspec(&language_name, cx)
             .with_context(|| format!("No kernel found for language: {language_name}"))?;
 
         let session = self.sessions.entry(entity_id).or_insert_with(|| {
@@ -223,8 +236,6 @@ impl RuntimePanel {
             cx.notify();
             view
         });
-
-        // todo!(): Check if session uses the same language as the snippet
 
         session.update(cx, |session, cx| {
             session.execute(&selected_text, anchor_range, cx);
@@ -353,7 +364,6 @@ impl Render for RuntimePanel {
         }
 
         // When there are no sessions, show the command to run code in an editor
-
         if self.sessions.is_empty() {
             return v_flex()
                 .p_4()
