@@ -31,9 +31,91 @@ pub struct Session {
 
 #[derive(Debug)]
 struct EditorBlock {
+    editor: View<Editor>,
     code_range: Range<Anchor>,
     block_id: BlockId,
     execution_view: View<ExecutionView>,
+}
+
+impl EditorBlock {
+    pub fn new(
+        editor: View<Editor>,
+        code_range: Range<Anchor>,
+        status: ExecutionStatus,
+        cx: &mut ViewContext<Session>,
+    ) -> Self {
+        let execution_view = cx.new_view(|cx| ExecutionView::new(status, cx));
+
+        let block_id = editor.update(cx, |editor, cx| {
+            let block = BlockProperties {
+                position: code_range.end,
+                height: execution_view.num_lines(cx).saturating_add(1),
+                style: BlockStyle::Sticky,
+                render: Self::create_output_area_render(execution_view.clone()),
+                disposition: BlockDisposition::Below,
+            };
+
+            editor.insert_blocks([block], None, cx)[0]
+        });
+
+        Self {
+            editor,
+            code_range,
+            block_id,
+            execution_view,
+        }
+    }
+
+    pub fn handle_message(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Session>) {
+        self.execution_view.update(cx, |execution_view, cx| {
+            execution_view.push_message(&message.content, cx);
+        });
+
+        let execution_view = self.execution_view.clone();
+
+        self.editor.update(cx, |editor, cx| {
+            let mut replacements = HashMap::default();
+            replacements.insert(
+                self.block_id,
+                (
+                    Some(self.execution_view.num_lines(cx).saturating_add(1)),
+                    Self::create_output_area_render(execution_view),
+                ),
+            );
+            editor.replace_blocks(replacements, None, cx);
+        })
+    }
+
+    pub fn create_output_area_render(execution_view: View<ExecutionView>) -> RenderBlock {
+        let render = move |cx: &mut BlockContext| {
+            let execution_view = execution_view.clone();
+            let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
+            // Note: we'll want to use `cx.anchor_x` when someone runs something with no output -- just show a checkmark and not make the full block below the line
+
+            let gutter_width = cx.gutter_dimensions.width;
+
+            h_flex()
+                .w_full()
+                .bg(cx.theme().colors().background)
+                .border_y_1()
+                .border_color(cx.theme().colors().border)
+                .pl(gutter_width)
+                .child(
+                    div()
+                        .font_family(text_font)
+                        // .ml(gutter_width)
+                        .mx_1()
+                        .my_2()
+                        .h_full()
+                        .w_full()
+                        .mr(gutter_width)
+                        .child(execution_view),
+                )
+                .into_any_element()
+        };
+
+        Box::new(render)
+    }
 }
 
 impl Session {
@@ -45,8 +127,6 @@ impl Session {
     ) -> Self {
         let entity_id = editor.entity_id();
         let kernel = RunningKernel::new(runtime_specification.clone(), entity_id, fs.clone(), cx);
-
-        // todo!(): Add in a kernel info request on startup until ready with a duration check
 
         let pending_kernel = cx
             .spawn(|this, mut cx| async move {
@@ -67,7 +147,7 @@ impl Session {
                                 while let Some(message) = messages_rx.next().await {
                                     session
                                         .update(&mut cx, |session, cx| {
-                                            session.route(message, cx);
+                                            session.route(&message, cx);
                                         })
                                         .ok();
                                 }
@@ -123,20 +203,6 @@ impl Session {
 
         let message: JupyterMessage = execute_request.into();
 
-        let status = match &self.kernel {
-            Kernel::RunningKernel(_) => ExecutionStatus::Queued,
-            Kernel::StartingKernel(_) => ExecutionStatus::ConnectingToKernel,
-            Kernel::ErroredLaunch(error) => ExecutionStatus::KernelErrored(error.clone()),
-            Kernel::ShuttingDown => ExecutionStatus::ShuttingDown,
-            Kernel::Shutdown => ExecutionStatus::Shutdown,
-        };
-
-        let execution_view = cx.new_view(|cx| {
-            let mut execution_view = ExecutionView::new(cx);
-            execution_view.set_status(status, cx);
-            execution_view
-        });
-
         let mut blocks_to_remove: HashSet<BlockId> = HashSet::default();
 
         let buffer = self.editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -150,24 +216,19 @@ impl Session {
             }
         });
 
-        let block_id = self.editor.update(cx, |editor, cx| {
+        self.editor.update(cx, |editor, cx| {
             editor.remove_blocks(blocks_to_remove, None, cx);
-            let block = BlockProperties {
-                position: anchor_range.end,
-                height: execution_view.num_lines(cx).saturating_add(1),
-                style: BlockStyle::Sticky,
-                render: create_output_area_render(execution_view.clone()),
-                disposition: BlockDisposition::Below,
-            };
-
-            editor.insert_blocks([block], None, cx)[0]
         });
 
-        let editor_block = EditorBlock {
-            code_range: anchor_range,
-            block_id,
-            execution_view: execution_view.clone(),
+        let status = match &self.kernel {
+            Kernel::RunningKernel(_) => ExecutionStatus::Queued,
+            Kernel::StartingKernel(_) => ExecutionStatus::ConnectingToKernel,
+            Kernel::ErroredLaunch(error) => ExecutionStatus::KernelErrored(error.clone()),
+            Kernel::ShuttingDown => ExecutionStatus::ShuttingDown,
+            Kernel::Shutdown => ExecutionStatus::Shutdown,
         };
+
+        let editor_block = EditorBlock::new(self.editor.clone(), anchor_range, status, cx);
 
         self.blocks
             .insert(message.header.msg_id.clone(), editor_block);
@@ -190,18 +251,13 @@ impl Session {
                 })
                 .detach();
             }
-            Kernel::ErroredLaunch(error) => {
-                execution_view.update(cx, |execution_view, cx| {
-                    execution_view.set_status(ExecutionStatus::KernelErrored(error.clone()), cx);
-                });
-            }
             _ => {}
         }
     }
 
-    fn route(&mut self, message: JupyterMessage, cx: &mut ViewContext<Self>) {
-        let parent_message_id = match message.parent_header {
-            Some(header) => header.msg_id,
+    fn route(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Self>) {
+        let parent_message_id = match message.parent_header.as_ref() {
+            Some(header) => header.msg_id.clone(),
             None => return,
         };
 
@@ -218,20 +274,7 @@ impl Session {
         }
 
         if let Some(block) = self.blocks.get_mut(&parent_message_id) {
-            block.execution_view.update(cx, |execution_view, cx| {
-                execution_view.push_message(&message.content, cx);
-            });
-            self.editor.update(cx, |editor, cx| {
-                let mut replacements = HashMap::default();
-                replacements.insert(
-                    block.block_id,
-                    (
-                        Some(block.execution_view.num_lines(cx).saturating_add(1)),
-                        create_output_area_render(block.execution_view.clone()),
-                    ),
-                );
-                editor.replace_blocks(replacements, None, cx);
-            });
+            block.handle_message(&message, cx);
             return;
         }
     }
@@ -335,35 +378,4 @@ impl Render for Session {
             )
             .child(h_flex().gap_2().children(buttons));
     }
-}
-
-fn create_output_area_render(execution_view: View<ExecutionView>) -> RenderBlock {
-    let render = move |cx: &mut BlockContext| {
-        let execution_view = execution_view.clone();
-        let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
-        // Note: we'll want to use `cx.anchor_x` when someone runs something with no output -- just show a checkmark and not make the full block below the line
-
-        let gutter_width = cx.gutter_dimensions.width;
-
-        h_flex()
-            .w_full()
-            .bg(cx.theme().colors().background)
-            .border_y_1()
-            .border_color(cx.theme().colors().border)
-            .pl(gutter_width)
-            .child(
-                div()
-                    .font_family(text_font)
-                    // .ml(gutter_width)
-                    .mx_1()
-                    .my_2()
-                    .h_full()
-                    .w_full()
-                    .mr(gutter_width)
-                    .child(execution_view),
-            )
-            .into_any_element()
-    };
-
-    Box::new(render)
 }
