@@ -49,9 +49,17 @@ impl LineWrapper {
                     continue;
                 }
 
-                if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = ix;
-                    last_candidate_width = width;
+                if Self::is_word_char(c) {
+                    if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
+                        last_candidate_ix = ix;
+                        last_candidate_width = width;
+                    }
+                } else {
+                    // CJK may not be space separated, e.g.: `Hello world你好世界`
+                    if c != ' ' && first_non_whitespace_ix.is_some() {
+                        last_candidate_ix = ix;
+                        last_candidate_width = width;
+                    }
                 }
 
                 if c != ' ' && first_non_whitespace_ix.is_none() {
@@ -88,6 +96,31 @@ impl LineWrapper {
 
             None
         })
+    }
+
+    pub(crate) fn is_word_char(c: char) -> bool {
+        // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
+        c.is_ascii_alphanumeric() ||
+        // Latin script in Unicode for French, German, Spanish, etc.
+        // Latin-1 Supplement
+        // https://en.wikipedia.org/wiki/Latin-1_Supplement
+        matches!(c, '\u{00C0}'..='\u{00FF}') ||
+        // Latin Extended-A
+        // https://en.wikipedia.org/wiki/Latin_Extended-A
+        matches!(c, '\u{0100}'..='\u{017F}') ||
+        // Latin Extended-B
+        // https://en.wikipedia.org/wiki/Latin_Extended-B
+        matches!(c, '\u{0180}'..='\u{024F}') ||
+        // Cyrillic for Russian, Ukrainian, etc.
+        // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
+        matches!(c, '\u{0400}'..='\u{04FF}') ||
+        // Some other known special characters that should be treated as word characters,
+        // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`, `2^3`, `a~b`, etc.
+        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~') ||
+        // Characters that used in URL, e.g. `https://github.com/zed-industries/zed?a=1&b=2` for better wrapping a long URL.
+        matches!(c,  '/' | ':' | '?' | '&' | '=') ||
+        // `⋯` character is special used in Zed, to keep this at the end of the line.
+        matches!(c, '⋯')
     }
 
     #[inline(always)]
@@ -217,6 +250,59 @@ mod tests {
                 ]
             );
         });
+    }
+
+    #[test]
+    fn test_is_word_char() {
+        #[track_caller]
+        fn assert_word(word: &str) {
+            for c in word.chars() {
+                assert!(LineWrapper::is_word_char(c), "assertion failed for '{}'", c);
+            }
+        }
+
+        #[track_caller]
+        fn assert_not_word(word: &str) {
+            let found = word.chars().any(|c| !LineWrapper::is_word_char(c));
+            assert!(found, "assertion failed for '{}'", word);
+        }
+
+        assert_word("Hello123");
+        assert_word("non-English");
+        assert_word("var_name");
+        assert_word("123456");
+        assert_word("3.1415");
+        assert_word("10^2");
+        assert_word("1~2");
+        assert_word("100%");
+        assert_word("@mention");
+        assert_word("#hashtag");
+        assert_word("$variable");
+        assert_word("more⋯");
+
+        // Space
+        assert_not_word("foo bar");
+
+        // URL case
+        assert_word("https://github.com/zed-industries/zed/");
+        assert_word("github.com");
+        assert_word("a=1&b=2");
+
+        // Latin-1 Supplement
+        assert_word("ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ");
+        // Latin Extended-A
+        assert_word("ĀāĂăĄąĆćĈĉĊċČčĎď");
+        // Latin Extended-B
+        assert_word("ƀƁƂƃƄƅƆƇƈƉƊƋƌƍƎƏ");
+        // Cyrillic
+        assert_word("АБВГДЕЖЗИЙКЛМНОП");
+
+        // non-word characters
+        assert_not_word("你好");
+        assert_not_word("안녕하세요");
+        assert_not_word("こんにちは");
+        assert_not_word("😀😁😂");
+        assert_not_word("()[]{}<>");
     }
 
     // For compatibility with the test macro
