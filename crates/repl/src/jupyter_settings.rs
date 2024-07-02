@@ -5,7 +5,7 @@ use ui::Pixels;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum RuntimesDockPosition {
+pub enum JupyterDockPosition {
     Left,
     #[default]
     Right,
@@ -15,21 +15,21 @@ pub enum RuntimesDockPosition {
 #[derive(Debug, Default)]
 pub struct JupyterSettings {
     pub enabled: bool,
-    pub dock: RuntimesDockPosition,
+    pub dock: JupyterDockPosition,
     pub default_width: Pixels,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct JupyterSettingsContent {
-    /// Whether the Runtimes feature is enabled.
+    /// Whether the Jupyter feature is enabled.
     ///
     /// Default: `false`
     enabled: Option<bool>,
-    /// Where to dock the runtimes panel.
+    /// Where to dock the Jupyter panel.
     ///
     /// Default: `right`
-    dock: Option<RuntimesDockPosition>,
-    /// Default width in pixels when the runtimes panel is docked to the left or right.
+    dock: Option<JupyterDockPosition>,
+    /// Default width in pixels when the jupyter panel is docked to the left or right.
     ///
     /// Default: 640
     pub default_width: Option<f32>,
@@ -39,7 +39,7 @@ impl Default for JupyterSettingsContent {
     fn default() -> Self {
         JupyterSettingsContent {
             enabled: Some(false),
-            dock: Some(RuntimesDockPosition::Right),
+            dock: Some(JupyterDockPosition::Right),
             default_width: Some(640.0),
         }
     }

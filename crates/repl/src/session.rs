@@ -1,6 +1,6 @@
 use crate::{
+    kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView, LineHeight as _},
-    runtimes::{Kernel, RunningKernel, RuntimeSpecification},
 };
 use collections::{HashMap, HashSet};
 use editor::{
@@ -26,7 +26,7 @@ pub struct Session {
     kernel: Kernel,
     blocks: HashMap<String, EditorBlock>,
     messaging_task: Task<()>,
-    runtime_specification: RuntimeSpecification,
+    kernel_specification: KernelSpecification,
 }
 
 #[derive(Debug)]
@@ -120,11 +120,11 @@ impl Session {
     pub fn new(
         editor: View<Editor>,
         fs: Arc<dyn Fs>,
-        runtime_specification: RuntimeSpecification,
+        kernel_specification: KernelSpecification,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let entity_id = editor.entity_id();
-        let kernel = RunningKernel::new(runtime_specification.clone(), entity_id, fs.clone(), cx);
+        let kernel = RunningKernel::new(kernel_specification.clone(), entity_id, fs.clone(), cx);
 
         let pending_kernel = cx
             .spawn(|this, mut cx| async move {
@@ -168,7 +168,7 @@ impl Session {
             kernel: Kernel::StartingKernel(pending_kernel),
             messaging_task: Task::ready(()),
             blocks: HashMap::default(),
-            runtime_specification,
+            kernel_specification,
         };
     }
 
@@ -311,7 +311,6 @@ impl Session {
                 .detach();
             }
             Kernel::StartingKernel(_kernel) => {
-                // todo!(): cancel the task
                 self.kernel = Kernel::Shutdown;
             }
             _ => {
@@ -345,7 +344,7 @@ impl Render for Session {
                             session.interrupt(cx);
                         })),
                 );
-                let mut name = self.runtime_specification.name.clone();
+                let mut name = self.kernel_specification.name.clone();
 
                 if let Some(info) = &kernel.kernel_info {
                     name.push_str(" (");
@@ -354,12 +353,12 @@ impl Render for Session {
                 }
                 name
             }
-            Kernel::StartingKernel(_) => format!("{} (Starting)", self.runtime_specification.name),
+            Kernel::StartingKernel(_) => format!("{} (Starting)", self.kernel_specification.name),
             Kernel::ErroredLaunch(err) => {
-                format!("{} (Error: {})", self.runtime_specification.name, err)
+                format!("{} (Error: {})", self.kernel_specification.name, err)
             }
-            Kernel::ShuttingDown => format!("{} (Shutting Down)", self.runtime_specification.name),
-            Kernel::Shutdown => format!("{} (Shutdown)", self.runtime_specification.name),
+            Kernel::ShuttingDown => format!("{} (Shutting Down)", self.kernel_specification.name),
+            Kernel::Shutdown => format!("{} (Shutdown)", self.kernel_specification.name),
         };
 
         return v_flex()

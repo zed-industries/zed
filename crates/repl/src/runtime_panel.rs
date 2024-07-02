@@ -1,21 +1,19 @@
 use crate::{
-    runtime_settings::JupyterSettings,
-    runtimes::{kernel_specifications, RuntimeSpecification},
-    Session,
+    jupyter_settings::JupyterSettings,
+    kernels::{kernel_specifications, KernelSpecification},
+    session::Session,
 };
 use anyhow::{Context as _, Result};
-use async_dispatcher::{set_dispatcher, Dispatcher, Runnable};
 use collections::HashMap;
 use editor::{Anchor, Editor, RangeToAnchorExt};
 use gpui::{
     actions, prelude::*, AppContext, AsyncWindowContext, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusOutEvent, FocusableView, PlatformDispatcher, Subscription, Task, View,
-    WeakView,
+    FocusHandle, FocusOutEvent, FocusableView, Subscription, Task, View, WeakView,
 };
 use language::Point;
 use project::Fs;
 use settings::{Settings as _, SettingsStore};
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc};
 use ui::prelude::*;
 use workspace::{
     dock::{Panel, PanelEvent},
@@ -24,33 +22,7 @@ use workspace::{
 
 actions!(repl, [Run, ToggleFocus]);
 
-fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
-    struct ZedDispatcher {
-        dispatcher: Arc<dyn PlatformDispatcher>,
-    }
-
-    // PlatformDispatcher is _super_ close to the same interface we put in
-    // async-dispatcher, except for the task label in dispatch. Later we should
-    // just make that consistent so we have this dispatcher ready to go for
-    // other crates in Zed.
-    impl Dispatcher for ZedDispatcher {
-        fn dispatch(&self, runnable: Runnable) {
-            self.dispatcher.dispatch(runnable, None)
-        }
-
-        fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
-            self.dispatcher.dispatch_after(duration, runnable);
-        }
-    }
-
-    ZedDispatcher {
-        dispatcher: cx.background_executor().dispatcher.clone(),
-    }
-}
-
 pub fn init(cx: &mut AppContext) {
-    set_dispatcher(zed_dispatcher(cx));
-    JupyterSettings::register(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
@@ -69,7 +41,7 @@ pub struct RuntimePanel {
     focus_handle: FocusHandle,
     width: Option<Pixels>,
     sessions: HashMap<EntityId, View<Session>>,
-    runtime_specifications: Vec<RuntimeSpecification>,
+    kernel_specifications: Vec<KernelSpecification>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -100,7 +72,7 @@ impl RuntimePanel {
                         fs,
                         width: None,
                         focus_handle,
-                        runtime_specifications: Vec::new(),
+                        kernel_specifications: Vec::new(),
                         sessions: Default::default(),
                         _subscriptions: subscriptions,
                         enabled,
@@ -210,14 +182,14 @@ impl RuntimePanel {
             let kernel_specifications = kernel_specifications.await?;
 
             this.update(&mut cx, |this, cx| {
-                this.runtime_specifications = kernel_specifications;
+                this.kernel_specifications = kernel_specifications;
                 cx.notify();
             })
         })
     }
 
-    pub fn kernelspec(&self, language_name: &str) -> Option<RuntimeSpecification> {
-        self.runtime_specifications
+    pub fn kernelspec(&self, language_name: &str) -> Option<KernelSpecification> {
+        self.kernel_specifications
             .iter()
             .find(|runtime_specification| {
                 runtime_specification.kernelspec.language.as_str() == language_name
@@ -242,12 +214,12 @@ impl RuntimePanel {
 
         let entity_id = editor.entity_id();
 
-        let runtime_specification = self
+        let kernel_specification = self
             .kernelspec(&language_name)
             .with_context(|| format!("No kernel found for language: {language_name}"))?;
 
         let session = self.sessions.entry(entity_id).or_insert_with(|| {
-            let view = cx.new_view(|cx| Session::new(editor, fs, runtime_specification, cx));
+            let view = cx.new_view(|cx| Session::new(editor, fs, kernel_specification, cx));
             cx.notify();
             view
         });
@@ -345,7 +317,7 @@ impl Render for RuntimePanel {
             // .child(Label::new("Jupyter Kernels Available"))
             // .children(
             //    self
-            //         .runtime_specifications
+            //         .kernel_specifications
             //         .iter()
             //         .map(|spec| div().child(spec.name.clone())),
             // )

@@ -21,13 +21,13 @@ use std::{
 use ui::{Color, Indicator};
 
 #[derive(Debug, Clone)]
-pub struct RuntimeSpecification {
+pub struct KernelSpecification {
     pub name: String,
     pub path: PathBuf,
     pub kernelspec: JupyterKernelspec,
 }
 
-impl RuntimeSpecification {
+impl KernelSpecification {
     #[must_use]
     fn command(&self, connection_path: &PathBuf) -> anyhow::Result<Command> {
         let argv = &self.kernelspec.argv;
@@ -138,7 +138,7 @@ impl Debug for RunningKernel {
 
 impl RunningKernel {
     pub fn new(
-        runtime_specification: RuntimeSpecification,
+        kernel_specification: KernelSpecification,
         entity_id: EntityId,
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
@@ -157,7 +157,7 @@ impl RunningKernel {
                 iopub_port: ports[4],
                 signature_scheme: "hmac-sha256".to_string(),
                 key: uuid::Uuid::new_v4().to_string(),
-                kernel_name: Some(format!("zed-{}", runtime_specification.name)),
+                kernel_name: Some(format!("zed-{}", kernel_specification.name)),
             };
 
             let connection_path = dirs::runtime_dir().join(format!("kernel-zed-{entity_id}.json"));
@@ -165,7 +165,7 @@ impl RunningKernel {
             // write out file to disk for kernel
             fs.atomic_write(connection_path.clone(), content).await?;
 
-            let mut cmd = runtime_specification.command(&connection_path)?;
+            let mut cmd = kernel_specification.command(&connection_path)?;
             let process = cmd
                 // .stdout(Stdio::null())
                 // .stderr(Stdio::null())
@@ -274,7 +274,7 @@ async fn read_kernelspec_at(
     // /usr/local/share/jupyter/kernels/python3
     kernel_dir: PathBuf,
     fs: &dyn Fs,
-) -> anyhow::Result<RuntimeSpecification> {
+) -> anyhow::Result<KernelSpecification> {
     let path = kernel_dir;
     let kernel_name = if let Some(kernel_name) = path.file_name() {
         kernel_name.to_string_lossy().to_string()
@@ -290,7 +290,7 @@ async fn read_kernelspec_at(
     let spec = fs.load(expected_kernel_json.as_path()).await?;
     let spec = serde_json::from_str::<JupyterKernelspec>(&spec)?;
 
-    Ok(RuntimeSpecification {
+    Ok(KernelSpecification {
         name: kernel_name,
         path,
         kernelspec: spec,
@@ -298,7 +298,7 @@ async fn read_kernelspec_at(
 }
 
 /// Read a directory of kernelspec directories
-async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> anyhow::Result<Vec<RuntimeSpecification>> {
+async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> anyhow::Result<Vec<KernelSpecification>> {
     let mut kernelspec_dirs = fs.read_dir(&path).await?;
 
     let mut valid_kernelspecs = Vec::new();
@@ -318,7 +318,7 @@ async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> anyhow::Result<Vec<Runt
     Ok(valid_kernelspecs)
 }
 
-pub async fn kernel_specifications(fs: Arc<dyn Fs>) -> anyhow::Result<Vec<RuntimeSpecification>> {
+pub async fn kernel_specifications(fs: Arc<dyn Fs>) -> anyhow::Result<Vec<KernelSpecification>> {
     let data_dirs = dirs::data_dirs();
     let kernel_dirs = data_dirs
         .iter()
