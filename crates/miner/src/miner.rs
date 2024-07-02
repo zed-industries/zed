@@ -268,15 +268,30 @@ impl Miner {
         self.reset().await;
 
         println!("Starting project summarization");
-        // Populate the queue with files and directories
-        let mut entries = self.walk_root().await?;
+        let entries = self.walk_root().await?;
+        self.process_entries(entries).await?;
 
+        println!("Initial queue population complete");
+
+        self.process_queue().await?;
+
+        self.remove_deleted_entries().await?;
+
+        self.finish_progress();
+        println!("Project summarization completed successfully");
+        Ok(())
+    }
+
+    async fn process_entries(
+        self: &Arc<Self>,
+        mut entries: Pin<Box<dyn Send + Stream<Item = Result<DirEntry>>>>,
+    ) -> Result<()> {
         while let Some(entry) = entries.next().await {
             let entry = entry?;
             let path = entry.path.clone();
 
             if entry.metadata.is_dir {
-                println!("Enqueueing directory: {:?}", path);
+                println!("Processing directory: {:?}", path);
                 let mut contents = Vec::new();
                 let mut read_dir = self.fs.read_dir(&path).await?;
                 while let Some(child_entry) = read_dir.next().await {
@@ -305,10 +320,11 @@ impl Miner {
                 },
             );
         }
-
         self.update_progress();
-        println!("Initial queue population complete");
+        Ok(())
+    }
 
+    async fn process_queue(self: &Arc<Self>) -> Result<()> {
         let workers: Vec<_> = (0..self.num_workers)
             .map(|worker_id| {
                 let this = self.clone();
@@ -328,17 +344,17 @@ impl Miner {
 
         self.update_progress();
         println!("All workers have completed");
+        Ok(())
+    }
 
-        // Remove deleted entries from the database
+    async fn remove_deleted_entries(&self) -> Result<()> {
         println!("Removing deleted entries from the database");
 
-        // Read all keys from the database
         let keys: Vec<String> = self
             .database
             .transact(|db, txn| db.iter(&txn)?.map(|item| Ok(item?.0.to_string())).collect())
             .await?;
 
-        // Filter keys that no longer exist
         let mut keys_to_delete = Vec::new();
         for key in keys {
             if let Some((_, path_str)) = key.split_once(':') {
@@ -350,7 +366,6 @@ impl Miner {
             }
         }
 
-        // Delete filtered keys from the database
         self.database
             .transact(|db, mut txn| {
                 for key in keys_to_delete {
@@ -361,6 +376,10 @@ impl Miner {
             })
             .await?;
 
+        Ok(())
+    }
+
+    fn finish_progress(&self) {
         self.file_progress
             .finish_with_message("File processing complete");
         self.chunk_progress
@@ -369,8 +388,6 @@ impl Miner {
             .finish_with_message("Rust symbol processing complete");
         self.overall_progress
             .finish_with_message("Project summarization finished");
-        println!("Project summarization completed successfully");
-        Ok(())
     }
 
     async fn reset(self: &Arc<Self>) {
@@ -553,6 +570,8 @@ impl Miner {
 
         if !pending_entries.is_empty() {
             // Re-enqueue the directory with remaining entries
+            //
+            dbg!(&path, &pending_entries);
             self.queue
                 .lock()
                 .await
