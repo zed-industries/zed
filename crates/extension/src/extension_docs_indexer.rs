@@ -11,6 +11,7 @@ use crate::wasm_host::{WasmExtension, WasmHost};
 pub struct ExtensionDocsIndexer {
     pub(crate) extension: WasmExtension,
     pub(crate) host: Arc<WasmHost>,
+    pub(crate) name: Arc<str>,
 }
 
 #[async_trait]
@@ -23,11 +24,17 @@ impl IndexDocs for ExtensionDocsIndexer {
     ) -> Result<()> {
         self.extension
             .call({
+                let name = self.name.clone();
                 |extension, store| {
                     async move {
                         let database_resource = store.data_mut().table().push(database)?;
                         extension
-                            .call_index_docs(store, package.as_ref(), database_resource)
+                            .call_index_docs(
+                                store,
+                                name.as_ref(),
+                                package.as_ref(),
+                                database_resource,
+                            )
                             .await?
                             .map_err(|err| anyhow!("{err:?}"))?;
 

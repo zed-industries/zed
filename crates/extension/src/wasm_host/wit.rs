@@ -294,10 +294,19 @@ impl Extension {
     pub async fn call_index_docs(
         &self,
         store: &mut Store<WasmState>,
+        provider: &str,
         package_name: &str,
-        resource: Resource<Arc<IndexedDocsDatabase>>,
+        database: Resource<Arc<IndexedDocsDatabase>>,
     ) -> Result<Result<(), String>> {
-        Ok(Ok(()))
+        match self {
+            Extension::V007(ext) => {
+                ext.call_index_docs(store, provider, package_name, database)
+                    .await
+            }
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
+                Err(anyhow!("`index_docs` not available prior to v0.0.7"))
+            }
+        }
     }
 }
 

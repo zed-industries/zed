@@ -9,6 +9,7 @@ mod wasm_host;
 #[cfg(test)]
 mod extension_store_test;
 
+use crate::extension_docs_indexer::ExtensionDocsIndexer;
 use crate::extension_manifest::SchemaVersion;
 use crate::extension_slash_command::ExtensionSlashCommand;
 use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
@@ -33,6 +34,7 @@ use gpui::{
     WeakModel,
 };
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+use indexed_docs::{IndexedDocsRegistry, Provider, ProviderId};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
@@ -112,6 +114,7 @@ pub struct ExtensionStore {
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     slash_command_registry: Arc<SlashCommandRegistry>,
+    indexed_docs_registry: Arc<IndexedDocsRegistry>,
     modified_extensions: HashSet<Arc<str>>,
     wasm_host: Arc<WasmHost>,
     wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
@@ -189,6 +192,7 @@ pub fn init(
             language_registry,
             theme_registry,
             SlashCommandRegistry::global(cx),
+            IndexedDocsRegistry::global(cx),
             cx,
         )
     });
@@ -222,6 +226,7 @@ impl ExtensionStore {
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
+        indexed_docs_registry: Arc<IndexedDocsRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let work_dir = extensions_dir.join("work");
@@ -253,6 +258,7 @@ impl ExtensionStore {
             language_registry,
             theme_registry,
             slash_command_registry,
+            indexed_docs_registry,
             reload_tx,
             tasks: Vec::new(),
         };
@@ -1192,6 +1198,24 @@ impl ExtensionStore {
                             },
                             false,
                         );
+                    }
+
+                    for (provider_name, _provider) in &manifest.indexed_docs_providers {
+                        this.indexed_docs_registry.register_provider(Provider {
+                            id: ProviderId(provider_name.clone()),
+                            database_path: {
+                                let mut database_path = this.wasm_host.work_dir.clone();
+                                database_path.push(manifest.id.as_ref());
+                                database_path.push("docs");
+                                database_path.push(format!("{provider_name}.0.mdb"));
+                                database_path
+                            },
+                            indexer: Box::new(ExtensionDocsIndexer {
+                                extension: wasm_extension.clone(),
+                                host: this.wasm_host.clone(),
+                                name: provider_name.clone(),
+                            }),
+                        });
                     }
                 }
                 this.wasm_extensions.extend(wasm_extensions);

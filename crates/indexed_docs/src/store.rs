@@ -19,7 +19,7 @@ use crate::indexer::{IndexDocs, IndexedDocsProvider, RustdocIndexer};
 use crate::IndexedDocsRegistry;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
-pub struct ProviderId(Arc<str>);
+pub struct ProviderId(pub Arc<str>);
 
 impl ProviderId {
     pub fn rustdoc() -> Self {

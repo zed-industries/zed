@@ -130,7 +130,7 @@ impl SlashCommand for RustdocSlashCommand {
             anyhow::Ok((fs, cargo_workspace_root))
         });
 
-        let store = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx);
+        let store = IndexedDocsStore::try_global(ProviderId("gleam-hexdocs".into()), cx);
         cx.background_executor().spawn(async move {
             let store = store?;
 
@@ -180,7 +180,8 @@ impl SlashCommand for RustdocSlashCommand {
         let item_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
 
         let text = cx.background_executor().spawn({
-            let rustdoc_store = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx);
+            let rustdoc_store =
+                IndexedDocsStore::try_global(ProviderId("gleam-hexdocs".into()), cx);
             let crate_name = crate_name.clone();
             let item_path = item_path.clone();
             async move {
