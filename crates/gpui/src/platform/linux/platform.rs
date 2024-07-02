@@ -38,8 +38,8 @@ use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
     OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler,
-    PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, SharedString,
-    Size, Task, WindowAppearance, WindowOptions, WindowParams,
+    PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, ScreenCaptureSource,
+    SemanticVersion, SharedString, Size, Task, WindowAppearance, WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
@@ -228,6 +228,14 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.displays()
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (mut tx, rx) = oneshot::channel();
+        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
+        rx
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
