@@ -2,6 +2,7 @@ mod since_v0_0_1;
 mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_0_7;
+use indexed_docs::IndexedDocsDatabase;
 use release_channel::ReleaseChannel;
 use since_v0_0_7 as latest;
 
@@ -288,6 +289,15 @@ impl Extension {
                 Err(anyhow!("`run_slash_command` not available prior to v0.0.7"))
             }
         }
+    }
+
+    pub async fn call_index_docs(
+        &self,
+        store: &mut Store<WasmState>,
+        package_name: &str,
+        resource: Resource<Arc<IndexedDocsDatabase>>,
+    ) -> Result<Result<(), String>> {
+        Ok(Ok(()))
     }
 }
 

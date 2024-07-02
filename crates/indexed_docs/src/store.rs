@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
 use crate::indexer::{IndexDocs, IndexedDocsProvider, RustdocIndexer};
-use crate::{IndexedDocsRegistry, RustdocItem};
+use crate::IndexedDocsRegistry;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
 pub struct ProviderId(Arc<str>);
@@ -99,11 +99,17 @@ impl IndexedDocsStore {
         package: PackageName,
         item_path: Option<String>,
     ) -> Result<MarkdownDocs> {
+        let item_path = if let Some(item_path) = item_path {
+            format!("{package}::{item_path}")
+        } else {
+            package.to_string()
+        };
+
         self.database_future
             .clone()
             .await
             .map_err(|err| anyhow!(err))?
-            .load(package, item_path)
+            .load(item_path)
             .await
     }
 
@@ -241,44 +247,25 @@ impl IndexedDocsDatabase {
         })
     }
 
-    pub fn load(
-        &self,
-        package: PackageName,
-        item_path: Option<String>,
-    ) -> Task<Result<MarkdownDocs>> {
+    pub fn load(&self, key: String) -> Task<Result<MarkdownDocs>> {
         let env = self.env.clone();
         let entries = self.entries;
-        let item_path = if let Some(item_path) = item_path {
-            format!("{package}::{item_path}")
-        } else {
-            package.to_string()
-        };
 
         self.executor.spawn(async move {
             let txn = env.read_txn()?;
             entries
-                .get(&txn, &item_path)?
-                .ok_or_else(|| anyhow!("no docs found for {item_path}"))
+                .get(&txn, &key)?
+                .ok_or_else(|| anyhow!("no docs found for {key}"))
         })
     }
 
-    pub fn insert(
-        &self,
-        package: PackageName,
-        item: Option<&RustdocItem>,
-        docs: String,
-    ) -> Task<Result<()>> {
+    pub fn insert(&self, key: String, docs: String) -> Task<Result<()>> {
         let env = self.env.clone();
         let entries = self.entries;
-        let (item_path, entry) = if let Some(item) = item {
-            (format!("{package}::{}", item.display()), MarkdownDocs(docs))
-        } else {
-            (package.to_string(), MarkdownDocs(docs))
-        };
 
         self.executor.spawn(async move {
             let mut txn = env.write_txn()?;
-            entries.put(&mut txn, &item_path, &entry)?;
+            entries.put(&mut txn, &key, &MarkdownDocs(docs))?;
             txn.commit()?;
             Ok(())
         })

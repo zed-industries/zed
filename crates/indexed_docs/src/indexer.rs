@@ -53,7 +53,7 @@ impl IndexDocs for RustdocIndexer {
             convert_rustdoc_to_markdown(package_root_content.as_bytes())?;
 
         database
-            .insert(package.clone(), None, crate_root_markdown)
+            .insert(package.to_string(), crate_root_markdown)
             .await?;
 
         let mut seen_items = HashSet::from_iter(items.clone());
@@ -91,7 +91,7 @@ impl IndexDocs for RustdocIndexer {
             let (markdown, referenced_items) = convert_rustdoc_to_markdown(result.as_bytes())?;
 
             database
-                .insert(package.clone(), Some(item), markdown)
+                .insert(format!("{package}::{}", item.display()), markdown)
                 .await?;
 
             let parent_item = item;
