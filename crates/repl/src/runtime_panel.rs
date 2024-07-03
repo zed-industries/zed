@@ -202,10 +202,11 @@ impl RuntimePanel {
             .find(|runtime_specification| {
                 if let Some(selected) = selected_kernel {
                     // Top priority is the selected kernel
-                    &runtime_specification.name == selected
+                    runtime_specification.name.to_lowercase() == selected.to_lowercase()
                 } else {
                     // Otherwise, we'll try to find a kernel that matches the language
-                    runtime_specification.kernelspec.language.as_str() == language_name
+                    runtime_specification.kernelspec.language.to_lowercase()
+                        == language_name.to_lowercase()
                 }
             })
             .cloned()
