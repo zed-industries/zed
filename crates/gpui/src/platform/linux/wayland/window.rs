@@ -1080,6 +1080,7 @@ fn compute_outer_size(
         if !tiling.right {
             new_size.width += inset;
         }
+
         new_size
     })
 }
@@ -1087,10 +1088,10 @@ fn compute_outer_size(
 fn inset_by_tiling(mut bounds: Bounds<Pixels>, inset: Pixels, tiling: Tiling) -> Bounds<Pixels> {
     if !tiling.top {
         bounds.origin.y += inset;
-        bounds.size.width -= inset;
+        bounds.size.height -= inset;
     }
     if !tiling.bottom {
-        bounds.size.width -= inset;
+        bounds.size.height -= inset;
     }
     if !tiling.left {
         bounds.origin.x += inset;
