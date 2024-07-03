@@ -136,7 +136,7 @@ You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI 
 
 ## Using Claude 3.5 Sonnet
 
-You can use Claude with the Zed assistant, [As it is now supported](https://github.com/zed-industries/zed/issues/8914) by Adding the following settings
+You can use Claude with the Zed assistant by adding the following settings:
 
 ```json
 "assistant": {
