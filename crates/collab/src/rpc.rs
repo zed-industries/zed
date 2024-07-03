@@ -4471,6 +4471,7 @@ async fn complete_with_open_ai(
                                     Some(function) => {
                                         let name = function.name;
                                         let arguments = function.arguments;
+
                                         Some(proto::tool_call_delta::Variant::Function(
                                             proto::tool_call_delta::FunctionCallDelta {
                                                 name,
