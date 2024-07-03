@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::{AsyncAppContext, Task};
+use gpui::{AppContext, AsyncAppContext, Task};
 use http::github::latest_github_release;
 pub use language::*;
 use lazy_static::lazy_static;
@@ -501,7 +501,11 @@ impl ContextProvider for GoContextProvider {
         ))
     }
 
-    fn associated_tasks(&self) -> Option<TaskTemplates> {
+    fn associated_tasks(
+        &self,
+        _: Option<Arc<dyn language::File>>,
+        _: &AppContext,
+    ) -> Option<TaskTemplates> {
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: format!(

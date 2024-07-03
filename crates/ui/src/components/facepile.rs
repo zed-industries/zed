@@ -1,14 +1,19 @@
+use crate::prelude::*;
 use gpui::AnyElement;
 use smallvec::SmallVec;
-use ui::prelude::*;
 
+/// A facepile is a collection of faces stacked horizontally–
+/// always with the leftmost face on top and descending in z-index
+///
+/// Facepiles are used to display a group of people or things,
+/// such as a list of participants in a collaboration session.
 #[derive(IntoElement)]
-pub struct FacePile {
+pub struct Facepile {
     base: Div,
     faces: SmallVec<[AnyElement; 2]>,
 }
 
-impl FacePile {
+impl Facepile {
     pub fn empty() -> Self {
         Self::new(SmallVec::new())
     }
@@ -18,7 +23,7 @@ impl FacePile {
     }
 }
 
-impl RenderOnce for FacePile {
+impl RenderOnce for Facepile {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         // Lay the faces out in reverse so they overlap in the desired order (left to right, front to back)
         self.base
@@ -36,13 +41,13 @@ impl RenderOnce for FacePile {
     }
 }
 
-impl ParentElement for FacePile {
+impl ParentElement for Facepile {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.faces.extend(elements);
     }
 }
 
-impl Styled for FacePile {
+impl Styled for Facepile {
     fn style(&mut self) -> &mut gpui::StyleRefinement {
         self.base.style()
     }

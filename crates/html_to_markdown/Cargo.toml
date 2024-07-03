@@ -1,9 +1,12 @@
 [package]
 name = "html_to_markdown"
 version = "0.1.0"
+description = "Convert HTML to Markdown"
+repository = "https://github.com/zed-industries/zed"
+documentation = "https://docs.rs/html_to_markdown"
+keywords = ["html", "markdown", "html-to-markdown"]
 edition = "2021"
-publish = false
-license = "GPL-3.0-or-later"
+license = "Apache-2.0"
 
 [lints]
 workspace = true

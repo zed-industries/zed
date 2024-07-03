@@ -7,10 +7,12 @@ use crate::{
         default_command::DefaultSlashCommand, SlashCommandCompletionProvider, SlashCommandLine,
         SlashCommandRegistry,
     },
+    terminal_inline_assistant::TerminalInlineAssistant,
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, ContextStore, CycleMessageRole,
-    InlineAssist, InlineAssistant, LanguageModelRequest, LanguageModelRequestMessage, MessageId,
-    MessageMetadata, MessageStatus, ModelSelector, QuoteSelection, ResetKey, Role, SavedContext,
-    SavedContextMetadata, SavedMessage, Split, ToggleFocus, ToggleHistory, ToggleModelSelector,
+    InlineAssist, InlineAssistant, InsertIntoEditor, LanguageModelRequest,
+    LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus, ModelSelector,
+    QuoteSelection, ResetKey, Role, SavedContext, SavedContextMetadata, SavedMessage, Split,
+    ToggleFocus, ToggleHistory, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
@@ -37,6 +39,7 @@ use gpui::{
     Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
+use indexed_docs::{IndexedDocsStore, PackageName, ProviderId};
 use language::{
     language_settings::SoftWrap, AnchorRangeExt as _, AutoindentMode, Buffer, LanguageRegistry,
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
@@ -45,7 +48,6 @@ use multi_buffer::MultiBufferRow;
 use paths::contexts_dir;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
-use rustdoc::{CrateName, RustdocStore};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use std::{
@@ -58,6 +60,7 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::AssistantKind;
+use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::{
     prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tab, TabBar, Tooltip,
@@ -84,7 +87,8 @@ pub fn init(cx: &mut AppContext) {
                     workspace.toggle_panel_focus::<AssistantPanel>(cx);
                 })
                 .register_action(AssistantPanel::inline_assist)
-                .register_action(ContextEditor::quote_selection);
+                .register_action(ContextEditor::quote_selection)
+                .register_action(ContextEditor::insert_selection);
         },
     )
     .detach();
@@ -122,6 +126,11 @@ struct SavedContextPickerDelegate {
 
 enum SavedContextPickerEvent {
     Confirmed { path: PathBuf },
+}
+
+enum InlineAssistTarget {
+    Editor(View<Editor>, bool),
+    Terminal(View<TerminalView>),
 }
 
 impl EventEmitter<SavedContextPickerEvent> for Picker<SavedContextPickerDelegate> {}
@@ -369,6 +378,108 @@ impl AssistantPanel {
             return;
         };
 
+        let Some(inline_assist_target) =
+            Self::resolve_inline_assist_target(workspace, &assistant_panel, cx)
+        else {
+            return;
+        };
+
+        if assistant_panel.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
+            match inline_assist_target {
+                InlineAssistTarget::Editor(active_editor, include_context) => {
+                    InlineAssistant::update_global(cx, |assistant, cx| {
+                        assistant.assist(
+                            &active_editor,
+                            Some(cx.view().downgrade()),
+                            include_context.then_some(&assistant_panel),
+                            cx,
+                        )
+                    })
+                }
+                InlineAssistTarget::Terminal(active_terminal) => {
+                    TerminalInlineAssistant::update_global(cx, |assistant, cx| {
+                        assistant.assist(
+                            &active_terminal,
+                            Some(cx.view().downgrade()),
+                            Some(&assistant_panel),
+                            cx,
+                        )
+                    })
+                }
+            }
+        } else {
+            let assistant_panel = assistant_panel.downgrade();
+            cx.spawn(|workspace, mut cx| async move {
+                assistant_panel
+                    .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
+                    .await?;
+                if assistant_panel.update(&mut cx, |panel, cx| panel.is_authenticated(cx))? {
+                    cx.update(|cx| match inline_assist_target {
+                        InlineAssistTarget::Editor(active_editor, include_context) => {
+                            let assistant_panel = if include_context {
+                                assistant_panel.upgrade()
+                            } else {
+                                None
+                            };
+                            InlineAssistant::update_global(cx, |assistant, cx| {
+                                assistant.assist(
+                                    &active_editor,
+                                    Some(workspace),
+                                    assistant_panel.as_ref(),
+                                    cx,
+                                )
+                            })
+                        }
+                        InlineAssistTarget::Terminal(active_terminal) => {
+                            TerminalInlineAssistant::update_global(cx, |assistant, cx| {
+                                assistant.assist(
+                                    &active_terminal,
+                                    Some(workspace),
+                                    assistant_panel.upgrade().as_ref(),
+                                    cx,
+                                )
+                            })
+                        }
+                    })?
+                } else {
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.focus_panel::<AssistantPanel>(cx)
+                    })?;
+                }
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx)
+        }
+    }
+
+    fn resolve_inline_assist_target(
+        workspace: &mut Workspace,
+        assistant_panel: &View<AssistantPanel>,
+        cx: &mut WindowContext,
+    ) -> Option<InlineAssistTarget> {
+        if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) {
+            if terminal_panel
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(cx)
+            {
+                use feature_flags::FeatureFlagAppExt;
+                if !cx.has_flag::<feature_flags::TerminalInlineAssist>() {
+                    return None;
+                }
+
+                if let Some(terminal_view) = terminal_panel
+                    .read(cx)
+                    .pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|t| t.downcast::<TerminalView>())
+                {
+                    return Some(InlineAssistTarget::Terminal(terminal_view));
+                }
+            }
+        }
         let context_editor = assistant_panel
             .read(cx)
             .active_context_editor()
@@ -381,63 +492,15 @@ impl AssistantPanel {
                 }
             });
 
-        let include_context;
-        let active_editor;
         if let Some(context_editor) = context_editor {
-            active_editor = context_editor;
-            include_context = false;
+            Some(InlineAssistTarget::Editor(context_editor, false))
         } else if let Some(workspace_editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
         {
-            active_editor = workspace_editor;
-            include_context = true;
+            Some(InlineAssistTarget::Editor(workspace_editor, true))
         } else {
-            return;
-        };
-
-        if assistant_panel.update(cx, |panel, cx| panel.is_authenticated(cx)) {
-            InlineAssistant::update_global(cx, |assistant, cx| {
-                assistant.assist(
-                    &active_editor,
-                    Some(cx.view().downgrade()),
-                    include_context.then_some(&assistant_panel),
-                    cx,
-                )
-            })
-        } else {
-            let assistant_panel = assistant_panel.downgrade();
-            cx.spawn(|workspace, mut cx| async move {
-                assistant_panel
-                    .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
-                    .await?;
-                if assistant_panel
-                    .update(&mut cx, |assistant, cx| assistant.is_authenticated(cx))?
-                {
-                    cx.update(|cx| {
-                        let assistant_panel = if include_context {
-                            assistant_panel.upgrade()
-                        } else {
-                            None
-                        };
-                        InlineAssistant::update_global(cx, |assistant, cx| {
-                            assistant.assist(
-                                &active_editor,
-                                Some(workspace),
-                                assistant_panel.as_ref(),
-                                cx,
-                            )
-                        })
-                    })?
-                } else {
-                    workspace.update(&mut cx, |workspace, cx| {
-                        workspace.focus_panel::<AssistantPanel>(cx)
-                    })?;
-                }
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx)
+            None
         }
     }
 
@@ -2914,6 +2977,42 @@ impl ContextEditor {
         });
     }
 
+    fn insert_selection(
+        workspace: &mut Workspace,
+        _: &InsertIntoEditor,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+        let Some(context_editor_view) = panel.read(cx).active_context_editor().cloned() else {
+            return;
+        };
+        let Some(active_editor_view) = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+        else {
+            return;
+        };
+
+        let context_editor = context_editor_view.read(cx).editor.read(cx);
+        let anchor = context_editor.selections.newest_anchor();
+        let text = context_editor
+            .buffer()
+            .read(cx)
+            .read(cx)
+            .text_for_range(anchor.range())
+            .collect::<String>();
+
+        // If nothing is selected, don't delete the current selection; instead, be a no-op.
+        if !text.is_empty() {
+            active_editor_view.update(cx, |editor, cx| {
+                editor.insert(&text, cx);
+                editor.focus(cx);
+            })
+        }
+    }
+
     fn quote_selection(
         workspace: &mut Workspace,
         _: &QuoteSelection,
@@ -3311,7 +3410,9 @@ fn render_rustdoc_slash_command_trailer(
     command: PendingSlashCommand,
     cx: &mut WindowContext,
 ) -> AnyElement {
-    let rustdoc_store = RustdocStore::global(cx);
+    let Some(rustdoc_store) = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx).ok() else {
+        return Empty.into_any();
+    };
 
     let Some((crate_name, _)) = command
         .argument
@@ -3321,7 +3422,7 @@ fn render_rustdoc_slash_command_trailer(
         return Empty.into_any();
     };
 
-    let crate_name = CrateName::from(crate_name);
+    let crate_name = PackageName::from(crate_name);
     if !rustdoc_store.is_indexing(&crate_name) {
         return Empty.into_any();
     }

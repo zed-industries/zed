@@ -53,9 +53,17 @@ async fn get_extensions(
     let extensions = if let Some(extension_ids) = extension_ids {
         app.db.get_extensions_by_ids(&extension_ids, None).await?
     } else {
-        app.db
+        let result = app
+            .db
             .get_extensions(params.filter.as_deref(), params.max_schema_version, 500)
-            .await?
+            .await?;
+
+        if let Some(query) = params.filter.as_deref() {
+            let count = result.len();
+            tracing::info!(query, count, "extension_search")
+        }
+
+        result
     };
 
     Ok(Json(GetExtensionsResponse { data: extensions }))

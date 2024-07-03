@@ -203,6 +203,10 @@ impl Telemetry {
             max_queue_size: MAX_QUEUE_LEN,
             worktree_id_map: WorktreeIdMap(HashMap::from_iter([
                 (
+                    "pnpm-lock.yaml".to_string(),
+                    ProjectCache::new("pnpm".to_string()),
+                ),
+                (
                     "yarn.lock".to_string(),
                     ProjectCache::new("yarn".to_string()),
                 ),

@@ -18,9 +18,9 @@ use editor::{
 use fs::Fs;
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{
-    point, AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Global,
-    HighlightStyle, Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View,
-    ViewContext, WeakView, WhiteSpace, WindowContext,
+    point, AppContext, EventEmitter, FocusHandle, FocusableView, FontStyle, Global, HighlightStyle,
+    Model, ModelContext, Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, WeakView,
+    WhiteSpace, WindowContext,
 };
 use language::{Buffer, Point, Selection, TransactionId};
 use multi_buffer::MultiBufferRow;
@@ -1730,7 +1730,7 @@ impl PromptEditor {
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,

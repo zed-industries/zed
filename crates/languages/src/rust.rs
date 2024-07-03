@@ -2,9 +2,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
-use gpui::AsyncAppContext;
+use gpui::{AppContext, AsyncAppContext};
 use http::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
+use language_settings::all_language_settings;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
 use project::project_settings::{BinarySettings, ProjectSettings};
@@ -407,7 +408,22 @@ impl ContextProvider for RustContextProvider {
         Ok(TaskVariables::default())
     }
 
-    fn associated_tasks(&self) -> Option<TaskTemplates> {
+    fn associated_tasks(
+        &self,
+        file: Option<Arc<dyn language::File>>,
+        cx: &AppContext,
+    ) -> Option<TaskTemplates> {
+        const DEFAULT_RUN_NAME_STR: &'static str = "RUST_DEFAULT_PACKAGE_RUN";
+        let package_to_run = all_language_settings(file.as_ref(), cx)
+            .language(Some("Rust"))
+            .tasks
+            .variables
+            .get(DEFAULT_RUN_NAME_STR);
+        let run_task_args = if let Some(package_to_run) = package_to_run {
+            vec!["run".into(), "-p".into(), package_to_run.clone()]
+        } else {
+            vec!["run".into()]
+        };
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: format!(
@@ -420,12 +436,14 @@ impl ContextProvider for RustContextProvider {
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: "cargo check --workspace --all-targets".into(),
                 command: "cargo".into(),
                 args: vec!["check".into(), "--workspace".into(), "--all-targets".into()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -444,6 +462,7 @@ impl ContextProvider for RustContextProvider {
                     "--nocapture".into(),
                 ],
                 tags: vec!["rust-test".to_owned()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -460,6 +479,7 @@ impl ContextProvider for RustContextProvider {
                     VariableName::Stem.template_value(),
                 ],
                 tags: vec!["rust-mod-test".to_owned()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -476,6 +496,7 @@ impl ContextProvider for RustContextProvider {
                     "--bin".into(),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
                 ],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 tags: vec!["rust-main".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -490,18 +511,21 @@ impl ContextProvider for RustContextProvider {
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: "cargo run".into(),
                 command: "cargo".into(),
-                args: vec!["run".into()],
+                args: run_task_args,
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: "cargo clean".into(),
                 command: "cargo".into(),
                 args: vec!["clean".into()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
         ]))
