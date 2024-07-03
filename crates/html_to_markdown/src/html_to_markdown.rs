@@ -1,4 +1,4 @@
-//! Provides conversion from rustdoc's HTML output to Markdown.
+//! Convert HTML to Markdown.
 
 mod html_element;
 pub mod markdown;

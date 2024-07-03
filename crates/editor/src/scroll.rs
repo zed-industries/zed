@@ -205,7 +205,7 @@ impl ScrollManager {
                 ScrollBeyondLastLine::OnePage => scroll_top,
                 ScrollBeyondLastLine::Off => {
                     if let Some(height_in_lines) = self.visible_line_count {
-                        let max_row = map.max_buffer_row().as_f32();
+                        let max_row = map.max_point().row().0 as f32;
                         scroll_top.min(max_row - height_in_lines + 1.).max(0.)
                     } else {
                         scroll_top
@@ -213,7 +213,7 @@ impl ScrollManager {
                 }
                 ScrollBeyondLastLine::VerticalScrollMargin => {
                     if let Some(height_in_lines) = self.visible_line_count {
-                        let max_row = map.max_buffer_row().as_f32();
+                        let max_row = map.max_point().row().0 as f32;
                         scroll_top
                             .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
                             .max(0.)

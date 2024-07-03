@@ -236,7 +236,7 @@ pub fn preprocess_anthropic_request(request: &mut LanguageModelRequest) {
     }
 
     if !system_message.is_empty() {
-        request.messages.insert(
+        new_messages.insert(
             0,
             LanguageModelRequestMessage {
                 role: Role::System,

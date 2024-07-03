@@ -19,6 +19,7 @@ pub use wit::{
         github_release_by_tag_name, latest_github_release, GithubRelease, GithubReleaseAsset,
         GithubReleaseOptions,
     },
+    zed::extension::http_client::{fetch, HttpRequest, HttpResponse},
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
         npm_package_latest_version,
@@ -26,7 +27,7 @@ pub use wit::{
     zed::extension::platform::{current_platform, Architecture, Os},
     zed::extension::slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection},
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    LanguageServerInstallationStatus, Range, Worktree,
+    KeyValueStore, LanguageServerInstallationStatus, Range, Worktree,
 };
 
 // Undocumented WIT re-exports.
@@ -125,6 +126,15 @@ pub trait Extension: Send + Sync {
         _worktree: &Worktree,
     ) -> Result<SlashCommandOutput, String> {
         Err("`run_slash_command` not implemented".to_string())
+    }
+
+    fn index_docs(
+        &self,
+        _provider: String,
+        _package: String,
+        _database: &KeyValueStore,
+    ) -> Result<(), String> {
+        Err("`index_docs` not implemented".to_string())
     }
 }
 
@@ -247,6 +257,14 @@ impl wit::Guest for Component {
         worktree: &Worktree,
     ) -> Result<SlashCommandOutput, String> {
         extension().run_slash_command(command, argument, worktree)
+    }
+
+    fn index_docs(
+        provider: String,
+        package: String,
+        database: &KeyValueStore,
+    ) -> Result<(), String> {
+        extension().index_docs(provider, package, database)
     }
 }
 

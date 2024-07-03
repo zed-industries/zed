@@ -94,6 +94,7 @@ Zed has two main binaries:
 * You will need to ensure that the necessary libraries are installed. You can get the current list by [inspecting the built binary](https://github.com/zed-industries/zed/blob/059a4141b756cf4afac4c977afc488539aec6470/script/bundle-linux#L65-L70) on your system.
 * For an example of a complete build script, see [script/bundle-linux](https://github.com/zed-industries/zed/blob/main/script/bundle-linux).
 * You can disable Zed's auto updates and provide instructions for users who try to Update zed manually by building (or running) Zed with the environment variable `ZED_UPDATE_EXPLANATION`. For example: `ZED_UPDATE_EXPLANATION="Please use flatpak to update zed."`.
+* Make sure to update the contents of the `crates/zed/RELEASE_CHANNEL` file to 'nightly', 'preview', or 'stable', with no newline. This will cause Zed to use the credentials manager to remember a user's login.
 
 ### Other things to note
 

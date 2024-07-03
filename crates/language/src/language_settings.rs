@@ -120,6 +120,8 @@ pub struct LanguageSettings {
     pub code_actions_on_format: HashMap<String, bool>,
     /// Whether to perform linked edits
     pub linked_edits: bool,
+    /// Task configuration for this language.
+    pub tasks: LanguageTaskConfig,
 }
 
 impl LanguageSettings {
@@ -340,6 +342,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
+    /// Task configuration for this language.
+    ///
+    /// Default: {}
+    pub tasks: Option<LanguageTaskConfig>,
 }
 
 /// The contents of the inline completion settings.
@@ -544,6 +550,13 @@ fn edit_debounce_ms() -> u64 {
 
 fn scroll_debounce_ms() -> u64 {
     50
+}
+
+/// The task settings for a particular language.
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
+pub struct LanguageTaskConfig {
+    /// Extra task variables to set for a particular language.
+    pub variables: HashMap<String, String>,
 }
 
 impl InlayHintSettings {
@@ -823,6 +836,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.code_actions_on_format.clone(),
     );
     merge(&mut settings.linked_edits, src.linked_edits);
+    merge(&mut settings.tasks, src.tasks.clone());
 
     merge(
         &mut settings.preferred_line_length,
