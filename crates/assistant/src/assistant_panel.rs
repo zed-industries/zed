@@ -16,6 +16,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
+use breadcrumbs::Breadcrumbs;
 use client::telemetry::Telemetry;
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
@@ -33,7 +34,7 @@ use futures::future::Shared;
 use futures::{FutureExt, StreamExt};
 use gpui::{
     div, percentage, point, rems, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, ClipboardItem, Context as _, Empty, EventEmitter,
+    AsyncAppContext, AsyncWindowContext, ClipboardItem, Context as _, Empty, Entity, EventEmitter,
     FocusHandle, FocusOutEvent, FocusableView, InteractiveElement, IntoElement, Model,
     ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
     Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
@@ -61,6 +62,7 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
+use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tab, TabBar, Tooltip,
@@ -69,10 +71,11 @@ use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    item::Item,
+    item::{BreadcrumbText, Item, ItemHandle},
     pane,
     searchable::{Direction, SearchEvent, SearchableItem},
-    Pane, Save, ToggleZoom, Toolbar, Workspace,
+    Pane, Save, ToggleZoom, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
 };
 use workspace::{searchable::SearchableItemHandle, NewFile};
 
@@ -115,7 +118,7 @@ pub struct AssistantPanel {
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
     authentication_prompt: Option<AnyView>,
-    model_menu_handle: PopoverMenuHandle<ContextMenu>,
+    model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 struct SavedContextPickerDelegate {
@@ -240,6 +243,7 @@ impl AssistantPanel {
         context_store: Model<ContextStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let model_selector_menu_handle = PopoverMenuHandle::default();
         let pane = cx.new_view(|cx| {
             let mut pane = Pane::new(
                 workspace.weak_handle(),
@@ -295,28 +299,13 @@ impl AssistantPanel {
                     .into_any_element()
             });
             pane.toolbar().update(cx, |toolbar, cx| {
-                // todo!("toolbar.add_item")
-                // toolbar.add_item(
-                //     cx.new_view(|_| {
-                //         h_flex()
-                //             .gap_2()
-                //             .child(ModelSelector::new(
-                //                 PopoverMenuHandle::default(),
-                //                 workspace.app_state().fs.clone(),
-                //             ))
-                //             .child(
-                //                 IconButton::new("inject-context", IconName::Quote).tooltip(|cx| {
-                //                     Tooltip::with_meta(
-                //                         "Insert Context",
-                //                         None,
-                //                         "Type / to insert via keyboard",
-                //                         cx,
-                //                     )
-                //                 }),
-                //             )
-                //     }),
-                //     cx,
-                // );
+                toolbar.add_item(cx.new_view(|_| Breadcrumbs::new()), cx);
+                toolbar.add_item(
+                    cx.new_view(|_| {
+                        ContextEditorToolbarItem::new(workspace, model_selector_menu_handle.clone())
+                    }),
+                    cx,
+                );
                 toolbar.add_item(cx.new_view(BufferSearchBar::new), cx)
             });
             pane
@@ -365,7 +354,7 @@ impl AssistantPanel {
             telemetry: workspace.client().telemetry().clone(),
             _subscriptions: subscriptions,
             authentication_prompt: None,
-            model_menu_handle: PopoverMenuHandle::default(),
+            model_selector_menu_handle,
         }
     }
 
@@ -657,15 +646,7 @@ impl AssistantPanel {
     }
 
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
-        self.model_menu_handle.toggle(cx);
-    }
-
-    fn insert_command(&mut self, name: &str, cx: &mut ViewContext<Self>) {
-        if let Some(context_editor) = self.active_context_editor(cx) {
-            context_editor.update(cx, |context_editor, cx| {
-                context_editor.insert_command(name, cx)
-            });
-        }
+        self.model_selector_menu_handle.toggle(cx);
     }
 
     fn active_context_editor(&self, cx: &AppContext) -> Option<View<ContextEditor>> {
@@ -712,70 +693,6 @@ impl AssistantPanel {
     //             .into()
     //         })
     // }
-
-    fn render_inject_context_menu(&self, cx: &mut ViewContext<Self>) -> impl Element {
-        let commands = self.slash_commands.clone();
-        let assistant_panel = cx.view().downgrade();
-        let active_editor_focus_handle = self.workspace.upgrade().and_then(|workspace| {
-            Some(
-                workspace
-                    .read(cx)
-                    .active_item_as::<Editor>(cx)?
-                    .focus_handle(cx),
-            )
-        });
-
-        PopoverMenu::new("inject-context-menu")
-            .trigger(IconButton::new("trigger", IconName::Quote).tooltip(|cx| {
-                Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
-            }))
-            .menu(move |cx| {
-                ContextMenu::build(cx, |mut menu, _cx| {
-                    for command_name in commands.featured_command_names() {
-                        if let Some(command) = commands.command(&command_name) {
-                            let menu_text = SharedString::from(Arc::from(command.menu_text()));
-                            menu = menu.custom_entry(
-                                {
-                                    let command_name = command_name.clone();
-                                    move |_cx| {
-                                        h_flex()
-                                            .w_full()
-                                            .justify_between()
-                                            .child(Label::new(menu_text.clone()))
-                                            .child(
-                                                div().ml_4().child(
-                                                    Label::new(format!("/{command_name}"))
-                                                        .color(Color::Muted),
-                                                ),
-                                            )
-                                            .into_any()
-                                    }
-                                },
-                                {
-                                    let assistant_panel = assistant_panel.clone();
-                                    move |cx| {
-                                        assistant_panel
-                                            .update(cx, |assistant_panel, cx| {
-                                                assistant_panel.insert_command(&command_name, cx)
-                                            })
-                                            .ok();
-                                    }
-                                },
-                            )
-                        }
-                    }
-
-                    if let Some(active_editor_focus_handle) = active_editor_focus_handle.clone() {
-                        menu = menu
-                            .context(active_editor_focus_handle)
-                            .action("Quote Selection", Box::new(QuoteSelection));
-                    }
-
-                    menu
-                })
-                .into()
-            })
-    }
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         self.active_context_editor(cx).map(|context_editor| {
@@ -884,41 +801,6 @@ impl AssistantPanel {
                         .into_any()
                 },
             )
-    }
-
-    fn render_remaining_tokens(
-        &self,
-        context: &Model<Context>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<impl IntoElement> {
-        let model = CompletionProvider::global(cx).model();
-        let token_count = context.read(cx).token_count()?;
-        let max_token_count = model.max_token_count();
-
-        let remaining_tokens = max_token_count as isize - token_count as isize;
-        let token_count_color = if remaining_tokens <= 0 {
-            Color::Error
-        } else if token_count as f32 / max_token_count as f32 >= 0.8 {
-            Color::Warning
-        } else {
-            Color::Muted
-        };
-
-        Some(
-            h_flex()
-                .gap_0p5()
-                .child(
-                    Label::new(humanize_token_count(token_count))
-                        .size(LabelSize::Small)
-                        .color(token_count_color),
-                )
-                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
-                .child(
-                    Label::new(humanize_token_count(max_token_count))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
-        )
     }
 }
 
@@ -3333,6 +3215,38 @@ impl Item for ContextEditor {
     fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
+
+    fn breadcrumbs(
+        &self,
+        theme: &theme::Theme,
+        cx: &AppContext,
+    ) -> Option<Vec<workspace::item::BreadcrumbText>> {
+        let editor = self.editor.read(cx);
+        let cursor = editor.selections.newest_anchor().head();
+        let multibuffer = &editor.buffer().read(cx);
+        let (_, symbols) = multibuffer.symbols_containing(cursor, Some(&theme.syntax()), cx)?;
+
+        let text = self.title(cx);
+
+        let settings = ThemeSettings::get_global(cx);
+
+        let mut breadcrumbs = vec![BreadcrumbText {
+            text,
+            highlights: None,
+            font: Some(settings.buffer_font.clone()),
+        }];
+
+        breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
+            text: symbol.text,
+            highlights: Some(symbol.highlight_ranges),
+            font: Some(settings.buffer_font.clone()),
+        }));
+        Some(breadcrumbs)
+    }
+
+    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+        ToolbarItemLocation::PrimaryLeft
+    }
 }
 
 impl SearchableItem for ContextEditor {
@@ -3398,6 +3312,162 @@ impl SearchableItem for ContextEditor {
             .update(cx, |editor, cx| editor.active_match_index(matches, cx))
     }
 }
+
+pub struct ContextEditorToolbarItem {
+    fs: Arc<dyn Fs>,
+    workspace: WeakView<Workspace>,
+    active_context_editor: Option<WeakView<ContextEditor>>,
+    model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
+}
+
+impl ContextEditorToolbarItem {
+    pub fn new(
+        workspace: &Workspace,
+        model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
+    ) -> Self {
+        Self {
+            fs: workspace.app_state().fs.clone(),
+            workspace: workspace.weak_handle(),
+            active_context_editor: None,
+            model_selector_menu_handle,
+        }
+    }
+
+    fn render_inject_context_menu(&self, cx: &mut ViewContext<Self>) -> impl Element {
+        let commands = SlashCommandRegistry::global(cx);
+        let active_editor_focus_handle = self.workspace.upgrade().and_then(|workspace| {
+            Some(
+                workspace
+                    .read(cx)
+                    .active_item_as::<Editor>(cx)?
+                    .focus_handle(cx),
+            )
+        });
+        let active_context_editor = self.active_context_editor.clone();
+
+        PopoverMenu::new("inject-context-menu")
+            .trigger(IconButton::new("trigger", IconName::Quote).tooltip(|cx| {
+                Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
+            }))
+            .menu(move |cx| {
+                let active_context_editor = active_context_editor.clone()?;
+                ContextMenu::build(cx, |mut menu, _cx| {
+                    for command_name in commands.featured_command_names() {
+                        if let Some(command) = commands.command(&command_name) {
+                            let menu_text = SharedString::from(Arc::from(command.menu_text()));
+                            menu = menu.custom_entry(
+                                {
+                                    let command_name = command_name.clone();
+                                    move |_cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new(menu_text.clone()))
+                                            .child(
+                                                div().ml_4().child(
+                                                    Label::new(format!("/{command_name}"))
+                                                        .color(Color::Muted),
+                                                ),
+                                            )
+                                            .into_any()
+                                    }
+                                },
+                                {
+                                    let active_context_editor = active_context_editor.clone();
+                                    move |cx| {
+                                        active_context_editor
+                                            .update(cx, |context_editor, cx| {
+                                                context_editor.insert_command(&command_name, cx)
+                                            })
+                                            .ok();
+                                    }
+                                },
+                            )
+                        }
+                    }
+
+                    if let Some(active_editor_focus_handle) = active_editor_focus_handle.clone() {
+                        menu = menu
+                            .context(active_editor_focus_handle)
+                            .action("Quote Selection", Box::new(QuoteSelection));
+                    }
+
+                    menu
+                })
+                .into()
+            })
+    }
+
+    fn render_remaining_tokens(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+        let model = CompletionProvider::global(cx).model();
+        let context = &self
+            .active_context_editor
+            .as_ref()?
+            .upgrade()?
+            .read(cx)
+            .context;
+        let token_count = context.read(cx).token_count()?;
+        let max_token_count = model.max_token_count();
+
+        let remaining_tokens = max_token_count as isize - token_count as isize;
+        let token_count_color = if remaining_tokens <= 0 {
+            Color::Error
+        } else if token_count as f32 / max_token_count as f32 >= 0.8 {
+            Color::Warning
+        } else {
+            Color::Muted
+        };
+
+        Some(
+            h_flex()
+                .gap_0p5()
+                .child(
+                    Label::new(humanize_token_count(token_count))
+                        .size(LabelSize::Small)
+                        .color(token_count_color),
+                )
+                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                .child(
+                    Label::new(humanize_token_count(max_token_count))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+        )
+    }
+}
+
+impl Render for ContextEditorToolbarItem {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .gap_2()
+            .child(ModelSelector::new(
+                self.model_selector_menu_handle.clone(),
+                self.fs.clone(),
+            ))
+            .children(self.render_remaining_tokens(cx))
+            .child(self.render_inject_context_menu(cx))
+    }
+}
+
+impl ToolbarItemView for ContextEditorToolbarItem {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) -> ToolbarItemLocation {
+        self.active_context_editor = active_pane_item
+            .and_then(|item| item.act_as::<ContextEditor>(cx))
+            .map(|editor| editor.downgrade());
+        cx.notify();
+        ToolbarItemLocation::PrimaryRight
+    }
+
+    fn pane_focus_update(&mut self, _pane_focused: bool, cx: &mut ViewContext<Self>) {
+        cx.notify();
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for ContextEditorToolbarItem {}
 
 #[derive(Clone, Debug)]
 struct MessageAnchor {
