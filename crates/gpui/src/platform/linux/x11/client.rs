@@ -285,70 +285,9 @@ impl X11Client {
                     calloop::Interest::READ,
                     calloop::Mode::Level,
                 ),
-                {
-                    let xcb_connection = xcb_connection.clone();
-                    move |_readiness, _, client| {
-                        let mut events = Vec::new();
-                        let mut windows_to_refresh = HashSet::new();
-
-                        while let Some(event) = xcb_connection.poll_for_event()? {
-                            if let Event::Expose(event) = event {
-                                windows_to_refresh.insert(event.window);
-                            } else {
-                                events.push(event);
-                            }
-                        }
-
-                        for window in windows_to_refresh.into_iter() {
-                            if let Some(window) = client.get_window(window) {
-                                window.refresh();
-                            }
-                        }
-
-                        for event in events.into_iter() {
-                            let mut state = client.0.borrow_mut();
-                            if state.ximc.is_none() || state.xim_handler.is_none() {
-                                drop(state);
-                                client.handle_event(event);
-                                continue;
-                            }
-
-                            let mut ximc = state.ximc.take().unwrap();
-                            let mut xim_handler = state.xim_handler.take().unwrap();
-                            let xim_connected = xim_handler.connected;
-                            drop(state);
-
-                            let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
-                                Ok(handled) => handled,
-                                Err(err) => {
-                                    log::error!("XIMClientError: {}", err);
-                                    false
-                                }
-                            };
-                            let xim_callback_event = xim_handler.last_callback_event.take();
-
-                            let mut state = client.0.borrow_mut();
-                            state.ximc = Some(ximc);
-                            state.xim_handler = Some(xim_handler);
-                            drop(state);
-
-                            if let Some(event) = xim_callback_event {
-                                client.handle_xim_callback_event(event);
-                            }
-
-                            if xim_filtered {
-                                continue;
-                            }
-
-                            if xim_connected {
-                                client.xim_handle_event(event);
-                            } else {
-                                client.handle_event(event);
-                            }
-                        }
-
-                        Ok(calloop::PostAction::Continue)
-                    }
+                |_readiness, _, client| {
+                    client.consume_x11_events();
+                    Ok(calloop::PostAction::Continue)
                 },
             )
             .expect("Failed to initialize x11 event source");
@@ -466,6 +405,80 @@ impl X11Client {
             .get(&win)
             .filter(|window_reference| !window_reference.window.state.borrow().destroyed)
             .map(|window_reference| window_reference.window.clone())
+    }
+
+    fn consume_x11_events(&self) {
+        let xcb_connection = self.0.borrow_mut().xcb_connection.clone();
+
+        let mut events = Vec::new();
+        let mut windows_to_refresh = HashSet::new();
+
+        loop {
+            match xcb_connection.poll_for_event() {
+                Ok(Some(event)) => {
+                    if let Event::Expose(event) = event {
+                        windows_to_refresh.insert(event.window);
+                    } else {
+                        events.push(event);
+                    }
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(error) => {
+                    log::warn!("error polling xcb connection for new events: {}", error);
+                    break;
+                }
+            }
+        }
+
+        for window in windows_to_refresh.into_iter() {
+            if let Some(window) = self.get_window(window) {
+                window.refresh();
+            }
+        }
+
+        for event in events.into_iter() {
+            let mut state = self.0.borrow_mut();
+            if state.ximc.is_none() || state.xim_handler.is_none() {
+                drop(state);
+                self.handle_event(event);
+                continue;
+            }
+
+            let mut ximc = state.ximc.take().unwrap();
+            let mut xim_handler = state.xim_handler.take().unwrap();
+            let xim_connected = xim_handler.connected;
+            drop(state);
+
+            let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
+                Ok(handled) => handled,
+                Err(err) => {
+                    log::error!("XIMClientError: {}", err);
+                    false
+                }
+            };
+            let xim_callback_event = xim_handler.last_callback_event.take();
+
+            let mut state = self.0.borrow_mut();
+            state.ximc = Some(ximc);
+            state.xim_handler = Some(xim_handler);
+            drop(state);
+
+            if let Some(event) = xim_callback_event {
+                self.handle_xim_callback_event(event);
+            }
+
+            if xim_filtered {
+                continue;
+            }
+
+            if xim_connected {
+                self.xim_handle_event(event);
+            } else {
+                self.handle_event(event);
+            }
+        }
     }
 
     fn handle_event(&self, event: Event) -> Option<()> {
