@@ -54,7 +54,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter,
-    ops::Range,
+    ops::{ControlFlow, Range},
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -67,12 +67,14 @@ use ui::{
 };
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
-use workspace::NewFile;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    searchable::Direction,
-    Save, ToggleZoom, Toolbar, Workspace,
+    item::Item,
+    pane,
+    searchable::{Direction, SearchEvent, SearchableItem},
+    Pane, Save, ToggleZoom, Toolbar, Workspace,
 };
+use workspace::{searchable::SearchableItemHandle, NewFile};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -99,16 +101,14 @@ pub enum AssistantPanelEvent {
 }
 
 pub struct AssistantPanel {
+    pane: View<Pane>,
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     height: Option<Pixels>,
-    active_context_editor: Option<ActiveContextEditor>,
     show_saved_contexts: bool,
     context_store: Model<ContextStore>,
     saved_context_picker: View<Picker<SavedContextPickerDelegate>>,
-    zoomed: bool,
     focus_handle: FocusHandle,
-    toolbar: View<Toolbar>,
     languages: Arc<LanguageRegistry>,
     slash_commands: Arc<SlashCommandRegistry>,
     fs: Arc<dyn Fs>,
@@ -226,98 +226,181 @@ impl AssistantPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
+            // TODO: deserialize state.
             let fs = workspace.update(&mut cx, |workspace, _| workspace.app_state().fs.clone())?;
             let context_store = cx.update(|cx| ContextStore::new(fs.clone(), cx))?.await?;
-
-            // TODO: deserialize state.
-            let workspace_handle = workspace.clone();
             workspace.update(&mut cx, |workspace, cx| {
-                cx.new_view::<Self>(|cx| {
-                    let toolbar = cx.new_view(|cx| {
-                        let mut toolbar = Toolbar::new();
-                        toolbar.set_can_navigate(false, cx);
-                        toolbar.add_item(cx.new_view(BufferSearchBar::new), cx);
-                        toolbar
-                    });
-
-                    let saved_context_picker = cx.new_view(|cx| {
-                        Picker::uniform_list(
-                            SavedContextPickerDelegate::new(context_store.clone()),
-                            cx,
-                        )
-                        .modal(false)
-                        .max_height(None)
-                    });
-
-                    let focus_handle = cx.focus_handle();
-                    let subscriptions = vec![
-                        cx.on_focus_in(&focus_handle, Self::focus_in),
-                        cx.on_focus_out(&focus_handle, Self::focus_out),
-                        cx.observe_global::<CompletionProvider>({
-                            let mut prev_settings_version =
-                                CompletionProvider::global(cx).settings_version();
-                            move |this, cx| {
-                                this.completion_provider_changed(prev_settings_version, cx);
-                                prev_settings_version =
-                                    CompletionProvider::global(cx).settings_version();
-                            }
-                        }),
-                        cx.observe(&context_store, |this, _, cx| {
-                            this.saved_context_picker
-                                .update(cx, |picker, cx| picker.refresh(cx));
-                        }),
-                        cx.subscribe(
-                            &saved_context_picker,
-                            Self::handle_saved_context_picker_event,
-                        ),
-                    ];
-
-                    cx.observe_global::<FileIcons>(|_, cx| {
-                        cx.notify();
-                    })
-                    .detach();
-
-                    Self {
-                        workspace: workspace_handle,
-                        active_context_editor: None,
-                        show_saved_contexts: false,
-                        saved_context_picker,
-                        context_store,
-                        zoomed: false,
-                        focus_handle,
-                        toolbar,
-                        languages: workspace.app_state().languages.clone(),
-                        slash_commands: SlashCommandRegistry::global(cx),
-                        fs: workspace.app_state().fs.clone(),
-                        telemetry: workspace.client().telemetry().clone(),
-                        width: None,
-                        height: None,
-                        _subscriptions: subscriptions,
-                        authentication_prompt: None,
-                        model_menu_handle: PopoverMenuHandle::default(),
-                    }
-                })
+                cx.new_view(|cx| Self::new(workspace, context_store.clone(), cx))
             })
         })
     }
 
-    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        self.toolbar
-            .update(cx, |toolbar, cx| toolbar.focus_changed(true, cx));
-        cx.notify();
-        if self.focus_handle.is_focused(cx) {
-            if self.show_saved_contexts {
-                cx.focus_view(&self.saved_context_picker);
-            } else if let Some(context) = self.active_context_editor() {
-                cx.focus_view(context);
-            }
+    fn new(
+        workspace: &Workspace,
+        context_store: Model<ContextStore>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let pane = cx.new_view(|cx| {
+            let mut pane = Pane::new(
+                workspace.weak_handle(),
+                workspace.project().clone(),
+                Default::default(),
+                None,
+                NewFile.boxed_clone(),
+                cx,
+            );
+            pane.set_can_split(false, cx);
+            pane.set_can_navigate(false, cx);
+            pane.display_nav_history_buttons(None);
+            pane.set_should_display_tab_bar(|_| true);
+            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
+                let pane_handle = cx.view().downgrade();
+                h_flex()
+                    .gap_2()
+                    .child(
+                        PopoverMenu::new("assistant-popover")
+                            .trigger(IconButton::new("trigger", IconName::Menu))
+                            .menu(move |cx| {
+                                ContextMenu::build(cx, |menu, _cx| {
+                                    menu.entry("New Context", Some(Box::new(NewFile)), {
+                                        let pane_handle = pane_handle.clone();
+                                        move |cx| {
+                                            pane_handle
+                                                .update(cx, |pane, cx| {
+                                                    pane.focus_handle(cx)
+                                                        .dispatch_action(&NewFile, cx);
+                                                })
+                                                .ok();
+                                        }
+                                    })
+                                    .entry(
+                                        "History",
+                                        Some(Box::new(ToggleHistory)),
+                                        {
+                                            let pane_handle = pane_handle.clone();
+                                            move |cx| {
+                                                pane_handle
+                                                    .update(cx, |pane, cx| {
+                                                        pane.focus_handle(cx)
+                                                            .dispatch_action(&ToggleHistory, cx);
+                                                    })
+                                                    .ok();
+                                            }
+                                        },
+                                    )
+                                })
+                                .into()
+                            }),
+                    )
+                    .into_any_element()
+            });
+            pane.toolbar().update(cx, |toolbar, cx| {
+                // todo!("toolbar.add_item")
+                // toolbar.add_item(
+                //     cx.new_view(|_| {
+                //         h_flex()
+                //             .gap_2()
+                //             .child(ModelSelector::new(
+                //                 PopoverMenuHandle::default(),
+                //                 workspace.app_state().fs.clone(),
+                //             ))
+                //             .child(
+                //                 IconButton::new("inject-context", IconName::Quote).tooltip(|cx| {
+                //                     Tooltip::with_meta(
+                //                         "Insert Context",
+                //                         None,
+                //                         "Type / to insert via keyboard",
+                //                         cx,
+                //                     )
+                //                 }),
+                //             )
+                //     }),
+                //     cx,
+                // );
+                toolbar.add_item(cx.new_view(BufferSearchBar::new), cx)
+            });
+            pane
+        });
+
+        let saved_context_picker = cx.new_view(|cx| {
+            Picker::uniform_list(SavedContextPickerDelegate::new(context_store.clone()), cx)
+                .modal(false)
+                .max_height(None)
+        });
+        let focus_handle = cx.focus_handle();
+
+        let subscriptions = vec![
+            cx.observe(&pane, |_, _, cx| cx.notify()),
+            cx.subscribe(&pane, Self::handle_pane_event),
+            cx.observe_global::<CompletionProvider>({
+                let mut prev_settings_version = CompletionProvider::global(cx).settings_version();
+                move |this, cx| {
+                    this.completion_provider_changed(prev_settings_version, cx);
+                    prev_settings_version = CompletionProvider::global(cx).settings_version();
+                }
+            }),
+            cx.observe(&context_store, |this, _, cx| {
+                this.saved_context_picker
+                    .update(cx, |picker, cx| picker.refresh(cx));
+            }),
+            cx.subscribe(
+                &saved_context_picker,
+                Self::handle_saved_context_picker_event,
+            ),
+            cx.on_focus_in(&focus_handle, Self::focus_in),
+        ];
+
+        Self {
+            pane,
+            focus_handle,
+            workspace: workspace.weak_handle(),
+            width: None,
+            height: None,
+            context_store,
+            saved_context_picker,
+            show_saved_contexts: false,
+            languages: workspace.app_state().languages.clone(),
+            slash_commands: SlashCommandRegistry::global(cx),
+            fs: workspace.app_state().fs.clone(),
+            telemetry: workspace.client().telemetry().clone(),
+            _subscriptions: subscriptions,
+            authentication_prompt: None,
+            model_menu_handle: PopoverMenuHandle::default(),
         }
     }
 
-    fn focus_out(&mut self, _event: FocusOutEvent, cx: &mut ViewContext<Self>) {
-        self.toolbar
-            .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
+    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        if self.focus_handle.is_focused(cx) {
+            if self.show_saved_contexts {
+                cx.focus_view(&self.saved_context_picker);
+            } else {
+                cx.focus_view(&self.pane);
+            }
+        }
         cx.notify();
+    }
+
+    fn handle_pane_event(
+        &mut self,
+        _pane: View<Pane>,
+        event: &pane::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            pane::Event::Remove => cx.emit(PanelEvent::Close),
+            pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
+            pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
+
+            pane::Event::AddItem { item } => {
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        item.added_to_pane(workspace, self.pane.clone(), cx)
+                    });
+                }
+            }
+
+            _ => {}
+        }
     }
 
     fn completion_provider_changed(
@@ -328,7 +411,7 @@ impl AssistantPanel {
         if self.is_authenticated(cx) {
             self.authentication_prompt = None;
 
-            if let Some(editor) = self.active_context_editor() {
+            if let Some(editor) = self.active_context_editor(cx) {
                 editor.update(cx, |active_context, cx| {
                     active_context
                         .context
@@ -336,7 +419,7 @@ impl AssistantPanel {
                 })
             }
 
-            if self.active_context_editor().is_none() {
+            if self.active_context_editor(cx).is_none() {
                 self.new_context(cx);
             }
             cx.notify();
@@ -480,17 +563,18 @@ impl AssistantPanel {
                 }
             }
         }
-        let context_editor = assistant_panel
-            .read(cx)
-            .active_context_editor()
-            .and_then(|editor| {
-                let editor = &editor.read(cx).editor;
-                if editor.read(cx).is_focused(cx) {
-                    Some(editor.clone())
-                } else {
-                    None
-                }
-            });
+        let context_editor =
+            assistant_panel
+                .read(cx)
+                .active_context_editor(cx)
+                .and_then(|editor| {
+                    let editor = &editor.read(cx).editor;
+                    if editor.read(cx).is_focused(cx) {
+                        Some(editor.clone())
+                    } else {
+                        None
+                    }
+                });
 
         if let Some(context_editor) = context_editor {
             Some(InlineAssistTarget::Editor(context_editor, false))
@@ -522,24 +606,10 @@ impl AssistantPanel {
     }
 
     fn show_context(&mut self, context_editor: View<ContextEditor>, cx: &mut ViewContext<Self>) {
-        let mut subscriptions = Vec::new();
-        subscriptions.push(cx.subscribe(&context_editor, Self::handle_context_editor_event));
-
-        let context = context_editor.read(cx).context.clone();
-        subscriptions.push(cx.observe(&context, |_, _, cx| cx.notify()));
-
-        let editor = context_editor.read(cx).editor.clone();
-        self.toolbar.update(cx, |toolbar, cx| {
-            toolbar.set_active_item(Some(&editor), cx);
+        let focus = self.focus_handle.contains_focused(cx);
+        self.pane.update(cx, |pane, cx| {
+            pane.add_item(Box::new(context_editor), focus, focus, None, cx)
         });
-        if self.focus_handle.contains_focused(cx) {
-            cx.focus_view(&editor);
-        }
-        self.active_context_editor = Some(ActiveContextEditor {
-            editor: context_editor,
-            _subscriptions: subscriptions,
-        });
-        self.show_saved_contexts = false;
         cx.emit(AssistantPanelEvent::ContextEdited);
         cx.notify();
     }
@@ -553,14 +623,6 @@ impl AssistantPanel {
         match event {
             ContextEditorEvent::TabContentChanged => cx.notify(),
             ContextEditorEvent::Edited => cx.emit(AssistantPanelEvent::ContextEdited),
-        }
-    }
-
-    fn toggle_zoom(&mut self, _: &workspace::ToggleZoom, cx: &mut ViewContext<Self>) {
-        if self.zoomed {
-            cx.emit(PanelEvent::ZoomOut)
-        } else {
-            cx.emit(PanelEvent::ZoomIn)
         }
     }
 
@@ -581,54 +643,10 @@ impl AssistantPanel {
     }
 
     fn hide_history(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(editor) = self.active_context_editor() {
+        if let Some(editor) = self.active_context_editor(cx) {
             cx.focus_view(&editor);
             self.show_saved_contexts = false;
             cx.notify();
-        }
-    }
-
-    fn deploy(&mut self, action: &search::buffer_search::Deploy, cx: &mut ViewContext<Self>) {
-        let mut propagate = true;
-        if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |search_bar, cx| {
-                if search_bar.show(cx) {
-                    search_bar.search_suggested(cx);
-                    if action.focus {
-                        let focus_handle = search_bar.focus_handle(cx);
-                        search_bar.select_query(cx);
-                        cx.focus(&focus_handle);
-                    }
-                    propagate = false
-                }
-            });
-        }
-        if propagate {
-            cx.propagate();
-        }
-    }
-
-    fn handle_editor_cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
-        if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
-            if !search_bar.read(cx).is_dismissed() {
-                search_bar.update(cx, |search_bar, cx| {
-                    search_bar.dismiss(&Default::default(), cx)
-                });
-                return;
-            }
-        }
-        cx.propagate();
-    }
-
-    fn select_next_match(&mut self, _: &search::SelectNextMatch, cx: &mut ViewContext<Self>) {
-        if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Next, 1, cx));
-        }
-    }
-
-    fn select_prev_match(&mut self, _: &search::SelectPrevMatch, cx: &mut ViewContext<Self>) {
-        if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.select_match(Direction::Prev, 1, cx));
         }
     }
 
@@ -643,53 +661,57 @@ impl AssistantPanel {
     }
 
     fn insert_command(&mut self, name: &str, cx: &mut ViewContext<Self>) {
-        if let Some(context_editor) = self.active_context_editor() {
+        if let Some(context_editor) = self.active_context_editor(cx) {
             context_editor.update(cx, |context_editor, cx| {
                 context_editor.insert_command(name, cx)
             });
         }
     }
 
-    fn active_context_editor(&self) -> Option<&View<ContextEditor>> {
-        Some(&self.active_context_editor.as_ref()?.editor)
+    fn active_context_editor(&self, cx: &AppContext) -> Option<View<ContextEditor>> {
+        self.pane
+            .read(cx)
+            .active_item()?
+            .downcast::<ContextEditor>()
     }
 
     pub fn active_context(&self, cx: &AppContext) -> Option<Model<Context>> {
-        Some(self.active_context_editor()?.read(cx).context.clone())
+        Some(self.active_context_editor(cx)?.read(cx).context.clone())
     }
 
-    fn render_popover_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let assistant = cx.view().clone();
-        let zoomed = self.zoomed;
-        PopoverMenu::new("assistant-popover")
-            .trigger(IconButton::new("trigger", IconName::Menu))
-            .menu(move |cx| {
-                let assistant = assistant.clone();
-                ContextMenu::build(cx, |menu, _cx| {
-                    menu.entry(
-                        if zoomed { "Zoom Out" } else { "Zoom In" },
-                        Some(Box::new(ToggleZoom)),
-                        {
-                            let assistant = assistant.clone();
-                            move |cx| {
-                                assistant.focus_handle(cx).dispatch_action(&ToggleZoom, cx);
-                            }
-                        },
-                    )
-                    .entry("New Context", Some(Box::new(NewFile)), {
-                        let assistant = assistant.clone();
-                        move |cx| {
-                            assistant.focus_handle(cx).dispatch_action(&NewFile, cx);
-                        }
-                    })
-                    .entry("History", Some(Box::new(ToggleHistory)), {
-                        let assistant = assistant.clone();
-                        move |cx| assistant.update(cx, |assistant, cx| assistant.show_history(cx))
-                    })
-                })
-                .into()
-            })
-    }
+    // todo!("render_popover_button")
+    // fn render_popover_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    //     let assistant = cx.view().clone();
+    //     let zoomed = self.zoomed;
+    //     PopoverMenu::new("assistant-popover")
+    //         .trigger(IconButton::new("trigger", IconName::Menu))
+    //         .menu(move |cx| {
+    //             let assistant = assistant.clone();
+    //             ContextMenu::build(cx, |menu, _cx| {
+    //                 menu.entry(
+    //                     if zoomed { "Zoom Out" } else { "Zoom In" },
+    //                     Some(Box::new(ToggleZoom)),
+    //                     {
+    //                         let assistant = assistant.clone();
+    //                         move |cx| {
+    //                             assistant.focus_handle(cx).dispatch_action(&ToggleZoom, cx);
+    //                         }
+    //                     },
+    //                 )
+    //                 .entry("New Context", Some(Box::new(NewFile)), {
+    //                     let assistant = assistant.clone();
+    //                     move |cx| {
+    //                         assistant.focus_handle(cx).dispatch_action(&NewFile, cx);
+    //                     }
+    //                 })
+    //                 .entry("History", Some(Box::new(ToggleHistory)), {
+    //                     let assistant = assistant.clone();
+    //                     move |cx| assistant.update(cx, |assistant, cx| assistant.show_history(cx))
+    //                 })
+    //             })
+    //             .into()
+    //         })
+    // }
 
     fn render_inject_context_menu(&self, cx: &mut ViewContext<Self>) -> impl Element {
         let commands = self.slash_commands.clone();
@@ -756,8 +778,8 @@ impl AssistantPanel {
     }
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        self.active_context_editor.as_ref().map(|context| {
-            let focus_handle = context.editor.focus_handle(cx);
+        self.active_context_editor(cx).map(|context_editor| {
+            let focus_handle = context_editor.focus_handle(cx);
             ButtonLike::new("send_button")
                 .style(ButtonStyle::Filled)
                 .layer(ElevationIndex::ModalSurface)
@@ -767,7 +789,7 @@ impl AssistantPanel {
                 )
                 .child(Label::new("Send"))
                 .on_click(cx.listener(|this, _event, cx| {
-                    if let Some(active_editor) = this.active_context_editor() {
+                    if let Some(active_editor) = this.active_context_editor(cx) {
                         active_editor.update(cx, |editor, cx| editor.assist(&Assist, cx));
                     }
                 }))
@@ -826,117 +848,42 @@ impl AssistantPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let header = TabBar::new("assistant_header")
-            .start_child(h_flex().gap_1().child(self.render_popover_button(cx)))
-            .children(self.active_context_editor().map(|editor| {
-                h_flex()
-                    .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
-                    .flex_1()
-                    .px_2()
-                    .child(
-                        div()
-                            .id("title")
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, cx| this.hide_history(cx)))
-                            .child(Label::new(editor.read(cx).title(cx))),
-                    )
-            }))
-            .end_child(
-                h_flex()
-                    .gap_2()
-                    .when_some(self.active_context_editor(), |this, editor| {
-                        let context = editor.read(cx).context.clone();
-                        this.child(
-                            h_flex()
-                                .gap_1()
-                                .child(ModelSelector::new(
-                                    self.model_menu_handle.clone(),
-                                    self.fs.clone(),
-                                ))
-                                .children(self.render_remaining_tokens(&context, cx)),
-                        )
-                        .child(
-                            ui::Divider::vertical()
-                                .inset()
-                                .color(ui::DividerColor::Border),
-                        )
-                    })
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(self.render_inject_context_menu(cx))
-                            .child(
-                                IconButton::new("show-prompt-library", IconName::Library)
-                                    .icon_size(IconSize::Small)
-                                    .on_click({
-                                        let language_registry = self.languages.clone();
-                                        cx.listener(move |_this, _event, cx| {
-                                            open_prompt_library(language_registry.clone(), cx)
-                                                .detach_and_log_err(cx);
-                                        })
-                                    })
-                                    .tooltip(|cx| Tooltip::text("Prompt Library…", cx)),
-                            ),
-                    ),
-            );
-
-        let contents = if self.active_context_editor().is_some() {
-            let mut registrar = DivRegistrar::new(
-                |panel, cx| panel.toolbar.read(cx).item_of_type::<BufferSearchBar>(),
-                cx,
-            );
-            BufferSearchBar::register(&mut registrar);
-            registrar.into_div()
-        } else {
-            div()
-        };
-
         v_flex()
             .key_context("AssistantPanel")
             .size_full()
             .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                 this.new_context(cx);
             }))
-            .on_action(cx.listener(AssistantPanel::toggle_zoom))
             .on_action(cx.listener(AssistantPanel::toggle_history))
-            .on_action(cx.listener(AssistantPanel::deploy))
-            .on_action(cx.listener(AssistantPanel::select_next_match))
-            .on_action(cx.listener(AssistantPanel::select_prev_match))
-            .on_action(cx.listener(AssistantPanel::handle_editor_cancel))
             .on_action(cx.listener(AssistantPanel::reset_credentials))
             .on_action(cx.listener(AssistantPanel::toggle_model_selector))
             .track_focus(&self.focus_handle)
-            .child(header)
-            .children(if self.toolbar.read(cx).hidden() {
-                None
-            } else {
-                Some(self.toolbar.clone())
-            })
-            .child(contents.flex_1().child(
-                if self.show_saved_contexts || self.active_context_editor().is_none() {
+            .child(
+                if self.show_saved_contexts || self.active_context_editor(cx).is_none() {
                     div()
                         .size_full()
                         .child(self.saved_context_picker.clone())
                         .into_any_element()
-                } else if let Some(editor) = self.active_context_editor() {
-                    let editor = editor.clone();
-                    div()
-                        .size_full()
-                        .child(editor.clone())
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .absolute()
-                                .bottom_0()
-                                .p_4()
-                                .justify_end()
-                                .children(self.render_send_button(cx)),
-                        )
-                        .into_any_element()
                 } else {
-                    div().into_any_element()
+                    let mut registrar = DivRegistrar::new(
+                        |panel, cx| {
+                            panel
+                                .pane
+                                .read(cx)
+                                .toolbar()
+                                .read(cx)
+                                .item_of_type::<BufferSearchBar>()
+                        },
+                        cx,
+                    );
+                    BufferSearchBar::register(&mut registrar);
+                    registrar
+                        .into_div()
+                        .size_full()
+                        .child(self.pane.clone())
+                        .into_any()
                 },
-            ))
+            )
     }
 
     fn render_remaining_tokens(
@@ -1031,13 +978,12 @@ impl Panel for AssistantPanel {
         cx.notify();
     }
 
-    fn is_zoomed(&self, _: &WindowContext) -> bool {
-        self.zoomed
+    fn is_zoomed(&self, cx: &WindowContext) -> bool {
+        self.pane.read(cx).is_zoomed()
     }
 
     fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
-        self.zoomed = zoomed;
-        cx.notify();
+        self.pane.update(cx, |pane, cx| pane.set_zoomed(zoomed, cx));
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
@@ -1046,7 +992,7 @@ impl Panel for AssistantPanel {
             cx.spawn(|this, mut cx| async move {
                 load_credentials.await?;
                 this.update(&mut cx, |this, cx| {
-                    if this.is_authenticated(cx) && this.active_context_editor().is_none() {
+                    if this.is_authenticated(cx) && this.active_context_editor(cx).is_none() {
                         this.new_context(cx);
                     }
                 })
@@ -2274,7 +2220,7 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
-enum ContextEditorEvent {
+pub enum ContextEditorEvent {
     Edited,
     TabContentChanged,
 }
@@ -2357,6 +2303,7 @@ impl ContextEditor {
             cx.observe(&context, |_, _, cx| cx.notify()),
             cx.subscribe(&context, Self::handle_context_event),
             cx.subscribe(&editor, Self::handle_editor_event),
+            cx.subscribe(&editor, Self::handle_editor_search_event),
         ];
 
         let sections = context.read(cx).slash_command_output_sections.clone();
@@ -2873,6 +2820,15 @@ impl ContextEditor {
         }
     }
 
+    fn handle_editor_search_event(
+        &mut self,
+        _: View<Editor>,
+        event: &SearchEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        cx.emit(event.clone());
+    }
+
     fn cursor_scroll_position(&self, cx: &mut ViewContext<Self>) -> Option<ScrollPosition> {
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
@@ -2985,7 +2941,7 @@ impl ContextEditor {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
-        let Some(context_editor_view) = panel.read(cx).active_context_editor().cloned() else {
+        let Some(context_editor_view) = panel.read(cx).active_context_editor(cx) else {
             return;
         };
         let Some(active_editor_view) = workspace
@@ -3066,8 +3022,7 @@ impl ContextEditor {
                 // being updated.
                 cx.defer(move |panel, cx| {
                     if let Some(context) = panel
-                        .active_context_editor()
-                        .cloned()
+                        .active_context_editor(cx)
                         .or_else(|| panel.new_context(cx))
                     {
                         context.update(cx, |context, cx| {
@@ -3310,6 +3265,7 @@ impl ContextEditor {
 }
 
 impl EventEmitter<ContextEditorEvent> for ContextEditor {}
+impl EventEmitter<SearchEvent> for ContextEditor {}
 
 impl Render for ContextEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -3337,6 +3293,109 @@ impl Render for ContextEditor {
 impl FocusableView for ContextEditor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.editor.focus_handle(cx)
+    }
+}
+
+impl Item for ContextEditor {
+    type Event = ContextEditorEvent;
+
+    fn tab_content(
+        &self,
+        params: workspace::item::TabContentParams,
+        cx: &WindowContext,
+    ) -> AnyElement {
+        let color = if params.selected {
+            Color::Default
+        } else {
+            Color::Muted
+        };
+        Label::new(util::truncate_and_trailoff(&self.title(cx), 16))
+            .color(color)
+            .into_any_element()
+    }
+
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+        match event {
+            ContextEditorEvent::Edited => {
+                f(workspace::item::ItemEvent::Edit);
+                f(workspace::item::ItemEvent::UpdateBreadcrumbs);
+            }
+            ContextEditorEvent::TabContentChanged => {
+                f(workspace::item::ItemEvent::UpdateTab);
+            }
+        }
+    }
+
+    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
+        Some(self.title(cx).into())
+    }
+
+    fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
+}
+
+impl SearchableItem for ContextEditor {
+    type Match = <Editor as SearchableItem>::Match;
+
+    fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_matches(cx);
+        });
+    }
+
+    fn update_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.update_matches(matches, cx));
+    }
+
+    fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
+        self.editor
+            .update(cx, |editor, cx| editor.query_suggestion(cx))
+    }
+
+    fn activate_match(
+        &mut self,
+        index: usize,
+        matches: &[Self::Match],
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.activate_match(index, matches, cx);
+        });
+    }
+
+    fn select_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.select_matches(matches, cx));
+    }
+
+    fn replace(
+        &mut self,
+        identifier: &Self::Match,
+        query: &project::search::SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor
+            .update(cx, |editor, cx| editor.replace(identifier, query, cx));
+    }
+
+    fn find_matches(
+        &mut self,
+        query: Arc<project::search::SearchQuery>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Vec<Self::Match>> {
+        self.editor
+            .update(cx, |editor, cx| editor.find_matches(query, cx))
+    }
+
+    fn active_match_index(
+        &mut self,
+        matches: &[Self::Match],
+        cx: &mut ViewContext<Self>,
+    ) -> Option<usize> {
+        self.editor
+            .update(cx, |editor, cx| editor.active_match_index(matches, cx))
     }
 }
 
