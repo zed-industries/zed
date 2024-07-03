@@ -2,15 +2,11 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
-use fs::Fs;
-use futures::AsyncReadExt;
 use gpui::{AppContext, Model, Task, WeakView};
-use http::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{
-    convert_rustdoc_to_markdown, IndexedDocsRegistry, IndexedDocsStore, LocalProvider, PackageName,
-    ProviderId, RustdocIndexer, RustdocSource,
+    IndexedDocsRegistry, IndexedDocsStore, LocalProvider, ProviderId, RustdocIndexer,
 };
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
@@ -154,16 +150,25 @@ impl SlashCommand for DocsSlashCommand {
     ) -> Task<Result<Vec<String>>> {
         self.ensure_rustdoc_provider_is_registered(workspace, cx);
 
-        let args = DocsSlashCommandArgs::parse(&query);
-
-        dbg!(&args);
-
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
+        let args = DocsSlashCommandArgs::parse(&query);
         let store = args
             .provider()
-            .ok_or_else(|| anyhow!("no provider specified"))
+            .ok_or_else(|| anyhow!("no docs provider specified"))
             .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
         cx.background_executor().spawn(async move {
+            /// HACK: Prefixes the completions with the provider ID so that it doesn't get deleted
+            /// when a completion is accepted.
+            ///
+            /// We will likely want to extend `complete_argument` with support for replacing just
+            /// a particular range of the argument when a completion is accepted.
+            fn prefix_with_provider(provider: ProviderId, items: Vec<String>) -> Vec<String> {
+                items
+                    .into_iter()
+                    .map(|item| format!("{provider} {item}"))
+                    .collect()
+            }
+
             match args {
                 DocsSlashCommandArgs::NoProvider => {
                     let providers = indexed_docs_registry.list_providers();
@@ -172,12 +177,12 @@ impl SlashCommand for DocsSlashCommand {
                         .map(|provider| provider.to_string())
                         .collect())
                 }
-                DocsSlashCommandArgs::ProviderSelected { .. } => {
+                DocsSlashCommandArgs::ProviderSelected { provider } => {
                     let store = store?;
                     let items = store.search(String::new()).await;
-                    Ok(items)
+                    Ok(prefix_with_provider(provider, items))
                 }
-                DocsSlashCommandArgs::SearchPackageDocs { package, .. } => {
+                DocsSlashCommandArgs::SearchPackageDocs { provider, package } => {
                     let store = store?;
 
                     // We don't need to hold onto this task, as the `IndexedDocsStore` will hold it
@@ -185,12 +190,15 @@ impl SlashCommand for DocsSlashCommand {
                     let _ = store.clone().index(package.as_str().into());
 
                     let items = store.search(package).await;
-                    Ok(items)
+                    Ok(prefix_with_provider(provider, items))
                 }
-                DocsSlashCommandArgs::SearchItemDocs { item_path, .. } => {
+                DocsSlashCommandArgs::SearchItemDocs {
+                    provider,
+                    item_path,
+                } => {
                     let store = store?;
                     let items = store.search(item_path).await;
-                    Ok(items)
+                    Ok(prefix_with_provider(provider, items))
                 }
             }
         })
@@ -199,78 +207,52 @@ impl SlashCommand for DocsSlashCommand {
     fn run(
         self: Arc<Self>,
         argument: Option<&str>,
-        workspace: WeakView<Workspace>,
+        _workspace: WeakView<Workspace>,
         _delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(argument) = argument else {
             return Task::ready(Err(anyhow!("missing argument")));
         };
-        let Some(workspace) = workspace.upgrade() else {
-            return Task::ready(Err(anyhow!("workspace was dropped")));
-        };
 
-        let mut args = argument.split(' ');
-        let Some(provider) = args.next() else {
-            return Task::ready(Err(anyhow!("missing provider")));
-        };
-
-        let mut path_components = argument.split("::");
-        let crate_name = match path_components
-            .next()
-            .ok_or_else(|| anyhow!("missing crate name"))
-        {
-            Ok(crate_name) => PackageName::from(crate_name),
-            Err(err) => return Task::ready(Err(err)),
-        };
-        let item_path = path_components.map(ToString::to_string).collect::<Vec<_>>();
-
+        let args = DocsSlashCommandArgs::parse(argument);
         let text = cx.background_executor().spawn({
-            let rustdoc_store = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx);
-            let crate_name = crate_name.clone();
-            let item_path = item_path.clone();
+            let store = args
+                .provider()
+                .ok_or_else(|| anyhow!("no docs provider specified"))
+                .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
             async move {
-                let rustdoc_store = rustdoc_store?;
-                let item_docs = rustdoc_store
-                    .load(
-                        crate_name.clone(),
-                        if item_path.is_empty() {
-                            None
-                        } else {
-                            Some(item_path.join("::"))
-                        },
-                    )
-                    .await?;
+                match args {
+                    DocsSlashCommandArgs::NoProvider => bail!("no docs provider specified"),
+                    DocsSlashCommandArgs::ProviderSelected { .. } => bail!("no search query"),
+                    DocsSlashCommandArgs::SearchPackageDocs { provider, package } => {
+                        let store = store?;
+                        let item_docs = store.load(package.clone()).await?;
 
-                anyhow::Ok((RustdocSource::Index, item_docs.to_string()))
+                        anyhow::Ok((provider, package, item_docs.to_string()))
+                    }
+                    DocsSlashCommandArgs::SearchItemDocs {
+                        provider,
+                        item_path,
+                    } => {
+                        let store = store?;
+                        let item_docs = store.load(item_path.clone()).await?;
+
+                        anyhow::Ok((provider, item_path, item_docs.to_string()))
+                    }
+                }
             }
         });
 
-        let module_path = if item_path.is_empty() {
-            None
-        } else {
-            Some(SharedString::from(item_path.join("::")))
-        };
         cx.foreground_executor().spawn(async move {
-            let (source, text) = text.await?;
+            let (provider, path, text) = text.await?;
             let range = 0..text.len();
-            let crate_path = module_path
-                .map(|module_path| format!("{}::{}", crate_name, module_path))
-                .unwrap_or_else(|| crate_name.to_string());
             Ok(SlashCommandOutput {
                 text,
                 sections: vec![SlashCommandOutputSection {
                     range,
                     icon: IconName::FileRust,
-                    label: format!(
-                        "rustdoc ({source}): {crate_path}",
-                        source = match source {
-                            RustdocSource::Index => "index",
-                            RustdocSource::Local => "local",
-                            RustdocSource::DocsDotRs => "docs.rs",
-                        }
-                    )
-                    .into(),
+                    label: format!("docs ({provider}): {path}",).into(),
                 }],
                 run_commands_in_text: false,
             })

@@ -206,16 +206,22 @@ impl SlashCommand for RustdocSlashCommand {
             let item_path = item_path.clone();
             async move {
                 let rustdoc_store = rustdoc_store?;
-                let item_docs = rustdoc_store
-                    .load(
-                        crate_name.clone(),
-                        if item_path.is_empty() {
-                            None
-                        } else {
-                            Some(item_path.join("::"))
-                        },
-                    )
-                    .await;
+
+                let item_docs = {
+                    let package = crate_name.clone();
+                    let item_path = if item_path.is_empty() {
+                        None
+                    } else {
+                        Some(item_path.join("::"))
+                    };
+                    let item_path = if let Some(item_path) = item_path {
+                        format!("{package}::{item_path}")
+                    } else {
+                        package.to_string()
+                    };
+
+                    rustdoc_store.load(item_path).await
+                };
 
                 if let Ok(item_docs) = item_docs {
                     anyhow::Ok((RustdocSource::Index, item_docs.to_string()))
