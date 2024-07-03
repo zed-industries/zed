@@ -39,11 +39,12 @@ pub fn convert_hexdocs_to_markdown(html: impl Read) -> Result<(String, Vec<Strin
 
     let mut handlers: Vec<TagHandler> = vec![
         module_collector.clone(),
-        Rc::new(RefCell::new(ParagraphHandler)),
-        Rc::new(RefCell::new(HeadingHandler)),
-        Rc::new(RefCell::new(ListHandler)),
-        Rc::new(RefCell::new(TableHandler::new())),
-        Rc::new(RefCell::new(StyledTextHandler)),
+        Rc::new(RefCell::new(GleamChromeRemover)),
+        Rc::new(RefCell::new(NavSkipper::new(ParagraphHandler))),
+        Rc::new(RefCell::new(NavSkipper::new(HeadingHandler))),
+        Rc::new(RefCell::new(NavSkipper::new(ListHandler))),
+        Rc::new(RefCell::new(NavSkipper::new(TableHandler::new()))),
+        Rc::new(RefCell::new(NavSkipper::new(StyledTextHandler))),
     ];
 
     let markdown = convert_html_to_markdown(html, &mut handlers)
@@ -56,9 +57,86 @@ pub fn convert_hexdocs_to_markdown(html: impl Read) -> Result<(String, Vec<Strin
         .cloned()
         .collect::<Vec<_>>();
 
-    dbg!(&modules);
-
     Ok((markdown, modules))
+}
+
+/// A higher-order handler that skips all content from the `nav`.
+///
+/// We still need to traverse the `nav` for collecting information, but
+/// we don't want to include any of its content in the resulting Markdown.
+pub struct NavSkipper<T: HandleTag> {
+    handler: T,
+}
+
+impl<T: HandleTag> NavSkipper<T> {
+    pub fn new(handler: T) -> Self {
+        Self { handler }
+    }
+}
+
+impl<T: HandleTag> HandleTag for NavSkipper<T> {
+    fn should_handle(&self, tag: &str) -> bool {
+        tag == "nav" || self.handler.should_handle(tag)
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        if writer.is_inside("nav") {
+            return StartTagOutcome::Continue;
+        }
+
+        self.handler.handle_tag_start(tag, writer)
+    }
+
+    fn handle_tag_end(&mut self, tag: &HtmlElement, writer: &mut MarkdownWriter) {
+        if writer.is_inside("nav") {
+            return;
+        }
+
+        self.handler.handle_tag_end(tag, writer)
+    }
+
+    fn handle_text(&mut self, text: &str, writer: &mut MarkdownWriter) -> HandlerOutcome {
+        if writer.is_inside("nav") {
+            return HandlerOutcome::Handled;
+        }
+
+        self.handler.handle_text(text, writer)
+    }
+}
+
+pub struct GleamChromeRemover;
+
+impl HandleTag for GleamChromeRemover {
+    fn should_handle(&self, tag: &str) -> bool {
+        match tag {
+            "head" | "script" | "style" | "svg" | "header" | "footer" | "a" => true,
+            _ => false,
+        }
+    }
+
+    fn handle_tag_start(
+        &mut self,
+        tag: &HtmlElement,
+        _writer: &mut MarkdownWriter,
+    ) -> StartTagOutcome {
+        match tag.tag() {
+            "head" | "script" | "style" | "svg" | "header" | "footer" => {
+                return StartTagOutcome::Skip;
+            }
+            "a" => {
+                if tag.attr("onclick").is_some() {
+                    return StartTagOutcome::Skip;
+                }
+            }
+            _ => {}
+        }
+
+        StartTagOutcome::Continue
+    }
 }
 
 pub struct GleamModuleCollector {
@@ -105,7 +183,6 @@ impl HandleTag for GleamModuleCollector {
     ) -> StartTagOutcome {
         match tag.tag() {
             "a" => {
-                dbg!(self.has_seen_modules_header, writer.is_inside("li"), &tag);
                 if self.has_seen_modules_header && writer.is_inside("li") {
                     if let Some(module_name) = Self::parse_module(tag) {
                         self.modules.insert(module_name);
