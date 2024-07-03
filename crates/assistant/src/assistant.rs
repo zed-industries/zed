@@ -26,8 +26,9 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, diagnostics_command, fetch_command, file_command, now_command,
-    project_command, prompt_command, rustdoc_command, search_command, tabs_command, term_command,
+    active_command, auto_command, default_command, diagnostics_command, fetch_command,
+    file_command, now_command, project_command, prompt_command, rustdoc_command, search_command,
+    tabs_command, term_command,
 };
 use std::{
     fmt::{self, Display},

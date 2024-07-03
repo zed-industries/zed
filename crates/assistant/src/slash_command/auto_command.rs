@@ -1,8 +1,11 @@
 use super::{SlashCommand, SlashCommandOutput};
-use crate::slash_command::create_label_for_command;
+use crate::{CompletionProvider, LanguageModelRequest, LanguageModelRequestMessage, Role};
+use anyhow::anyhow;
 use anyhow::Result;
+use futures::FutureExt;
+use futures::StreamExt;
 use gpui::{AppContext, Task, WeakView};
-use language::{CodeLabel, LspAdapterDelegate};
+use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::WindowContext;
 use workspace::Workspace;
@@ -11,68 +14,69 @@ pub(crate) struct AutoCommand;
 
 impl SlashCommand for AutoCommand {
     fn name(&self) -> String {
-        "action".into()
-    }
-
-    fn label(&self, cx: &AppContext) -> CodeLabel {
-        create_label_for_command("action", &["--action"], cx)
+        "auto".into()
     }
 
     fn description(&self) -> String {
-        "Run an editor action".into()
+        "Automatically infer what context to add, based on your prompt".into()
     }
 
     fn menu_text(&self) -> String {
-        "Run Editor Action".into()
+        "Automatically Infer Context".into()
     }
 
     fn requires_argument(&self) -> bool {
-        true
+        false
     }
 
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
-        _cancellation_flag: Arc<AtomicBool>,
+        _query: String,
+        _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
     ) -> Task<Result<Vec<String>>> {
-        let actions = vec![
-            "workspace:search".to_string(),
-            "workspace:newfile".to_string(),
-            // Add more actions as needed
-        ];
-
-        let completions = actions
-            .into_iter()
-            .filter(|action| action.contains(&query))
-            .collect::<Vec<_>>();
-
-        Task::ready(Ok(completions))
+        Task::ready(Err(anyhow!("this command does not require argument")))
     }
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        _argument: Option<&str>,
         _workspace: WeakView<Workspace>,
         _delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        use anyhow::anyhow;
-
-        let Some(argument) = argument else {
-            return Task::ready(Err(anyhow!("missing action argument")));
+        let request = LanguageModelRequest {
+            model: CompletionProvider::global(cx).model(),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: "please tell me a story".into(),
+            }],
+            stop: vec![],
+            temperature: 1.0,
         };
 
-        match argument {
-            "workspace:search" => {
-                cx.dispatch_action(Box::new(workspace::DeploySearch::find()));
-            }
-            "workspace:newfile" => {
-                cx.dispatch_action(Box::new(workspace::NewFile::default()));
-            }
-            _ => return Task::ready(Err(anyhow!("unknown action: {}", argument))),
-        }
+        let stream = CompletionProvider::global(cx).complete(request);
+
+        cx.spawn(|_cx| async move {
+            let stream_completion = async {
+                let mut messages = stream.await?;
+
+                while let Some(message) = messages.next().await {
+                    let text = message?;
+
+                    dbg!(&text);
+
+                    smol::future::yield_now().await;
+                }
+
+                anyhow::Ok(())
+            };
+
+            let result = stream_completion.await;
+
+            dbg!(&result);
+        });
 
         Task::ready(Ok(SlashCommandOutput::default()))
     }
