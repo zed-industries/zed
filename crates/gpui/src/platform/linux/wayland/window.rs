@@ -194,8 +194,7 @@ impl WaylandWindowState {
     }
 
     pub fn is_transparent(&self) -> bool {
-        self.decorations == WindowDecorations::Client
-            || self.background_appearance != WindowBackgroundAppearance::Opaque
+        self.background_appearance != WindowBackgroundAppearance::Opaque
     }
 }
 
