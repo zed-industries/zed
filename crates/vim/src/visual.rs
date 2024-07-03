@@ -610,7 +610,7 @@ pub fn select_match(
     });
     if !match_exists {
         vim.clear_operator(cx);
-        vim.stop_replaying();
+        vim.stop_replaying(cx);
         return;
     }
     vim.update_active_editor(cx, |_, editor, cx| {
