@@ -20,7 +20,7 @@ use workspace::{
     Workspace,
 };
 
-actions!(repl, [Run, ToggleFocus]);
+actions!(repl, [Run, ToggleFocus, ClearOutputs]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -29,7 +29,8 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(|workspace, _: &ToggleFocus, cx| {
                     workspace.toggle_panel_focus::<RuntimePanel>(cx);
                 })
-                .register_action(run);
+                .register_action(run)
+                .register_action(clear_outputs);
         },
     )
     .detach();
@@ -258,6 +259,16 @@ impl RuntimePanel {
 
         anyhow::Ok(())
     }
+
+    pub fn clear_outputs(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+        let entity_id = editor.entity_id();
+        if let Some(session) = self.sessions.get_mut(&entity_id) {
+            session.update(cx, |session, cx| {
+                session.clear_outputs(cx);
+            });
+            cx.notify();
+        }
+    }
 }
 
 pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
@@ -275,6 +286,23 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
             runtime_panel
                 .run(editor, workspace.app_state().fs.clone(), cx)
                 .ok();
+        });
+    }
+}
+
+pub fn clear_outputs(workspace: &mut Workspace, _: &ClearOutputs, cx: &mut ViewContext<Workspace>) {
+    let settings = JupyterSettings::get_global(cx);
+    if !settings.enabled {
+        return;
+    }
+
+    let editor = workspace
+        .active_item(cx)
+        .and_then(|item| item.act_as::<Editor>(cx));
+
+    if let (Some(editor), Some(runtime_panel)) = (editor, workspace.panel::<RuntimePanel>(cx)) {
+        runtime_panel.update(cx, |runtime_panel, cx| {
+            runtime_panel.clear_outputs(editor, cx);
         });
     }
 }

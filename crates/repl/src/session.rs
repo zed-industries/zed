@@ -10,7 +10,7 @@ use editor::{
     Anchor, AnchorRangeExt as _, Editor,
 };
 use futures::{FutureExt as _, StreamExt as _};
-use gpui::{div, prelude::*, Entity, EntityId, EventEmitter, Render, Task, View, ViewContext};
+use gpui::{div, prelude::*, Entity, EventEmitter, Render, Task, View, ViewContext};
 use project::Fs;
 use runtimelib::{
     ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest,
@@ -182,6 +182,17 @@ impl Session {
         anyhow::Ok(())
     }
 
+    pub fn clear_outputs(&mut self, cx: &mut ViewContext<Self>) {
+        let blocks_to_remove: HashSet<BlockId> =
+            self.blocks.values().map(|block| block.block_id).collect();
+
+        self.editor.update(cx, |editor, cx| {
+            editor.remove_blocks(blocks_to_remove, None, cx);
+        });
+
+        self.blocks.clear();
+    }
+
     pub fn execute(&mut self, code: &str, anchor_range: Range<Anchor>, cx: &mut ViewContext<Self>) {
         let execute_request = ExecuteRequest {
             code: code.to_string(),
@@ -266,10 +277,6 @@ impl Session {
         }
     }
 
-    pub fn id(&mut self) -> EntityId {
-        self.editor.entity_id()
-    }
-
     fn interrupt(&mut self, cx: &mut ViewContext<Self>) {
         match &mut self.kernel {
             Kernel::RunningKernel(_kernel) => {
@@ -301,6 +308,7 @@ impl Session {
 
                     this.update(&mut cx, |this, cx| {
                         cx.emit(SessionEvent::Shutdown(this.editor.clone()));
+                        this.clear_outputs(cx);
                         this.kernel = Kernel::Shutdown;
                         cx.notify();
                     })
