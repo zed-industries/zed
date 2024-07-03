@@ -1083,7 +1083,7 @@ impl Project {
             .expect("Debug tasks need to know what directory to open");
         let adapter_config = debug_task
             .debug_adapter_config()
-            .expect("Debug taks need to specify adapter configuration");
+            .expect("Debug tasks need to specify adapter configuration");
 
         let command = debug_template.command.clone();
         let args = debug_template.args.clone();
