@@ -134,6 +134,24 @@ You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI 
   ```
 5. Restart Zed
 
+## Using Claude 3.5 Sonnet
+
+You can use Claude with the Zed assistant, [As it is now supported](https://github.com/zed-industries/zed/issues/8914) by Adding the following settings
+
+```json
+"assistant": {
+  "version": "1",
+  "provider": {
+    "default_model": "claude-3-5-sonnet",
+    "name": "anthropic"
+  }
+},
+```
+
+When you save the settings the assistant panel will open and ask you to add your Anthropic API key. Which you need to get from here https://console.anthropic.com/settings/keys
+
+Even if you pay for Claude pro, you will still have to pay for additional credits to use it via the API. Which you can do here https://console.anthropic.com/settings/plans
+
 ## Prompt Library
 
 **Warning: This feature is experimental and the format of prompts is _highly_ likely to change. Use at your own risk!**
