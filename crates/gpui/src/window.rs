@@ -611,7 +611,10 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
 
     cx.active_window()
         .and_then(|w| w.update(cx, |_, cx| cx.bounds()).ok())
-        .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
+        .map(|mut bounds| {
+            bounds.origin += DEFAULT_WINDOW_OFFSET;
+            bounds
+        })
         .unwrap_or_else(|| {
             let display = display_id
                 .map(|id| cx.find_display(id))

@@ -117,7 +117,7 @@ impl RenderOnce for TitlebarButton {
 
         let should_round_top_corner = match cx.window_decorations() {
             gpui::Decorations::Server => false,
-            gpui::Decorations::Client { tiling, .. } => !(tiling.right && tiling.top),
+            gpui::Decorations::Client { tiling, .. } => !(tiling.right || tiling.top),
         };
 
         h_flex()

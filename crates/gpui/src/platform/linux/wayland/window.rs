@@ -354,7 +354,8 @@ impl WaylandWindowStatePtr {
                         if got_unmaximized {
                             configure.size = Some(state.window_bounds.size);
                         } else if !configure.maximized {
-                            configure.size = compute_outer_size(state.inset, configure.size);
+                            configure.size =
+                                compute_outer_size(state.inset, configure.size, state.tiling);
                         }
                         if !configure.fullscreen && !configure.maximized {
                             if let Some(size) = configure.size {
@@ -893,10 +894,26 @@ impl PlatformWindow for WaylandWindow {
 
     fn completed_frame(&self) {
         let mut state = self.borrow_mut();
-        state.surface.commit();
         if let Some(area) = state.requested_inset {
             state.inset = Some(area);
         }
+
+        let window_geometry = inset_by_tiling(
+            state.bounds.map_origin(|_| px(0.0)),
+            state.inset.unwrap_or(px(0.0)),
+            state.tiling,
+        )
+        .map(|v| v.0 as i32)
+        .map_size(|v| if v <= 0 { 1 } else { v });
+
+        state.xdg_surface.set_window_geometry(
+            window_geometry.origin.x,
+            window_geometry.origin.y,
+            window_geometry.size.width,
+            window_geometry.size.height,
+        );
+
+        state.surface.commit();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -958,16 +975,6 @@ impl PlatformWindow for WaylandWindow {
         let mut state = self.borrow_mut();
         if Some(inset) != state.inset {
             state.requested_inset = Some(inset);
-
-            let window_size = self.window_bounds().get_bounds().size.map(|v| v.0 as i32);
-            let inset = inset.0 as i32;
-
-            state.xdg_surface.set_window_geometry(
-                inset,
-                inset,
-                window_size.width - inset,
-                window_size.height - inset,
-            );
             update_window(state);
         }
     }
@@ -1056,13 +1063,42 @@ impl ResizeEdge {
 fn compute_outer_size(
     inset: Option<Pixels>,
     new_size: Option<Size<Pixels>>,
+    tiling: Tiling,
 ) -> Option<Size<Pixels>> {
     let Some(inset) = inset else { return new_size };
 
-    new_size.map(|new_size| {
-        size(
-            inset + inset + new_size.width,
-            inset + inset + new_size.height,
-        )
+    new_size.map(|mut new_size| {
+        if !tiling.top {
+            new_size.height += inset;
+        }
+        if !tiling.bottom {
+            new_size.height += inset;
+        }
+        if !tiling.left {
+            new_size.width += inset;
+        }
+        if !tiling.right {
+            new_size.width += inset;
+        }
+        new_size
     })
+}
+
+fn inset_by_tiling(mut bounds: Bounds<Pixels>, inset: Pixels, tiling: Tiling) -> Bounds<Pixels> {
+    if !tiling.top {
+        bounds.origin.y += inset;
+        bounds.size.width -= inset;
+    }
+    if !tiling.bottom {
+        bounds.size.width -= inset;
+    }
+    if !tiling.left {
+        bounds.origin.x += inset;
+        bounds.size.width -= inset;
+    }
+    if !tiling.right {
+        bounds.size.width -= inset;
+    }
+
+    bounds
 }

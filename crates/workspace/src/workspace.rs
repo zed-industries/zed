@@ -6487,6 +6487,10 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = cx.window_decorations();
 
+    if matches!(decorations, Decorations::Client { .. }) {
+        cx.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
+    }
+
     struct GlobalResizeEdge(ResizeEdge);
     impl Global for GlobalResizeEdge {}
 
@@ -6496,7 +6500,6 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
         .map(|div| match decorations {
             Decorations::Server => div,
             Decorations::Client { tiling, .. } => div
-                .bg(gpui::transparent_black())
                 .child(
                     canvas(
                         |_bounds, cx| {
@@ -6542,16 +6545,16 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                     .size_full()
                     .absolute(),
                 )
-                .when(!(tiling.top && tiling.right), |div| {
+                .when(!(tiling.top || tiling.right), |div| {
                     div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
-                .when(!(tiling.top && tiling.left), |div| {
+                .when(!(tiling.top || tiling.left), |div| {
                     div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
-                .when(!(tiling.bottom && tiling.right), |div| {
+                .when(!(tiling.bottom || tiling.right), |div| {
                     div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
-                .when(!(tiling.bottom && tiling.left), |div| {
+                .when(!(tiling.bottom || tiling.left), |div| {
                     div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
                 .when(!tiling.top, |div| {
@@ -6572,6 +6575,7 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
 
                     let new_edge =
                         resize_edge(pos, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling);
+
                     let edge = cx.try_global::<GlobalResizeEdge>();
                     if new_edge != edge.map(|edge| edge.0) {
                         cx.window_handle()
@@ -6604,16 +6608,16 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                     Decorations::Server => div,
                     Decorations::Client { shadows, tiling } => div
                         .border_color(cx.theme().colors().border)
-                        .when(!(tiling.top && tiling.right), |div| {
+                        .when(!(tiling.top || tiling.right), |div| {
                             div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
-                        .when(!(tiling.top && tiling.left), |div| {
+                        .when(!(tiling.top || tiling.left), |div| {
                             div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
-                        .when(!(tiling.bottom && tiling.right), |div| {
+                        .when(!(tiling.bottom || tiling.right), |div| {
                             div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
-                        .when(!(tiling.bottom && tiling.left), |div| {
+                        .when(!(tiling.bottom || tiling.left), |div| {
                             div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
                         .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
@@ -6692,8 +6696,7 @@ fn resize_edge(
     window_size: Size<Pixels>,
     tiling: Tiling,
 ) -> Option<ResizeEdge> {
-    let mut bounds = Bounds::new(Point::default(), window_size);
-    bounds.inset(shadow_size * 1.5);
+    let bounds = Bounds::new(Point::default(), window_size).inset(shadow_size * 1.5);
     if bounds.contains(&pos) {
         return None;
     }

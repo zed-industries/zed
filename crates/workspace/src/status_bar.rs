@@ -45,10 +45,10 @@ impl Render for StatusBar {
             .map(|el| match cx.window_decorations() {
                 Decorations::Server => el,
                 Decorations::Client { tiling, .. } => el
-                    .when(!(tiling.bottom && tiling.right), |el| {
+                    .when(!(tiling.bottom || tiling.right), |el| {
                         el.rounded_br(CLIENT_SIDE_DECORATION_ROUNDING)
                     })
-                    .when(!(tiling.bottom && tiling.left), |el| {
+                    .when(!(tiling.bottom || tiling.left), |el| {
                         el.rounded_bl(CLIENT_SIDE_DECORATION_ROUNDING)
                     }),
             })
