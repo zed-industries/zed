@@ -409,9 +409,9 @@ impl DebugPanel {
                     entry.scopes = scopes;
                     entry.variables = variables;
 
-                    // TODO: check if the current client is the one that stopped
-                    // if not we should not reset the stack frame list
-                    this.stack_frame_list.reset(entry.stack_frames.len());
+                    if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
+                        this.stack_frame_list.reset(entry.stack_frames.len());
+                    }
 
                     cx.notify();
                 }
@@ -444,7 +444,9 @@ impl DebugPanel {
         } else {
             if current_thread_id == Some(event.thread_id) {
                 client.update_current_thread_id(None);
-                this.stack_frame_list.reset(0); // TODO: check based on the selected/current client
+                if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
+                    this.stack_frame_list.reset(0);
+                }
             }
 
             client.thread_state().remove(&event.thread_id);

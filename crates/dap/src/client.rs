@@ -50,6 +50,7 @@ pub struct ThreadState {
 }
 
 pub struct DebugAdapterClient {
+    id: DebugAdapterClientId,
     _process: Option<Child>,
     server_tx: UnboundedSender<Payload>,
     request_count: AtomicU64,
@@ -62,6 +63,7 @@ pub struct DebugAdapterClient {
 
 impl DebugAdapterClient {
     pub async fn new(
+        id: DebugAdapterClientId,
         config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
@@ -70,15 +72,16 @@ impl DebugAdapterClient {
     ) -> Result<Self> {
         match config.transport {
             TransportType::TCP => {
-                Self::create_tcp_client(config, command, args, project_path, cx).await
+                Self::create_tcp_client(id, config, command, args, project_path, cx).await
             }
             TransportType::STDIO => {
-                Self::create_stdio_client(config, command, args, project_path, cx).await
+                Self::create_stdio_client(id, config, command, args, project_path, cx).await
             }
         }
     }
 
     async fn create_tcp_client(
+        id: DebugAdapterClientId,
         config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
@@ -108,6 +111,7 @@ impl DebugAdapterClient {
         let (rx, tx) = TcpStream::connect(address).await?.split();
 
         Self::handle_transport(
+            id,
             config,
             Box::new(BufReader::new(rx)),
             Box::new(tx),
@@ -118,6 +122,7 @@ impl DebugAdapterClient {
     }
 
     async fn create_stdio_client(
+        id: DebugAdapterClientId,
         config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
@@ -128,6 +133,7 @@ impl DebugAdapterClient {
     }
 
     pub fn handle_transport(
+        id: DebugAdapterClientId,
         config: DebugAdapterConfig,
         rx: Box<dyn AsyncBufRead + Unpin + Send>,
         tx: Box<dyn AsyncWrite + Unpin + Send>,
@@ -141,14 +147,15 @@ impl DebugAdapterClient {
         let client_rx = Arc::new(Mutex::new(client_rx));
 
         let client = Self {
-            server_tx: server_tx.clone(),
-            _process: process,
-            request_count: AtomicU64::new(0),
-            capabilities: None,
+            id,
             config,
             client_rx,
-            thread_state: Arc::new(Mutex::new(HashMap::new())),
+            _process: process,
+            capabilities: None,
+            server_tx: server_tx.clone(),
+            request_count: AtomicU64::new(0),
             current_thread_id: Arc::new(Mutex::new(None)),
+            thread_state: Arc::new(Mutex::new(HashMap::new())),
         };
 
         cx.spawn(move |_| Self::handle_recv(server_rx, server_tx, client_tx))
@@ -216,6 +223,10 @@ impl DebugAdapterClient {
             true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
             false => Err(anyhow!("Request failed")),
         }
+    }
+
+    pub fn id(&self) -> DebugAdapterClientId {
+        self.id
     }
 
     pub fn next_request_id(&self) -> u64 {

@@ -86,7 +86,6 @@ use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
 use search_history::SearchHistory;
 use serde::Serialize;
-use serde_json::json;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
@@ -1087,6 +1086,7 @@ impl Project {
 
         let task = cx.spawn(|this, mut cx| async move {
             let mut client = DebugAdapterClient::new(
+                id,
                 adapter_config,
                 &command,
                 args.iter().map(|ele| &ele[..]).collect(),
