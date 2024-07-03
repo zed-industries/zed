@@ -32,9 +32,6 @@ actions!(
 );
 
 pub struct DebugPanel {
-    pub position: DockPosition,
-    pub zoomed: bool,
-    pub active: bool,
     pub focus_handle: FocusHandle,
     pub size: Pixels,
     _subscriptions: Vec<Subscription>,
@@ -70,9 +67,6 @@ impl DebugPanel {
                 });
 
             Self {
-                position: DockPosition::Bottom,
-                zoomed: false,
-                active: false,
                 focus_handle: cx.focus_handle(),
                 size: px(300.),
                 _subscriptions,
@@ -470,18 +464,14 @@ impl Panel for DebugPanel {
     }
 
     fn position(&self, _cx: &WindowContext) -> DockPosition {
-        self.position
+        DockPosition::Bottom
     }
 
-    fn position_is_valid(&self, _position: DockPosition) -> bool {
-        true
+    fn position_is_valid(&self, position: DockPosition) -> bool {
+        position == DockPosition::Bottom
     }
 
-    fn set_position(&mut self, position: DockPosition, _cx: &mut ViewContext<Self>) {
-        self.position = position;
-        // TODO:
-        // cx.update_global::<SettingsStore>(f)
-    }
+    fn set_position(&mut self, _position: DockPosition, _cx: &mut ViewContext<Self>) {}
 
     fn size(&self, _cx: &WindowContext) -> Pixels {
         self.size
