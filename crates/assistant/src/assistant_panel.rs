@@ -28,17 +28,15 @@ use editor::{
     Anchor, Editor, EditorEvent, RowExt, ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
-use file_icons::FileIcons;
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    div, percentage, point, rems, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, ClipboardItem, Context as _, Empty, Entity, EventEmitter,
-    FocusHandle, FocusOutEvent, FocusableView, InteractiveElement, IntoElement, Model,
-    ModelContext, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
+    AsyncAppContext, AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty,
+    EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ModelContext,
+    ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
+    Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{
     language_settings::SoftWrap, AnchorRangeExt as _, AutoindentMode, Buffer, LanguageRegistry,
@@ -55,7 +53,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter,
-    ops::{ControlFlow, Range},
+    ops::Range,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -65,7 +63,7 @@ use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
-    ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tab, TabBar, Tooltip,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -73,9 +71,8 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{BreadcrumbText, Item, ItemHandle},
     pane,
-    searchable::{Direction, SearchEvent, SearchableItem},
-    Pane, Save, ToggleZoom, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
+    searchable::{SearchEvent, SearchableItem},
+    Pane, Save, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 use workspace::{searchable::SearchableItemHandle, NewFile};
 
@@ -109,7 +106,6 @@ pub struct AssistantPanel {
     width: Option<Pixels>,
     height: Option<Pixels>,
     context_store: Model<ContextStore>,
-    focus_handle: FocusHandle,
     languages: Arc<LanguageRegistry>,
     slash_commands: Arc<SlashCommandRegistry>,
     fs: Arc<dyn Fs>,
@@ -250,50 +246,73 @@ impl AssistantPanel {
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
-            pane.set_render_tab_bar_buttons(cx, move |_pane, cx| {
-                let pane_handle = cx.view().downgrade();
-
+            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 h_flex()
-                    // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
                     .gap(Spacing::Small.rems(cx))
-                    .child(IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small))
                     .child(
-                        PopoverMenu::new("assistant-popover")
-                            .trigger(IconButton::new("trigger", IconName::Menu))
-                            .menu(move |cx| {
-                                ContextMenu::build(cx, |menu, _cx| {
+                        IconButton::new("plus", IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .on_click({
+                                let pane_handle = cx.view().downgrade();
+                                move |_, cx| {
+                                    if let Ok(focus_handle) =
+                                        pane_handle.update(cx, |pane, cx| pane.focus_handle(cx))
+                                    {
+                                        focus_handle.dispatch_action(&NewFile, cx);
+                                    }
+                                }
+                            }),
+                    )
+                    .child({
+                        let zoomed = pane.is_zoomed();
+                        IconButton::new("toggle_zoom", IconName::Maximize)
+                            .icon_size(IconSize::Small)
+                            .selected(zoomed)
+                            .selected_icon(IconName::Minimize)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                pane.toggle_zoom(&Default::default(), cx);
+                            }))
+                            .tooltip(move |cx| {
+                                Tooltip::for_action(
+                                    if zoomed { "Zoom Out" } else { "Zoom In" },
+                                    &ToggleZoom,
+                                    cx,
+                                )
+                            })
+                    })
+                    .child(
+                        IconButton::new("menu", IconName::Menu)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                let menu = ContextMenu::build(cx, |menu, cx| {
                                     menu.entry("History", Some(Box::new(DeployHistory)), {
-                                        let pane_handle = pane_handle.clone();
+                                        let focus_handle = pane.focus_handle(cx);
                                         move |cx| {
-                                            pane_handle
-                                                .update(cx, |pane, cx| {
-                                                    pane.focus_handle(cx)
-                                                        .dispatch_action(&DeployHistory, cx);
-                                                })
-                                                .ok();
+                                            focus_handle.dispatch_action(&DeployHistory, cx);
                                         }
                                     })
                                     .entry(
                                         "Prompt Library",
                                         Some(Box::new(DeployPromptLibrary)),
                                         {
-                                            let pane_handle = pane_handle.clone();
+                                            let focus_handle = pane.focus_handle(cx);
                                             move |cx| {
-                                                pane_handle
-                                                    .update(cx, |pane, cx| {
-                                                        pane.focus_handle(cx).dispatch_action(
-                                                            &DeployPromptLibrary,
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .ok();
+                                                focus_handle
+                                                    .dispatch_action(&DeployPromptLibrary, cx);
                                             }
                                         },
                                     )
+                                });
+                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
+                                    pane.new_item_menu = None;
                                 })
-                                .into()
-                            }),
+                                .detach();
+                                pane.new_item_menu = Some(menu);
+                            })),
                     )
+                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
+                        el.child(Pane::render_menu_overlay(new_item_menu))
+                    })
                     .into_any_element()
             });
             pane.toolbar().update(cx, |toolbar, cx| {
@@ -309,8 +328,6 @@ impl AssistantPanel {
             pane
         });
 
-        let focus_handle = cx.focus_handle();
-
         let subscriptions = vec![
             cx.observe(&pane, |_, _, cx| cx.notify()),
             cx.subscribe(&pane, Self::handle_pane_event),
@@ -321,12 +338,10 @@ impl AssistantPanel {
                     prev_settings_version = CompletionProvider::global(cx).settings_version();
                 }
             }),
-            cx.on_focus_in(&focus_handle, Self::focus_in),
         ];
 
         Self {
             pane,
-            focus_handle,
             workspace: workspace.weak_handle(),
             width: None,
             height: None,
@@ -339,14 +354,6 @@ impl AssistantPanel {
             authentication_prompt: None,
             model_selector_menu_handle,
         }
-    }
-
-    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        // todo!("remove focus_handle")
-        if self.focus_handle.is_focused(cx) {
-            cx.focus_view(&self.pane);
-        }
-        cx.notify();
     }
 
     fn handle_pane_event(
@@ -566,7 +573,7 @@ impl AssistantPanel {
     }
 
     fn show_context(&mut self, context_editor: View<ContextEditor>, cx: &mut ViewContext<Self>) {
-        let focus = self.focus_handle.contains_focused(cx);
+        let focus = self.focus_handle(cx).contains_focused(cx);
         let prev_len = self.pane.read(cx).items_len();
         self.pane.update(cx, |pane, cx| {
             pane.add_item(Box::new(context_editor.clone()), focus, focus, None, cx)
@@ -594,10 +601,11 @@ impl AssistantPanel {
     }
 
     fn deploy_history(&mut self, _: &DeployHistory, cx: &mut ViewContext<Self>) {
-        let history_item_ix = self.pane.update(cx, |pane, cx| {
-            pane.items()
-                .position(|item| item.downcast::<ContextHistory>().is_some())
-        });
+        let history_item_ix = self
+            .pane
+            .read(cx)
+            .items()
+            .position(|item| item.downcast::<ContextHistory>().is_some());
 
         if let Some(history_item_ix) = history_item_ix {
             self.pane.update(cx, |pane, cx| {
@@ -637,59 +645,6 @@ impl AssistantPanel {
 
     pub fn active_context(&self, cx: &AppContext) -> Option<Model<Context>> {
         Some(self.active_context_editor(cx)?.read(cx).context.clone())
-    }
-
-    // todo!("render_popover_button")
-    // fn render_popover_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-    //     let assistant = cx.view().clone();
-    //     let zoomed = self.zoomed;
-    //     PopoverMenu::new("assistant-popover")
-    //         .trigger(IconButton::new("trigger", IconName::Menu))
-    //         .menu(move |cx| {
-    //             let assistant = assistant.clone();
-    //             ContextMenu::build(cx, |menu, _cx| {
-    //                 menu.entry(
-    //                     if zoomed { "Zoom Out" } else { "Zoom In" },
-    //                     Some(Box::new(ToggleZoom)),
-    //                     {
-    //                         let assistant = assistant.clone();
-    //                         move |cx| {
-    //                             assistant.focus_handle(cx).dispatch_action(&ToggleZoom, cx);
-    //                         }
-    //                     },
-    //                 )
-    //                 .entry("New Context", Some(Box::new(NewFile)), {
-    //                     let assistant = assistant.clone();
-    //                     move |cx| {
-    //                         assistant.focus_handle(cx).dispatch_action(&NewFile, cx);
-    //                     }
-    //                 })
-    //                 .entry("History", Some(Box::new(ToggleHistory)), {
-    //                     let assistant = assistant.clone();
-    //                     move |cx| assistant.update(cx, |assistant, cx| assistant.show_history(cx))
-    //                 })
-    //             })
-    //             .into()
-    //         })
-    // }
-
-    fn render_send_button(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        self.active_context_editor(cx).map(|context_editor| {
-            let focus_handle = context_editor.focus_handle(cx);
-            ButtonLike::new("send_button")
-                .style(ButtonStyle::Filled)
-                .layer(ElevationIndex::ModalSurface)
-                .children(
-                    KeyBinding::for_action_in(&Assist, &focus_handle, cx)
-                        .map(|binding| binding.into_any_element()),
-                )
-                .child(Label::new("Send"))
-                .on_click(cx.listener(|this, _event, cx| {
-                    if let Some(active_editor) = this.active_context_editor(cx) {
-                        active_editor.update(cx, |editor, cx| editor.assist(&Assist, cx));
-                    }
-                }))
-        })
     }
 
     fn open_context(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
@@ -782,7 +737,6 @@ impl AssistantPanel {
             .on_action(cx.listener(AssistantPanel::deploy_prompt_library))
             .on_action(cx.listener(AssistantPanel::reset_credentials))
             .on_action(cx.listener(AssistantPanel::toggle_model_selector))
-            .track_focus(&self.focus_handle)
             .child(registrar.size_full().child(self.pane.clone()))
     }
 }
@@ -888,8 +842,8 @@ impl EventEmitter<PanelEvent> for AssistantPanel {}
 impl EventEmitter<AssistantPanelEvent> for AssistantPanel {}
 
 impl FocusableView for AssistantPanel {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.pane.focus_handle(cx)
     }
 }
 
@@ -3127,6 +3081,21 @@ impl ContextEditor {
             .map(|summary| summary.text.clone())
             .unwrap_or_else(|| "New Context".into())
     }
+
+    fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx).clone();
+        ButtonLike::new("send_button")
+            .style(ButtonStyle::Filled)
+            .layer(ElevationIndex::ModalSurface)
+            .children(
+                KeyBinding::for_action_in(&Assist, &focus_handle, cx)
+                    .map(|binding| binding.into_any_element()),
+            )
+            .child(Label::new("Send"))
+            .on_click(move |_event, cx| {
+                focus_handle.dispatch_action(&Assist, cx);
+            })
+    }
 }
 
 impl EventEmitter<ContextEditorEvent> for ContextEditor {}
@@ -3150,7 +3119,16 @@ impl Render for ContextEditor {
                 div()
                     .flex_grow()
                     .bg(cx.theme().colors().editor_background)
-                    .child(self.editor.clone()),
+                    .child(self.editor.clone())
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .absolute()
+                            .bottom_0()
+                            .p_4()
+                            .justify_end()
+                            .child(self.render_send_button(cx)),
+                    ),
             )
     }
 }
