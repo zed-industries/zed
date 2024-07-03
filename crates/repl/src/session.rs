@@ -10,7 +10,7 @@ use editor::{
     Anchor, AnchorRangeExt as _, Editor,
 };
 use futures::{FutureExt as _, StreamExt as _};
-use gpui::{div, prelude::*, Entity, Render, Task, View, ViewContext};
+use gpui::{div, prelude::*, Entity, EntityId, EventEmitter, Render, Task, View, ViewContext};
 use project::Fs;
 use runtimelib::{
     ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest,
@@ -266,6 +266,10 @@ impl Session {
         }
     }
 
+    pub fn id(&mut self) -> EntityId {
+        self.editor.entity_id()
+    }
+
     fn interrupt(&mut self, cx: &mut ViewContext<Self>) {
         match &mut self.kernel {
             Kernel::RunningKernel(_kernel) => {
@@ -296,6 +300,7 @@ impl Session {
                     kernel.process.kill().ok();
 
                     this.update(&mut cx, |this, cx| {
+                        cx.emit(SessionEvent::Shutdown(this.editor.clone()));
                         this.kernel = Kernel::Shutdown;
                         cx.notify();
                     })
@@ -313,6 +318,12 @@ impl Session {
         cx.notify();
     }
 }
+
+pub enum SessionEvent {
+    Shutdown(View<Editor>),
+}
+
+impl EventEmitter<SessionEvent> for Session {}
 
 impl Render for Session {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {

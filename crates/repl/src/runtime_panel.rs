@@ -1,7 +1,7 @@
 use crate::{
     jupyter_settings::{JupyterDockPosition, JupyterSettings},
     kernels::{kernel_specifications, KernelSpecification},
-    session::Session,
+    session::{Session, SessionEvent},
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -234,6 +234,21 @@ impl RuntimePanel {
         let session = self.sessions.entry(entity_id).or_insert_with(|| {
             let view = cx.new_view(|cx| Session::new(editor, fs, kernel_specification, cx));
             cx.notify();
+
+            let subscription = cx.subscribe(
+                &view,
+                |panel: &mut RuntimePanel, _session: View<Session>, event: &SessionEvent, _cx| {
+                    match event {
+                        SessionEvent::Shutdown(shutdown_event) => {
+                            panel.sessions.remove(&shutdown_event.entity_id());
+                        }
+                    }
+                    //
+                },
+            );
+
+            subscription.detach();
+
             view
         });
 
