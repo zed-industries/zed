@@ -1356,6 +1356,7 @@ impl<'a> WindowContext<'a> {
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
+    #[profiling::function]
     pub fn draw(&mut self) {
         self.window.dirty.set(false);
         self.window.requested_autoscroll = None;
@@ -1389,7 +1390,6 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.layout_engine.as_mut().unwrap().clear();
-
         self.text_system().finish_frame();
         self.window
             .next_frame
@@ -1444,6 +1444,7 @@ impl<'a> WindowContext<'a> {
         self.window.needs_present.set(true);
     }
 
+    #[profiling::function]
     fn present(&self) {
         self.window
             .platform_window
@@ -2999,6 +3000,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Dispatch a mouse or keyboard event on the window.
+    #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput) -> DispatchEventResult {
         self.window.last_input_timestamp.set(Instant::now());
         // Handlers may set this to false by calling `stop_propagation`.
@@ -3276,7 +3278,7 @@ impl<'a> WindowContext<'a> {
             }
         }
 
-        self.finish_dispatch_key_event(event, dispatch_path);
+        self.finish_dispatch_key_event(event, dispatch_path)
     }
 
     fn finish_dispatch_key_event(

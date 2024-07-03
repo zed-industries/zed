@@ -160,8 +160,7 @@ pub struct Callbacks {
 
 pub struct X11WindowState {
     pub destroyed: bool,
-    pub refresh_rate: Duration,
-    pub last_refresh_at: Option<Instant>,
+    refresh_rate: Duration,
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
@@ -442,7 +441,6 @@ impl X11WindowState {
             handle,
             destroyed: false,
             refresh_rate,
-            last_refresh_at: None,
         })
     }
 
@@ -612,10 +610,6 @@ impl X11WindowStatePtr {
         let mut cb = self.callbacks.borrow_mut();
         if let Some(ref mut fun) = cb.request_frame {
             fun();
-            self.state
-                .borrow_mut()
-                .last_refresh_at
-                .replace(Instant::now());
         }
     }
 
@@ -647,6 +641,7 @@ impl X11WindowStatePtr {
             state.input_handler = Some(input_handler);
         }
     }
+
     pub fn handle_ime_preedit(&self, text: String) {
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
