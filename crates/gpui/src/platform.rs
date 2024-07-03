@@ -210,6 +210,83 @@ impl Debug for DisplayId {
 
 unsafe impl Send for DisplayId {}
 
+/// Which part of the window to resize
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeEdge {
+    /// The top edge
+    Top,
+    /// The top right corner
+    TopRight,
+    /// The right edge
+    Right,
+    /// The bottom right corner
+    BottomRight,
+    /// The bottom edge
+    Bottom,
+    /// The bottom left corner
+    BottomLeft,
+    /// The left edge
+    Left,
+    /// The top left corner
+    TopLeft,
+}
+
+/// A type to describe the appearance of a window
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub enum WindowDecorations {
+    #[default]
+    /// Server side decorations
+    Server,
+    /// Client side decorations
+    Client,
+}
+
+/// A type to describe how this window is currently configured
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub enum Decorations {
+    /// The window is configured to use server side decorations
+    #[default]
+    Server,
+    /// The window is configured to use client side decorations
+    Client {
+        /// The edge tiling state
+        tiling: Tiling,
+    },
+}
+
+/// What window controls this platform supports
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub struct WindowControls {
+    /// Whether this platform supports fullscreen
+    pub fullscreen: bool,
+    /// Whether this platform supports maximize
+    pub maximize: bool,
+    /// Whether this platform supports minimize
+    pub minimize: bool,
+    /// Whether this platform supports a window menu
+    pub window_menu: bool,
+}
+
+/// A type to describe which sides of the window are currently tiled in some way
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+pub struct Tiling {
+    /// Whether the top edge is tiled
+    pub top: bool,
+    /// Whether the left edge is tiled
+    pub left: bool,
+    /// Whether the right edge is tiled
+    pub right: bool,
+    /// Whether the bottom edge is tiled
+    pub bottom: bool,
+}
+
+impl Tiling {
+    /// Whether any edge is tiled
+    pub fn is_tiled(&self) -> bool {
+        self.top || self.left || self.right || self.bottom
+    }
+}
+
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
@@ -232,10 +309,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn set_title(&mut self, title: &str);
-    fn set_app_id(&mut self, app_id: &str);
-    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance);
-    fn set_edited(&mut self, edited: bool);
-    fn show_character_palette(&self);
+    fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_fullscreen(&self);
@@ -252,12 +326,31 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
+    // macOS specific methods
+    fn set_edited(&mut self, _edited: bool) {}
+    fn show_character_palette(&self) {}
+
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
 
-    fn show_window_menu(&self, position: Point<Pixels>);
-    fn start_system_move(&self);
-    fn should_render_window_controls(&self) -> bool;
+    // Linux specific methods
+    fn request_decorations(&self, _decorations: WindowDecorations) {}
+    fn show_window_menu(&self, _position: Point<Pixels>) {}
+    fn start_window_move(&self) {}
+    fn start_window_resize(&self, _edge: ResizeEdge) {}
+    fn window_decorations(&self) -> Decorations {
+        Decorations::Server
+    }
+    fn set_app_id(&mut self, _app_id: &str) {}
+    fn window_controls(&self) -> WindowControls {
+        WindowControls {
+            fullscreen: true,
+            maximize: true,
+            minimize: true,
+            window_menu: false,
+        }
+    }
+    fn set_client_inset(&self, _inset: Pixels) {}
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -570,6 +663,10 @@ pub struct WindowOptions {
 
     /// Window minimum size
     pub window_min_size: Option<Size<Pixels>>,
+
+    /// Whether to use client or server side decorations. Wayland only
+    /// Note that this may be ignored.
+    pub window_decorations: Option<WindowDecorations>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -595,8 +692,6 @@ pub(crate) struct WindowParams {
     pub show: bool,
 
     pub display_id: Option<DisplayId>,
-
-    pub window_background: WindowBackgroundAppearance,
 
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub window_min_size: Option<Size<Pixels>>,
@@ -649,6 +744,7 @@ impl Default for WindowOptions {
             window_background: WindowBackgroundAppearance::default(),
             app_id: None,
             window_min_size: None,
+            window_decorations: None,
         }
     }
 }
@@ -659,7 +755,7 @@ pub struct TitlebarOptions {
     /// The initial title of the window
     pub title: Option<SharedString>,
 
-    /// Whether the titlebar should appear transparent
+    /// Whether the titlebar should appear transparent (macOS only)
     pub appears_transparent: bool,
 
     /// The position of the macOS traffic light buttons
@@ -804,6 +900,14 @@ pub enum CursorStyle {
     /// A resize cursor directing up and down
     /// corresponds to the CSS cursor value `ns-resize`
     ResizeUpDown,
+
+    /// A resize cursor directing up-left and down-right
+    /// corresponds to the CSS cursor value `nesw-resize`
+    ResizeUpLeftDownRight,
+
+    /// A resize cursor directing up-right and down-left
+    /// corresponds to the CSS cursor value `nwse-resize`
+    ResizeUpRightDownLeft,
 
     /// A cursor indicating that the item/column can be resized horizontally.
     /// corresponds to the CSS curosr value `col-resize`
