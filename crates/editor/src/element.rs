@@ -1677,6 +1677,29 @@ impl EditorElement {
         roman
     }
 
+    fn calculate_aegean_numeral(&self, number: &DisplayRowDelta) -> String {
+        let values = [
+            9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1000, 900, 800, 700, 600, 500, 400,
+            300, 200, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+        ];
+        let symbols = [
+            "𐄪", "𐄩", "𐄨", "𐄧", "𐄦", "𐄥", "𐄤", "𐄣", "𐄢", "𐄡", "𐄠", "𐄟", "𐄞", "𐄝", "𐄜", "𐄛", "𐄚",
+            "𐄙", "𐄘", "𐄗", "𐄖", "𐄕", "𐄔", "𐄓", "𐄒", "𐄑", "𐄐", "𐄏", "𐄎", "𐄍", "𐄌", "𐄋", "𐄊", "𐄉",
+            "𐄈", "𐄇",
+        ];
+
+        let mut num = *number;
+        let mut aegean = String::with_capacity(5);
+        for i in 0..values.len() {
+            while num >= values[i] {
+                num -= values[i];
+                aegean.push_str(symbols[i]);
+            }
+        }
+
+        aegean
+    }
+
     fn calculate_relative_line_numbers(
         &self,
         snapshot: &EditorSnapshot,
@@ -1790,7 +1813,7 @@ impl EditorElement {
                 let number = match numeral_style {
                     NumeralStyle::Arabic => raw_number.to_string(),
                     NumeralStyle::Roman => self.calculate_roman_numeral(raw_number),
-                    //NumeralStyle::Aegean => self.calculate_aegean_numeral(raw_number),
+                    NumeralStyle::Aegean => self.calculate_aegean_numeral(raw_number),
                     _ => raw_number.to_string(),
                 };
                 write!(&mut line_number, "{number}").unwrap();
