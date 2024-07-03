@@ -7,7 +7,8 @@ use crate::{
     visual::visual_motion,
     Vim,
 };
-use gpui::{actions, Action, View, ViewContext, WindowContext};
+use gpui::{actions, Action, ViewContext, WindowContext};
+use util::ResultExt;
 use workspace::Workspace;
 
 actions!(vim, [Repeat, EndRepeat, ToggleRecord, ReplayLastRecording]);
@@ -74,19 +75,17 @@ pub struct ReplayerState {
     actions: Vec<ReplayableAction>,
     running: bool,
     ix: usize,
-    editor: View<editor::Editor>,
 }
 
 #[derive(Clone)]
 pub struct Replayer(Rc<RefCell<ReplayerState>>);
 
 impl Replayer {
-    pub fn new(editor: View<editor::Editor>) -> Self {
+    pub fn new() -> Self {
         Self(Rc::new(RefCell::new(ReplayerState {
             actions: vec![],
             running: false,
             ix: 0,
-            editor,
         })))
     }
 
@@ -97,6 +96,7 @@ impl Replayer {
         if lock.running {
             return;
         }
+        lock.running = true;
         let this = self.clone();
         cx.defer(move |cx| this.next(cx))
     }
@@ -107,8 +107,12 @@ impl Replayer {
 
     pub fn next(self, cx: &mut WindowContext) {
         let mut lock = self.0.borrow_mut();
-        let action = lock.actions.get(lock.ix).cloned();
-        let editor = lock.editor.clone();
+        let action = if lock.ix < 10000 {
+            lock.actions.get(lock.ix).cloned()
+        } else {
+            log::error!("Aborting replay after 10000 actions");
+            None
+        };
         lock.ix += 1;
         drop(lock);
         let Some(action) = action else {
@@ -125,12 +129,27 @@ impl Replayer {
             ReplayableAction::Insertion {
                 text,
                 utf16_range_to_replace,
-            } => editor.update(cx, |editor, cx| {
-                editor.replay_insert_event(&text, utf16_range_to_replace.clone(), cx)
-            }),
+            } => {
+                if let Some(editor) = Vim::read(cx).active_editor.clone() {
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.replay_insert_event(&text, utf16_range_to_replace.clone(), cx)
+                        })
+                        .log_err();
+                }
+            }
         }
         cx.defer(move |cx| self.next(cx));
     }
+}
+
+pub(crate) fn record_register(register: char, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
+        vim.workspace_state.recording_register = Some(register);
+        vim.workspace_state.recordings.remove(&register);
+        vim.workspace_state.ignore_current_insertion = true;
+        vim.clear_operator(cx)
+    })
 }
 
 pub(crate) fn replay_register(mut register: char, cx: &mut WindowContext) {
@@ -147,13 +166,6 @@ pub(crate) fn replay_register(mut register: char, cx: &mut WindowContext) {
         let Some(actions) = vim.workspace_state.recordings.get(&register) else {
             return;
         };
-        let Some(editor) = vim
-            .active_editor
-            .clone()
-            .and_then(|editor| editor.upgrade())
-        else {
-            return;
-        };
 
         let mut repeated_actions = vec![];
         while count > 0 {
@@ -165,25 +177,18 @@ pub(crate) fn replay_register(mut register: char, cx: &mut WindowContext) {
 
         vim.workspace_state
             .replayer
-            .get_or_insert_with(|| Replayer::new(editor))
+            .get_or_insert_with(|| Replayer::new())
             .replay(repeated_actions, cx);
     });
 }
 
 pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
-    let Some((mut actions, editor, selection)) = Vim::update(cx, |vim, cx| {
+    let Some((mut actions, selection)) = Vim::update(cx, |vim, cx| {
         let actions = vim.workspace_state.recorded_actions.clone();
         if actions.is_empty() {
             return None;
         }
 
-        let Some(editor) = vim
-            .active_editor
-            .clone()
-            .and_then(|editor| editor.upgrade())
-        else {
-            return None;
-        };
         let count = vim.take_count(cx);
 
         let selection = vim.workspace_state.recorded_selection.clone();
@@ -217,7 +222,7 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
             }
         }
 
-        Some((actions, editor, selection))
+        Some((actions, selection))
     }) else {
         return;
     };
@@ -306,7 +311,7 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
 
         vim.workspace_state
             .replayer
-            .get_or_insert_with(|| Replayer::new(editor))
+            .get_or_insert_with(|| Replayer::new())
             .replay(actions, cx);
     })
 }

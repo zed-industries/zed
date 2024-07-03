@@ -34,7 +34,7 @@ use motion::Motion;
 use normal::{
     mark::create_visual_marks,
     normal_replace,
-    repeat::{observe_action, observe_insertion, replay_register},
+    repeat::{observe_action, observe_insertion, record_register, replay_register},
 };
 use replace::multi_replace;
 use schemars::JsonSchema;
@@ -875,13 +875,7 @@ impl Vim {
             Some(Operator::Mark) => Vim::update(cx, |vim, cx| {
                 normal::mark::create_mark(vim, text, false, cx)
             }),
-            Some(Operator::RecordRegister) => Vim::update(cx, |vim, cx| {
-                let register = text.chars().next().unwrap();
-                vim.workspace_state.recording_register = Some(register);
-                vim.workspace_state.recordings.remove(&register);
-                vim.workspace_state.ignore_current_insertion = true;
-                vim.clear_operator(cx)
-            }),
+            Some(Operator::RecordRegister) => record_register(text.chars().next().unwrap(), cx),
             Some(Operator::ReplayRegister) => replay_register(text.chars().next().unwrap(), cx),
             Some(Operator::Register) => Vim::update(cx, |vim, cx| match vim.state().mode {
                 Mode::Insert => {
