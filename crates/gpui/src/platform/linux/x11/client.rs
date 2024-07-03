@@ -6,6 +6,7 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use async_task::Runnable;
 use calloop::channel::Channel;
 

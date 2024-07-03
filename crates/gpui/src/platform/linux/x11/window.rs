@@ -32,7 +32,7 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::{self, Arc},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use super::{X11Display, XINPUT_MASTER_DEVICE};
