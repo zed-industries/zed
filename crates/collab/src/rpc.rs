@@ -4442,7 +4442,6 @@ async fn complete_with_open_ai(
     )
     .await
     .context("open_ai::stream_completion request failed within collab")?;
-
     while let Some(event) = completion_stream.next().await {
         let event = event?;
         response.send(proto::LanguageModelResponse {
@@ -4462,33 +4461,35 @@ async fn complete_with_open_ai(
                         tool_calls: choice
                             .delta
                             .tool_calls
-                            .into_iter()
-                            .map(|delta| proto::ToolCallDelta {
-                                index: delta.index as u32,
-                                id: delta.id,
-                                variant: match delta.function {
-                                    Some(function) => {
-                                        let name = function.name;
-                                        let arguments = function.arguments;
-
-                                        Some(proto::tool_call_delta::Variant::Function(
-                                            proto::tool_call_delta::FunctionCallDelta {
-                                                name,
-                                                arguments,
-                                            },
-                                        ))
-                                    }
-                                    None => None,
-                                },
+                            .map(|tool_calls| {
+                                tool_calls
+                                    .into_iter()
+                                    .map(|delta| proto::ToolCallDelta {
+                                        index: delta.index as u32,
+                                        id: delta.id,
+                                        variant: match delta.function {
+                                            Some(function) => {
+                                                let name = function.name;
+                                                let arguments = function.arguments;
+                                                Some(proto::tool_call_delta::Variant::Function(
+                                                    proto::tool_call_delta::FunctionCallDelta {
+                                                        name,
+                                                        arguments,
+                                                    },
+                                                ))
+                                            }
+                                            None => None,
+                                        },
+                                    })
+                                    .collect()
                             })
-                            .collect(),
+                            .unwrap_or_default(),
                     }),
                     finish_reason: choice.finish_reason,
                 })
                 .collect(),
         })?;
     }
-
     Ok(())
 }
 
