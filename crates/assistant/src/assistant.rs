@@ -49,6 +49,7 @@ actions!(
         InlineAssist,
         InsertActivePrompt,
         ToggleHistory,
+        ShowPromptLibrary,
         ApplyEdit,
         ConfirmCommand,
         ToggleModelSelector

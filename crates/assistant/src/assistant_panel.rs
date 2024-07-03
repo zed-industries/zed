@@ -11,8 +11,8 @@ use crate::{
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, ContextStore, CycleMessageRole,
     InlineAssist, InlineAssistant, InsertIntoEditor, LanguageModelRequest,
     LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus, ModelSelector,
-    QuoteSelection, ResetKey, Role, SavedContext, SavedContextMetadata, SavedMessage, Split,
-    ToggleFocus, ToggleHistory, ToggleModelSelector,
+    QuoteSelection, ResetKey, Role, SavedContext, SavedContextMetadata, SavedMessage,
+    ShowPromptLibrary, Split, ToggleFocus, ToggleHistory, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
@@ -116,7 +116,7 @@ pub struct AssistantPanel {
     slash_commands: Arc<SlashCommandRegistry>,
     fs: Arc<dyn Fs>,
     telemetry: Arc<Telemetry>,
-    _subscriptions: Vec<Subscription>,
+    subscriptions: Vec<Subscription>,
     authentication_prompt: Option<AnyView>,
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
@@ -259,34 +259,39 @@ impl AssistantPanel {
             pane.set_should_display_tab_bar(|_| true);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let pane_handle = cx.view().downgrade();
+
                 h_flex()
-                    .gap_2()
+                    // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
+                    .gap(Spacing::Small.rems(cx))
+                    .child(IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small))
                     .child(
                         PopoverMenu::new("assistant-popover")
                             .trigger(IconButton::new("trigger", IconName::Menu))
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |menu, _cx| {
-                                    menu.entry("New Context", Some(Box::new(NewFile)), {
+                                    menu.entry("History", Some(Box::new(ToggleHistory)), {
                                         let pane_handle = pane_handle.clone();
                                         move |cx| {
                                             pane_handle
                                                 .update(cx, |pane, cx| {
                                                     pane.focus_handle(cx)
-                                                        .dispatch_action(&NewFile, cx);
+                                                        .dispatch_action(&ToggleHistory, cx);
                                                 })
                                                 .ok();
                                         }
                                     })
                                     .entry(
-                                        "History",
-                                        Some(Box::new(ToggleHistory)),
+                                        "Prompt Library",
+                                        Some(Box::new(ShowPromptLibrary)),
                                         {
                                             let pane_handle = pane_handle.clone();
                                             move |cx| {
                                                 pane_handle
                                                     .update(cx, |pane, cx| {
-                                                        pane.focus_handle(cx)
-                                                            .dispatch_action(&ToggleHistory, cx);
+                                                        pane.focus_handle(cx).dispatch_action(
+                                                            &ShowPromptLibrary,
+                                                            cx,
+                                                        );
                                                     })
                                                     .ok();
                                             }
@@ -352,7 +357,7 @@ impl AssistantPanel {
             slash_commands: SlashCommandRegistry::global(cx),
             fs: workspace.app_state().fs.clone(),
             telemetry: workspace.client().telemetry().clone(),
-            _subscriptions: subscriptions,
+            subscriptions,
             authentication_prompt: None,
             model_selector_menu_handle,
         }
@@ -596,6 +601,8 @@ impl AssistantPanel {
 
     fn show_context(&mut self, context_editor: View<ContextEditor>, cx: &mut ViewContext<Self>) {
         let focus = self.focus_handle.contains_focused(cx);
+        self.subscriptions
+            .push(cx.subscribe(&context_editor, Self::handle_context_editor_event));
         self.pane.update(cx, |pane, cx| {
             pane.add_item(Box::new(context_editor), focus, focus, None, cx)
         });
