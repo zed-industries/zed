@@ -252,6 +252,7 @@ impl AssistantPanel {
                     .child(
                         IconButton::new("plus", IconName::Plus)
                             .icon_size(IconSize::Small)
+                            .tooltip(|cx| Tooltip::for_action("New Context", &NewFile, cx))
                             .on_click({
                                 let pane_handle = cx.view().downgrade();
                                 move |_, cx| {
