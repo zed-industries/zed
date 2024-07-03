@@ -20,6 +20,7 @@ members = [
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/copilot",
+    "crates/crdb",
     "crates/db",
     "crates/dev_server_projects",
     "crates/diagnostics",
@@ -359,7 +360,7 @@ shellexpand = "2.1.0"
 shlex = "1.3.0"
 signal-hook = "0.3.17"
 similar = "1.3"
-smallvec = { version = "1.6", features = ["union"] }
+smallvec = { version = "1.6", features = ["union", "serde"] }
 smol = "1.2"
 strum = { version = "0.25.0", features = ["derive"] }
 subtle = "2.5.0"

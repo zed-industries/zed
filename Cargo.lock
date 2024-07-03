@@ -306,6 +306,9 @@ name = "arrayvec"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "as-raw-xcb-connection"
@@ -473,6 +476,17 @@ checksum = "a3203e79f4dd9bdda415ed03cf14dae5a2bf775c683a00f94e9cd1faf0f596e5"
 dependencies = [
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "async-broadcast"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d26004fe83b2d1cd3a97609b21e39f9a31535822210fe83205d2ce48866ea61"
+dependencies = [
+ "event-listener 2.5.3",
+ "futures-core",
+ "parking_lot",
 ]
 
 [[package]]
@@ -1789,6 +1803,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bromberg_sl2"
+version = "0.6.0"
+source = "git+https://github.com/zed-industries/bromberg_sl2?rev=6faf816bd5b4b7b2b6ea77495686634732ded095#6faf816bd5b4b7b2b6ea77495686634732ded095"
+dependencies = [
+ "digest 0.9.0",
+ "lazy_static",
+ "rayon",
+ "seq-macro",
+ "serde",
+]
+
+[[package]]
 name = "bstr"
 version = "1.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3056,6 +3082,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b540bd8bc810d3885c6ea91e2018302f68baba2129ab3e88f32389ee9370880d"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "crdb"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "async-broadcast 0.4.1",
+ "bromberg_sl2",
+ "collections",
+ "ctor",
+ "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "lazy_static",
+ "log",
+ "parking_lot",
+ "portable-atomic",
+ "rand 0.8.5",
+ "serde",
+ "serde_bare",
+ "serde_json",
+ "smallvec",
+ "smol",
+ "util",
+ "uuid",
 ]
 
 [[package]]
@@ -6245,7 +6298,7 @@ name = "live_kit_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-broadcast",
+ "async-broadcast 0.7.0",
  "async-trait",
  "collections",
  "core-foundation",
@@ -7889,6 +7942,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5da3b0203fd7ee5720aa0b5e790b591aa5d3f41c3ed2c34a3a393382198af2f7"
 
 [[package]]
+name = "portable-atomic"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7170ef9988bc169ba16dd36a7fa041e5c4cbeb6a35b76d4c03daded371eae7c0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "postage"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9491,12 +9553,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0293b4b29daaf487284529cc2f5675b8e57c61f70167ba415a463651fd6a918"
 
 [[package]]
+name = "seq-macro"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a9f47faea3cad316faa914d013d24f471cd90bfca1a0c70f05a3f42c6441e99"
+
+[[package]]
 name = "serde"
 version = "1.0.202"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "226b61a0d411b2ba5ff6d7f73a476ac4f8bb900373459cd00fab8512828ba395"
 dependencies = [
  "serde_derive",
+]
+
+[[package]]
+name = "serde_bare"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51c55386eed0f1ae957b091dc2ca8122f287b60c79c774cbe3d5f2b69fded660"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -9876,6 +9953,9 @@ name = "smallvec"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "942b4a808e05215192e39f4ab80813e599068285906cc91aa64f923db842bd5a"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "smol"
@@ -11926,6 +12006,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a183cf7feeba97b4dd1c0d46788634f6221d87fa961b305bed08c851829efcc0"
 dependencies = [
  "getrandom 0.2.10",
+ "rand 0.8.5",
  "serde",
  "sha1_smol",
 ]
@@ -13547,7 +13628,7 @@ version = "4.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b8e3d6ae3342792a6cc2340e4394334c7402f3d793b390d2c5494a4032b3030"
 dependencies = [
- "async-broadcast",
+ "async-broadcast 0.7.0",
  "async-executor",
  "async-fs 2.1.1",
  "async-io 2.3.1",

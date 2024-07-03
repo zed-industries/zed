@@ -1,0 +1,40 @@
+[package]
+name = "crdb"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/crdb.rs"
+doctest = false
+
+[features]
+test-support = ["collections/test-support", "util/test-support"]
+
+[dependencies]
+collections = { path = "../collections" }
+util = { path = "../util" }
+
+anyhow.workspace = true
+arrayvec = { version = "0.7.1", features = ["serde"] }
+bromberg_sl2 = { git = "https://github.com/zed-industries/bromberg_sl2", rev = "6faf816bd5b4b7b2b6ea77495686634732ded095" }
+futures.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+portable-atomic = { version = "1", features = ["serde"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_bare = "0.5"
+smallvec.workspace = true
+uuid = { version = "1.3", features = ["v4", "fast-rng", "serde"] }
+
+[dev-dependencies]
+collections = { path = "../collections", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+
+async-broadcast = "0.4"
+ctor.workspace = true
+env_logger.workspace = true
+rand.workspace = true
+smol.workspace = true
