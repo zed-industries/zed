@@ -1184,17 +1184,22 @@ impl LinuxClient for X11Client {
                     frame_length = frame_length.min(window_ref.window.refresh_rate());
                     windows.push(window_ref.window.clone());
                 }
+
                 drop(state);
 
                 for window in windows {
                     window.refresh();
                 }
 
+                state = self.0.borrow_mut();
+
                 // In the case that we're looping a bit too fast, slow down
                 next_refresh_needed = now.max(next_refresh_needed) + frame_length;
             }
 
             // X11 events
+            drop(state);
+
             loop {
                 let (x_windows, events) = self.read_x11_events();
                 for x_window in x_windows {
