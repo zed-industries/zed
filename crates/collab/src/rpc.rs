@@ -4462,29 +4462,26 @@ async fn complete_with_open_ai(
                         tool_calls: choice
                             .delta
                             .tool_calls
-                            .map(|tool_calls| {
-                                tool_calls
-                                    .into_iter()
-                                    .map(|delta| proto::ToolCallDelta {
-                                        index: delta.index as u32,
-                                        id: delta.id,
-                                        variant: match delta.function {
-                                            Some(function) => {
-                                                let name = function.name;
-                                                let arguments = function.arguments;
-                                                Some(proto::tool_call_delta::Variant::Function(
-                                                    proto::tool_call_delta::FunctionCallDelta {
-                                                        name,
-                                                        arguments,
-                                                    },
-                                                ))
-                                            }
-                                            None => None,
-                                        },
-                                    })
-                                    .collect()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|delta| proto::ToolCallDelta {
+                                index: delta.index as u32,
+                                id: delta.id,
+                                variant: match delta.function {
+                                    Some(function) => {
+                                        let name = function.name;
+                                        let arguments = function.arguments;
+                                        Some(proto::tool_call_delta::Variant::Function(
+                                            proto::tool_call_delta::FunctionCallDelta {
+                                                name,
+                                                arguments,
+                                            },
+                                        ))
+                                    }
+                                    None => None,
+                                },
                             })
-                            .unwrap_or_default(),
+                            .collect(),
                     }),
                     finish_reason: choice.finish_reason,
                 })
