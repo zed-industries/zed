@@ -249,8 +249,6 @@ pub enum Decorations {
     Server,
     /// The window is configured to use client side decorations
     Client {
-        /// Whether this window has shadows
-        shadows: bool,
         /// The edge tiling state
         tiling: Tiling,
     },

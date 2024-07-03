@@ -6624,17 +6624,19 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                         .when(!tiling.bottom, |div| div.border_b(BORDER_SIZE))
                         .when(!tiling.left, |div| div.border_l(BORDER_SIZE))
                         .when(!tiling.right, |div| div.border_r(BORDER_SIZE))
-                        .shadow(smallvec::smallvec![gpui::BoxShadow {
-                            color: Hsla {
-                                h: 0.,
-                                s: 0.,
-                                l: 0.,
-                                a: 0.4,
-                            },
-                            blur_radius: theme::CLIENT_SIDE_DECORATION_SHADOW / 2.,
-                            spread_radius: px(0.),
-                            offset: point(px(0.0), px(0.0)),
-                        }]),
+                        .when(!tiling.is_tiled(), |div| {
+                            div.shadow(smallvec::smallvec![gpui::BoxShadow {
+                                color: Hsla {
+                                    h: 0.,
+                                    s: 0.,
+                                    l: 0.,
+                                    a: 0.4,
+                                },
+                                blur_radius: theme::CLIENT_SIDE_DECORATION_SHADOW / 2.,
+                                spread_radius: px(0.),
+                                offset: point(px(0.0), px(0.0)),
+                            }])
+                        }),
                 })
                 .on_mouse_move(|_e, cx| {
                     cx.stop_propagation();

@@ -196,7 +196,7 @@ pub struct X11WindowState {
     fullscreen: bool,
     decorations: WindowDecorations,
     pub handle: AnyWindowHandle,
-    inset: Pixels,
+    last_insets: [u32; 4],
 }
 
 impl X11WindowState {
@@ -466,7 +466,7 @@ impl X11WindowState {
             background_appearance: WindowBackgroundAppearance::Opaque,
             destroyed: false,
             decorations: WindowDecorations::Server,
-            inset: px(0.0),
+            last_insets: [0, 0, 0, 0],
             counter_id: sync_request_counter,
             last_sync_counter: None,
         })
@@ -1149,7 +1149,6 @@ impl PlatformWindow for X11Window {
             WindowDecorations::Client => {
                 // https://source.chromium.org/chromium/chromium/src/+/main:ui/ozone/platform/x11/x11_window.cc;l=2519;drc=1f14cc876cc5bf899d13284a12c451498219bb2d
                 Decorations::Client {
-                    shadows: false,
                     tiling: Tiling {
                         top: state.maximized_vertical,
                         bottom: state.maximized_vertical,
@@ -1164,10 +1163,23 @@ impl PlatformWindow for X11Window {
     fn set_client_inset(&self, inset: Pixels) {
         let mut state = self.0.state.borrow_mut();
 
-        if state.inset != inset {
-            state.inset = inset;
-            let dp = (inset.0 * state.scale_factor) as u32;
-            let data = [dp, dp, dp, dp];
+        let dp = (inset.0 * state.scale_factor) as u32;
+
+        let (left, right) = if state.maximized_horizontal {
+            (0, 0)
+        } else {
+            (dp, dp)
+        };
+        let (top, bottom) = if state.maximized_vertical {
+            (0, 0)
+        } else {
+            (dp, dp)
+        };
+        let insets = [left, right, top, bottom];
+
+        if state.last_insets != insets {
+            state.last_insets = insets;
+
             self.0
                 .xcb_connection
                 .change_property(
@@ -1177,7 +1189,7 @@ impl PlatformWindow for X11Window {
                     xproto::AtomEnum::CARDINAL,
                     size_of::<u32>() as u8 * 8,
                     4,
-                    bytemuck::cast_slice::<u32, u8>(&data),
+                    bytemuck::cast_slice::<u32, u8>(&insets),
                 )
                 .unwrap();
         }
