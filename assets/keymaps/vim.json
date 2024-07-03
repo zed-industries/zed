@@ -722,5 +722,14 @@
       "g g": "menu::SelectFirst",
       "-": "project_panel::SelectParent"
     }
+  },
+  {
+    "context": "OutlinePanel",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrev",
+      "shift-g": "menu::SelectLast",
+      "g g": "menu::SelectFirst"
+    }
   }
 ]
