@@ -1,19 +1,15 @@
 {
   // The name of the Zed theme to use for the UI.
   //
-  // The theme can also be set to follow system preferences:
-  //
-  // "theme": {
-  //   "mode": "system",
-  //   "light": "One Light",
-  //   "dark": "One Dark"
-  // }
-  //
-  // Where `mode` is one of:
+  // `mode` is one of:
   // - "system": Use the theme that corresponds to the system's appearance
   // - "light": Use the theme indicated by the "light" field
   // - "dark": Use the theme indicated by the "dark" field
-  "theme": "One Dark",
+  "theme": {
+    "mode": "system",
+    "light": "One Light",
+    "dark": "One Dark"
+  },
   // The name of a base set of key bindings to use.
   // This setting can take four values, each named after another
   // text editor:
@@ -166,11 +162,11 @@
   // 1. Draw tabs and spaces only for the selected text (default):
   //    "selection"
   // 2. Do not draw any tabs or spaces:
-  //   "none"
+  //    "none"
   // 3. Draw all invisible symbols:
-  //   "all"
+  //    "all"
   // 4. Draw whitespaces at boundaries only:
-  //   "boundaries"
+  //    "boundary"
   // For a whitespace to be on a boundary, any of the following conditions need to be met:
   // - It is a tab
   // - It is adjacent to an edge (start or end)
@@ -410,9 +406,7 @@
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
-  "language_servers": [
-    "..."
-  ],
+  "language_servers": ["..."],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -547,9 +541,7 @@
   },
   "inline_completions": {
     // A list of globs representing files that inline completions should be disabled for.
-    "disabled_globs": [
-      ".env"
-    ]
+    "disabled_globs": [".env"]
   },
   // Settings specific to journaling
   "journal": {
@@ -660,12 +652,7 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [
-          ".env",
-          "env",
-          ".venv",
-          "venv"
-        ],
+        "directories": [".env", "env", ".venv", "venv"],
         // Can also be `csh`, `fish`, and `nushell`
         "activate_script": "default"
       }
@@ -686,6 +673,10 @@
     // "max_scroll_history_lines": 10000,
   },
   "code_actions_on_format": {},
+  /// Settings related to running tasks.
+  "tasks": {
+    "variables": {}
+  },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
   // use those languages.
@@ -699,10 +690,7 @@
   // }
   //
   "file_types": {
-    "JSONC": [
-      "**/.zed/**/*.json",
-      "**/zed/**/*.json"
-    ]
+    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json"]
   },
   // The extensions that Zed should automatically install on startup.
   //
@@ -716,9 +704,7 @@
     "Astro": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-astro"
-        ]
+        "plugins": ["prettier-plugin-astro"]
       }
     },
     "Blade": {
@@ -738,12 +724,7 @@
       }
     },
     "Elixir": {
-      "language_servers": [
-        "elixir-ls",
-        "!next-ls",
-        "!lexical",
-        "..."
-      ]
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "Go": {
       "code_actions_on_format": {
@@ -756,12 +737,7 @@
       }
     },
     "HEEX": {
-      "language_servers": [
-        "elixir-ls",
-        "!next-ls",
-        "!lexical",
-        "..."
-      ]
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "HTML": {
       "prettier": {
@@ -771,22 +747,21 @@
     "Java": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-java"
-        ]
+        "plugins": ["prettier-plugin-java"]
       }
     },
     "JavaScript": {
-      "language_servers": [
-        "!typescript-language-server",
-        "vtsls",
-        "..."
-      ],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
     },
     "JSON": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "JSONC": {
       "prettier": {
         "allowed": true
       }
@@ -800,17 +775,11 @@
     "PHP": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "@prettier/plugin-php"
-        ]
+        "plugins": ["@prettier/plugin-php"]
       }
     },
     "Ruby": {
-      "language_servers": [
-        "solargraph",
-        "!ruby-lsp",
-        "..."
-      ]
+      "language_servers": ["solargraph", "!ruby-lsp", "..."]
     },
     "SCSS": {
       "prettier": {
@@ -820,25 +789,17 @@
     "SQL": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-sql"
-        ]
+        "plugins": ["prettier-plugin-sql"]
       }
     },
     "Svelte": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "prettier-plugin-svelte"
-        ]
+        "plugins": ["prettier-plugin-svelte"]
       }
     },
     "TSX": {
-      "language_servers": [
-        "!typescript-language-server",
-        "vtsls",
-        "..."
-      ],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -849,11 +810,7 @@
       }
     },
     "TypeScript": {
-      "language_servers": [
-        "!typescript-language-server",
-        "vtsls",
-        "..."
-      ],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -866,9 +823,7 @@
     "XML": {
       "prettier": {
         "allowed": true,
-        "plugins": [
-          "@prettier/plugin-xml"
-        ]
+        "plugins": ["@prettier/plugin-xml"]
       }
     },
     "YAML": {

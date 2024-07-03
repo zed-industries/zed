@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use gpui::AppContext;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
@@ -220,7 +221,11 @@ impl ContextProvider for PythonContextProvider {
         Ok(task::TaskVariables::from_iter([unittest_target]))
     }
 
-    fn associated_tasks(&self) -> Option<TaskTemplates> {
+    fn associated_tasks(
+        &self,
+        _: Option<Arc<dyn language::File>>,
+        _: &AppContext,
+    ) -> Option<TaskTemplates> {
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: "execute selection".to_owned(),

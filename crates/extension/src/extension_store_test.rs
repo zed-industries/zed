@@ -12,6 +12,7 @@ use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
 use http::{FakeHttpClient, Response};
+use indexed_docs::IndexedDocsRegistry;
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
@@ -158,6 +159,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .collect(),
                         language_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
+                        indexed_docs_providers: BTreeMap::default(),
                     }),
                     dev: false,
                 },
@@ -182,6 +184,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
+                        indexed_docs_providers: BTreeMap::default(),
                     }),
                     dev: false,
                 },
@@ -254,6 +257,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let slash_command_registry = SlashCommandRegistry::new();
+    let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
     let node_runtime = FakeNodeRuntime::new();
 
     let store = cx.new_model(|cx| {
@@ -267,6 +271,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             language_registry.clone(),
             theme_registry.clone(),
             slash_command_registry.clone(),
+            indexed_docs_registry.clone(),
             cx,
         )
     });
@@ -339,6 +344,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
+                indexed_docs_providers: BTreeMap::default(),
             }),
             dev: false,
         },
@@ -389,6 +395,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             language_registry.clone(),
             theme_registry.clone(),
             slash_command_registry,
+            indexed_docs_registry,
             cx,
         )
     });
@@ -468,6 +475,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     let slash_command_registry = SlashCommandRegistry::new();
+    let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
     let node_runtime = FakeNodeRuntime::new();
 
     let mut status_updates = language_registry.language_server_binary_statuses();
@@ -558,6 +566,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
             language_registry.clone(),
             theme_registry.clone(),
             slash_command_registry,
+            indexed_docs_registry,
             cx,
         )
     });

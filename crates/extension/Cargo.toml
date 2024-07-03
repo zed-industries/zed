@@ -28,6 +28,7 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http.workspace = true
+indexed_docs.workspace = true
 isahc.workspace = true
 language.workspace = true
 log.workspace = true

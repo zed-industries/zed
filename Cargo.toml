@@ -21,6 +21,7 @@ members = [
     "crates/command_palette_hooks",
     "crates/copilot",
     "crates/db",
+    "crates/dev_server_projects",
     "crates/diagnostics",
     "crates/editor",
     "crates/extension",
@@ -44,6 +45,7 @@ members = [
     "crates/html_to_markdown",
     "crates/http",
     "crates/image_viewer",
+    "crates/indexed_docs",
     "crates/inline_completion_button",
     "crates/install_cli",
     "crates/journal",
@@ -77,14 +79,10 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
-    "crates/dev_server_projects",
     "crates/repl",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
-    "crates/rustdoc",
-    "crates/task",
-    "crates/tasks_ui",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
@@ -95,17 +93,20 @@ members = [
     "crates/story",
     "crates/storybook",
     "crates/sum_tree",
-    "crates/tab_switcher",
     "crates/supermaven",
     "crates/supermaven_api",
+    "crates/tab_switcher",
+    "crates/task",
+    "crates/tasks_ui",
+    "crates/telemetry_events",
     "crates/terminal",
     "crates/terminal_view",
     "crates/text",
     "crates/theme",
     "crates/theme_importer",
     "crates/theme_selector",
-    "crates/telemetry_events",
     "crates/time_format",
+    "crates/title_bar",
     "crates/ui",
     "crates/ui_text_field",
     "crates/util",
@@ -157,10 +158,8 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tooling = { path = "crates/assistant_tooling" }
-async-watch = "0.3.1"
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
-base64 = "0.13"
 breadcrumbs = { path = "crates/breadcrumbs" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
@@ -173,8 +172,8 @@ collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
-dashmap = "5.5.3"
 db = { path = "crates/db" }
+dev_server_projects = { path = "crates/dev_server_projects" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
@@ -195,9 +194,10 @@ gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http = { path = "crates/http" }
-install_cli = { path = "crates/install_cli" }
 image_viewer = { path = "crates/image_viewer" }
+indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
+install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_selector = { path = "crates/language_selector" }
@@ -223,21 +223,16 @@ plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
-proto = { path = "crates/proto" }
-worktree = { path = "crates/worktree" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
+proto = { path = "crates/proto" }
 quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
-dev_server_projects = { path = "crates/dev_server_projects" }
 repl = { path = "crates/repl" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
-rustdoc = { path = "crates/rustdoc" }
-task = { path = "crates/task" }
-tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
@@ -245,20 +240,23 @@ settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
-supermaven = { path = "crates/supermaven" }
-supermaven_api = { path = "crates/supermaven_api" }
 story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
 sum_tree = { path = "crates/sum_tree" }
+supermaven = { path = "crates/supermaven" }
+supermaven_api = { path = "crates/supermaven_api" }
 tab_switcher = { path = "crates/tab_switcher" }
+task = { path = "crates/task" }
+tasks_ui = { path = "crates/tasks_ui" }
+telemetry_events = { path = "crates/telemetry_events" }
 terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
-telemetry_events = { path = "crates/telemetry_events" }
 time_format = { path = "crates/time_format" }
+title_bar = { path = "crates/title_bar" }
 ui = { path = "crates/ui" }
 ui_text_field = { path = "crates/ui_text_field" }
 util = { path = "crates/util" }
@@ -266,12 +264,13 @@ vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
 welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
+worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
 alacritty_terminal = "0.23"
-anyhow = "1.0.57"
 any_vec = "0.13"
+anyhow = "1.0.57"
 ashpd = "0.8.0"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = { version = "0.1"}
@@ -279,20 +278,23 @@ async-fs = "1.6"
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
+async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
+base64 = "0.13"
 bitflags = "2.4.2"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
-blade-macros = { git = "https://github.com/kvark/blade", rev =  "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7"  }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "21a56f780e21e4cb42c70a1dcf4b59842d1ad7f7" }
 cap-std = "3.0"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
 cocoa = "0.25"
-ctor = "0.2.6"
 core-foundation = { version = "0.9.3" }
 core-foundation-sys = "0.8.6"
+ctor = "0.2.6"
+dashmap = "5.5.3"
 derive_more = "0.99.17"
 dirs = "4.0"
 emojis = "0.6.1"

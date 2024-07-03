@@ -95,6 +95,10 @@ impl JsonLspAdapter {
                 "format": {
                     "enable": true,
                 },
+                "validate":
+                {
+                    "enable": true,
+                },
                 "schemas": [
                     {
                         "fileMatch": ["tsconfig.json"],
