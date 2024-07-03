@@ -16,6 +16,7 @@ use futures::{
     AsyncBufRead, AsyncReadExt, AsyncWrite, SinkExt as _, StreamExt,
 };
 use gpui::{AppContext, AsyncAppContext};
+use parking_lot::Mutex;
 use serde_json::Value;
 use smol::{
     io::BufReader,
@@ -28,7 +29,7 @@ use std::{
     process::Stdio,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     time::Duration,
 };
@@ -152,10 +153,7 @@ impl DebugAdapterClient {
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
-        let mut client_rx = client
-            .client_rx
-            .lock()
-            .expect("Client should not be locked by any other thread/task");
+        let mut client_rx = client.client_rx.lock();
         while let Some(payload) = client_rx.next().await {
             cx.update(|cx| match payload {
                 Payload::Event(event) => event_handler(*event, cx),
