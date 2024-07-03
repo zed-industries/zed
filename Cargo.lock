@@ -13897,6 +13897,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_test_extension"
+version = "0.1.0"
+dependencies = [
+ "zed_extension_api 0.0.6",
+]
+
+[[package]]
 name = "zed_toml"
 version = "0.1.1"
 dependencies = [

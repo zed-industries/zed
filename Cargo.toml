@@ -140,6 +140,7 @@ members = [
     "extensions/snippets",
     "extensions/svelte",
     "extensions/terraform",
+    "extensions/test-extension",
     "extensions/toml",
     "extensions/uiua",
     "extensions/vue",
