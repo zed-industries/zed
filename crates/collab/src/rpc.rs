@@ -4442,6 +4442,7 @@ async fn complete_with_open_ai(
     )
     .await
     .context("open_ai::stream_completion request failed within collab")?;
+
     while let Some(event) = completion_stream.next().await {
         let event = event?;
         response.send(proto::LanguageModelResponse {
