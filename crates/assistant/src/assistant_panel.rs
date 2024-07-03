@@ -1,3 +1,4 @@
+use crate::slash_command::docs_command::{DocsSlashCommand, DocsSlashCommandArgs};
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -39,7 +40,7 @@ use gpui::{
     Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
-use indexed_docs::{IndexedDocsStore, PackageName, ProviderId};
+use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, AnchorRangeExt as _, AutoindentMode, Buffer, LanguageRegistry,
     LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
@@ -2695,8 +2696,8 @@ impl ContextEditor {
                                     // TODO: In the future we should investigate how we can expose
                                     // this as a hook on the `SlashCommand` trait so that we don't
                                     // need to special-case it here.
-                                    if command.name == "rustdoc" {
-                                        return render_rustdoc_slash_command_trailer(
+                                    if command.name == DocsSlashCommand::NAME {
+                                        return render_docs_slash_command_trailer(
                                             row,
                                             command.clone(),
                                             cx,
@@ -3405,25 +3406,29 @@ fn render_pending_slash_command_gutter_decoration(
     icon.into_any_element()
 }
 
-fn render_rustdoc_slash_command_trailer(
+fn render_docs_slash_command_trailer(
     row: MultiBufferRow,
     command: PendingSlashCommand,
     cx: &mut WindowContext,
 ) -> AnyElement {
-    let Some(rustdoc_store) = IndexedDocsStore::try_global(ProviderId::rustdoc(), cx).ok() else {
+    let Some(argument) = command.argument else {
         return Empty.into_any();
     };
 
-    let Some((crate_name, _)) = command
-        .argument
-        .as_ref()
-        .and_then(|arg| arg.split_once(':'))
+    let args = DocsSlashCommandArgs::parse(&argument);
+
+    let Some(store) = args
+        .provider()
+        .and_then(|provider| IndexedDocsStore::try_global(provider, cx).ok())
     else {
         return Empty.into_any();
     };
 
-    let crate_name = PackageName::from(crate_name);
-    if !rustdoc_store.is_indexing(&crate_name) {
+    let Some(package) = args.package() else {
+        return Empty.into_any();
+    };
+
+    if !store.is_indexing(&package) {
         return Empty.into_any();
     }
 
@@ -3434,7 +3439,7 @@ fn render_rustdoc_slash_command_trailer(
             Animation::new(Duration::from_secs(4)).repeat(),
             |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
         ))
-        .tooltip(move |cx| Tooltip::text(format!("Indexing {crate_name}…"), cx))
+        .tooltip(move |cx| Tooltip::text(format!("Indexing {package}…"), cx))
         .into_any_element()
 }
 

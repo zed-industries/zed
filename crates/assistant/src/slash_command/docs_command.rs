@@ -6,7 +6,7 @@ use anyhow::{anyhow, bail, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
 use gpui::{AppContext, Model, Task, WeakView};
 use indexed_docs::{
-    IndexedDocsRegistry, IndexedDocsStore, LocalProvider, ProviderId, RustdocIndexer,
+    IndexedDocsRegistry, IndexedDocsStore, LocalProvider, PackageName, ProviderId, RustdocIndexer,
 };
 use language::LspAdapterDelegate;
 use project::{Project, ProjectPath};
@@ -14,66 +14,11 @@ use ui::prelude::*;
 use util::{maybe, ResultExt};
 use workspace::Workspace;
 
-fn is_item_path_delimiter(char: char) -> bool {
-    !char.is_alphanumeric() && char != '-' && char != '_'
-}
-
-#[derive(Debug)]
-enum DocsSlashCommandArgs {
-    NoProvider,
-    ProviderSelected {
-        provider: ProviderId,
-    },
-    SearchPackageDocs {
-        provider: ProviderId,
-        package: String,
-    },
-    SearchItemDocs {
-        provider: ProviderId,
-        item_path: String,
-    },
-}
-
-impl DocsSlashCommandArgs {
-    pub fn parse(argument: &str) -> Self {
-        let Some((provider, argument)) = argument.split_once(' ') else {
-            return Self::NoProvider;
-        };
-
-        let provider = ProviderId(provider.into());
-
-        let Some((package, rest)) = argument.split_once(is_item_path_delimiter) else {
-            return Self::ProviderSelected { provider };
-        };
-
-        if rest.trim().is_empty() {
-            return Self::SearchPackageDocs {
-                provider,
-                package: package.to_owned(),
-            };
-        }
-
-        let item_path = argument.trim_start_matches(provider.as_ref()).trim();
-
-        Self::SearchItemDocs {
-            provider,
-            item_path: item_path.to_owned(),
-        }
-    }
-
-    pub fn provider(&self) -> Option<ProviderId> {
-        match self {
-            Self::NoProvider => None,
-            Self::ProviderSelected { provider }
-            | Self::SearchPackageDocs { provider, .. }
-            | Self::SearchItemDocs { provider, .. } => Some(provider.clone()),
-        }
-    }
-}
-
 pub(crate) struct DocsSlashCommand;
 
 impl DocsSlashCommand {
+    pub const NAME: &'static str = "docs";
+
     fn path_to_cargo_toml(project: Model<Project>, cx: &mut AppContext) -> Option<Arc<Path>> {
         let worktree = project.read(cx).worktrees().next()?;
         let worktree = worktree.read(cx);
@@ -126,7 +71,7 @@ impl DocsSlashCommand {
 
 impl SlashCommand for DocsSlashCommand {
     fn name(&self) -> String {
-        "docs".into()
+        Self::NAME.into()
     }
 
     fn description(&self) -> String {
@@ -195,6 +140,7 @@ impl SlashCommand for DocsSlashCommand {
                 DocsSlashCommandArgs::SearchItemDocs {
                     provider,
                     item_path,
+                    ..
                 } => {
                     let store = store?;
                     let items = store.search(item_path).await;
@@ -234,6 +180,7 @@ impl SlashCommand for DocsSlashCommand {
                     DocsSlashCommandArgs::SearchItemDocs {
                         provider,
                         item_path,
+                        ..
                     } => {
                         let store = store?;
                         let item_docs = store.load(item_path.clone()).await?;
@@ -257,5 +204,73 @@ impl SlashCommand for DocsSlashCommand {
                 run_commands_in_text: false,
             })
         })
+    }
+}
+
+fn is_item_path_delimiter(char: char) -> bool {
+    !char.is_alphanumeric() && char != '-' && char != '_'
+}
+
+#[derive(Debug)]
+pub(crate) enum DocsSlashCommandArgs {
+    NoProvider,
+    ProviderSelected {
+        provider: ProviderId,
+    },
+    SearchPackageDocs {
+        provider: ProviderId,
+        package: String,
+    },
+    SearchItemDocs {
+        provider: ProviderId,
+        package: String,
+        item_path: String,
+    },
+}
+
+impl DocsSlashCommandArgs {
+    pub fn parse(argument: &str) -> Self {
+        let Some((provider, argument)) = argument.split_once(' ') else {
+            return Self::NoProvider;
+        };
+
+        let provider = ProviderId(provider.into());
+
+        let Some((package, rest)) = argument.split_once(is_item_path_delimiter) else {
+            return Self::ProviderSelected { provider };
+        };
+
+        if rest.trim().is_empty() {
+            return Self::SearchPackageDocs {
+                provider,
+                package: package.to_owned(),
+            };
+        }
+
+        let item_path = argument.trim_start_matches(provider.as_ref()).trim();
+
+        Self::SearchItemDocs {
+            provider,
+            package: package.to_owned(),
+            item_path: item_path.to_owned(),
+        }
+    }
+
+    pub fn provider(&self) -> Option<ProviderId> {
+        match self {
+            Self::NoProvider => None,
+            Self::ProviderSelected { provider }
+            | Self::SearchPackageDocs { provider, .. }
+            | Self::SearchItemDocs { provider, .. } => Some(provider.clone()),
+        }
+    }
+
+    pub fn package(&self) -> Option<PackageName> {
+        match self {
+            Self::NoProvider | Self::ProviderSelected { .. } => None,
+            Self::SearchPackageDocs { package, .. } | Self::SearchItemDocs { package, .. } => {
+                Some(package.as_str().into())
+            }
+        }
     }
 }
