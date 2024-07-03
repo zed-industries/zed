@@ -302,6 +302,7 @@ struct ExcerptBytes<'a> {
     reversed: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExpandExcerptDirection {
     Up,
     Down,

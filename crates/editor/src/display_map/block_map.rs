@@ -81,7 +81,18 @@ pub struct BlockProperties<P> {
     pub disposition: BlockDisposition,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+impl<P: Debug> Debug for BlockProperties<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockProperties")
+            .field("position", &self.position)
+            .field("height", &self.height)
+            .field("style", &self.style)
+            .field("disposition", &self.disposition)
+            .finish()
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum BlockStyle {
     Fixed,
     Flex,

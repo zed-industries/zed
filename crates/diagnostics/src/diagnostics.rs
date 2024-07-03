@@ -6,13 +6,14 @@ mod toolbar_controls;
 mod diagnostics_tests;
 
 use anyhow::Result;
-use collections::{BTreeSet, HashSet};
+use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
     highlight_diagnostic_message,
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
+    DEFAULT_MULTIBUFFER_CONTEXT,
 };
 use futures::{
     channel::mpsc::{self, UnboundedSender},
@@ -25,9 +26,11 @@ use gpui::{
     WeakView, WindowContext,
 };
 use language::{
-    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
+    Bias, Buffer, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point,
+    Selection, SelectionGoal, ToPoint,
 };
 use lsp::LanguageServerId;
+use multi_buffer::ExpandExcerptDirection;
 use project::{DiagnosticSummary, Project, ProjectPath};
 use project_diagnostics_settings::ProjectDiagnosticsSettings;
 use settings::Settings;
@@ -73,8 +76,17 @@ struct ProjectDiagnosticsEditor {
 struct PathState {
     path: ProjectPath,
     diagnostic_groups: Vec<DiagnosticGroupState>,
+    diagnostics: Vec<(DiagnosticData, BlockId)>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiagnosticData {
+    language_server_id: LanguageServerId,
+    is_primary: bool,
+    entry: DiagnosticEntry<language::Anchor>,
+}
+
+// TODO kb regroup
 struct DiagnosticGroupState {
     language_server_id: LanguageServerId,
     primary_diagnostic: DiagnosticEntry<language::Anchor>,
@@ -314,6 +326,7 @@ impl ProjectDiagnosticsEditor {
                     PathState {
                         path: path_to_update.clone(),
                         diagnostic_groups: Default::default(),
+                        diagnostics: Vec::new(),
                     },
                 );
                 ix
@@ -330,7 +343,6 @@ impl ProjectDiagnosticsEditor {
             ExcerptId::min()
         };
 
-        let path_state = &mut self.path_states[path_ix];
         let mut new_group_ixs = Vec::new();
         let mut blocks_to_add = Vec::new();
         let mut blocks_to_remove = HashSet::default();
@@ -340,6 +352,11 @@ impl ProjectDiagnosticsEditor {
         } else {
             DiagnosticSeverity::ERROR
         };
+
+        // TODO kb
+        self.update_diagnostics_for_path(path_ix, &snapshot, server_to_update, max_severity, cx);
+
+        let path_state = &mut self.path_states[path_ix];
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, cx| {
             let mut old_groups = mem::take(&mut path_state.diagnostic_groups)
                 .into_iter()
@@ -590,6 +607,277 @@ impl ProjectDiagnosticsEditor {
         self.check_invariants(cx);
 
         cx.notify();
+    }
+
+    fn update_diagnostics_for_path(
+        &mut self,
+        path_ix: usize,
+        buffer_snapshot: &BufferSnapshot,
+        server_to_update: Option<LanguageServerId>,
+        max_severity: DiagnosticSeverity,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let path_state = &mut self.path_states[path_ix];
+        let mut new_diagnostics = path_state
+            .diagnostics
+            .iter()
+            .filter(|(diagnostic_data, _)| {
+                server_to_update.map_or(false, |server_id| {
+                    diagnostic_data.language_server_id != server_id
+                })
+            })
+            .filter(|(diagnostic_data, _)| {
+                diagnostic_data.entry.diagnostic.severity <= max_severity
+            })
+            .map(|(diagnostic, _)| diagnostic.clone())
+            .collect::<Vec<_>>();
+        for (server_id, group) in buffer_snapshot
+            .diagnostic_groups(server_to_update)
+            .into_iter()
+            .filter(|(_, group)| {
+                group.entries[group.primary_ix].diagnostic.severity <= max_severity
+            })
+        {
+            for (diagnostic_index, diagnostic) in group.entries.iter().enumerate() {
+                let new_data = DiagnosticData {
+                    language_server_id: server_id,
+                    is_primary: diagnostic_index == group.primary_ix,
+                    entry: diagnostic.clone(),
+                };
+                let (Ok(i) | Err(i)) = new_diagnostics.binary_search_by(|probe| {
+                    compare_data_locations(probe, &new_data, buffer_snapshot)
+                });
+                new_diagnostics.insert(i, new_data);
+            }
+        }
+
+        let multi_buffer_snapshot = self.excerpts.read(cx).snapshot(cx);
+        let mut current_excerpts = multi_buffer_snapshot.excerpts().fuse().peekable();
+        let mut current_diagnostics = path_state.diagnostics.iter().fuse().peekable();
+        let mut blocks_to_remove = Vec::new();
+        let mut blocks_to_add = Vec::new();
+        let mut excerpts_with_new_diagnostics = HashSet::default();
+        let mut excerpts_to_remove = Vec::new();
+        let mut excerpts_to_add = HashMap::<ExcerptId, Vec<Range<language::Anchor>>>::default();
+        let mut excerpt_to_expand =
+            HashMap::<(u32, ExpandExcerptDirection), Vec<ExcerptId>>::default();
+        let mut latest_excerpt_id = ExcerptId::min();
+
+        for new_diagnostic in &new_diagnostics {
+            while let Some((current_excerpt_id, _, current_excerpt_range)) = current_excerpts.peek()
+            {
+                match (
+                    current_excerpt_range
+                        .context
+                        .start
+                        .cmp(&new_diagnostic.entry.range.start, &buffer_snapshot),
+                    current_excerpt_range
+                        .context
+                        .end
+                        .cmp(&new_diagnostic.entry.range.end, &buffer_snapshot),
+                ) {
+                    /*
+                          new_s new_e
+                    ----[---->><<----]--
+                     cur_s         cur_e
+                    */
+                    (Ordering::Less | Ordering::Equal, Ordering::Greater | Ordering::Equal) => {
+                        excerpts_with_new_diagnostics.insert(*current_excerpt_id);
+                        break;
+                    }
+                    /*
+                          cur_s cur_e
+                    ---->>>>>[--]<<<<<--
+                     new_s         new_e
+                    */
+                    (Ordering::Greater | Ordering::Equal, Ordering::Less | Ordering::Equal) => {
+                        let expand_up = current_excerpt_range
+                            .context
+                            .start
+                            .to_point(&buffer_snapshot)
+                            .row
+                            .saturating_sub(
+                                new_diagnostic
+                                    .entry
+                                    .range
+                                    .start
+                                    .to_point(&buffer_snapshot)
+                                    .row,
+                            );
+                        let expand_down = new_diagnostic
+                            .entry
+                            .range
+                            .end
+                            .to_point(&buffer_snapshot)
+                            .row
+                            .saturating_sub(
+                                current_excerpt_range
+                                    .context
+                                    .end
+                                    .to_point(&buffer_snapshot)
+                                    .row,
+                            );
+                        // TODO kb wrong, as there could be multiple diagnostics in the same range start
+                        excerpt_to_expand
+                            .entry((
+                                expand_up.max(expand_down).max(DEFAULT_MULTIBUFFER_CONTEXT),
+                                ExpandExcerptDirection::UpAndDown,
+                            ))
+                            .or_default()
+                            .push(*current_excerpt_id);
+                        excerpts_with_new_diagnostics.insert(*current_excerpt_id);
+                        break;
+                    }
+                    /*
+                            new_s   new_e
+                             >       <
+                    ----[---->>>]<<<<<--
+                     cur_s    cur_e
+
+                    or
+                              new_s new_e
+                                >    <
+                    ----[----]-->>><<<--
+                     cur_s cur_e
+                    */
+                    (Ordering::Less, Ordering::Less) => {
+                        if current_excerpt_range
+                            .context
+                            .start
+                            .cmp(&new_diagnostic.entry.range.end, &buffer_snapshot)
+                            .is_le()
+                        {
+                            let expand_up = current_excerpt_range
+                                .context
+                                .start
+                                .to_point(&buffer_snapshot)
+                                .row
+                                .saturating_sub(
+                                    new_diagnostic
+                                        .entry
+                                        .range
+                                        .start
+                                        .to_point(&buffer_snapshot)
+                                        .row,
+                                );
+                            // TODO kb wrong, as there could be multiple diagnostics in the same range start
+                            excerpt_to_expand
+                                .entry((
+                                    expand_up.max(DEFAULT_MULTIBUFFER_CONTEXT),
+                                    ExpandExcerptDirection::Up,
+                                ))
+                                .or_default()
+                                .push(*current_excerpt_id);
+                            excerpts_with_new_diagnostics.insert(*current_excerpt_id);
+                            break;
+                        } else {
+                            if !excerpts_with_new_diagnostics.contains(current_excerpt_id) {
+                                excerpts_to_remove.push(*current_excerpt_id);
+                            }
+                            break;
+                        }
+                    }
+                    /*
+                          cur_s      cur_e
+                    ---->>>>>[<<<<----]--
+                        >        <
+                       new_s    new_e
+
+                    or
+                              cur_s cur_e
+                    ---->>><<<--[----]--
+                        >    <
+                       new_s new_e
+                    */
+                    (Ordering::Greater, Ordering::Greater) => {
+                        if current_excerpt_range
+                            .context
+                            .end
+                            .cmp(&new_diagnostic.entry.range.start, &buffer_snapshot)
+                            .is_ge()
+                        {
+                            let expand_down = new_diagnostic
+                                .entry
+                                .range
+                                .end
+                                .to_point(&buffer_snapshot)
+                                .row
+                                .saturating_sub(
+                                    current_excerpt_range
+                                        .context
+                                        .end
+                                        .to_point(&buffer_snapshot)
+                                        .row,
+                                );
+                            // TODO kb wrong, as there could be multiple diagnostics in the same range start
+                            excerpt_to_expand
+                                .entry((
+                                    expand_down.max(DEFAULT_MULTIBUFFER_CONTEXT),
+                                    ExpandExcerptDirection::Down,
+                                ))
+                                .or_default()
+                                .push(*current_excerpt_id);
+                            excerpts_with_new_diagnostics.insert(*current_excerpt_id);
+                            break;
+                        } else {
+                            let excerpt_ranges =
+                                excerpts_to_add.entry(latest_excerpt_id).or_default();
+                            let new_range = new_diagnostic.entry.range.clone();
+                            let (Ok(i) | Err(i)) = excerpt_ranges.binary_search_by(|probe| {
+                                compare_diagnostic_ranges(probe, &new_range, buffer_snapshot)
+                            });
+                            excerpt_ranges.insert(i, new_range);
+                        }
+                    }
+                }
+                if let Some((next_id, ..)) = current_excerpts.next() {
+                    latest_excerpt_id = next_id;
+                }
+            }
+
+            while let Some((current_diagnostic, current_block)) = current_diagnostics.peek() {
+                match compare_data_locations(current_diagnostic, new_diagnostic, buffer_snapshot) {
+                    Ordering::Less => blocks_to_remove.push(*current_block),
+                    Ordering::Equal => {
+                        if current_diagnostic != new_diagnostic {
+                            blocks_to_remove.push(*current_block);
+                            blocks_to_add.push(BlockProperties {
+                                position: (latest_excerpt_id, new_diagnostic.entry.range.start),
+                                height: new_diagnostic
+                                    .entry
+                                    .diagnostic
+                                    .message
+                                    .matches('\n')
+                                    .count() as u8
+                                    + 1,
+                                style: BlockStyle::Fixed,
+                                render: diagnostic_block_renderer(
+                                    // TODO kb this clone is not needed
+                                    new_diagnostic.entry.diagnostic.clone(),
+                                    true,
+                                ),
+                                disposition: BlockDisposition::Below,
+                            });
+                        }
+                    }
+                    Ordering::Greater => break,
+                }
+                let _ = current_diagnostics.next();
+            }
+        }
+        excerpts_to_remove.extend(current_excerpts.map(|(excerpt_id, ..)| excerpt_id));
+        blocks_to_remove.extend(current_diagnostics.map(|&(_, block_id)| block_id));
+
+        // TODO kb clean-up `current_excerpts` and `current_diagnostics`
+        // TODO kb update selections, move to the next primary one if the excerpt is gone
+        dbg!(
+            "@@@@@@",
+            blocks_to_remove,
+            blocks_to_add,
+            excerpts_to_remove,
+            excerpt_to_expand,
+            excerpts_to_add
+        );
     }
 
     #[cfg(test)]
@@ -864,27 +1152,42 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     })
 }
 
+fn compare_data_locations(
+    old: &DiagnosticData,
+    new: &DiagnosticData,
+    snapshot: &BufferSnapshot,
+) -> Ordering {
+    compare_diagnostics(&old.entry, &new.entry, snapshot)
+        .then_with(|| old.language_server_id.cmp(&new.language_server_id))
+}
+
 fn compare_diagnostics(
     old: &DiagnosticEntry<language::Anchor>,
     new: &DiagnosticEntry<language::Anchor>,
-    snapshot: &language::BufferSnapshot,
+    snapshot: &BufferSnapshot,
+) -> Ordering {
+    compare_diagnostic_ranges(&old.range, &new.range, snapshot)
+        .then_with(|| old.diagnostic.message.cmp(&new.diagnostic.message))
+}
+
+fn compare_diagnostic_ranges(
+    old: &Range<language::Anchor>,
+    new: &Range<language::Anchor>,
+    snapshot: &BufferSnapshot,
 ) -> Ordering {
     use language::ToOffset;
 
     // The diagnostics may point to a previously open Buffer for this file.
-    if !old.range.start.is_valid(snapshot) || !new.range.start.is_valid(snapshot) {
+    if !old.start.is_valid(snapshot) || !new.start.is_valid(snapshot) {
         return Ordering::Greater;
     }
 
-    old.range
-        .start
+    old.start
         .to_offset(snapshot)
-        .cmp(&new.range.start.to_offset(snapshot))
+        .cmp(&new.start.to_offset(snapshot))
         .then_with(|| {
-            old.range
-                .end
+            old.end
                 .to_offset(snapshot)
-                .cmp(&new.range.end.to_offset(snapshot))
+                .cmp(&new.end.to_offset(snapshot))
         })
-        .then_with(|| old.diagnostic.message.cmp(&new.diagnostic.message))
 }
