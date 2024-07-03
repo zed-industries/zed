@@ -48,8 +48,8 @@ actions!(
         ResetKey,
         InlineAssist,
         InsertActivePrompt,
-        ToggleHistory,
-        ShowPromptLibrary,
+        DeployHistory,
+        DeployPromptLibrary,
         ApplyEdit,
         ConfirmCommand,
         ToggleModelSelector

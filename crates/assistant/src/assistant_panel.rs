@@ -9,10 +9,10 @@ use crate::{
     },
     terminal_inline_assistant::TerminalInlineAssistant,
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, ContextStore, CycleMessageRole,
-    InlineAssist, InlineAssistant, InsertIntoEditor, LanguageModelRequest,
-    LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus, ModelSelector,
-    QuoteSelection, ResetKey, Role, SavedContext, SavedContextMetadata, SavedMessage,
-    ShowPromptLibrary, Split, ToggleFocus, ToggleHistory, ToggleModelSelector,
+    DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistant, InsertIntoEditor,
+    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
+    ModelSelector, QuoteSelection, ResetKey, Role, SavedContext, SavedContextMetadata,
+    SavedMessage, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
@@ -108,9 +108,7 @@ pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     height: Option<Pixels>,
-    show_saved_contexts: bool,
     context_store: Model<ContextStore>,
-    saved_context_picker: View<Picker<SavedContextPickerDelegate>>,
     focus_handle: FocusHandle,
     languages: Arc<LanguageRegistry>,
     slash_commands: Arc<SlashCommandRegistry>,
@@ -218,11 +216,6 @@ impl PickerDelegate for SavedContextPickerDelegate {
     }
 }
 
-struct ActiveContextEditor {
-    editor: View<ContextEditor>,
-    _subscriptions: Vec<Subscription>,
-}
-
 impl AssistantPanel {
     pub fn load(
         workspace: WeakView<Workspace>,
@@ -257,7 +250,7 @@ impl AssistantPanel {
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
-            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
+            pane.set_render_tab_bar_buttons(cx, move |_pane, cx| {
                 let pane_handle = cx.view().downgrade();
 
                 h_flex()
@@ -269,27 +262,27 @@ impl AssistantPanel {
                             .trigger(IconButton::new("trigger", IconName::Menu))
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |menu, _cx| {
-                                    menu.entry("History", Some(Box::new(ToggleHistory)), {
+                                    menu.entry("History", Some(Box::new(DeployHistory)), {
                                         let pane_handle = pane_handle.clone();
                                         move |cx| {
                                             pane_handle
                                                 .update(cx, |pane, cx| {
                                                     pane.focus_handle(cx)
-                                                        .dispatch_action(&ToggleHistory, cx);
+                                                        .dispatch_action(&DeployHistory, cx);
                                                 })
                                                 .ok();
                                         }
                                     })
                                     .entry(
                                         "Prompt Library",
-                                        Some(Box::new(ShowPromptLibrary)),
+                                        Some(Box::new(DeployPromptLibrary)),
                                         {
                                             let pane_handle = pane_handle.clone();
                                             move |cx| {
                                                 pane_handle
                                                     .update(cx, |pane, cx| {
                                                         pane.focus_handle(cx).dispatch_action(
-                                                            &ShowPromptLibrary,
+                                                            &DeployPromptLibrary,
                                                             cx,
                                                         );
                                                     })
@@ -316,11 +309,6 @@ impl AssistantPanel {
             pane
         });
 
-        let saved_context_picker = cx.new_view(|cx| {
-            Picker::uniform_list(SavedContextPickerDelegate::new(context_store.clone()), cx)
-                .modal(false)
-                .max_height(None)
-        });
         let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
@@ -333,14 +321,6 @@ impl AssistantPanel {
                     prev_settings_version = CompletionProvider::global(cx).settings_version();
                 }
             }),
-            cx.observe(&context_store, |this, _, cx| {
-                this.saved_context_picker
-                    .update(cx, |picker, cx| picker.refresh(cx));
-            }),
-            cx.subscribe(
-                &saved_context_picker,
-                Self::handle_saved_context_picker_event,
-            ),
             cx.on_focus_in(&focus_handle, Self::focus_in),
         ];
 
@@ -351,8 +331,6 @@ impl AssistantPanel {
             width: None,
             height: None,
             context_store,
-            saved_context_picker,
-            show_saved_contexts: false,
             languages: workspace.app_state().languages.clone(),
             slash_commands: SlashCommandRegistry::global(cx),
             fs: workspace.app_state().fs.clone(),
@@ -364,12 +342,9 @@ impl AssistantPanel {
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        // todo!("remove focus_handle")
         if self.focus_handle.is_focused(cx) {
-            if self.show_saved_contexts {
-                cx.focus_view(&self.saved_context_picker);
-            } else {
-                cx.focus_view(&self.pane);
-            }
+            cx.focus_view(&self.pane);
         }
         cx.notify();
     }
@@ -391,6 +366,10 @@ impl AssistantPanel {
                         item.added_to_pane(workspace, self.pane.clone(), cx)
                     });
                 }
+            }
+
+            pane::Event::RemoveItem { .. } | pane::Event::ActivateItem { .. } => {
+                cx.emit(AssistantPanelEvent::ContextEdited);
             }
 
             _ => {}
@@ -425,19 +404,6 @@ impl AssistantPanel {
                     provider.authentication_prompt(cx)
                 }));
             cx.notify();
-        }
-    }
-
-    fn handle_saved_context_picker_event(
-        &mut self,
-        _picker: View<Picker<SavedContextPickerDelegate>>,
-        event: &SavedContextPickerEvent,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            SavedContextPickerEvent::Confirmed { path } => {
-                self.open_context(path.clone(), cx).detach_and_log_err(cx);
-            }
         }
     }
 
@@ -601,11 +567,16 @@ impl AssistantPanel {
 
     fn show_context(&mut self, context_editor: View<ContextEditor>, cx: &mut ViewContext<Self>) {
         let focus = self.focus_handle.contains_focused(cx);
-        self.subscriptions
-            .push(cx.subscribe(&context_editor, Self::handle_context_editor_event));
+        let prev_len = self.pane.read(cx).items_len();
         self.pane.update(cx, |pane, cx| {
-            pane.add_item(Box::new(context_editor), focus, focus, None, cx)
+            pane.add_item(Box::new(context_editor.clone()), focus, focus, None, cx)
         });
+
+        if prev_len != self.pane.read(cx).items_len() {
+            self.subscriptions
+                .push(cx.subscribe(&context_editor, Self::handle_context_editor_event));
+        }
+
         cx.emit(AssistantPanelEvent::ContextEdited);
         cx.notify();
     }
@@ -622,28 +593,29 @@ impl AssistantPanel {
         }
     }
 
-    fn toggle_history(&mut self, _: &ToggleHistory, cx: &mut ViewContext<Self>) {
-        if self.show_saved_contexts {
-            self.hide_history(cx);
+    fn deploy_history(&mut self, _: &DeployHistory, cx: &mut ViewContext<Self>) {
+        let history_item_ix = self.pane.update(cx, |pane, cx| {
+            pane.items()
+                .position(|item| item.downcast::<ContextHistory>().is_some())
+        });
+
+        if let Some(history_item_ix) = history_item_ix {
+            self.pane.update(cx, |pane, cx| {
+                pane.activate_item(history_item_ix, true, true, cx);
+            });
         } else {
-            self.show_history(cx);
+            let assistant_panel = cx.view().downgrade();
+            let history = cx.new_view(|cx| {
+                ContextHistory::new(self.context_store.clone(), assistant_panel, cx)
+            });
+            self.pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(history), true, true, None, cx);
+            });
         }
     }
 
-    fn show_history(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus_view(&self.saved_context_picker);
-        if !self.show_saved_contexts {
-            self.show_saved_contexts = true;
-            cx.notify();
-        }
-    }
-
-    fn hide_history(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(editor) = self.active_context_editor(cx) {
-            cx.focus_view(&editor);
-            self.show_saved_contexts = false;
-            cx.notify();
-        }
+    fn deploy_prompt_library(&mut self, _: &DeployPromptLibrary, cx: &mut ViewContext<Self>) {
+        open_prompt_library(self.languages.clone(), cx).detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
@@ -721,7 +693,21 @@ impl AssistantPanel {
     }
 
     fn open_context(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        cx.focus(&self.focus_handle);
+        let existing_context = self.pane.read(cx).items().find_map(|item| {
+            if let Some(editor) = item.downcast::<ContextEditor>() {
+                if editor.read(cx).context.read(cx).path.as_ref() == Some(&path) {
+                    Some(editor)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        if let Some(existing_context) = existing_context {
+            self.show_context(existing_context, cx);
+            return Task::ready(Ok(()));
+        }
 
         let saved_context = self.context_store.read(cx).load(path.clone(), cx);
         let fs = self.fs.clone();
@@ -741,7 +727,7 @@ impl AssistantPanel {
             let saved_context = saved_context.await?;
             let context = Context::deserialize(
                 saved_context,
-                path.clone(),
+                path,
                 languages,
                 slash_commands,
                 Some(telemetry),
@@ -772,42 +758,32 @@ impl AssistantPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let mut registrar = DivRegistrar::new(
+            |panel, cx| {
+                panel
+                    .pane
+                    .read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+            },
+            cx,
+        );
+        BufferSearchBar::register(&mut registrar);
+        let registrar = registrar.into_div();
+
         v_flex()
             .key_context("AssistantPanel")
             .size_full()
             .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                 this.new_context(cx);
             }))
-            .on_action(cx.listener(AssistantPanel::toggle_history))
+            .on_action(cx.listener(AssistantPanel::deploy_history))
+            .on_action(cx.listener(AssistantPanel::deploy_prompt_library))
             .on_action(cx.listener(AssistantPanel::reset_credentials))
             .on_action(cx.listener(AssistantPanel::toggle_model_selector))
             .track_focus(&self.focus_handle)
-            .child(
-                if self.show_saved_contexts || self.active_context_editor(cx).is_none() {
-                    div()
-                        .size_full()
-                        .child(self.saved_context_picker.clone())
-                        .into_any_element()
-                } else {
-                    let mut registrar = DivRegistrar::new(
-                        |panel, cx| {
-                            panel
-                                .pane
-                                .read(cx)
-                                .toolbar()
-                                .read(cx)
-                                .item_of_type::<BufferSearchBar>()
-                        },
-                        cx,
-                    );
-                    BufferSearchBar::register(&mut registrar);
-                    registrar
-                        .into_div()
-                        .size_full()
-                        .child(self.pane.clone())
-                        .into_any()
-                },
-            )
+            .child(registrar.size_full().child(self.pane.clone()))
     }
 }
 
@@ -3466,7 +3442,11 @@ impl ToolbarItemView for ContextEditorToolbarItem {
             .and_then(|item| item.act_as::<ContextEditor>(cx))
             .map(|editor| editor.downgrade());
         cx.notify();
-        ToolbarItemLocation::PrimaryRight
+        if self.active_context_editor.is_none() {
+            ToolbarItemLocation::Hidden
+        } else {
+            ToolbarItemLocation::PrimaryRight
+        }
     }
 
     fn pane_focus_update(&mut self, _pane_focused: bool, cx: &mut ViewContext<Self>) {
@@ -3475,6 +3455,86 @@ impl ToolbarItemView for ContextEditorToolbarItem {
 }
 
 impl EventEmitter<ToolbarItemEvent> for ContextEditorToolbarItem {}
+
+pub struct ContextHistory {
+    picker: View<Picker<SavedContextPickerDelegate>>,
+    _subscriptions: Vec<Subscription>,
+    assistant_panel: WeakView<AssistantPanel>,
+}
+
+impl ContextHistory {
+    fn new(
+        context_store: Model<ContextStore>,
+        assistant_panel: WeakView<AssistantPanel>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let picker = cx.new_view(|cx| {
+            Picker::uniform_list(SavedContextPickerDelegate::new(context_store.clone()), cx)
+                .modal(false)
+                .max_height(None)
+        });
+
+        let _subscriptions = vec![
+            cx.observe(&context_store, |this, _, cx| {
+                this.picker.update(cx, |picker, cx| picker.refresh(cx));
+            }),
+            cx.subscribe(&picker, Self::handle_picker_event),
+        ];
+
+        Self {
+            picker,
+            _subscriptions,
+            assistant_panel,
+        }
+    }
+
+    fn handle_picker_event(
+        &mut self,
+        _: View<Picker<SavedContextPickerDelegate>>,
+        event: &SavedContextPickerEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let SavedContextPickerEvent::Confirmed { path } = event;
+        self.assistant_panel
+            .update(cx, |assistant_panel, cx| {
+                assistant_panel
+                    .open_context(path.clone(), cx)
+                    .detach_and_log_err(cx);
+            })
+            .ok();
+    }
+}
+
+impl Render for ContextHistory {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+        div().size_full().child(self.picker.clone())
+    }
+}
+
+impl FocusableView for ContextHistory {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl EventEmitter<()> for ContextHistory {}
+
+impl Item for ContextHistory {
+    type Event = ();
+
+    fn tab_content(
+        &self,
+        params: workspace::item::TabContentParams,
+        _: &WindowContext,
+    ) -> AnyElement {
+        let color = if params.selected {
+            Color::Default
+        } else {
+            Color::Muted
+        };
+        Label::new("History").color(color).into_any_element()
+    }
+}
 
 #[derive(Clone, Debug)]
 struct MessageAnchor {
