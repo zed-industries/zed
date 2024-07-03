@@ -1,19 +1,23 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ops::Deref;
+use std::os::fd::AsRawFd;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use calloop::generic::{FdWrapper, Generic};
-use calloop::{EventLoop, LoopHandle, RegistrationToken};
+use anyhow::Context;
+use async_task::Runnable;
+use calloop::channel::Channel;
 
 use collections::HashMap;
-use util::ResultExt;
 
+use futures::channel::oneshot;
+use mio::{Interest, Token, Waker};
+use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::cursor;
 use x11rb::errors::ConnectionError;
-use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xinput::ConnectionExt;
 use x11rb::protocol::xkb::ConnectionExt as _;
 use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
@@ -30,7 +34,7 @@ use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
     DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput,
-    Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    Point, QuitSignal, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
 use super::{
@@ -47,7 +51,6 @@ pub(super) const XINPUT_MASTER_DEVICE: u16 = 1;
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
-    refresh_event_token: RegistrationToken,
 }
 
 impl WindowRef {
@@ -95,15 +98,18 @@ impl From<xim::ClientError> for EventHandlerError {
 }
 
 pub struct X11ClientState {
-    pub(crate) loop_handle: LoopHandle<'static, X11Client>,
-    pub(crate) event_loop: Option<calloop::EventLoop<'static, X11Client>>,
+    /// poll is in an Option so we can take it out in `run()` without
+    /// mutating self.
+    poll: Option<mio::Poll>,
+    quit_signal_rx: oneshot::Receiver<()>,
+    runnables: Channel<Runnable>,
+    xdp_event_source: XDPEventSource,
 
     pub(crate) last_click: Instant,
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
 
     pub(crate) scale_factor: f32,
-
     pub(crate) xcb_connection: Rc<XCBConnection>,
     pub(crate) x_root_index: usize,
     pub(crate) _resource_database: Database,
@@ -139,14 +145,46 @@ impl X11ClientStatePtr {
         let client = X11Client(self.0.upgrade().expect("client already dropped"));
         let mut state = client.0.borrow_mut();
 
-        if let Some(window_ref) = state.windows.remove(&x_window) {
-            state.loop_handle.remove(window_ref.refresh_event_token);
+        if state.windows.remove(&x_window).is_none() {
+            log::warn!(
+                "failed to remove X window {} from client state, does not exist",
+                x_window
+            );
         }
 
         state.cursor_styles.remove(&x_window);
 
         if state.windows.is_empty() {
-            state.common.signal.stop();
+            state.common.quit_signal.quit();
+        }
+    }
+}
+
+struct ChannelQuitSignal {
+    tx: Option<oneshot::Sender<()>>,
+    waker: Option<Arc<Waker>>,
+}
+
+impl ChannelQuitSignal {
+    fn new(waker: Option<Arc<Waker>>) -> (Self, oneshot::Receiver<()>) {
+        let (tx, rx) = oneshot::channel::<()>();
+
+        let quit_signal = ChannelQuitSignal {
+            tx: Some(tx),
+            waker,
+        };
+
+        (quit_signal, rx)
+    }
+}
+
+impl QuitSignal for ChannelQuitSignal {
+    fn quit(&mut self) {
+        if let Some(tx) = self.tx.take() {
+            tx.send(()).log_err();
+            if let Some(waker) = self.waker.as_ref() {
+                waker.wake().ok();
+            }
         }
     }
 }
@@ -156,27 +194,12 @@ pub(crate) struct X11Client(Rc<RefCell<X11ClientState>>);
 
 impl X11Client {
     pub(crate) fn new() -> Self {
-        let event_loop = EventLoop::try_new().unwrap();
+        let mut poll = mio::Poll::new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let waker = Arc::new(Waker::new(poll.registry(), WAKER_TOKEN).unwrap());
 
-        let handle = event_loop.handle();
-
-        handle
-            .insert_source(main_receiver, {
-                let handle = handle.clone();
-                move |event, _, _: &mut X11Client| {
-                    if let calloop::channel::Event::Msg(runnable) = event {
-                        // Insert the runnables as idle callbacks, so we make sure that user-input and X11
-                        // events have higher priority and runnables are only worked off after the event
-                        // callbacks.
-                        handle.insert_idle(|_| {
-                            runnable.run();
-                        });
-                    }
-                }
-            })
-            .unwrap();
+        let (quit_signal, quit_signal_rx) = ChannelQuitSignal::new(Some(waker.clone()));
+        let (common, runnables) = LinuxCommon::new(Box::new(quit_signal), Some(waker.clone()));
 
         let (xcb_connection, x_root_index) = XCBConnection::connect(None).unwrap();
         xcb_connection
@@ -275,105 +298,18 @@ impl X11Client {
             None
         };
 
-        // Safety: Safe if xcb::Connection always returns a valid fd
-        let fd = unsafe { FdWrapper::new(Rc::clone(&xcb_connection)) };
-
-        handle
-            .insert_source(
-                Generic::new_with_error::<EventHandlerError>(
-                    fd,
-                    calloop::Interest::READ,
-                    calloop::Mode::Level,
-                ),
-                {
-                    let xcb_connection = xcb_connection.clone();
-                    move |_readiness, _, client| {
-                        let mut events = Vec::new();
-                        let mut windows_to_refresh = HashSet::new();
-
-                        while let Some(event) = xcb_connection.poll_for_event()? {
-                            if let Event::Expose(event) = event {
-                                windows_to_refresh.insert(event.window);
-                            } else {
-                                events.push(event);
-                            }
-                        }
-
-                        for window in windows_to_refresh.into_iter() {
-                            if let Some(window) = client.get_window(window) {
-                                window.refresh();
-                            }
-                        }
-
-                        for event in events.into_iter() {
-                            let mut state = client.0.borrow_mut();
-                            if state.ximc.is_none() || state.xim_handler.is_none() {
-                                drop(state);
-                                client.handle_event(event);
-                                continue;
-                            }
-
-                            let mut ximc = state.ximc.take().unwrap();
-                            let mut xim_handler = state.xim_handler.take().unwrap();
-                            let xim_connected = xim_handler.connected;
-                            drop(state);
-
-                            let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
-                                Ok(handled) => handled,
-                                Err(err) => {
-                                    log::error!("XIMClientError: {}", err);
-                                    false
-                                }
-                            };
-                            let xim_callback_event = xim_handler.last_callback_event.take();
-
-                            let mut state = client.0.borrow_mut();
-                            state.ximc = Some(ximc);
-                            state.xim_handler = Some(xim_handler);
-                            drop(state);
-
-                            if let Some(event) = xim_callback_event {
-                                client.handle_xim_callback_event(event);
-                            }
-
-                            if xim_filtered {
-                                continue;
-                            }
-
-                            if xim_connected {
-                                client.xim_handle_event(event);
-                            } else {
-                                client.handle_event(event);
-                            }
-                        }
-
-                        Ok(calloop::PostAction::Continue)
-                    }
-                },
-            )
-            .expect("Failed to initialize x11 event source");
-
-        handle
-            .insert_source(XDPEventSource::new(&common.background_executor), {
-                move |event, _, client| match event {
-                    XDPEvent::WindowAppearance(appearance) => {
-                        client.with_common(|common| common.appearance = appearance);
-                        for (_, window) in &mut client.0.borrow_mut().windows {
-                            window.window.set_appearance(appearance);
-                        }
-                    }
-                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
-                        // noop, X11 manages this for us.
-                    }
-                }
-            })
-            .unwrap();
+        let xdp_event_source =
+            XDPEventSource::new(&common.background_executor, Some(waker.clone()));
 
         X11Client(Rc::new(RefCell::new(X11ClientState {
-            modifiers: Modifiers::default(),
-            event_loop: Some(event_loop),
-            loop_handle: handle,
+            poll: Some(poll),
+            runnables,
+
+            xdp_event_source,
+            quit_signal_rx,
             common,
+
+            modifiers: Modifiers::default(),
             last_click: Instant::now(),
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
@@ -466,6 +402,110 @@ impl X11Client {
             .get(&win)
             .filter(|window_reference| !window_reference.window.state.borrow().destroyed)
             .map(|window_reference| window_reference.window.clone())
+    }
+
+    fn read_x11_events(&self) -> (HashSet<u32>, Vec<Event>) {
+        let mut events = Vec::new();
+        let mut windows_to_refresh = HashSet::new();
+        let mut state = self.0.borrow_mut();
+
+        let mut last_key_release: Option<Event> = None;
+
+        loop {
+            match state.xcb_connection.poll_for_event() {
+                Ok(Some(event)) => {
+                    if let Event::Expose(expose_event) = event {
+                        windows_to_refresh.insert(expose_event.window);
+                    } else {
+                        match event {
+                            Event::KeyRelease(_) => {
+                                last_key_release = Some(event);
+                            }
+                            Event::KeyPress(key_press) => {
+                                if let Some(Event::KeyRelease(key_release)) =
+                                    last_key_release.take()
+                                {
+                                    // We ignore that last KeyRelease if it's too close to this KeyPress,
+                                    // suggesting that it's auto-generated by X11 as a key-repeat event.
+                                    if key_release.detail != key_press.detail
+                                        || key_press.time.wrapping_sub(key_release.time) > 20
+                                    {
+                                        events.push(Event::KeyRelease(key_release));
+                                    }
+                                }
+                                events.push(Event::KeyPress(key_press));
+                            }
+                            _ => {
+                                if let Some(release_event) = last_key_release.take() {
+                                    events.push(release_event);
+                                }
+                                events.push(event);
+                            }
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // Add any remaining stored KeyRelease event
+                    if let Some(release_event) = last_key_release.take() {
+                        events.push(release_event);
+                    }
+                    break;
+                }
+                Err(e) => {
+                    log::warn!("error polling for X11 events: {e:?}");
+                    break;
+                }
+            }
+        }
+
+        (windows_to_refresh, events)
+    }
+
+    fn process_x11_events(&self, events: Vec<Event>) {
+        for event in events.into_iter() {
+            let mut state = self.0.borrow_mut();
+            if state.ximc.is_none() || state.xim_handler.is_none() {
+                drop(state);
+                self.handle_event(event);
+                continue;
+            }
+
+            let mut ximc = state.ximc.take().unwrap();
+            let mut xim_handler = state.xim_handler.take().unwrap();
+            let xim_connected = xim_handler.connected;
+            drop(state);
+
+            // let xim_filtered = false;
+            let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
+                Ok(handled) => handled,
+                Err(err) => {
+                    log::error!("XIMClientError: {}", err);
+                    false
+                }
+            };
+            let xim_callback_event = xim_handler.last_callback_event.take();
+
+            let mut state = self.0.borrow_mut();
+            state.ximc = Some(ximc);
+            state.xim_handler = Some(xim_handler);
+
+            if let Some(event) = xim_callback_event {
+                drop(state);
+                self.handle_xim_callback_event(event);
+            } else {
+                drop(state);
+            }
+
+            if xim_filtered {
+                continue;
+            }
+
+            if xim_connected {
+                self.xim_handle_event(event);
+            } else {
+                self.handle_event(event);
+            }
+        }
     }
 
     fn handle_event(&self, event: Event) -> Option<()> {
@@ -902,11 +942,13 @@ impl X11Client {
     }
 }
 
+const XCB_CONNECTION_TOKEN: Token = Token(0);
+const WAKER_TOKEN: Token = Token(1);
+
 impl LinuxClient for X11Client {
     fn compositor_name(&self) -> &'static str {
         "X11"
     }
-
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
     }
@@ -972,69 +1014,8 @@ impl LinuxClient for X11Client {
             state.common.appearance,
         )?;
 
-        let screen_resources = state
-            .xcb_connection
-            .randr_get_screen_resources(x_window)
-            .unwrap()
-            .reply()
-            .expect("Could not find available screens");
-
-        let mode = screen_resources
-            .crtcs
-            .iter()
-            .find_map(|crtc| {
-                let crtc_info = state
-                    .xcb_connection
-                    .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
-                    .ok()?
-                    .reply()
-                    .ok()?;
-
-                screen_resources
-                    .modes
-                    .iter()
-                    .find(|m| m.id == crtc_info.mode)
-            })
-            .expect("Unable to find screen refresh rate");
-
-        let refresh_event_token = state
-            .loop_handle
-            .insert_source(calloop::timer::Timer::immediate(), {
-                let refresh_duration = mode_refresh_rate(mode);
-                move |mut instant, (), client| {
-                    let state = client.0.borrow_mut();
-                    state
-                        .xcb_connection
-                        .send_event(
-                            false,
-                            x_window,
-                            xproto::EventMask::EXPOSURE,
-                            xproto::ExposeEvent {
-                                response_type: xproto::EXPOSE_EVENT,
-                                sequence: 0,
-                                window: x_window,
-                                x: 0,
-                                y: 0,
-                                width: 0,
-                                height: 0,
-                                count: 1,
-                            },
-                        )
-                        .unwrap();
-                    let _ = state.xcb_connection.flush().unwrap();
-                    // Take into account that some frames have been skipped
-                    let now = Instant::now();
-                    while instant < now {
-                        instant += refresh_duration;
-                    }
-                    calloop::timer::TimeoutAction::ToInstant(instant)
-                }
-            })
-            .expect("Failed to initialize refresh timer");
-
         let window_ref = WindowRef {
             window: window.0.clone(),
-            refresh_event_token,
         };
 
         state.windows.insert(x_window, window_ref);
@@ -1157,14 +1138,123 @@ impl LinuxClient for X11Client {
     }
 
     fn run(&self) {
-        let mut event_loop = self
+        let mut poll = self
             .0
             .borrow_mut()
-            .event_loop
+            .poll
             .take()
-            .expect("App is already running");
+            .context("no poll set on X11Client. calling run more than once is not possible")
+            .unwrap();
 
-        event_loop.run(None, &mut self.clone(), |_| {}).log_err();
+        let xcb_fd = self.0.borrow().xcb_connection.as_raw_fd();
+        let mut xcb_source = mio::unix::SourceFd(&xcb_fd);
+        poll.registry()
+            .register(&mut xcb_source, XCB_CONNECTION_TOKEN, Interest::READABLE)
+            .unwrap();
+
+        let mut events = mio::Events::with_capacity(1024);
+        let mut next_refresh_needed = Instant::now();
+
+        'run_loop: loop {
+            let poll_timeout = next_refresh_needed - Instant::now();
+            // We rounding the poll_timeout down so `mio` doesn't round it up to the next higher milliseconds
+            let poll_timeout = Duration::from_millis(poll_timeout.as_millis() as u64);
+
+            if poll_timeout >= Duration::from_millis(1) {
+                let _ = poll.poll(&mut events, Some(poll_timeout));
+            };
+
+            let mut state = self.0.borrow_mut();
+
+            // Check if we need to quit
+            if let Ok(Some(())) = state.quit_signal_rx.try_recv() {
+                return;
+            }
+
+            // Redraw windows
+            let now = Instant::now();
+            if now > next_refresh_needed {
+                // This will be pulled down to 16ms (or less) if a window is open
+                let mut frame_length = Duration::from_millis(100);
+
+                let mut windows = vec![];
+                for (_, window_ref) in state.windows.iter() {
+                    if !window_ref.window.state.borrow().destroyed {
+                        frame_length = frame_length.min(window_ref.window.refresh_rate());
+                        windows.push(window_ref.window.clone());
+                    }
+                }
+
+                drop(state);
+
+                for window in windows {
+                    window.refresh();
+                }
+
+                state = self.0.borrow_mut();
+
+                // In the case that we're looping a bit too fast, slow down
+                next_refresh_needed = now.max(next_refresh_needed) + frame_length;
+            }
+
+            // X11 events
+            drop(state);
+
+            loop {
+                let (x_windows, events) = self.read_x11_events();
+                for x_window in x_windows {
+                    if let Some(window) = self.get_window(x_window) {
+                        window.refresh();
+                    }
+                }
+
+                if events.len() == 0 {
+                    break;
+                }
+                self.process_x11_events(events);
+
+                // When X11 is sending us events faster than we can handle we'll
+                // let the frame rate drop to 10fps to try and avoid getting too behind.
+                if Instant::now() > next_refresh_needed + Duration::from_millis(80) {
+                    continue 'run_loop;
+                }
+            }
+
+            state = self.0.borrow_mut();
+
+            // Runnables
+            while let Ok(runnable) = state.runnables.try_recv() {
+                drop(state);
+                runnable.run();
+                state = self.0.borrow_mut();
+
+                if Instant::now() + Duration::from_millis(1) >= next_refresh_needed {
+                    continue 'run_loop;
+                }
+            }
+
+            // XDG events
+            if let Ok(event) = state.xdp_event_source.try_recv() {
+                match event {
+                    XDPEvent::WindowAppearance(appearance) => {
+                        let mut windows = state
+                            .windows
+                            .values()
+                            .map(|window| window.window.clone())
+                            .collect::<Vec<_>>();
+                        drop(state);
+
+                        self.with_common(|common| common.appearance = appearance);
+                        for mut window in windows {
+                            window.set_appearance(appearance);
+                        }
+                    }
+                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
+                        // noop, X11 manages this for us.
+                    }
+                };
+            };
+        }
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -1176,19 +1266,6 @@ impl LinuxClient for X11Client {
                 .map(|window| window.handle())
         })
     }
-}
-
-// Adatpted from:
-// https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
-pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
-    if mode.dot_clock == 0 || mode.htotal == 0 || mode.vtotal == 0 {
-        return Duration::from_millis(16);
-    }
-
-    let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
-    let micros = 1_000_000_000 / millihertz;
-    log::info!("Refreshing at {} micros", micros);
-    Duration::from_micros(micros)
 }
 
 fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {

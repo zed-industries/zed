@@ -14,6 +14,7 @@ use util::{maybe, ResultExt};
 use x11rb::{
     connection::Connection,
     protocol::{
+        randr::{self, ConnectionExt as _},
         xinput::{self, ConnectionExt as _},
         xproto::{
             self, ClientMessageEvent, ConnectionExt as _, EventMask, TranslateCoordinatesReply,
@@ -31,6 +32,7 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::{self, Arc},
+    time::Duration,
 };
 
 use super::{X11Display, XINPUT_MASTER_DEVICE};
@@ -159,6 +161,7 @@ pub struct Callbacks {
 
 pub struct X11WindowState {
     pub destroyed: bool,
+    refresh_rate: Duration,
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
@@ -178,7 +181,7 @@ pub(crate) struct X11WindowStatePtr {
     pub state: Rc<RefCell<X11WindowState>>,
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb_connection: Rc<XCBConnection>,
-    x_window: xproto::Window,
+    pub x_window: xproto::Window,
 }
 
 impl rwh::HasWindowHandle for RawWindow {
@@ -397,6 +400,31 @@ impl X11WindowState {
         };
         xcb_connection.map_window(x_window).unwrap();
 
+        let screen_resources = xcb_connection
+            .randr_get_screen_resources(x_window)
+            .unwrap()
+            .reply()
+            .expect("Could not find available screens");
+
+        let mode = screen_resources
+            .crtcs
+            .iter()
+            .find_map(|crtc| {
+                let crtc_info = xcb_connection
+                    .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
+                    .ok()?
+                    .reply()
+                    .ok()?;
+
+                screen_resources
+                    .modes
+                    .iter()
+                    .find(|m| m.id == crtc_info.mode)
+            })
+            .expect("Unable to find screen refresh rate");
+
+        let refresh_rate = mode_refresh_rate(&mode);
+
         Ok(Self {
             client,
             executor,
@@ -413,6 +441,7 @@ impl X11WindowState {
             appearance,
             handle,
             destroyed: false,
+            refresh_rate,
         })
     }
 
@@ -714,6 +743,10 @@ impl X11WindowStatePtr {
         if let Some(ref mut fun) = callbacks.appearance_changed {
             (fun)()
         }
+    }
+
+    pub fn refresh_rate(&self) -> Duration {
+        self.state.borrow().refresh_rate
     }
 }
 
@@ -1038,4 +1071,17 @@ impl PlatformWindow for X11Window {
     fn should_render_window_controls(&self) -> bool {
         false
     }
+}
+
+// Adapted from:
+// https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
+pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
+    if mode.dot_clock == 0 || mode.htotal == 0 || mode.vtotal == 0 {
+        return Duration::from_millis(16);
+    }
+
+    let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
+    let micros = 1_000_000_000 / millihertz;
+    log::info!("Refreshing at {} micros", micros);
+    Duration::from_micros(micros)
 }
