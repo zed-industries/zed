@@ -7,16 +7,16 @@ use dap_types::{
         StepIn, StepOut,
     },
     ConfigurationDoneArguments, ContinueArguments, InitializeRequestArgumentsPathFormat,
-    LaunchRequestArguments, NextArguments, PauseArguments, SetBreakpointsArguments,
-    SetBreakpointsResponse, Source, SourceBreakpoint, StepBackArguments, StepInArguments,
-    StepOutArguments, SteppingGranularity,
+    LaunchRequestArguments, NextArguments, PauseArguments, Scope, SetBreakpointsArguments,
+    SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame, StepBackArguments,
+    StepInArguments, StepOutArguments, SteppingGranularity, Variable,
 };
 use futures::{
     channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
     AsyncBufRead, AsyncReadExt, AsyncWrite, SinkExt as _, StreamExt,
 };
 use gpui::{AppContext, AsyncAppContext};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use serde_json::Value;
 use smol::{
     io::BufReader,
@@ -24,6 +24,7 @@ use smol::{
     process::{self, Child},
 };
 use std::{
+    collections::HashMap,
     net::{Ipv4Addr, SocketAddrV4},
     path::PathBuf,
     process::Stdio,
@@ -40,7 +41,14 @@ use util::ResultExt;
 #[repr(transparent)]
 pub struct DebugAdapterClientId(pub usize);
 
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
+pub struct ThreadState {
+    pub stack_frames: Vec<StackFrame>,
+    pub scopes: HashMap<u64, Vec<Scope>>, // stack_frame_id -> scopes
+    pub variables: HashMap<u64, Vec<Variable>>, // scope.variable_reference -> variables
+    pub current_stack_frame_id: Option<u64>,
+}
+
 pub struct DebugAdapterClient {
     _process: Option<Child>,
     server_tx: UnboundedSender<Payload>,
@@ -48,6 +56,8 @@ pub struct DebugAdapterClient {
     capabilities: Option<dap_types::Capabilities>,
     config: DebugAdapterConfig,
     client_rx: Arc<Mutex<UnboundedReceiver<Payload>>>,
+    thread_state: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
+    current_thread_id: Arc<Mutex<Option<u64>>>,
 }
 
 impl DebugAdapterClient {
@@ -137,6 +147,8 @@ impl DebugAdapterClient {
             capabilities: None,
             config,
             client_rx,
+            thread_state: Arc::new(Mutex::new(HashMap::new())),
+            current_thread_id: Arc::new(Mutex::new(None)),
         };
 
         cx.spawn(move |_| Self::handle_recv(server_rx, server_tx, client_tx))
@@ -208,6 +220,26 @@ impl DebugAdapterClient {
 
     pub fn next_request_id(&self) -> u64 {
         self.request_count.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub fn current_thread_id(&self) -> Option<u64> {
+        self.current_thread_id.lock().clone()
+    }
+
+    pub fn update_current_thread_id(&self, thread_id: Option<u64>) {
+        *self.current_thread_id.lock() = thread_id;
+    }
+
+    pub fn thread_state(&self) -> MutexGuard<HashMap<u64, ThreadState>> {
+        self.thread_state.lock()
+    }
+
+    pub fn current_thread_state(&self) -> Option<ThreadState> {
+        if let Some(id) = self.current_thread_id() {
+            self.thread_state().clone().get(&id).cloned()
+        } else {
+            None
+        }
     }
 
     pub async fn initialize(&mut self) -> Result<dap_types::Capabilities> {
