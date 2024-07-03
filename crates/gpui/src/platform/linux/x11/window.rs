@@ -391,7 +391,7 @@ impl X11WindowState {
                 x_window,
                 atoms._NET_WM_SYNC_REQUEST_COUNTER,
                 xproto::AtomEnum::CARDINAL,
-                &[sync_request_counter as u32],
+                &[sync_request_counter],
             )
             .unwrap();
 

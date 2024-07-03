@@ -397,9 +397,12 @@ impl Render for TitleBar {
             |title_bar| {
                 title_bar
                     .child(platform_linux::LinuxWindowControls::new(close_action))
-                    .on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
-                        cx.show_window_menu(ev.position)
+                    .when(supported_controls.window_menu, |titlebar| {
+                        titlebar.on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
+                            cx.show_window_menu(ev.position)
+                        })
                     })
+
                                         .on_mouse_move(cx.listener(move |this, _ev, cx| {
                                             if this.should_move {
                                                 this.should_move = false;
