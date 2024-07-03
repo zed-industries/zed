@@ -27,11 +27,13 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size, Action,
-    AnyElement, AnyView, AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds,
-    DragMoveEvent, Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
-    KeyContext, Keystroke, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel,
-    Render, Size, Subscription, Task, View, WeakView, WindowBounds, WindowHandle, WindowOptions,
+    action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
+    transparent_black, Action, AnyElement, AnyView, AnyWeakView, AppContext, AsyncAppContext,
+    AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
+    EventEmitter, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, ManagedView,
+    Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
+    Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds, WindowHandle,
+    WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -4165,156 +4167,162 @@ impl Render for Workspace {
         let theme = cx.theme().clone();
         let colors = theme.colors();
 
-        self.actions(div(), cx)
-            .key_context(context)
-            .relative()
-            .size_full()
-            .flex()
-            .flex_col()
-            .font(ui_font)
-            .gap_0()
-            .justify_start()
-            .items_start()
-            .text_color(colors.text)
-            .bg(colors.background)
-            .children(self.titlebar_item.clone())
-            .child(
-                div()
-                    .id("workspace")
-                    .relative()
-                    .flex_1()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .overflow_hidden()
-                    .border_t_1()
-                    .border_b_1()
-                    .border_color(colors.border)
-                    .child({
-                        let this = cx.view().clone();
-                        canvas(
-                            move |bounds, cx| this.update(cx, |this, _cx| this.bounds = bounds),
-                            |_, _, _| {},
-                        )
-                        .absolute()
-                        .size_full()
-                    })
-                    .when(self.zoomed.is_none(), |this| {
-                        this.on_drag_move(cx.listener(
-                            |workspace, e: &DragMoveEvent<DraggedDock>, cx| match e.drag(cx).0 {
-                                DockPosition::Left => {
-                                    let size = workspace.bounds.left() + e.event.position.x;
-                                    workspace.left_dock.update(cx, |left_dock, cx| {
-                                        left_dock.resize_active_panel(Some(size), cx);
-                                    });
-                                }
-                                DockPosition::Right => {
-                                    let size = workspace.bounds.right() - e.event.position.x;
-                                    workspace.right_dock.update(cx, |right_dock, cx| {
-                                        right_dock.resize_active_panel(Some(size), cx);
-                                    });
-                                }
-                                DockPosition::Bottom => {
-                                    let size = workspace.bounds.bottom() - e.event.position.y;
-                                    workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-                                        bottom_dock.resize_active_panel(Some(size), cx);
-                                    });
-                                }
-                            },
-                        ))
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .h_full()
-                            // Left Dock
-                            .children(self.zoomed_position.ne(&Some(DockPosition::Left)).then(
-                                || {
-                                    div()
-                                        .flex()
-                                        .flex_none()
-                                        .overflow_hidden()
-                                        .child(self.left_dock.clone())
+        client_side_decorations(
+            self.actions(div(), cx)
+                .key_context(context)
+                .relative()
+                .size_full()
+                .flex()
+                .flex_col()
+                .font(ui_font)
+                .gap_0()
+                .justify_start()
+                .items_start()
+                .text_color(colors.text)
+                .overflow_hidden()
+                .children(self.titlebar_item.clone())
+                .child(
+                    div()
+                        .id("workspace")
+                        .bg(colors.background)
+                        .relative()
+                        .flex_1()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .overflow_hidden()
+                        .border_t_1()
+                        .border_b_1()
+                        .border_color(colors.border)
+                        .child({
+                            let this = cx.view().clone();
+                            canvas(
+                                move |bounds, cx| this.update(cx, |this, _cx| this.bounds = bounds),
+                                |_, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                        })
+                        .when(self.zoomed.is_none(), |this| {
+                            this.on_drag_move(cx.listener(
+                                |workspace, e: &DragMoveEvent<DraggedDock>, cx| match e.drag(cx).0 {
+                                    DockPosition::Left => {
+                                        let size = e.event.position.x - workspace.bounds.left();
+                                        workspace.left_dock.update(cx, |left_dock, cx| {
+                                            left_dock.resize_active_panel(Some(size), cx);
+                                        });
+                                    }
+                                    DockPosition::Right => {
+                                        let size = workspace.bounds.right() - e.event.position.x;
+                                        workspace.right_dock.update(cx, |right_dock, cx| {
+                                            right_dock.resize_active_panel(Some(size), cx);
+                                        });
+                                    }
+                                    DockPosition::Bottom => {
+                                        let size = workspace.bounds.bottom() - e.event.position.y;
+                                        workspace.bottom_dock.update(cx, |bottom_dock, cx| {
+                                            bottom_dock.resize_active_panel(Some(size), cx);
+                                        });
+                                    }
                                 },
                             ))
-                            // Panes
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .flex_1()
-                                    .overflow_hidden()
-                                    .child(
-                                        h_flex()
-                                            .flex_1()
-                                            .when_some(paddings.0, |this, p| {
-                                                this.child(p.border_r_1())
-                                            })
-                                            .child(self.center.render(
-                                                &self.project,
-                                                &self.follower_states,
-                                                self.active_call(),
-                                                &self.active_pane,
-                                                self.zoomed.as_ref(),
-                                                &self.app_state,
-                                                cx,
-                                            ))
-                                            .when_some(paddings.1, |this, p| {
-                                                this.child(p.border_l_1())
-                                            }),
-                                    )
-                                    .children(
-                                        self.zoomed_position
-                                            .ne(&Some(DockPosition::Bottom))
-                                            .then(|| self.bottom_dock.clone()),
-                                    ),
-                            )
-                            // Right Dock
-                            .children(self.zoomed_position.ne(&Some(DockPosition::Right)).then(
-                                || {
+                        })
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .h_full()
+                                // Left Dock
+                                .children(self.zoomed_position.ne(&Some(DockPosition::Left)).then(
+                                    || {
+                                        div()
+                                            .flex()
+                                            .flex_none()
+                                            .overflow_hidden()
+                                            .child(self.left_dock.clone())
+                                    },
+                                ))
+                                // Panes
+                                .child(
                                     div()
                                         .flex()
-                                        .flex_none()
+                                        .flex_col()
+                                        .flex_1()
                                         .overflow_hidden()
-                                        .child(self.right_dock.clone())
-                                },
-                            )),
-                    )
-                    .children(self.zoomed.as_ref().and_then(|view| {
-                        let zoomed_view = view.upgrade()?;
-                        let div = div()
-                            .occlude()
-                            .absolute()
-                            .overflow_hidden()
-                            .border_color(colors.border)
-                            .bg(colors.background)
-                            .child(zoomed_view)
-                            .inset_0()
-                            .shadow_lg();
+                                        .child(
+                                            h_flex()
+                                                .flex_1()
+                                                .when_some(paddings.0, |this, p| {
+                                                    this.child(p.border_r_1())
+                                                })
+                                                .child(self.center.render(
+                                                    &self.project,
+                                                    &self.follower_states,
+                                                    self.active_call(),
+                                                    &self.active_pane,
+                                                    self.zoomed.as_ref(),
+                                                    &self.app_state,
+                                                    cx,
+                                                ))
+                                                .when_some(paddings.1, |this, p| {
+                                                    this.child(p.border_l_1())
+                                                }),
+                                        )
+                                        .children(
+                                            self.zoomed_position
+                                                .ne(&Some(DockPosition::Bottom))
+                                                .then(|| self.bottom_dock.clone()),
+                                        ),
+                                )
+                                // Right Dock
+                                .children(
+                                    self.zoomed_position.ne(&Some(DockPosition::Right)).then(
+                                        || {
+                                            div()
+                                                .flex()
+                                                .flex_none()
+                                                .overflow_hidden()
+                                                .child(self.right_dock.clone())
+                                        },
+                                    ),
+                                ),
+                        )
+                        .children(self.zoomed.as_ref().and_then(|view| {
+                            let zoomed_view = view.upgrade()?;
+                            let div = div()
+                                .occlude()
+                                .absolute()
+                                .overflow_hidden()
+                                .border_color(colors.border)
+                                .bg(colors.background)
+                                .child(zoomed_view)
+                                .inset_0()
+                                .shadow_lg();
 
-                        Some(match self.zoomed_position {
-                            Some(DockPosition::Left) => div.right_2().border_r_1(),
-                            Some(DockPosition::Right) => div.left_2().border_l_1(),
-                            Some(DockPosition::Bottom) => div.top_2().border_t_1(),
-                            None => div.top_2().bottom_2().left_2().right_2().border_1(),
-                        })
-                    }))
-                    .child(self.modal_layer.clone())
-                    .children(self.render_notifications(cx)),
-            )
-            .child(self.status_bar.clone())
-            .children(if self.project.read(cx).is_disconnected() {
-                if let Some(render) = self.render_disconnected_overlay.take() {
-                    let result = render(self, cx);
-                    self.render_disconnected_overlay = Some(render);
-                    Some(result)
+                            Some(match self.zoomed_position {
+                                Some(DockPosition::Left) => div.right_2().border_r_1(),
+                                Some(DockPosition::Right) => div.left_2().border_l_1(),
+                                Some(DockPosition::Bottom) => div.top_2().border_t_1(),
+                                None => div.top_2().bottom_2().left_2().right_2().border_1(),
+                            })
+                        }))
+                        .child(self.modal_layer.clone())
+                        .children(self.render_notifications(cx)),
+                )
+                .child(self.status_bar.clone())
+                .children(if self.project.read(cx).is_disconnected() {
+                    if let Some(render) = self.render_disconnected_overlay.take() {
+                        let result = render(self, cx);
+                        self.render_disconnected_overlay = Some(render);
+                        Some(result)
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
-            } else {
-                None
-            })
+                }),
+            cx,
+        )
     }
 }
 
@@ -6472,5 +6480,269 @@ mod tests {
             crate::init_settings(cx);
             Project::init_settings(cx);
         });
+    }
+}
+
+pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext) -> Stateful<Div> {
+    const BORDER_SIZE: Pixels = px(1.0);
+    let decorations = cx.window_decorations();
+
+    if matches!(decorations, Decorations::Client { .. }) {
+        cx.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
+    }
+
+    struct GlobalResizeEdge(ResizeEdge);
+    impl Global for GlobalResizeEdge {}
+
+    div()
+        .id("window-backdrop")
+        .bg(transparent_black())
+        .map(|div| match decorations {
+            Decorations::Server => div,
+            Decorations::Client { tiling, .. } => div
+                .child(
+                    canvas(
+                        |_bounds, cx| {
+                            cx.insert_hitbox(
+                                Bounds::new(
+                                    point(px(0.0), px(0.0)),
+                                    cx.window_bounds().get_bounds().size,
+                                ),
+                                false,
+                            )
+                        },
+                        move |_bounds, hitbox, cx| {
+                            let mouse = cx.mouse_position();
+                            let size = cx.window_bounds().get_bounds().size;
+                            let Some(edge) = resize_edge(
+                                mouse,
+                                theme::CLIENT_SIDE_DECORATION_SHADOW,
+                                size,
+                                tiling,
+                            ) else {
+                                return;
+                            };
+                            cx.set_global(GlobalResizeEdge(edge));
+                            cx.set_cursor_style(
+                                match edge {
+                                    ResizeEdge::Top | ResizeEdge::Bottom => {
+                                        CursorStyle::ResizeUpDown
+                                    }
+                                    ResizeEdge::Left | ResizeEdge::Right => {
+                                        CursorStyle::ResizeLeftRight
+                                    }
+                                    ResizeEdge::TopLeft | ResizeEdge::BottomRight => {
+                                        CursorStyle::ResizeUpLeftDownRight
+                                    }
+                                    ResizeEdge::TopRight | ResizeEdge::BottomLeft => {
+                                        CursorStyle::ResizeUpRightDownLeft
+                                    }
+                                },
+                                &hitbox,
+                            );
+                        },
+                    )
+                    .size_full()
+                    .absolute(),
+                )
+                .when(!(tiling.top || tiling.right), |div| {
+                    div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                })
+                .when(!(tiling.top || tiling.left), |div| {
+                    div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                })
+                .when(!(tiling.bottom || tiling.right), |div| {
+                    div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                })
+                .when(!(tiling.bottom || tiling.left), |div| {
+                    div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                })
+                .when(!tiling.top, |div| {
+                    div.pt(theme::CLIENT_SIDE_DECORATION_SHADOW)
+                })
+                .when(!tiling.bottom, |div| {
+                    div.pb(theme::CLIENT_SIDE_DECORATION_SHADOW)
+                })
+                .when(!tiling.left, |div| {
+                    div.pl(theme::CLIENT_SIDE_DECORATION_SHADOW)
+                })
+                .when(!tiling.right, |div| {
+                    div.pr(theme::CLIENT_SIDE_DECORATION_SHADOW)
+                })
+                .on_mouse_move(move |e, cx| {
+                    let size = cx.window_bounds().get_bounds().size;
+                    let pos = e.position;
+
+                    let new_edge =
+                        resize_edge(pos, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling);
+
+                    let edge = cx.try_global::<GlobalResizeEdge>();
+                    if new_edge != edge.map(|edge| edge.0) {
+                        cx.window_handle()
+                            .update(cx, |workspace, cx| cx.notify(workspace.entity_id()))
+                            .ok();
+                    }
+                })
+                .on_mouse_down(MouseButton::Left, move |e, cx| {
+                    let size = cx.window_bounds().get_bounds().size;
+                    let pos = e.position;
+
+                    let edge = match resize_edge(
+                        pos,
+                        theme::CLIENT_SIDE_DECORATION_SHADOW,
+                        size,
+                        tiling,
+                    ) {
+                        Some(value) => value,
+                        None => return,
+                    };
+
+                    cx.start_window_resize(edge);
+                }),
+        })
+        .size_full()
+        .child(
+            div()
+                .cursor(CursorStyle::Arrow)
+                .map(|div| match decorations {
+                    Decorations::Server => div,
+                    Decorations::Client { tiling } => div
+                        .border_color(cx.theme().colors().border)
+                        .when(!(tiling.top || tiling.right), |div| {
+                            div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                        })
+                        .when(!(tiling.top || tiling.left), |div| {
+                            div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                        })
+                        .when(!(tiling.bottom || tiling.right), |div| {
+                            div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                        })
+                        .when(!(tiling.bottom || tiling.left), |div| {
+                            div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                        })
+                        .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
+                        .when(!tiling.bottom, |div| div.border_b(BORDER_SIZE))
+                        .when(!tiling.left, |div| div.border_l(BORDER_SIZE))
+                        .when(!tiling.right, |div| div.border_r(BORDER_SIZE))
+                        .when(!tiling.is_tiled(), |div| {
+                            div.shadow(smallvec::smallvec![gpui::BoxShadow {
+                                color: Hsla {
+                                    h: 0.,
+                                    s: 0.,
+                                    l: 0.,
+                                    a: 0.4,
+                                },
+                                blur_radius: theme::CLIENT_SIDE_DECORATION_SHADOW / 2.,
+                                spread_radius: px(0.),
+                                offset: point(px(0.0), px(0.0)),
+                            }])
+                        }),
+                })
+                .on_mouse_move(|_e, cx| {
+                    cx.stop_propagation();
+                })
+                .bg(cx.theme().colors().border)
+                .size_full()
+                .child(element),
+        )
+        .map(|div| match decorations {
+            Decorations::Server => div,
+            Decorations::Client { tiling, .. } => div.child(
+                canvas(
+                    |_bounds, cx| {
+                        cx.insert_hitbox(
+                            Bounds::new(
+                                point(px(0.0), px(0.0)),
+                                cx.window_bounds().get_bounds().size,
+                            ),
+                            false,
+                        )
+                    },
+                    move |_bounds, hitbox, cx| {
+                        let mouse = cx.mouse_position();
+                        let size = cx.window_bounds().get_bounds().size;
+                        let Some(edge) =
+                            resize_edge(mouse, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling)
+                        else {
+                            return;
+                        };
+                        cx.set_global(GlobalResizeEdge(edge));
+                        cx.set_cursor_style(
+                            match edge {
+                                ResizeEdge::Top | ResizeEdge::Bottom => CursorStyle::ResizeUpDown,
+                                ResizeEdge::Left | ResizeEdge::Right => {
+                                    CursorStyle::ResizeLeftRight
+                                }
+                                ResizeEdge::TopLeft | ResizeEdge::BottomRight => {
+                                    CursorStyle::ResizeUpLeftDownRight
+                                }
+                                ResizeEdge::TopRight | ResizeEdge::BottomLeft => {
+                                    CursorStyle::ResizeUpRightDownLeft
+                                }
+                            },
+                            &hitbox,
+                        );
+                    },
+                )
+                .size_full()
+                .absolute(),
+            ),
+        })
+}
+
+fn resize_edge(
+    pos: Point<Pixels>,
+    shadow_size: Pixels,
+    window_size: Size<Pixels>,
+    tiling: Tiling,
+) -> Option<ResizeEdge> {
+    let bounds = Bounds::new(Point::default(), window_size).inset(shadow_size * 1.5);
+    if bounds.contains(&pos) {
+        return None;
+    }
+
+    let corner_size = size(shadow_size * 1.5, shadow_size * 1.5);
+    let top_left_bounds = Bounds::new(Point::new(px(0.), px(0.)), corner_size);
+    if top_left_bounds.contains(&pos) {
+        return Some(ResizeEdge::TopLeft);
+    }
+
+    let top_right_bounds = Bounds::new(
+        Point::new(window_size.width - corner_size.width, px(0.)),
+        corner_size,
+    );
+    if top_right_bounds.contains(&pos) {
+        return Some(ResizeEdge::TopRight);
+    }
+
+    let bottom_left_bounds = Bounds::new(
+        Point::new(px(0.), window_size.height - corner_size.height),
+        corner_size,
+    );
+    if bottom_left_bounds.contains(&pos) {
+        return Some(ResizeEdge::BottomLeft);
+    }
+
+    let bottom_right_bounds = Bounds::new(
+        Point::new(
+            window_size.width - corner_size.width,
+            window_size.height - corner_size.height,
+        ),
+        corner_size,
+    );
+    if bottom_right_bounds.contains(&pos) {
+        return Some(ResizeEdge::BottomRight);
+    }
+
+    if !tiling.top && pos.y < shadow_size {
+        Some(ResizeEdge::Top)
+    } else if !tiling.bottom && pos.y > window_size.height - shadow_size {
+        Some(ResizeEdge::Bottom)
+    } else if !tiling.left && pos.x < shadow_size {
+        Some(ResizeEdge::Left)
+    } else if !tiling.right && pos.x > window_size.width - shadow_size {
+        Some(ResizeEdge::Right)
+    } else {
+        None
     }
 }

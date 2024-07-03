@@ -38,7 +38,7 @@ impl WindowControlStyle {
 
         Self {
             background: colors.ghost_element_background,
-            background_hover: colors.ghost_element_background,
+            background_hover: colors.ghost_element_hover,
             icon: colors.icon,
             icon_hover: colors.icon_muted,
         }
@@ -127,7 +127,7 @@ impl WindowControl {
 impl RenderOnce for WindowControl {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         let icon = svg()
-            .size_5()
+            .size_4()
             .flex_none()
             .path(self.icon.icon().path())
             .text_color(self.style.icon)
@@ -139,7 +139,7 @@ impl RenderOnce for WindowControl {
             .cursor_pointer()
             .justify_center()
             .content_center()
-            .rounded_md()
+            .rounded_2xl()
             .w_5()
             .h_5()
             .hover(|this| this.bg(self.style.background_hover))

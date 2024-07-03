@@ -883,6 +883,14 @@ where
         self.size.height = self.size.height.clone() + double_amount;
     }
 
+    /// inset the bounds by a specified amount
+    /// Note that this may panic if T does not support negative values
+    pub fn inset(&self, amount: T) -> Self {
+        let mut result = self.clone();
+        result.dilate(T::default() - amount);
+        result
+    }
+
     /// Returns the center point of the bounds.
     ///
     /// Calculates the center by taking the origin's x and y coordinates and adding half the width and height
@@ -1266,10 +1274,34 @@ where
     ///     size: Size { width: 10.0, height: 20.0 },
     /// });
     /// ```
-    pub fn map_origin(self, f: impl Fn(Point<T>) -> Point<T>) -> Bounds<T> {
+    pub fn map_origin(self, f: impl Fn(T) -> T) -> Bounds<T> {
         Bounds {
-            origin: f(self.origin),
+            origin: self.origin.map(f),
             size: self.size,
+        }
+    }
+
+    /// Applies a function to the origin  of the bounds, producing a new `Bounds` with the new origin
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 10.0, y: 10.0 },
+    ///     size: Size { width: 10.0, height: 20.0 },
+    /// };
+    /// let new_bounds = bounds.map_size(|value| value * 1.5);
+    ///
+    /// assert_eq!(new_bounds, Bounds {
+    ///     origin: Point { x: 10.0, y: 10.0 },
+    ///     size: Size { width: 15.0, height: 30.0 },
+    /// });
+    /// ```
+    pub fn map_size(self, f: impl Fn(T) -> T) -> Bounds<T> {
+        Bounds {
+            origin: self.origin,
+            size: self.size.map(f),
         }
     }
 }
