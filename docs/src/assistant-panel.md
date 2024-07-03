@@ -148,9 +148,10 @@ You can use Claude with the Zed assistant, [As it is now supported](https://gith
 },
 ```
 
-When you save the settings the assistant panel will open and ask you to add your Anthropic API key. Which you need to get from here https://console.anthropic.com/settings/keys
+When you save the settings, the assistant panel will open and ask you to add your Anthropic API key.
+You need can obtain this key [here](https://console.anthropic.com/settings/keys).
 
-Even if you pay for Claude pro, you will still have to pay for additional credits to use it via the API. Which you can do here https://console.anthropic.com/settings/plans
+Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
 
 ## Prompt Library
 
