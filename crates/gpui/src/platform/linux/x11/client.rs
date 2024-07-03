@@ -161,7 +161,6 @@ impl X11ClientStatePtr {
 }
 
 struct ChannelQuitSignal {
-    // TODO: this could also be a AtomicBool if we use waker
     tx: Option<oneshot::Sender<()>>,
     waker: Option<Arc<Waker>>,
 }
@@ -304,7 +303,6 @@ impl X11Client {
 
         X11Client(Rc::new(RefCell::new(X11ClientState {
             poll: Some(poll),
-            // waker,
             runnables,
 
             xdp_event_source,
@@ -1181,8 +1179,10 @@ impl LinuxClient for X11Client {
 
                 let mut windows = vec![];
                 for (_, window_ref) in state.windows.iter() {
-                    frame_length = frame_length.min(window_ref.window.refresh_rate());
-                    windows.push(window_ref.window.clone());
+                    if !window_ref.window.state.borrow().destroyed {
+                        frame_length = frame_length.min(window_ref.window.refresh_rate());
+                        windows.push(window_ref.window.clone());
+                    }
                 }
 
                 drop(state);
@@ -1214,8 +1214,7 @@ impl LinuxClient for X11Client {
                 self.process_x11_events(events);
 
                 // When X11 is sending us events faster than we can handle we'll
-                // stop running runnables, and let the frame rate drop to 10fps
-                // to try and avoid getting too behind.
+                // let the frame rate drop to 10fps to try and avoid getting too behind.
                 if Instant::now() > next_refresh_needed + Duration::from_millis(80) {
                     continue 'run_loop;
                 }
@@ -1224,29 +1223,18 @@ impl LinuxClient for X11Client {
             state = self.0.borrow_mut();
 
             // Runnables
-            loop {
-                if Instant::now() + Duration::from_millis(1) >= next_refresh_needed {
-                    continue 'run_loop;
-                }
-
-                let Ok(runnable) = state.runnables.try_recv() else {
-                    break;
-                };
+            while let Ok(runnable) = state.runnables.try_recv() {
                 drop(state);
                 runnable.run();
                 state = self.0.borrow_mut();
-            }
 
-            // XDG events
-            loop {
                 if Instant::now() + Duration::from_millis(1) >= next_refresh_needed {
                     continue 'run_loop;
                 }
+            }
 
-                let Ok(event) = state.xdp_event_source.try_recv() else {
-                    break;
-                };
-
+            // XDG events
+            if let Ok(event) = state.xdp_event_source.try_recv() {
                 match event {
                     XDPEvent::WindowAppearance(appearance) => {
                         let mut windows = state
@@ -1260,13 +1248,12 @@ impl LinuxClient for X11Client {
                         for mut window in windows {
                             window.set_appearance(appearance);
                         }
-                        state = self.0.borrow_mut();
                     }
                     XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
                         // noop, X11 manages this for us.
                     }
                 };
-            }
+            };
         }
     }
 
