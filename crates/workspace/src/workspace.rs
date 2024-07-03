@@ -6500,51 +6500,6 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
         .map(|div| match decorations {
             Decorations::Server => div,
             Decorations::Client { tiling, .. } => div
-                .child(
-                    canvas(
-                        |_bounds, cx| {
-                            cx.insert_hitbox(
-                                Bounds::new(
-                                    point(px(0.0), px(0.0)),
-                                    cx.window_bounds().get_bounds().size,
-                                ),
-                                false,
-                            )
-                        },
-                        move |_bounds, hitbox, cx| {
-                            let mouse = cx.mouse_position();
-                            let size = cx.window_bounds().get_bounds().size;
-                            let Some(edge) = resize_edge(
-                                mouse,
-                                theme::CLIENT_SIDE_DECORATION_SHADOW,
-                                size,
-                                tiling,
-                            ) else {
-                                return;
-                            };
-                            cx.set_global(GlobalResizeEdge(edge));
-                            cx.set_cursor_style(
-                                match edge {
-                                    ResizeEdge::Top | ResizeEdge::Bottom => {
-                                        CursorStyle::ResizeUpDown
-                                    }
-                                    ResizeEdge::Left | ResizeEdge::Right => {
-                                        CursorStyle::ResizeLeftRight
-                                    }
-                                    ResizeEdge::TopLeft | ResizeEdge::BottomRight => {
-                                        CursorStyle::ResizeUpLeftDownRight
-                                    }
-                                    ResizeEdge::TopRight | ResizeEdge::BottomLeft => {
-                                        CursorStyle::ResizeUpRightDownLeft
-                                    }
-                                },
-                                &hitbox,
-                            );
-                        },
-                    )
-                    .size_full()
-                    .absolute(),
-                )
                 .when(!(tiling.top || tiling.right), |div| {
                     div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
