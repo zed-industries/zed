@@ -28,7 +28,7 @@ pub fn index(package: String, database: &KeyValueStore) -> Result<()> {
 
         let (markdown, _modules) = convert_hexdocs_to_markdown(response.body.as_bytes())?;
 
-        database.insert(&module, &markdown)?;
+        database.insert(&format!("{module} ({package})"), &markdown)?;
     }
 
     Ok(())
