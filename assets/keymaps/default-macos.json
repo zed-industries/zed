@@ -193,6 +193,7 @@
         }
       ],
       "cmd->": "assistant::QuoteSelection",
+      "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol"
     }
   },
@@ -238,6 +239,7 @@
       "cmd-enter": "assistant::Assist",
       "cmd-s": "workspace::Save",
       "cmd->": "assistant::QuoteSelection",
+      "cmd-<": "assistant::InsertIntoEditor",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
@@ -688,6 +690,7 @@
       "cmd-c": "terminal::Copy",
       "cmd-v": "terminal::Paste",
       "cmd-k": "terminal::Clear",
+      "ctrl-enter": "assistant::InlineAssist",
       // Some nice conveniences
       "cmd-backspace": ["terminal::SendText", "\u0015"],
       "cmd-right": ["terminal::SendText", "\u0005"],

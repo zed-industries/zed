@@ -7020,6 +7020,73 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.lsp
+        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "first".into(),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "last".into(),
+                    ..Default::default()
+                },
+            ])))
+        });
+    cx.set_state("variableˇ");
+    cx.simulate_keystroke(".");
+    cx.executor().run_until_parked();
+
+    cx.update_editor(|editor, _| {
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+            assert_eq!(
+                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                &["first", "last"]
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_page_down(&MovePageDown::default(), cx);
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+            assert!(
+                menu.selected_item == 1,
+                "expected PageDown to select the last item from the context menu"
+            );
+        } else {
+            panic!("expected completion menu to stay open after PageDown");
+        }
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_page_up(&MovePageUp::default(), cx);
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+            assert!(
+                menu.selected_item == 0,
+                "expected PageUp to select the first item from the context menu"
+            );
+        } else {
+            panic!("expected completion menu to stay open after PageUp");
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_no_duplicated_completion_requests(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
