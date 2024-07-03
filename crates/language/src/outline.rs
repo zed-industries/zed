@@ -1,7 +1,7 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    relative, AppContext, BackgroundExecutor, FontStyle, FontWeight, HighlightStyle, StyledText,
-    TextStyle, WhiteSpace,
+    relative, AppContext, BackgroundExecutor, FontStyle, HighlightStyle, StyledText, TextStyle,
+    WhiteSpace,
 };
 use settings::Settings;
 use std::ops::Range;
@@ -159,7 +159,7 @@ pub fn render_item<T>(
         font_family: settings.buffer_font.family.clone(),
         font_features: settings.buffer_font.features.clone(),
         font_size: settings.buffer_font_size(cx).into(),
-        font_weight: FontWeight::NORMAL,
+        font_weight: settings.buffer_font.weight,
         font_style: FontStyle::Normal,
         line_height: relative(1.),
         background_color: None,

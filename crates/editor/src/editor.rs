@@ -3123,14 +3123,24 @@ impl Editor {
             let anchor = snapshot.anchor_after(selection.end);
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.start);
-                if let Some(ranges) =
-                    self.linked_editing_ranges_for(start_anchor.text_anchor..anchor.text_anchor, cx)
-                {
-                    for (buffer, edits) in ranges {
-                        linked_edits
-                            .entry(buffer.clone())
-                            .or_default()
-                            .extend(edits.into_iter().map(|range| (range, text.clone())));
+
+                let is_word_char = text.chars().next().map_or(true, |char| {
+                    let scope = snapshot.language_scope_at(start_anchor.to_offset(&snapshot));
+                    let kind = char_kind(&scope, char);
+
+                    kind == CharKind::Word
+                });
+
+                if is_word_char {
+                    if let Some(ranges) = self
+                        .linked_editing_ranges_for(start_anchor.text_anchor..anchor.text_anchor, cx)
+                    {
+                        for (buffer, edits) in ranges {
+                            linked_edits
+                                .entry(buffer.clone())
+                                .or_default()
+                                .extend(edits.into_iter().map(|range| (range, text.clone())));
+                        }
                     }
                 }
             }
@@ -8469,13 +8479,14 @@ impl Editor {
         runnable: &mut Runnable,
         cx: &WindowContext<'_>,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
-        let (inventory, worktree_id) = project.read_with(cx, |project, cx| {
-            let worktree_id = project
+        let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
+            let (worktree_id, file) = project
                 .buffer_for_id(runnable.buffer)
                 .and_then(|buffer| buffer.read(cx).file())
-                .map(|file| WorktreeId::from_usize(file.worktree_id()));
+                .map(|file| (WorktreeId::from_usize(file.worktree_id()), file.clone()))
+                .unzip();
 
-            (project.task_inventory().clone(), worktree_id)
+            (project.task_inventory().clone(), worktree_id, file)
         });
 
         let inventory = inventory.read(cx);
@@ -8485,7 +8496,12 @@ impl Editor {
             .flat_map(|tag| {
                 let tag = tag.0.clone();
                 inventory
-                    .list_tasks(Some(runnable.language.clone()), worktree_id)
+                    .list_tasks(
+                        file.clone(),
+                        Some(runnable.language.clone()),
+                        worktree_id,
+                        cx,
+                    )
                     .into_iter()
                     .filter(move |(_, template)| {
                         template.tags.iter().any(|source_tag| source_tag == &tag)

@@ -1,4 +1,5 @@
 pub mod extension_builder;
+mod extension_docs_indexer;
 mod extension_lsp_adapter;
 mod extension_manifest;
 mod extension_settings;
@@ -8,6 +9,7 @@ mod wasm_host;
 #[cfg(test)]
 mod extension_store_test;
 
+use crate::extension_docs_indexer::ExtensionDocsIndexer;
 use crate::extension_manifest::SchemaVersion;
 use crate::extension_slash_command::ExtensionSlashCommand;
 use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
@@ -32,6 +34,7 @@ use gpui::{
     WeakModel,
 };
 use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+use indexed_docs::{IndexedDocsRegistry, ProviderId};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
@@ -111,6 +114,7 @@ pub struct ExtensionStore {
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     slash_command_registry: Arc<SlashCommandRegistry>,
+    indexed_docs_registry: Arc<IndexedDocsRegistry>,
     modified_extensions: HashSet<Arc<str>>,
     wasm_host: Arc<WasmHost>,
     wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
@@ -188,6 +192,7 @@ pub fn init(
             language_registry,
             theme_registry,
             SlashCommandRegistry::global(cx),
+            IndexedDocsRegistry::global(cx),
             cx,
         )
     });
@@ -221,6 +226,7 @@ impl ExtensionStore {
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
+        indexed_docs_registry: Arc<IndexedDocsRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let work_dir = extensions_dir.join("work");
@@ -252,6 +258,7 @@ impl ExtensionStore {
             language_registry,
             theme_registry,
             slash_command_registry,
+            indexed_docs_registry,
             reload_tx,
             tasks: Vec::new(),
         };
@@ -1192,7 +1199,18 @@ impl ExtensionStore {
                             false,
                         );
                     }
+
+                    for (provider_id, _provider) in &manifest.indexed_docs_providers {
+                        this.indexed_docs_registry.register_provider(Box::new(
+                            ExtensionDocsIndexer {
+                                extension: wasm_extension.clone(),
+                                host: this.wasm_host.clone(),
+                                id: ProviderId(provider_id.clone()),
+                            },
+                        ));
+                    }
                 }
+
                 this.wasm_extensions.extend(wasm_extensions);
                 ThemeSettings::reload_current_theme(cx)
             })

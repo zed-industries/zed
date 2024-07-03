@@ -2,6 +2,7 @@ mod since_v0_0_1;
 mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_0_7;
+use indexed_docs::IndexedDocsDatabase;
 use release_channel::ReleaseChannel;
 use since_v0_0_7 as latest;
 
@@ -286,6 +287,24 @@ impl Extension {
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
                 Err(anyhow!("`run_slash_command` not available prior to v0.0.7"))
+            }
+        }
+    }
+
+    pub async fn call_index_docs(
+        &self,
+        store: &mut Store<WasmState>,
+        provider: &str,
+        package_name: &str,
+        database: Resource<Arc<IndexedDocsDatabase>>,
+    ) -> Result<Result<(), String>> {
+        match self {
+            Extension::V007(ext) => {
+                ext.call_index_docs(store, provider, package_name, database)
+                    .await
+            }
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
+                Err(anyhow!("`index_docs` not available prior to v0.0.7"))
             }
         }
     }

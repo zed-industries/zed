@@ -128,7 +128,14 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
+  "private_files": [
+    "**/.env*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.cert",
+    "**/*.crt",
+    "**/secrets.yml"
+  ],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -155,11 +162,11 @@
   // 1. Draw tabs and spaces only for the selected text (default):
   //    "selection"
   // 2. Do not draw any tabs or spaces:
-  //   "none"
+  //    "none"
   // 3. Draw all invisible symbols:
-  //   "all"
+  //    "all"
   // 4. Draw whitespaces at boundaries only:
-  //   "boundaries"
+  //    "boundary"
   // For a whitespace to be on a boundary, any of the following conditions need to be met:
   // - It is a tab
   // - It is adjacent to an edge (start or end)
@@ -666,6 +673,10 @@
     // "max_scroll_history_lines": 10000,
   },
   "code_actions_on_format": {},
+  /// Settings related to running tasks.
+  "tasks": {
+    "variables": {}
+  },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
   // use those languages.

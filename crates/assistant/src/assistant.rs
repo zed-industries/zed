@@ -9,6 +9,7 @@ mod prompts;
 mod search;
 mod slash_command;
 mod streaming_diff;
+mod terminal_inline_assistant;
 
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::{AnthropicModel, AssistantSettings, CloudModel, OllamaModel, OpenAiModel};
@@ -19,9 +20,9 @@ pub(crate) use completion_provider::*;
 pub(crate) use context_store::*;
 use fs::Fs;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 pub(crate) use model_selector::*;
-use rustdoc::RustdocStore;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -42,6 +43,7 @@ actions!(
         Split,
         CycleMessageRole,
         QuoteSelection,
+        InsertIntoEditor,
         ToggleFocus,
         ResetKey,
         InlineAssist,
@@ -289,7 +291,8 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     register_slash_commands(cx);
     assistant_panel::init(cx);
     inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
-    RustdocStore::init_global(cx);
+    terminal_inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
+    IndexedDocsRegistry::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(Assistant::NAMESPACE);
