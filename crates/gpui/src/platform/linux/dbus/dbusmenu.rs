@@ -359,12 +359,10 @@ impl DBusMenu {
         user_id: &str,
         submenu: DBusMenuItem,
     ) -> Option<(i32, Vec<DBusMenuUpdatedProperties>)> {
-        let Some(parent) = self.user_id_to_id_map.get(user_id) else {
+        let Some(parent) = self.user_id_to_id_map.get(user_id).cloned() else {
             return None;
         };
-        let parent_id = *parent;
-        drop(parent);
-        let new_id = self.add_to_root(submenu, parent_id);
+        let new_id = self.add_to_root(submenu, parent);
         let mut result = Vec::default();
         let mut queue = VecDeque::default();
         queue.push_back(self.items.get(&new_id).unwrap());
@@ -382,7 +380,7 @@ impl DBusMenu {
                 queue.push_back(self.items.get(id).unwrap());
             }
         }
-        Some((parent_id, result))
+        Some((parent, result))
     }
 
     /// Returns the parent id of the submenu and a vector of removed properties.
