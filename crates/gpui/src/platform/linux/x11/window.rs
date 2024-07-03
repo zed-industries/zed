@@ -201,7 +201,8 @@ pub struct X11WindowState {
 
 impl X11WindowState {
     fn is_transparent(&self) -> bool {
-        self.background_appearance != WindowBackgroundAppearance::Opaque
+        self.decorations == WindowDecorations::Client
+            || self.background_appearance != WindowBackgroundAppearance::Opaque
     }
 }
 
@@ -840,6 +841,9 @@ impl X11WindowStatePtr {
     pub fn set_appearance(&mut self, appearance: WindowAppearance) {
         let mut state = self.state.borrow_mut();
         state.appearance = appearance;
+        let is_transparent = state.is_transparent();
+        state.renderer.update_transparency(is_transparent);
+        state.appearance = appearance;
         drop(state);
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(ref mut fun) = callbacks.appearance_changed {
@@ -1204,9 +1208,13 @@ impl PlatformWindow for X11Window {
         match decorations {
             WindowDecorations::Server => {
                 state.decorations = WindowDecorations::Server;
+                let is_transparent = state.is_transparent();
+                state.renderer.update_transparency(is_transparent);
             }
             WindowDecorations::Client => {
                 state.decorations = WindowDecorations::Client;
+                let is_transparent = state.is_transparent();
+                state.renderer.update_transparency(is_transparent);
             }
         }
 
