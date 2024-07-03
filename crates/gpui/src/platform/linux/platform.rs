@@ -102,13 +102,13 @@ pub(crate) struct LinuxCommon {
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
-    pub(crate) signal: Box<dyn QuitSignal>,
+    pub(crate) quit_signal: Box<dyn QuitSignal>,
     pub(crate) menus: Vec<OwnedMenu>,
 }
 
 impl LinuxCommon {
     pub fn new(
-        signal: Box<dyn QuitSignal>,
+        quit_signal: Box<dyn QuitSignal>,
         main_waker: Option<Arc<Waker>>,
     ) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
@@ -126,7 +126,7 @@ impl LinuxCommon {
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
             callbacks,
-            signal,
+            quit_signal,
             menus: Vec::new(),
         };
 
@@ -160,7 +160,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn quit(&self) {
-        self.with_common(|common| common.signal.quit());
+        self.with_common(|common| common.quit_signal.quit());
     }
 
     fn compositor_name(&self) -> &'static str {

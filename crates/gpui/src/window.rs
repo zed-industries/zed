@@ -452,7 +452,6 @@ impl Frame {
         }
     }
 
-    #[profiling::function]
     pub(crate) fn clear(&mut self) {
         self.element_states.clear();
         self.accessed_element_states.clear();
@@ -486,7 +485,6 @@ impl Frame {
             .unwrap_or_default()
     }
 
-    #[profiling::function]
     pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
         for element_state_key in &self.accessed_element_states {
             if let Some((element_state_key, element_state)) =
@@ -1358,24 +1356,19 @@ impl<'a> WindowContext<'a> {
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
-    #[profiling::function]
     pub fn draw(&mut self) {
         self.window.dirty.set(false);
         self.window.requested_autoscroll = None;
 
         // Restore the previously-used input handler.
         if let Some(input_handler) = self.window.platform_window.take_input_handler() {
-            profiling::scope!("pushing input handler");
             self.window
                 .rendered_frame
                 .input_handlers
                 .push(Some(input_handler));
         }
 
-        {
-            profiling::scope!("draw roots");
-            self.draw_roots();
-        }
+        self.draw_roots();
         self.window.dirty_views.clear();
 
         self.window
@@ -1401,59 +1394,48 @@ impl<'a> WindowContext<'a> {
         self.window
             .next_frame
             .finish(&mut self.window.rendered_frame);
-        {
-            profiling::scope!("element area clear");
-            ELEMENT_ARENA.with_borrow_mut(|element_arena| {
-                let percentage =
-                    (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
-                if percentage >= 80. {
-                    log::warn!("elevated element arena occupation: {}.", percentage);
-                }
-                element_arena.clear();
-            });
-        }
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
+            if percentage >= 80. {
+                log::warn!("elevated element arena occupation: {}.", percentage);
+            }
+            element_arena.clear();
+        });
 
         self.window.draw_phase = DrawPhase::Focus;
         let previous_focus_path = self.window.rendered_frame.focus_path();
         let previous_window_active = self.window.rendered_frame.window_active;
-        {
-            profiling::scope!("swapping frames");
-
-            mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
-            self.window.next_frame.clear();
-        }
+        mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
+        self.window.next_frame.clear();
         let current_focus_path = self.window.rendered_frame.focus_path();
         let current_window_active = self.window.rendered_frame.window_active;
 
+        if previous_focus_path != current_focus_path
+            || previous_window_active != current_window_active
         {
-            profiling::scope!("calling focus listeners");
-            if previous_focus_path != current_focus_path
-                || previous_window_active != current_window_active
-            {
-                if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
-                    self.window
-                        .focus_lost_listeners
-                        .clone()
-                        .retain(&(), |listener| listener(self));
-                }
-
-                let event = WindowFocusEvent {
-                    previous_focus_path: if previous_window_active {
-                        previous_focus_path
-                    } else {
-                        Default::default()
-                    },
-                    current_focus_path: if current_window_active {
-                        current_focus_path
-                    } else {
-                        Default::default()
-                    },
-                };
+            if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
                 self.window
-                    .focus_listeners
+                    .focus_lost_listeners
                     .clone()
-                    .retain(&(), |listener| listener(&event, self));
+                    .retain(&(), |listener| listener(self));
             }
+
+            let event = WindowFocusEvent {
+                previous_focus_path: if previous_window_active {
+                    previous_focus_path
+                } else {
+                    Default::default()
+                },
+                current_focus_path: if current_window_active {
+                    current_focus_path
+                } else {
+                    Default::default()
+                },
+            };
+            self.window
+                .focus_listeners
+                .clone()
+                .retain(&(), |listener| listener(&event, self));
         }
 
         self.reset_cursor_style();
@@ -1462,7 +1444,6 @@ impl<'a> WindowContext<'a> {
         self.window.needs_present.set(true);
     }
 
-    #[profiling::function]
     fn present(&self) {
         self.window
             .platform_window
@@ -1477,32 +1458,22 @@ impl<'a> WindowContext<'a> {
 
         // Layout all root elements.
         let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
-        {
-            profiling::scope!("prepaint_as_root");
-            root_element.prepaint_as_root(Point::default(), self.window.viewport_size.into(), self);
-        }
+        root_element.prepaint_as_root(Point::default(), self.window.viewport_size.into(), self);
 
-        let mut sorted_deferred_draws = {
-            profiling::scope!("sorting deferred draws");
-            let mut sorted_deferred_draws =
-                (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
-            sorted_deferred_draws
-                .sort_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
-            sorted_deferred_draws
-        };
+        let mut sorted_deferred_draws =
+            (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
+        sorted_deferred_draws.sort_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
         self.prepaint_deferred_draws(&sorted_deferred_draws);
 
         let mut prompt_element = None;
         let mut active_drag_element = None;
         let mut tooltip_element = None;
         if let Some(prompt) = self.window.prompt.take() {
-            profiling::scope!("prompt prepaint_as_root");
             let mut element = prompt.view.any_view().into_any();
             element.prepaint_as_root(Point::default(), self.window.viewport_size.into(), self);
             prompt_element = Some(element);
             self.window.prompt = Some(prompt);
         } else if let Some(active_drag) = self.app.active_drag.take() {
-            profiling::scope!("active_drag prepaint_as_root");
             let mut element = active_drag.view.clone().into_any();
             let offset = self.mouse_position() - active_drag.cursor_offset;
             element.prepaint_as_root(offset, AvailableSpace::min_size(), self);
@@ -1575,7 +1546,6 @@ impl<'a> WindowContext<'a> {
         Some(element)
     }
 
-    #[profiling::function]
     fn prepaint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
         assert_eq!(self.window.element_id_stack.len(), 0);
 
@@ -1614,7 +1584,6 @@ impl<'a> WindowContext<'a> {
         self.window.text_style_stack.clear();
     }
 
-    #[profiling::function]
     fn paint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
         assert_eq!(self.window.element_id_stack.len(), 0);
 
@@ -2715,7 +2684,6 @@ impl<'a> WindowContext<'a> {
     /// After calling it, you can request the bounds of the given layout node id or any descendant.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
-    #[profiling::function]
     pub fn compute_layout(&mut self, layout_id: LayoutId, available_space: Size<AvailableSpace>) {
         debug_assert_eq!(
             self.window.draw_phase,
@@ -2975,7 +2943,6 @@ impl<'a> WindowContext<'a> {
         subscription
     }
 
-    #[profiling::function]
     fn reset_cursor_style(&self) {
         // Set the cursor only if we're the active window.
         if self.is_window_active() {
@@ -3032,7 +2999,6 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Dispatch a mouse or keyboard event on the window.
-    #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput) -> DispatchEventResult {
         self.window.last_input_timestamp.set(Instant::now());
         // Handlers may set this to false by calling `stop_propagation`.

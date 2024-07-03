@@ -883,7 +883,6 @@ impl X11Client {
         Some(())
     }
 
-    #[profiling::function]
     fn consume_x11_events(&self) -> (HashSet<u32>, Vec<Event>) {
         let mut events = Vec::new();
         let mut windows_to_refresh = HashSet::new();
