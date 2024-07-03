@@ -66,7 +66,6 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         _input_method_id: u16,
         input_context_id: u16,
     ) -> Result<(), ClientError> {
-        dbg!("create");
         self.connected = true;
         self.ic_id = input_context_id;
         Ok(())
@@ -108,7 +107,6 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
     }
 
     fn handle_close(&mut self, client: &mut C, _input_method_id: u16) -> Result<(), ClientError> {
-        dbg!("disconnect");
         client.disconnect()
     }
 
@@ -118,7 +116,6 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         input_method_id: u16,
         _input_context_id: u16,
     ) -> Result<(), ClientError> {
-        dbg!("destroy");
         client.close(input_method_id)
     }
 
