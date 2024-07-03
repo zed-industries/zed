@@ -952,7 +952,6 @@ impl PlatformWindow for WaylandWindow {
         match state.decorations {
             WindowDecorations::Server => Decorations::Server,
             WindowDecorations::Client => Decorations::Client {
-                shadows: false,
                 tiling: state.tiling,
             },
         }
