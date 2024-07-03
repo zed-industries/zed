@@ -1060,13 +1060,10 @@ impl Project {
             })
     }
 
-    pub fn debug_adapter_by_id(
-        &self,
-        id: DebugAdapterClientId,
-    ) -> Option<&Arc<DebugAdapterClient>> {
+    pub fn debug_adapter_by_id(&self, id: DebugAdapterClientId) -> Option<Arc<DebugAdapterClient>> {
         self.debug_adapters.get(&id).and_then(|state| match state {
             DebugAdapterClientState::Starting(_) => None,
-            DebugAdapterClientState::Running(client) => Some(client),
+            DebugAdapterClientState::Running(client) => Some(client.clone()),
         })
     }
 

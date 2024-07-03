@@ -1,16 +1,20 @@
 use anyhow::Result;
+use dap::client::DebugAdapterClientId;
 use dap::requests::{BreakpointLocations, Scopes, StackTrace, Variables};
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
     BreakpointLocationsArguments, Scope, ScopesArguments, StackFrame, StackTraceArguments,
-    ThreadEventReason, Variable, VariablesArguments,
+    StoppedEvent, ThreadEventReason, Variable, VariablesArguments,
 };
 use gpui::{
     actions, list, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
-    FocusableView, ListState, Subscription, Task, View, ViewContext, WeakView,
+    FocusableView, ListState, Model, Subscription, Task, View, ViewContext, WeakView,
 };
+use project::Event::DebugClientEvent;
+use project::Project;
 use std::{collections::HashMap, sync::Arc};
 use ui::{prelude::*, Tooltip};
+use workspace::pane::Event;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
@@ -60,128 +64,7 @@ impl DebugPanel {
             let _subscriptions = vec![cx.subscribe(&project, {
                 move |this: &mut Self, model, event, cx| {
                     if let project::Event::DebugClientEvent { client_id, event } = event {
-                        match event {
-                            Events::Initialized(_) => {
-                                let client = this.debug_adapter(cx);
-                                cx.spawn(|_, _| async move {
-                                    // TODO: send all the current breakpoints
-                                    client.configuration_done().await
-                                })
-                                .detach_and_log_err(cx);
-                            }
-                            Events::Stopped(event) => {
-                                if let Some(thread_id) = event.thread_id {
-                                    let client = this.debug_adapter(cx);
-
-                                    cx.spawn(|this, mut cx| async move {
-                                        let stack_trace_response = client
-                                            .request::<StackTrace>(StackTraceArguments {
-                                                thread_id,
-                                                start_frame: None,
-                                                levels: None,
-                                                format: None,
-                                            })
-                                            .await?;
-
-                                        let mut scopes: HashMap<u64, Vec<Scope>> = HashMap::new();
-                                        let mut variables: HashMap<u64, Vec<Variable>> =
-                                            HashMap::new();
-
-                                        for stack_frame in
-                                            stack_trace_response.stack_frames.clone().into_iter()
-                                        {
-                                            let scope_response = client
-                                                .request::<Scopes>(ScopesArguments {
-                                                    frame_id: stack_frame.id,
-                                                })
-                                                .await?;
-
-                                            scopes.insert(
-                                                stack_frame.id,
-                                                scope_response.scopes.clone(),
-                                            );
-
-                                            for scope in scope_response.scopes {
-                                                variables.insert(
-                                                    scope.variables_reference,
-                                                    client
-                                                        .request::<Variables>(VariablesArguments {
-                                                            variables_reference: scope
-                                                                .variables_reference,
-                                                            filter: None,
-                                                            start: None,
-                                                            count: None,
-                                                            format: None,
-                                                        })
-                                                        .await?
-                                                        .variables,
-                                                );
-                                            }
-                                        }
-
-                                        this.update(&mut cx, |this, cx| {
-                                            if let Some(entry) =
-                                                this.thread_state.get_mut(&thread_id)
-                                            {
-                                                this.current_thread_id = Some(thread_id);
-
-                                                this.current_stack_frame_id = stack_trace_response
-                                                    .stack_frames
-                                                    .clone()
-                                                    .first()
-                                                    .map(|f| f.id);
-
-                                                entry.stack_frames =
-                                                    stack_trace_response.stack_frames.clone();
-                                                entry.scopes = scopes;
-                                                entry.variables = variables;
-
-                                                this.stack_frame_list
-                                                    .reset(entry.stack_frames.len());
-
-                                                cx.notify();
-                                            }
-
-                                            anyhow::Ok(())
-                                        })
-                                    })
-                                    .detach();
-                                };
-                            }
-                            Events::Continued(_) => {}
-                            Events::Exited(_) => {}
-                            Events::Terminated(_) => {}
-                            Events::Thread(event) => {
-                                if event.reason == ThreadEventReason::Started {
-                                    this.thread_state.insert(
-                                        event.thread_id,
-                                        ThreadState {
-                                            ..Default::default()
-                                        },
-                                    );
-                                    this.current_thread_id = Some(event.thread_id);
-                                } else {
-                                    if this.current_thread_id == Some(event.thread_id) {
-                                        this.current_thread_id = None;
-                                    }
-                                    this.stack_frame_list.reset(0);
-                                    this.thread_state.remove(&event.thread_id);
-                                }
-
-                                cx.notify();
-                            }
-                            Events::Output(_) => {}
-                            Events::Breakpoint(_) => {}
-                            Events::Module(_) => {}
-                            Events::LoadedSource(_) => {}
-                            Events::Capabilities(_) => {}
-                            Events::Memory(_) => {}
-                            Events::Process(_) => {}
-                            Events::ProgressEnd(_) => {}
-                            Events::ProgressStart(_) => {}
-                            Events::ProgressUpdate(_) => {}
-                            Events::Invalidated(_) => {}
-                        }
+                        Self::handle_debug_client_events(this, model, client_id, event, cx);
                     }
                 }
             })];
@@ -239,6 +122,21 @@ impl DebugPanel {
                     .read(cx)
                     .running_debug_adapters()
                     .next()
+                    .unwrap()
+            })
+            .unwrap()
+    }
+
+    fn debug_adapter_by_id(
+        &self,
+        client_id: DebugAdapterClientId,
+        cx: &mut ViewContext<Self>,
+    ) -> Arc<DebugAdapterClient> {
+        self.workspace
+            .update(cx, |this, cx| {
+                this.project()
+                    .read(cx)
+                    .debug_adapter_by_id(client_id)
                     .unwrap()
             })
             .unwrap()
@@ -425,6 +323,132 @@ impl DebugPanel {
                 .spawn(async move { client.pause(thread_id).await })
                 .detach();
         }
+    }
+
+    fn handle_debug_client_events(
+        this: &mut Self,
+        model: Model<Project>,
+        client_id: &DebugAdapterClientId,
+        event: &Events,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            Events::Initialized(_) => {
+                let client = this.debug_adapter_by_id(*client_id, cx);
+                cx.spawn(|_, _| async move {
+                    // TODO: send all the current breakpoints
+                    client.configuration_done().await
+                })
+                .detach_and_log_err(cx);
+            }
+            Events::Stopped(event) => Self::handle_stopped_event(this, model, client_id, event, cx),
+            Events::Continued(_) => {}
+            Events::Exited(_) => {}
+            Events::Terminated(_) => {}
+            Events::Thread(event) => {
+                if event.reason == ThreadEventReason::Started {
+                    this.thread_state
+                        .insert(event.thread_id, ThreadState::default());
+                    this.current_thread_id = Some(event.thread_id);
+                } else {
+                    if this.current_thread_id == Some(event.thread_id) {
+                        this.current_thread_id = None;
+                    }
+                    this.stack_frame_list.reset(0);
+                    this.thread_state.remove(&event.thread_id);
+                }
+
+                cx.notify();
+            }
+            Events::Output(_) => {}
+            Events::Breakpoint(_) => {}
+            Events::Module(_) => {}
+            Events::LoadedSource(_) => {}
+            Events::Capabilities(_) => {}
+            Events::Memory(_) => {}
+            Events::Process(_) => {}
+            Events::ProgressEnd(_) => {}
+            Events::ProgressStart(_) => {}
+            Events::ProgressUpdate(_) => {}
+            Events::Invalidated(_) => {}
+        }
+    }
+
+    fn handle_stopped_event(
+        this: &mut Self,
+        model: Model<Project>,
+        client_id: &DebugAdapterClientId,
+        event: &StoppedEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(thread_id) = event.thread_id else {
+            return;
+        };
+
+        let client = this.debug_adapter_by_id(*client_id, cx);
+
+        cx.spawn(|this, mut cx| async move {
+            let stack_trace_response = client
+                .request::<StackTrace>(StackTraceArguments {
+                    thread_id,
+                    start_frame: None,
+                    levels: None,
+                    format: None,
+                })
+                .await?;
+
+            let mut scopes: HashMap<u64, Vec<Scope>> = HashMap::new();
+            let mut variables: HashMap<u64, Vec<Variable>> = HashMap::new();
+
+            for stack_frame in stack_trace_response.stack_frames.clone().into_iter() {
+                let scope_response = client
+                    .request::<Scopes>(ScopesArguments {
+                        frame_id: stack_frame.id,
+                    })
+                    .await?;
+
+                scopes.insert(stack_frame.id, scope_response.scopes.clone());
+
+                for scope in scope_response.scopes {
+                    variables.insert(
+                        scope.variables_reference,
+                        client
+                            .request::<Variables>(VariablesArguments {
+                                variables_reference: scope.variables_reference,
+                                filter: None,
+                                start: None,
+                                count: None,
+                                format: None,
+                            })
+                            .await?
+                            .variables,
+                    );
+                }
+            }
+
+            this.update(&mut cx, |this, cx| {
+                if let Some(entry) = this.thread_state.get_mut(&thread_id) {
+                    this.current_thread_id = Some(thread_id);
+
+                    this.current_stack_frame_id = stack_trace_response
+                        .stack_frames
+                        .clone()
+                        .first()
+                        .map(|f| f.id);
+
+                    entry.stack_frames = stack_trace_response.stack_frames.clone();
+                    entry.scopes = scopes;
+                    entry.variables = variables;
+
+                    this.stack_frame_list.reset(entry.stack_frames.len());
+
+                    cx.notify();
+                }
+
+                anyhow::Ok(())
+            })
+        })
+        .detach();
     }
 }
 
