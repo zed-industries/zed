@@ -4207,7 +4207,7 @@ impl Render for Workspace {
                             this.on_drag_move(cx.listener(
                                 |workspace, e: &DragMoveEvent<DraggedDock>, cx| match e.drag(cx).0 {
                                     DockPosition::Left => {
-                                        let size = workspace.bounds.left() + e.event.position.x;
+                                        let size = e.event.position.x - workspace.bounds.left();
                                         workspace.left_dock.update(cx, |left_dock, cx| {
                                             left_dock.resize_active_panel(Some(size), cx);
                                         });
