@@ -4491,6 +4491,7 @@ async fn complete_with_open_ai(
                 .collect(),
         })?;
     }
+
     Ok(())
 }
 
