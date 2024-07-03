@@ -310,6 +310,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
 
 fn register_slash_commands(cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
+    slash_command_registry.register_command(auto_command::AutoCommand, true);
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
     slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
