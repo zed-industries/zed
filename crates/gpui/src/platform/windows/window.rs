@@ -274,7 +274,7 @@ impl WindowsWindow {
             handle,
             hide_title_bar,
             display,
-            transparent: params.window_background != WindowBackgroundAppearance::Opaque,
+            transparent: true,
             executor,
             current_cursor,
         };
