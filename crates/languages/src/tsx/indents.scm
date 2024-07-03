@@ -1,1 +1,1 @@
-../typescript/indents.scm
+; inherits: typescript

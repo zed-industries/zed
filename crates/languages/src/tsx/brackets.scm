@@ -1,1 +1,1 @@
-../typescript/brackets.scm
+; inherits: typescript

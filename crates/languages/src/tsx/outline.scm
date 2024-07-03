@@ -1,1 +1,1 @@
-../typescript/outline.scm
+; inherits: typescript
