@@ -778,13 +778,12 @@ impl BufferSearchBar {
                     .filter(|matches| !matches.is_empty())
                 {
                     // If 'wrapscan' is disabled, searches do not wrap around the end of the file.
-                    let mut count = count;
                     if !EditorSettings::get_global(cx).search_wrap {
-                        if direction == Direction::Next && index + count >= matches.len() {
-                            count = matches.len() - index - 1;
-                        }
-                        if direction == Direction::Prev && index < count {
-                            count = index
+                        if (direction == Direction::Next && index + count >= matches.len())
+                            || (direction == Direction::Prev && index < count)
+                        {
+                            crate::show_no_more_matches(cx);
+                            return;
                         }
                     }
                     let new_match_index = searchable_item
