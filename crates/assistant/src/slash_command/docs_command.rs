@@ -122,17 +122,18 @@ impl SlashCommand for DocsSlashCommand {
                         .map(|provider| provider.to_string())
                         .collect())
                 }
-                DocsSlashCommandArgs::ProviderSelected { provider } => {
-                    let store = store?;
-                    let items = store.search(String::new()).await;
-                    Ok(prefix_with_provider(provider, items))
-                }
-                DocsSlashCommandArgs::SearchPackageDocs { provider, package } => {
+                DocsSlashCommandArgs::SearchPackageDocs {
+                    provider,
+                    package,
+                    index,
+                } => {
                     let store = store?;
 
-                    // We don't need to hold onto this task, as the `IndexedDocsStore` will hold it
-                    // until it completes.
-                    let _ = store.clone().index(package.as_str().into());
+                    if index {
+                        // We don't need to hold onto this task, as the `IndexedDocsStore` will hold it
+                        // until it completes.
+                        let _ = store.clone().index(package.as_str().into());
+                    }
 
                     let items = store.search(package).await;
                     Ok(prefix_with_provider(provider, items))
@@ -170,8 +171,9 @@ impl SlashCommand for DocsSlashCommand {
             async move {
                 match args {
                     DocsSlashCommandArgs::NoProvider => bail!("no docs provider specified"),
-                    DocsSlashCommandArgs::ProviderSelected { .. } => bail!("no search query"),
-                    DocsSlashCommandArgs::SearchPackageDocs { provider, package } => {
+                    DocsSlashCommandArgs::SearchPackageDocs {
+                        provider, package, ..
+                    } => {
                         let store = store?;
                         let item_docs = store.load(package.clone()).await?;
 
@@ -211,15 +213,13 @@ fn is_item_path_delimiter(char: char) -> bool {
     !char.is_alphanumeric() && char != '-' && char != '_'
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum DocsSlashCommandArgs {
     NoProvider,
-    ProviderSelected {
-        provider: ProviderId,
-    },
     SearchPackageDocs {
         provider: ProviderId,
         package: String,
+        index: bool,
     },
     SearchItemDocs {
         provider: ProviderId,
@@ -236,41 +236,130 @@ impl DocsSlashCommandArgs {
 
         let provider = ProviderId(provider.into());
 
-        let Some((package, rest)) = argument.split_once(is_item_path_delimiter) else {
-            return Self::ProviderSelected { provider };
-        };
-
-        if rest.trim().is_empty() {
-            return Self::SearchPackageDocs {
+        if let Some((package, rest)) = argument.split_once(is_item_path_delimiter) {
+            if rest.trim().is_empty() {
+                Self::SearchPackageDocs {
+                    provider,
+                    package: package.to_owned(),
+                    index: true,
+                }
+            } else {
+                Self::SearchItemDocs {
+                    provider,
+                    package: package.to_owned(),
+                    item_path: argument.to_owned(),
+                }
+            }
+        } else {
+            Self::SearchPackageDocs {
                 provider,
-                package: package.to_owned(),
-            };
-        }
-
-        let item_path = argument.trim_start_matches(provider.as_ref()).trim();
-
-        Self::SearchItemDocs {
-            provider,
-            package: package.to_owned(),
-            item_path: item_path.to_owned(),
+                package: argument.to_owned(),
+                index: false,
+            }
         }
     }
 
     pub fn provider(&self) -> Option<ProviderId> {
         match self {
             Self::NoProvider => None,
-            Self::ProviderSelected { provider }
-            | Self::SearchPackageDocs { provider, .. }
-            | Self::SearchItemDocs { provider, .. } => Some(provider.clone()),
+            Self::SearchPackageDocs { provider, .. } | Self::SearchItemDocs { provider, .. } => {
+                Some(provider.clone())
+            }
         }
     }
 
     pub fn package(&self) -> Option<PackageName> {
         match self {
-            Self::NoProvider | Self::ProviderSelected { .. } => None,
+            Self::NoProvider => None,
             Self::SearchPackageDocs { package, .. } | Self::SearchItemDocs { package, .. } => {
                 Some(package.as_str().into())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_docs_slash_command_args() {
+        assert_eq!(
+            DocsSlashCommandArgs::parse(""),
+            DocsSlashCommandArgs::NoProvider
+        );
+        assert_eq!(
+            DocsSlashCommandArgs::parse("rustdoc"),
+            DocsSlashCommandArgs::NoProvider
+        );
+
+        assert_eq!(
+            DocsSlashCommandArgs::parse("rustdoc "),
+            DocsSlashCommandArgs::SearchPackageDocs {
+                provider: ProviderId("rustdoc".into()),
+                package: "".into(),
+                index: false
+            }
+        );
+        assert_eq!(
+            DocsSlashCommandArgs::parse("gleam "),
+            DocsSlashCommandArgs::SearchPackageDocs {
+                provider: ProviderId("gleam".into()),
+                package: "".into(),
+                index: false
+            }
+        );
+
+        assert_eq!(
+            DocsSlashCommandArgs::parse("rustdoc gpui"),
+            DocsSlashCommandArgs::SearchPackageDocs {
+                provider: ProviderId("rustdoc".into()),
+                package: "gpui".into(),
+                index: false,
+            }
+        );
+        assert_eq!(
+            DocsSlashCommandArgs::parse("gleam gleam_stdlib"),
+            DocsSlashCommandArgs::SearchPackageDocs {
+                provider: ProviderId("gleam".into()),
+                package: "gleam_stdlib".into(),
+                index: false
+            }
+        );
+
+        // Adding an item path delimiter indicates we can start indexing.
+        assert_eq!(
+            DocsSlashCommandArgs::parse("rustdoc gpui:"),
+            DocsSlashCommandArgs::SearchPackageDocs {
+                provider: ProviderId("rustdoc".into()),
+                package: "gpui".into(),
+                index: true,
+            }
+        );
+        assert_eq!(
+            DocsSlashCommandArgs::parse("gleam gleam_stdlib/"),
+            DocsSlashCommandArgs::SearchPackageDocs {
+                provider: ProviderId("gleam".into()),
+                package: "gleam_stdlib".into(),
+                index: true
+            }
+        );
+
+        assert_eq!(
+            DocsSlashCommandArgs::parse("rustdoc gpui::foo::bar::Baz"),
+            DocsSlashCommandArgs::SearchItemDocs {
+                provider: ProviderId("rustdoc".into()),
+                package: "gpui".into(),
+                item_path: "gpui::foo::bar::Baz".into()
+            }
+        );
+        assert_eq!(
+            DocsSlashCommandArgs::parse("gleam gleam_stdlib/gleam/int"),
+            DocsSlashCommandArgs::SearchItemDocs {
+                provider: ProviderId("gleam".into()),
+                package: "gleam_stdlib".into(),
+                item_path: "gleam_stdlib/gleam/int".into()
+            }
+        );
     }
 }
