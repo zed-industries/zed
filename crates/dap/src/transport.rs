@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smol::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 use std::{collections::HashMap, sync::Arc};
-use util::ResultExt as _;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -188,27 +187,29 @@ impl Transport {
     async fn process_server_message(
         &self,
         mut client_tx: &UnboundedSender<Payload>,
-        msg: Payload,
+        payload: Payload,
     ) -> Result<()> {
-        match msg {
+        match payload {
             Payload::Response(res) => {
-                if let Some(mut tx) = self.pending_requests.lock().remove(&res.request_seq) {
+                let pending_request = {
+                    let mut pending_requests = self.pending_requests.lock();
+                    pending_requests.remove(&res.request_seq)
+                };
+
+                if let Some(mut tx) = pending_request {
                     tx.send(Self::process_response(res)).await?;
                 } else {
                     client_tx.send(Payload::Response(res)).await?;
                 };
-
-                Ok(())
             }
             Payload::Request(_) => {
-                client_tx.send(msg).await.log_err();
-                Ok(())
+                client_tx.send(payload).await?;
             }
             Payload::Event(_) => {
-                client_tx.send(msg).await.log_err();
-                Ok(())
+                client_tx.send(payload).await?;
             }
         }
+        Ok(())
     }
 
     async fn receive(

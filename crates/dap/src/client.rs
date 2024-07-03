@@ -16,7 +16,7 @@ use futures::{
     AsyncBufRead, AsyncReadExt, AsyncWrite, SinkExt as _, StreamExt,
 };
 use gpui::{AppContext, AsyncAppContext};
-use serde_json::{json, Value};
+use serde_json::Value;
 use smol::{
     io::BufReader,
     net::TcpStream,
@@ -245,7 +245,7 @@ impl DebugAdapterClient {
                 .config
                 .launch_config
                 .clone()
-                .and_then(|c| Some(c.config))
+                .map(|c| c.config)
                 .unwrap_or(Value::Null),
         })
         .await
@@ -322,11 +322,7 @@ impl DebugAdapterClient {
         path: PathBuf,
         breakpoints: Option<Vec<SourceBreakpoint>>,
     ) -> Result<SetBreakpointsResponse> {
-        let adapter_data = self
-            .config
-            .launch_config
-            .clone()
-            .and_then(|c| Some(c.config));
+        let adapter_data = self.config.launch_config.clone().map(|c| c.config);
 
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
