@@ -97,6 +97,8 @@ impl From<xim::ClientError> for EventHandlerError {
 }
 
 pub struct X11ClientState {
+    /// poll is in an Option so we can take it out in `run()` without
+    /// mutating self.
     poll: Option<mio::Poll>,
     quit_signal_rx: oneshot::Receiver<()>,
     runnables: Channel<Runnable>,
@@ -152,7 +154,7 @@ impl X11ClientStatePtr {
         state.cursor_styles.remove(&x_window);
 
         if state.windows.is_empty() {
-            state.common.signal.quit();
+            state.common.quit_signal.quit();
         }
     }
 }
@@ -1138,6 +1140,8 @@ impl LinuxClient for X11Client {
 
     fn run(&self) {
         let mut poll = self
+            .0
+            .borrow_mut()
             .poll
             .take()
             .context("no poll set on X11Client. calling run more than once is not possible")

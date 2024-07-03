@@ -310,7 +310,7 @@ impl WaylandClientStatePtr {
             }
         }
         if state.windows.is_empty() {
-            state.common.signal.quit();
+            state.common.quit_signal.quit();
         }
     }
 }
