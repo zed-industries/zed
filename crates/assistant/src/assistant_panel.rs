@@ -650,15 +650,8 @@ impl AssistantPanel {
 
     fn open_context(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         let existing_context = self.pane.read(cx).items().find_map(|item| {
-            if let Some(editor) = item.downcast::<ContextEditor>() {
-                if editor.read(cx).context.read(cx).path.as_ref() == Some(&path) {
-                    Some(editor)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            item.downcast::<ContextEditor>()
+                .filter(|editor| editor.read(cx).context.read(cx).path.as_ref() == Some(&path))
         });
         if let Some(existing_context) = existing_context {
             self.show_context(existing_context, cx);
