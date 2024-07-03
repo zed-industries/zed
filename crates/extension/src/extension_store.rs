@@ -1,5 +1,5 @@
 pub mod extension_builder;
-mod extension_docs_indexer;
+mod extension_indexed_docs_provider;
 mod extension_lsp_adapter;
 mod extension_manifest;
 mod extension_settings;
@@ -9,7 +9,7 @@ mod wasm_host;
 #[cfg(test)]
 mod extension_store_test;
 
-use crate::extension_docs_indexer::ExtensionDocsIndexer;
+use crate::extension_indexed_docs_provider::ExtensionIndexedDocsProvider;
 use crate::extension_manifest::SchemaVersion;
 use crate::extension_slash_command::ExtensionSlashCommand;
 use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
@@ -1202,7 +1202,7 @@ impl ExtensionStore {
 
                     for (provider_id, _provider) in &manifest.indexed_docs_providers {
                         this.indexed_docs_registry.register_provider(Box::new(
-                            ExtensionDocsIndexer {
+                            ExtensionIndexedDocsProvider {
                                 extension: wasm_extension.clone(),
                                 host: this.wasm_host.clone(),
                                 id: ProviderId(provider_id.clone()),
