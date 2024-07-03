@@ -243,7 +243,7 @@ impl AssistantPanel {
                 cx,
             );
             pane.set_can_split(false, cx);
-            pane.set_can_navigate(false, cx);
+            pane.set_can_navigate(true, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
@@ -3201,6 +3201,22 @@ impl Item for ContextEditor {
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
         ToolbarItemLocation::PrimaryLeft
+    }
+
+    fn set_nav_history(&mut self, nav_history: pane::ItemNavHistory, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            Item::set_nav_history(editor, nav_history, cx)
+        })
+    }
+
+    fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
+        self.editor
+            .update(cx, |editor, cx| Item::navigate(editor, data, cx))
+    }
+
+    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| Item::deactivated(editor, cx))
     }
 }
 
