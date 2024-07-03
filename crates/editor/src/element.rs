@@ -1814,7 +1814,6 @@ impl EditorElement {
                     NumeralStyle::Arabic => raw_number.to_string(),
                     NumeralStyle::Roman => self.calculate_roman_numeral(raw_number),
                     NumeralStyle::Aegean => self.calculate_aegean_numeral(raw_number),
-                    _ => raw_number.to_string(),
                 };
                 write!(&mut line_number, "{number}").unwrap();
                 let run = TextRun {
