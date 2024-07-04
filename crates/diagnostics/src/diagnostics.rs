@@ -12,8 +12,7 @@ use editor::{
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
     highlight_diagnostic_message,
     scroll::Autoscroll,
-    Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
-    DEFAULT_MULTIBUFFER_CONTEXT,
+    Bias, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, DEFAULT_MULTIBUFFER_CONTEXT,
 };
 use futures::{
     channel::mpsc::{self, UnboundedSender},
@@ -26,8 +25,8 @@ use gpui::{
     WeakView, WindowContext,
 };
 use language::{
-    Bias, Buffer, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point,
-    Selection, SelectionGoal, ToPoint,
+    Buffer, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt,
+    ToPoint,
 };
 use lsp::LanguageServerId;
 use multi_buffer::ExpandExcerptDirection;
@@ -37,7 +36,6 @@ use settings::Settings;
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
-    mem,
     ops::Range,
 };
 use theme::ActiveTheme;
@@ -75,7 +73,6 @@ struct ProjectDiagnosticsEditor {
 
 struct PathState {
     path: ProjectPath,
-    diagnostic_groups: Vec<DiagnosticGroupState>,
     diagnostics: Vec<(DiagnosticData, BlockId)>,
 }
 
@@ -84,16 +81,6 @@ struct DiagnosticData {
     language_server_id: LanguageServerId,
     is_primary: bool,
     entry: DiagnosticEntry<language::Anchor>,
-}
-
-// TODO kb regroup
-struct DiagnosticGroupState {
-    language_server_id: LanguageServerId,
-    primary_diagnostic: DiagnosticEntry<language::Anchor>,
-    primary_excerpt_ix: usize,
-    excerpts: Vec<ExcerptId>,
-    blocks: HashSet<BlockId>,
-    block_count: usize,
 }
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
@@ -205,8 +192,8 @@ impl ProjectDiagnosticsEditor {
             excerpts,
             focus_handle,
             editor,
-            path_states: Default::default(),
-            paths_to_update: Default::default(),
+            path_states: Vec::new(),
+            paths_to_update: BTreeSet::new(),
             include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
             update_paths_tx: update_excerpts_tx,
             _update_excerpts_task: cx.spawn(move |this, mut cx| async move {
@@ -314,7 +301,7 @@ impl ProjectDiagnosticsEditor {
         });
 
         let was_empty = self.path_states.is_empty();
-        let snapshot = buffer.read(cx).snapshot();
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let path_ix = match self
             .path_states
             .binary_search_by_key(&&path_to_update, |e| &e.path)
@@ -325,7 +312,6 @@ impl ProjectDiagnosticsEditor {
                     ix,
                     PathState {
                         path: path_to_update.clone(),
-                        diagnostic_groups: Default::default(),
                         diagnostics: Vec::new(),
                     },
                 );
@@ -333,290 +319,12 @@ impl ProjectDiagnosticsEditor {
             }
         };
 
-        let mut prev_excerpt_id = if path_ix > 0 {
-            let prev_path_last_group = &self.path_states[path_ix - 1]
-                .diagnostic_groups
-                .last()
-                .unwrap();
-            *prev_path_last_group.excerpts.last().unwrap()
-        } else {
-            ExcerptId::min()
-        };
-
-        let mut new_group_ixs = Vec::new();
-        let mut blocks_to_add = Vec::new();
-        let mut blocks_to_remove = HashSet::default();
-        let mut first_excerpt_id = None;
         let max_severity = if self.include_warnings {
             DiagnosticSeverity::WARNING
         } else {
             DiagnosticSeverity::ERROR
         };
 
-        // TODO kb make it the only way
-        self.update_diagnostics_for_path(path_ix, &snapshot, server_to_update, max_severity, cx);
-
-        let path_state = &mut self.path_states[path_ix];
-        let excerpts_snapshot = self.excerpts.update(cx, |excerpts, cx| {
-            let mut old_groups = mem::take(&mut path_state.diagnostic_groups)
-                .into_iter()
-                .enumerate()
-                .peekable();
-            let mut new_groups = snapshot
-                .diagnostic_groups(server_to_update)
-                .into_iter()
-                .filter(|(_, group)| {
-                    group.entries[group.primary_ix].diagnostic.severity <= max_severity
-                })
-                .peekable();
-            loop {
-                let mut to_insert = None;
-                let mut to_remove = None;
-                let mut to_keep = None;
-                match (old_groups.peek(), new_groups.peek()) {
-                    (None, None) => break,
-                    (None, Some(_)) => to_insert = new_groups.next(),
-                    (Some((_, old_group)), None) => {
-                        if server_to_update.map_or(true, |id| id == old_group.language_server_id) {
-                            to_remove = old_groups.next();
-                        } else {
-                            to_keep = old_groups.next();
-                        }
-                    }
-                    (Some((_, old_group)), Some((new_language_server_id, new_group))) => {
-                        let old_primary = &old_group.primary_diagnostic;
-                        let new_primary = &new_group.entries[new_group.primary_ix];
-                        match compare_diagnostics(old_primary, new_primary, &snapshot)
-                            .then_with(|| old_group.language_server_id.cmp(new_language_server_id))
-                        {
-                            Ordering::Less => {
-                                if server_to_update
-                                    .map_or(true, |id| id == old_group.language_server_id)
-                                {
-                                    to_remove = old_groups.next();
-                                } else {
-                                    to_keep = old_groups.next();
-                                }
-                            }
-                            Ordering::Equal => {
-                                to_keep = old_groups.next();
-                                new_groups.next();
-                            }
-                            Ordering::Greater => to_insert = new_groups.next(),
-                        }
-                    }
-                }
-
-                if let Some((language_server_id, group)) = to_insert {
-                    let mut group_state = DiagnosticGroupState {
-                        language_server_id,
-                        primary_diagnostic: group.entries[group.primary_ix].clone(),
-                        primary_excerpt_ix: 0,
-                        excerpts: Default::default(),
-                        blocks: Default::default(),
-                        block_count: 0,
-                    };
-                    let mut pending_range: Option<(Range<Point>, usize)> = None;
-                    let mut is_first_excerpt_for_group = true;
-                    for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
-                        let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
-                        if let Some((range, start_ix)) = &mut pending_range {
-                            if let Some(entry) = resolved_entry.as_ref() {
-                                if entry.range.start.row <= range.end.row + 1 + self.context * 2 {
-                                    range.end = range.end.max(entry.range.end);
-                                    continue;
-                                }
-                            }
-
-                            let excerpt_start =
-                                Point::new(range.start.row.saturating_sub(self.context), 0);
-                            let excerpt_end = snapshot.clip_point(
-                                Point::new(range.end.row + self.context, u32::MAX),
-                                Bias::Left,
-                            );
-
-                            let excerpt_id = excerpts
-                                .insert_excerpts_after(
-                                    prev_excerpt_id,
-                                    buffer.clone(),
-                                    [ExcerptRange {
-                                        context: excerpt_start..excerpt_end,
-                                        primary: Some(range.clone()),
-                                    }],
-                                    cx,
-                                )
-                                .pop()
-                                .unwrap();
-
-                            prev_excerpt_id = excerpt_id;
-                            first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
-                            group_state.excerpts.push(excerpt_id);
-                            let header_position = (excerpt_id, language::Anchor::MIN);
-
-                            if is_first_excerpt_for_group {
-                                is_first_excerpt_for_group = false;
-                                let mut primary =
-                                    group.entries[group.primary_ix].diagnostic.clone();
-                                primary.message =
-                                    primary.message.split('\n').next().unwrap().to_string();
-                                group_state.block_count += 1;
-                                blocks_to_add.push(BlockProperties {
-                                    position: header_position,
-                                    height: 2,
-                                    style: BlockStyle::Sticky,
-                                    render: diagnostic_header_renderer(primary),
-                                    disposition: BlockDisposition::Above,
-                                });
-                            }
-
-                            for entry in &group.entries[*start_ix..ix] {
-                                let mut diagnostic = entry.diagnostic.clone();
-                                if diagnostic.is_primary {
-                                    group_state.primary_excerpt_ix = group_state.excerpts.len() - 1;
-                                    diagnostic.message =
-                                        entry.diagnostic.message.split('\n').skip(1).collect();
-                                }
-
-                                if !diagnostic.message.is_empty() {
-                                    group_state.block_count += 1;
-                                    blocks_to_add.push(BlockProperties {
-                                        position: (excerpt_id, entry.range.start),
-                                        height: diagnostic.message.matches('\n').count() as u8 + 1,
-                                        style: BlockStyle::Fixed,
-                                        render: diagnostic_block_renderer(diagnostic, true),
-                                        disposition: BlockDisposition::Below,
-                                    });
-                                }
-                            }
-
-                            pending_range.take();
-                        }
-
-                        if let Some(entry) = resolved_entry {
-                            pending_range = Some((entry.range.clone(), ix));
-                        }
-                    }
-
-                    new_group_ixs.push(path_state.diagnostic_groups.len());
-                    path_state.diagnostic_groups.push(group_state);
-                } else if let Some((_, group_state)) = to_remove {
-                    excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx);
-                    blocks_to_remove.extend(group_state.blocks.iter().copied());
-                } else if let Some((_, group_state)) = to_keep {
-                    prev_excerpt_id = *group_state.excerpts.last().unwrap();
-                    first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
-                    path_state.diagnostic_groups.push(group_state);
-                }
-            }
-
-            excerpts.snapshot(cx)
-        });
-
-        self.editor.update(cx, |editor, cx| {
-            editor.remove_blocks(blocks_to_remove, None, cx);
-            let block_ids = editor.insert_blocks(
-                blocks_to_add.into_iter().flat_map(|block| {
-                    let (excerpt_id, text_anchor) = block.position;
-                    Some(BlockProperties {
-                        position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
-                        height: block.height,
-                        style: block.style,
-                        render: block.render,
-                        disposition: block.disposition,
-                    })
-                }),
-                Some(Autoscroll::fit()),
-                cx,
-            );
-
-            let mut block_ids = block_ids.into_iter();
-            for ix in new_group_ixs {
-                let group_state = &mut path_state.diagnostic_groups[ix];
-                group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
-            }
-        });
-
-        if path_state.diagnostic_groups.is_empty() {
-            self.path_states.remove(path_ix);
-        }
-
-        self.editor.update(cx, |editor, cx| {
-            let groups;
-            let mut selections;
-            let new_excerpt_ids_by_selection_id;
-            if was_empty {
-                groups = self.path_states.first()?.diagnostic_groups.as_slice();
-                new_excerpt_ids_by_selection_id = [(0, ExcerptId::min())].into_iter().collect();
-                selections = vec![Selection {
-                    id: 0,
-                    start: 0,
-                    end: 0,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                }];
-            } else {
-                groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
-                new_excerpt_ids_by_selection_id =
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.refresh());
-                selections = editor.selections.all::<usize>(cx);
-            }
-
-            // If any selection has lost its position, move it to start of the next primary diagnostic.
-            let snapshot = editor.snapshot(cx);
-            for selection in &mut selections {
-                if let Some(new_excerpt_id) = new_excerpt_ids_by_selection_id.get(&selection.id) {
-                    let group_ix = match groups.binary_search_by(|probe| {
-                        probe
-                            .excerpts
-                            .last()
-                            .unwrap()
-                            .cmp(new_excerpt_id, &snapshot.buffer_snapshot)
-                    }) {
-                        Ok(ix) | Err(ix) => ix,
-                    };
-                    if let Some(group) = groups.get(group_ix) {
-                        if let Some(offset) = excerpts_snapshot
-                            .anchor_in_excerpt(
-                                group.excerpts[group.primary_excerpt_ix],
-                                group.primary_diagnostic.range.start,
-                            )
-                            .map(|anchor| anchor.to_offset(&excerpts_snapshot))
-                        {
-                            selection.start = offset;
-                            selection.end = offset;
-                        }
-                    }
-                }
-            }
-            editor.change_selections(None, cx, |s| {
-                s.select(selections);
-            });
-            Some(())
-        });
-
-        if self.path_states.is_empty() {
-            if self.editor.focus_handle(cx).is_focused(cx) {
-                cx.focus(&self.focus_handle);
-            }
-        } else if self.focus_handle.is_focused(cx) {
-            let focus_handle = self.editor.focus_handle(cx);
-            cx.focus(&focus_handle);
-        }
-
-        #[cfg(test)]
-        self.check_invariants(cx);
-
-        cx.notify();
-    }
-
-    fn update_diagnostics_for_path(
-        &mut self,
-        path_ix: usize,
-        buffer_snapshot: &BufferSnapshot,
-        server_to_update: Option<LanguageServerId>,
-        max_severity: DiagnosticSeverity,
-        cx: &mut ViewContext<Self>,
-    ) {
         let path_state = &mut self.path_states[path_ix];
         let mut new_diagnostics = path_state
             .diagnostics
@@ -629,7 +337,7 @@ impl ProjectDiagnosticsEditor {
             .filter(|(diagnostic_data, _)| {
                 diagnostic_data.entry.diagnostic.severity <= max_severity
             })
-            .map(|(diagnostic, _)| diagnostic.clone())
+            .map(|(diagnostic, block_id)| (diagnostic.clone(), Some(block_id)))
             .collect::<Vec<_>>();
         for (server_id, group) in buffer_snapshot
             .diagnostic_groups(server_to_update)
@@ -645,16 +353,16 @@ impl ProjectDiagnosticsEditor {
                     entry: diagnostic.clone(),
                 };
                 let (Ok(i) | Err(i)) = new_diagnostics.binary_search_by(|probe| {
-                    compare_data_locations(probe, &new_data, buffer_snapshot)
+                    compare_data_locations(&probe.0, &new_data, &buffer_snapshot)
                 });
-                new_diagnostics.insert(i, new_data);
+                new_diagnostics.insert(i, (new_data, None));
             }
         }
 
         let multi_buffer_snapshot = self.excerpts.read(cx).snapshot(cx);
         let mut current_excerpts = multi_buffer_snapshot.excerpts().fuse().peekable();
         let mut current_diagnostics = path_state.diagnostics.iter().fuse().peekable();
-        let mut blocks_to_remove = Vec::new();
+        let mut blocks_to_remove = HashSet::default();
         let mut blocks_to_add = Vec::new();
         let mut excerpts_with_new_diagnostics = HashSet::default();
         let mut excerpts_to_remove = Vec::new();
@@ -663,14 +371,14 @@ impl ProjectDiagnosticsEditor {
             HashMap::<ExcerptId, HashMap<ExpandExcerptDirection, u32>>::default();
         let mut latest_excerpt_id = ExcerptId::min();
 
-        for new_diagnostic in &new_diagnostics {
+        for (diagnostic_index, (new_diagnostic, _)) in new_diagnostics.iter().enumerate() {
             loop {
                 match current_excerpts.peek() {
                     None => {
                         let excerpt_ranges = excerpts_to_add.entry(latest_excerpt_id).or_default();
                         let new_range = new_diagnostic.entry.range.clone();
                         let (Ok(i) | Err(i)) = excerpt_ranges.binary_search_by(|probe| {
-                            compare_diagnostic_ranges(probe, &new_range, buffer_snapshot)
+                            compare_diagnostic_ranges(probe, &new_range, &buffer_snapshot)
                         });
                         excerpt_ranges.insert(i, new_range);
                         break;
@@ -838,7 +546,7 @@ impl ProjectDiagnosticsEditor {
                                             compare_diagnostic_ranges(
                                                 probe,
                                                 &new_range,
-                                                buffer_snapshot,
+                                                &buffer_snapshot,
                                             )
                                         });
                                     excerpt_ranges.insert(i, new_range);
@@ -856,7 +564,11 @@ impl ProjectDiagnosticsEditor {
                 match current_diagnostics.peek() {
                     None => {
                         blocks_to_add.push(BlockProperties {
-                            position: (latest_excerpt_id, new_diagnostic.entry.range.start),
+                            position: (
+                                diagnostic_index,
+                                latest_excerpt_id,
+                                new_diagnostic.entry.range.start,
+                            ),
                             height: new_diagnostic
                                 .entry
                                 .diagnostic
@@ -877,14 +589,17 @@ impl ProjectDiagnosticsEditor {
                         match compare_data_locations(
                             current_diagnostic,
                             new_diagnostic,
-                            buffer_snapshot,
+                            &buffer_snapshot,
                         ) {
-                            Ordering::Less => blocks_to_remove.push(*current_block),
+                            Ordering::Less => {
+                                blocks_to_remove.insert(*current_block);
+                            }
                             Ordering::Equal => {
                                 if current_diagnostic != new_diagnostic {
-                                    blocks_to_remove.push(*current_block);
+                                    blocks_to_remove.insert(*current_block);
                                     blocks_to_add.push(BlockProperties {
                                         position: (
+                                            diagnostic_index,
                                             latest_excerpt_id,
                                             new_diagnostic.entry.range.start,
                                         ),
@@ -898,7 +613,6 @@ impl ProjectDiagnosticsEditor {
                                             + 1,
                                         style: BlockStyle::Fixed,
                                         render: diagnostic_block_renderer(
-                                            // TODO kb this clone is not needed
                                             new_diagnostic.entry.diagnostic.clone(),
                                             true,
                                         ),
@@ -942,16 +656,147 @@ impl ProjectDiagnosticsEditor {
             }
         }
 
-        // TODO kb apply the actual changes
-        // TODO kb update selections, move to the next primary one if the excerpt is gone
-        dbg!(
-            "@@@@@@",
-            blocks_to_remove.len(),
-            blocks_to_add.len(),
-            excerpts_to_remove.len(),
-            excerpt_expands.len(),
-            excerpts_to_add.iter().map(|(_, v)| v.len()).sum::<usize>(),
-        );
+        self.excerpts.update(cx, |multi_buffer, cx| {
+            let max_point = buffer_snapshot.max_point();
+            for (mut after_excerpt_id, ranges) in excerpts_to_add {
+                let new_excerpts = multi_buffer.insert_excerpts_after(
+                    after_excerpt_id,
+                    buffer.clone(),
+                    ranges.into_iter().map(|range| {
+                        let mut extended_point_range = range.to_point(&buffer_snapshot);
+                        extended_point_range.start.row = extended_point_range
+                            .start
+                            .row
+                            .saturating_sub(DEFAULT_MULTIBUFFER_CONTEXT);
+                        extended_point_range.end.row = (extended_point_range.end.row
+                            + DEFAULT_MULTIBUFFER_CONTEXT)
+                            .min(max_point.row);
+                        let extended_start =
+                            buffer_snapshot.clip_point(extended_point_range.start, Bias::Left);
+                        let extended_end =
+                            buffer_snapshot.clip_point(extended_point_range.end, Bias::Right);
+                        ExcerptRange {
+                            context: extended_start..extended_end,
+                            primary: None,
+                        }
+                    }),
+                    cx,
+                );
+                after_excerpt_id = new_excerpts.last().copied().unwrap_or(after_excerpt_id);
+            }
+            for ((direction, line_count), excerpts) in excerpt_expands {
+                multi_buffer.expand_excerpts(excerpts, line_count, direction, cx);
+            }
+            multi_buffer.remove_excerpts(excerpts_to_remove, cx);
+        });
+
+        let mut diagnostics_with_blocks = HashMap::default();
+        let new_block_ids = self.editor.update(cx, |editor, cx| {
+            editor.remove_blocks(blocks_to_remove, None, cx);
+            editor.insert_blocks(
+                blocks_to_add
+                    .into_iter()
+                    .enumerate()
+                    .flat_map(|(block_index, block)| {
+                        let (diagnostic_index, excerpt_id, text_anchor) = block.position;
+                        diagnostics_with_blocks.insert(diagnostic_index, block_index);
+                        Some(BlockProperties {
+                            position: multi_buffer_snapshot
+                                .anchor_in_excerpt(excerpt_id, text_anchor)?,
+                            height: block.height,
+                            style: block.style,
+                            render: block.render,
+                            disposition: block.disposition,
+                        })
+                    }),
+                Some(Autoscroll::fit()),
+                cx,
+            )
+        });
+        if new_diagnostics.is_empty() {
+            self.path_states.remove(path_ix);
+        } else {
+            path_state.diagnostics = new_diagnostics
+                .into_iter()
+                .enumerate()
+                .filter_map(|(diagnostic_index, (diagnostic, block_id))| {
+                    let &block_id = block_id.or_else(|| {
+                        let &block_index = diagnostics_with_blocks.get(&diagnostic_index)?;
+                        new_block_ids.get(block_index)
+                    })?;
+                    Some((diagnostic, block_id))
+                })
+                .collect();
+        }
+
+        // TODO kb
+        // self.editor.update(cx, |editor, cx| {
+        //     let groups;
+        //     let mut selections;
+        //     let new_excerpt_ids_by_selection_id;
+        //     if was_empty {
+        //         groups = self.path_states.first()?.diagnostic_groups.as_slice();
+        //         new_excerpt_ids_by_selection_id = [(0, ExcerptId::min())].into_iter().collect();
+        //         selections = vec![Selection {
+        //             id: 0,
+        //             start: 0,
+        //             end: 0,
+        //             reversed: false,
+        //             goal: SelectionGoal::None,
+        //         }];
+        //     } else {
+        //         groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
+        //         new_excerpt_ids_by_selection_id =
+        //             editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.refresh());
+        //         selections = editor.selections.all::<usize>(cx);
+        //     }
+
+        //     // If any selection has lost its position, move it to start of the next primary diagnostic.
+        //     let snapshot = editor.snapshot(cx);
+        //     for selection in &mut selections {
+        //         if let Some(new_excerpt_id) = new_excerpt_ids_by_selection_id.get(&selection.id) {
+        //             let group_ix = match groups.binary_search_by(|probe| {
+        //                 probe
+        //                     .excerpts
+        //                     .last()
+        //                     .unwrap()
+        //                     .cmp(new_excerpt_id, &snapshot.buffer_snapshot)
+        //             }) {
+        //                 Ok(ix) | Err(ix) => ix,
+        //             };
+        //             if let Some(group) = groups.get(group_ix) {
+        //                 if let Some(offset) = multi_buffer_snapshot
+        //                     .anchor_in_excerpt(
+        //                         group.excerpts[group.primary_excerpt_ix],
+        //                         group.primary_diagnostic.range.start,
+        //                     )
+        //                     .map(|anchor| anchor.to_offset(&multi_buffer_snapshot))
+        //                 {
+        //                     selection.start = offset;
+        //                     selection.end = offset;
+        //                 }
+        //             }
+        //         }
+        //     }
+        //     editor.change_selections(None, cx, |s| {
+        //         s.select(selections);
+        //     });
+        //     Some(())
+        // });
+
+        if self.path_states.is_empty() {
+            if self.editor.focus_handle(cx).is_focused(cx) {
+                cx.focus(&self.focus_handle);
+            }
+        } else if self.focus_handle.is_focused(cx) {
+            let focus_handle = self.editor.focus_handle(cx);
+            cx.focus(&focus_handle);
+        }
+
+        #[cfg(test)]
+        self.check_invariants(cx);
+
+        cx.notify();
     }
 
     #[cfg(test)]

@@ -2,11 +2,12 @@ use super::*;
 use collections::HashMap;
 use editor::{
     display_map::{BlockContext, DisplayRow, TransformBlock},
-    DisplayPoint, GutterDimensions,
+    DisplayPoint, ExcerptRange, GutterDimensions,
 };
 use gpui::{px, AvailableSpace, Stateful, TestAppContext, VisualTestContext};
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, PointUtf16, Rope, Unclipped,
+    Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, Point, PointUtf16, Rope,
+    Unclipped,
 };
 use pretty_assertions::assert_eq;
 use project::FakeFs;
@@ -860,17 +861,18 @@ fn get_diagnostics_excerpts(
             }
         });
 
-        for state in &view.path_states {
-            for group in &state.diagnostic_groups {
-                for (ix, excerpt_id) in group.excerpts.iter().enumerate() {
-                    let excerpt_ix = excerpt_indices_by_id[excerpt_id];
-                    let excerpt = &mut result[excerpt_ix];
-                    excerpt.group_id = group.primary_diagnostic.diagnostic.group_id;
-                    excerpt.language_server = group.language_server_id;
-                    excerpt.primary = ix == group.primary_excerpt_ix;
-                }
-            }
-        }
+        // TODO kb
+        // for state in &view.path_states {
+        //     for group in &state.diagnostic_groups {
+        //         for (ix, excerpt_id) in group.excerpts.iter().enumerate() {
+        //             let excerpt_ix = excerpt_indices_by_id[excerpt_id];
+        //             let excerpt = &mut result[excerpt_ix];
+        //             excerpt.group_id = group.primary_diagnostic.diagnostic.group_id;
+        //             excerpt.language_server = group.language_server_id;
+        //             excerpt.primary = ix == group.primary_excerpt_ix;
+        //         }
+        //     }
+        // }
 
         result
     })
