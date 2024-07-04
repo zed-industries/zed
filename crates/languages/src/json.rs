@@ -341,6 +341,7 @@ impl LspAdapter for NodeVersionAdapter {
                 let archive = Archive::new(decompressed_bytes);
                 archive.unpack(&destination_container_path).await?;
             }
+
             fs::copy(
                 destination_container_path.join(format!(
                     "package-version-server{}",
