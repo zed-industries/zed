@@ -317,8 +317,11 @@ impl LspAdapter for NodeVersionAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = latest_version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path =
-            container_dir.join(format!("package-version-server-{}", version.name));
+        #[cfg(target_os = "windows")]
+        let executable_name = format!("package-version-server-{}.exe", version.name);
+        #[cfg(not(target_os = "windows"))]
+        let executable_name = format!("package-version-server-{}", version.name);
+        let destination_path = container_dir.join(executable_name);
         let destination_container_path =
             container_dir.join(format!("package-version-server-{}-tmp", version.name));
         if fs::metadata(&destination_path).await.is_err() {
@@ -339,11 +342,22 @@ impl LspAdapter for NodeVersionAdapter {
                 archive.unpack(&destination_container_path).await?;
             }
 
-            fs::copy(
-                destination_container_path.join("package-version-server"),
-                &destination_path,
-            )
-            .await?;
+            #[cfg(not(target_os = "windows"))]
+            {
+                fs::copy(
+                    destination_container_path.join("package-version-server"),
+                    &destination_path,
+                )
+                .await?;
+            }
+            #[cfg(target_os = "windows")]
+            {
+                fs::copy(
+                    destination_container_path.join("package-version-server.exe"),
+                    &destination_path,
+                )
+                .await?;
+            }
             // todo("windows")
             #[cfg(not(windows))]
             {
