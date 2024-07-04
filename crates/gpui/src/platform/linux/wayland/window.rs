@@ -469,6 +469,10 @@ impl WaylandWindowStatePtr {
                     }
                 }
 
+                if fullscreen || maximized {
+                    tiling = Tiling::tiled();
+                }
+
                 let mut state = self.state.borrow_mut();
                 state.in_progress_configure = Some(InProgressConfigure {
                     size,
