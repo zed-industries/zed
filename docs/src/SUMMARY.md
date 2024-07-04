@@ -30,6 +30,7 @@
 - [C#](./languages/csharp.md)
 - [Clojure](./languages/clojure.md)
 - [CSS](./languages/css.md)
+- [Dart](./languages/dart.md)
 - [Deno](./languages/deno.md)
 - [Elixir](./languages/elixir.md)
 - [Elm](./languages/elm.md)
