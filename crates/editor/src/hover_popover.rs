@@ -7,7 +7,7 @@ use crate::{
 };
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, CursorStyle, Hsla, InteractiveElement, IntoElement,
-    Length, MouseButton, ParentElement, Pixels, Rems, ScrollHandle, SharedString, Size,
+    Length, MouseButton, ParentElement, Pixels, ScrollHandle, SharedString, Size,
     StatefulInteractiveElement, Styled, Task, View, ViewContext, WeakView,
 };
 use language::{DiagnosticEntry, Language, LanguageRegistry};

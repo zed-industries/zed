@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{prelude::*, App, KeyBinding, Length, Rems, StyleRefinement, Task, View, WindowOptions};
+use gpui::{prelude::*, App, KeyBinding, Length, StyleRefinement, Task, View, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::FakeNodeRuntime;
@@ -108,12 +108,12 @@ pub fn main() {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
                         font_family: "Zed Plex Mono".into(),
+                        color: cx.theme().colors().terminal_ansi_black,
                         ..Default::default()
                     },
                     code_block: StyleRefinement {
                         text: Some(gpui::TextStyleRefinement {
                             font_family: Some("Zed Plex Mono".into()),
-                            background_color: Some(cx.theme().colors().editor_background),
                             ..Default::default()
                         }),
                         margin: gpui::EdgesRefinement {

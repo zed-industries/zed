@@ -551,6 +551,9 @@ impl Element for MarkdownElement {
 
                             let mut d = div().w_full().rounded_lg();
                             d.style().refine(&self.style.code_block);
+                            if let Some(code_block_text_style) = &self.style.code_block.text {
+                                builder.push_text_style(code_block_text_style.to_owned());
+                            }
                             builder.push_code_block(language);
                             builder.push_div(d, range, markdown_end);
                         }
@@ -618,6 +621,9 @@ impl Element for MarkdownElement {
                         builder.trim_trailing_newline();
                         builder.pop_div();
                         builder.pop_code_block();
+                        if self.style.code_block.text.is_some() {
+                            builder.pop_text_style();
+                        }
                     }
                     MarkdownTagEnd::HtmlBlock => builder.pop_div(),
                     MarkdownTagEnd::List(_) => {
