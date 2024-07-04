@@ -196,6 +196,7 @@ pub struct X11WindowState {
     hidden: bool,
     active: bool,
     fullscreen: bool,
+    compositor_support: bool,
     decorations: WindowDecorations,
     pub handle: AnyWindowHandle,
     last_insets: [u32; 4],
@@ -470,6 +471,28 @@ impl X11WindowState {
 
         let refresh_rate = mode_refresh_rate(&mode);
 
+        // Check if compositor is avalible
+        let atom_name = format!("_NET_WM_CM_S{}", xcb_connection.setup().roots[0].root);
+        let atom = xcb_connection
+            .intern_atom(false, atom_name.as_bytes())
+            .unwrap()
+            .reply()
+            .map(|reply| reply.atom)
+            .unwrap_or(0);
+
+        let compositor_present = if atom == 0 {
+            false
+        } else {
+            xcb_connection
+                .get_selection_owner(atom)
+                .unwrap()
+                .reply()
+                .map(|reply| reply.owner != 0)
+                .unwrap_or(false)
+        };
+
+        log::info!("Compositor support: {}", compositor_present);
+
         Ok(Self {
             client,
             executor,
@@ -492,6 +515,7 @@ impl X11WindowState {
             handle,
             background_appearance: WindowBackgroundAppearance::Opaque,
             destroyed: false,
+            compositor_support: compositor_present,
             decorations: WindowDecorations::Server,
             last_insets: [0, 0, 0, 0],
             counter_id: sync_request_counter,
@@ -1175,6 +1199,11 @@ impl PlatformWindow for X11Window {
 
     fn window_decorations(&self) -> crate::Decorations {
         let state = self.0.state.borrow();
+
+        // Client window decorations require compositor support
+        if !state.compositor_support {
+            return Decorations::Server;
+        }
 
         match state.decorations {
             WindowDecorations::Server => Decorations::Server,
