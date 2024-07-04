@@ -22,5 +22,5 @@ if  [[ "$ZED_CHANNEL" == "dev" ]]; then
 else
   archive="zed-${target}.tar.gz"
 fi
-export ZED_BUNDLE_PATH="target/release/${archive}"
+export ZED_BUNDLE_PATH="${CARGO_TARGET_DIR:-target}/release/${archive}"
 script/install.sh
