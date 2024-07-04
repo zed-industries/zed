@@ -12,8 +12,8 @@ use editor::{
 };
 use gpui::{
     actions, AnyElement, AnyView, AppContext, ClipboardItem, Entity as _, EventEmitter,
-    FocusableView, IntoElement as _, Model, Pixels, Point, Render, Subscription, Task, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    FocusableView, IntoElement as _, Model, Pixels, Point, Render, Subscription, Task,
+    UpdateGlobal, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use project::Project;
 use std::{
@@ -22,18 +22,19 @@ use std::{
 };
 use ui::{prelude::*, Label};
 use util::ResultExt;
-use workspace::notifications::NotificationId;
 use workspace::{
-    item::{FollowableItem, Item, ItemEvent, ItemHandle, TabContentParams},
-    register_followable_item,
+    item::{FollowableView, Item, ItemEvent, ItemHandle, TabContentParams},
     searchable::SearchableItemHandle,
     ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
 };
+use workspace::{notifications::NotificationId, FollowableViewRegistry};
 
 actions!(collab, [CopyLink]);
 
 pub fn init(cx: &mut AppContext) {
-    register_followable_item::<ChannelView>(cx)
+    FollowableViewRegistry::update_global(cx, |registry, _| {
+        registry.register_item::<ChannelView>()
+    });
 }
 
 pub struct ChannelView {
@@ -452,7 +453,9 @@ impl Item for ChannelView {
     }
 }
 
-impl FollowableItem for ChannelView {
+impl FollowableView for ChannelView {
+    type Event = EditorEvent;
+
     fn remote_id(&self) -> Option<workspace::ViewId> {
         self.remote_id
     }
