@@ -361,8 +361,9 @@ impl ProjectDiagnosticsEditor {
         let mut current_diagnostics = path_state.diagnostics.iter().fuse().peekable();
         let mut blocks_to_remove = HashSet::default();
         let mut blocks_to_add = Vec::new();
+        let mut unchanged_blocks = HashMap::default();
         let mut excerpts_with_new_diagnostics = HashSet::default();
-        let mut excerpts_to_remove = Vec::new();
+        let mut excerpts_to_remove = HashSet::default();
         let mut excerpts_to_add = HashMap::<ExcerptId, Vec<Range<language::Anchor>>>::default();
         let mut excerpts_to_expand =
             HashMap::<ExcerptId, HashMap<ExpandExcerptDirection, u32>>::default();
@@ -400,6 +401,7 @@ impl ProjectDiagnosticsEditor {
                                 Ordering::Greater | Ordering::Equal,
                             ) => {
                                 excerpts_with_new_diagnostics.insert(*current_excerpt_id);
+                                excerpts_to_remove.remove(current_excerpt_id);
                                 break;
                             }
                             /*
@@ -444,6 +446,7 @@ impl ProjectDiagnosticsEditor {
                                     .or_default();
                                 *expand_value = (*expand_value).max(expand_up).max(expand_down);
                                 excerpts_with_new_diagnostics.insert(*current_excerpt_id);
+                                excerpts_to_remove.remove(current_excerpt_id);
                                 break;
                             }
                             /*
@@ -459,53 +462,6 @@ impl ProjectDiagnosticsEditor {
                              cur_s cur_e
                             */
                             (Ordering::Less, Ordering::Less) => {
-                                if current_excerpt_range
-                                    .context
-                                    .start
-                                    .cmp(&new_diagnostic.entry.range.end, &buffer_snapshot)
-                                    .is_le()
-                                {
-                                    let expand_up = current_excerpt_range
-                                        .context
-                                        .start
-                                        .to_point(&buffer_snapshot)
-                                        .row
-                                        .saturating_sub(
-                                            new_diagnostic
-                                                .entry
-                                                .range
-                                                .start
-                                                .to_point(&buffer_snapshot)
-                                                .row,
-                                        );
-                                    let expand_value = excerpts_to_expand
-                                        .entry(*current_excerpt_id)
-                                        .or_default()
-                                        .entry(ExpandExcerptDirection::Up)
-                                        .or_default();
-                                    *expand_value = (*expand_value).max(expand_up);
-                                    excerpts_with_new_diagnostics.insert(*current_excerpt_id);
-                                    break;
-                                } else {
-                                    if !excerpts_with_new_diagnostics.contains(current_excerpt_id) {
-                                        excerpts_to_remove.push(*current_excerpt_id);
-                                    }
-                                    break;
-                                }
-                            }
-                            /*
-                                  cur_s      cur_e
-                            ---->>>>>[<<<<----]--
-                                >        <
-                               new_s    new_e
-
-                            or
-                                      cur_s cur_e
-                            ---->>><<<--[----]--
-                                >    <
-                               new_s new_e
-                            */
-                            (Ordering::Greater, Ordering::Greater) => {
                                 if current_excerpt_range
                                     .context
                                     .end
@@ -532,6 +488,54 @@ impl ProjectDiagnosticsEditor {
                                         .or_default();
                                     *expand_value = (*expand_value).max(expand_down);
                                     excerpts_with_new_diagnostics.insert(*current_excerpt_id);
+                                    excerpts_to_remove.remove(current_excerpt_id);
+                                    break;
+                                } else if !excerpts_with_new_diagnostics
+                                    .contains(current_excerpt_id)
+                                {
+                                    excerpts_to_remove.insert(*current_excerpt_id);
+                                }
+                            }
+                            /*
+                                  cur_s      cur_e
+                            ---->>>>>[<<<<----]--
+                                >        <
+                               new_s    new_e
+
+                            or
+                                      cur_s cur_e
+                            ---->>><<<--[----]--
+                                >    <
+                               new_s new_e
+                            */
+                            (Ordering::Greater, Ordering::Greater) => {
+                                if current_excerpt_range
+                                    .context
+                                    .start
+                                    .cmp(&new_diagnostic.entry.range.end, &buffer_snapshot)
+                                    .is_le()
+                                {
+                                    let expand_up = current_excerpt_range
+                                        .context
+                                        .start
+                                        .to_point(&buffer_snapshot)
+                                        .row
+                                        .saturating_sub(
+                                            new_diagnostic
+                                                .entry
+                                                .range
+                                                .start
+                                                .to_point(&buffer_snapshot)
+                                                .row,
+                                        );
+                                    let expand_value = excerpts_to_expand
+                                        .entry(*current_excerpt_id)
+                                        .or_default()
+                                        .entry(ExpandExcerptDirection::Up)
+                                        .or_default();
+                                    *expand_value = (*expand_value).max(expand_up);
+                                    excerpts_with_new_diagnostics.insert(*current_excerpt_id);
+                                    excerpts_to_remove.remove(current_excerpt_id);
                                     break;
                                 } else {
                                     let excerpt_ranges =
@@ -546,6 +550,7 @@ impl ProjectDiagnosticsEditor {
                                             )
                                         });
                                     excerpt_ranges.insert(i, new_range);
+                                    break;
                                 }
                             }
                         }
@@ -556,7 +561,6 @@ impl ProjectDiagnosticsEditor {
                 }
             }
 
-            // TODO kb warnings toggle keeps one last warning
             // TODO kb diagnostics rendered have X button that does not work (need to hide it)
             // TODO kb deduplicate identical diagnostics text for the same line
             loop {
@@ -575,10 +579,14 @@ impl ProjectDiagnosticsEditor {
                                 blocks_to_remove.insert(*current_block);
                             }
                             Ordering::Equal => {
-                                if current_diagnostic != new_diagnostic {
+                                if current_diagnostic == new_diagnostic {
+                                    unchanged_blocks.insert(diagnostic_index, *current_block);
+                                } else {
                                     blocks_to_remove.insert(*current_block);
                                     blocks_to_add.push(diagnostic_index);
                                 }
+                                let _ = current_diagnostics.next();
+                                break;
                             }
                             Ordering::Greater => break,
                         }
@@ -587,7 +595,11 @@ impl ProjectDiagnosticsEditor {
                 }
             }
         }
-        excerpts_to_remove.extend(current_excerpts.map(|(excerpt_id, ..)| excerpt_id));
+        excerpts_to_remove.extend(
+            current_excerpts
+                .filter(|(excerpt_id, ..)| !excerpts_with_new_diagnostics.contains(excerpt_id))
+                .map(|(excerpt_id, ..)| excerpt_id),
+        );
         blocks_to_remove.extend(current_diagnostics.map(|&(_, block_id)| block_id));
 
         let mut excerpt_expands = HashMap::default();
@@ -660,6 +672,7 @@ impl ProjectDiagnosticsEditor {
                 .into_iter()
                 .enumerate()
                 .flat_map(|(block_index, diagnostic_index)| {
+                    diagnostics_with_blocks.insert(diagnostic_index, block_index);
                     let new_diagnostic = &new_diagnostics[diagnostic_index].0.entry;
                     let block_position = new_diagnostic.range.start;
                     let excerpt_id = loop {
@@ -685,7 +698,6 @@ impl ProjectDiagnosticsEditor {
                         }
                         let _ = updated_excerpts.next();
                     }?;
-                    diagnostics_with_blocks.insert(diagnostic_index, block_index);
 
                     Some(BlockProperties {
                         position: editor_snapshot
@@ -709,10 +721,12 @@ impl ProjectDiagnosticsEditor {
                 .into_iter()
                 .enumerate()
                 .filter_map(|(diagnostic_index, (diagnostic, block_id))| {
-                    let &block_id = block_id.or_else(|| {
-                        let &block_index = diagnostics_with_blocks.get(&diagnostic_index)?;
-                        new_block_ids.get(block_index)
-                    })?;
+                    let &block_id = block_id
+                        .or_else(|| unchanged_blocks.get(&diagnostic_index))
+                        .or_else(|| {
+                            let &block_index = diagnostics_with_blocks.get(&diagnostic_index)?;
+                            new_block_ids.get(block_index)
+                        })?;
                     Some((diagnostic, block_id))
                 })
                 .collect();
