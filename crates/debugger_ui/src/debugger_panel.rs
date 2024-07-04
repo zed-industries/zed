@@ -6,6 +6,7 @@ use dap::{
     Scope, ScopesArguments, StackFrame, StackTraceArguments, StoppedEvent, ThreadEvent,
     ThreadEventReason, Variable, VariablesArguments,
 };
+use futures::future::try_join_all;
 use gpui::{
     actions, list, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
     FocusableView, ListState, Model, Subscription, Task, View, ViewContext, WeakView,
@@ -361,33 +362,49 @@ impl DebugPanel {
                 })
                 .await?;
 
+            let mut scope_tasks = Vec::new();
+            for stack_frame in stack_trace_response.stack_frames.clone().into_iter() {
+                let frame_id = stack_frame.id.clone();
+                let client = client.clone();
+                scope_tasks.push(async move {
+                    anyhow::Ok((
+                        frame_id.clone(),
+                        client
+                            .request::<Scopes>(ScopesArguments { frame_id })
+                            .await?,
+                    ))
+                });
+            }
+
             let mut scopes: HashMap<u64, Vec<Scope>> = HashMap::new();
             let mut variables: HashMap<u64, Vec<Variable>> = HashMap::new();
 
-            for stack_frame in stack_trace_response.stack_frames.clone().into_iter() {
-                let scope_response = client
-                    .request::<Scopes>(ScopesArguments {
-                        frame_id: stack_frame.id,
-                    })
-                    .await?;
+            let mut variable_tasks = Vec::new();
+            for (thread_id, response) in try_join_all(scope_tasks).await? {
+                scopes.insert(thread_id, response.scopes.clone());
 
-                scopes.insert(stack_frame.id, scope_response.scopes.clone());
-
-                for scope in scope_response.scopes {
-                    variables.insert(
-                        scope.variables_reference,
-                        client
-                            .request::<Variables>(VariablesArguments {
-                                variables_reference: scope.variables_reference,
-                                filter: None,
-                                start: None,
-                                count: None,
-                                format: None,
-                            })
-                            .await?
-                            .variables,
-                    );
+                for scope in response.scopes {
+                    let scope_reference = scope.variables_reference.clone();
+                    let client = client.clone();
+                    variable_tasks.push(async move {
+                        anyhow::Ok((
+                            scope_reference.clone(),
+                            client
+                                .request::<Variables>(VariablesArguments {
+                                    variables_reference: scope_reference,
+                                    filter: None,
+                                    start: None,
+                                    count: None,
+                                    format: None,
+                                })
+                                .await?,
+                        ))
+                    });
                 }
+            }
+
+            for (scope_reference, response) in try_join_all(variable_tasks).await? {
+                variables.insert(scope_reference, response.variables.clone());
             }
 
             this.update(&mut cx, |this, cx| {
