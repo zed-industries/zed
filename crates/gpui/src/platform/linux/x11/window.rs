@@ -54,6 +54,7 @@ x11rb::atom_manager! {
         _MOTIF_WM_HINTS,
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
+        _GTK_EDGE_CONSTRAINTS,
     }
 }
 
@@ -681,7 +682,9 @@ impl X11WindowStatePtr {
 
     pub fn property_notify(&self, event: xproto::PropertyNotifyEvent) {
         let mut state = self.state.borrow_mut();
-        if event.atom == state.atoms._NET_WM_STATE {
+        if event.atom == state.atoms._NET_WM_STATE
+            || event.atom == state.atoms._GTK_EDGE_CONSTRAINTS
+        {
             self.set_wm_properties(state);
         }
     }
