@@ -3578,6 +3578,7 @@ impl<'a> WindowContext<'a> {
 
     /// Focus the current window and bring it to the foreground at the platform level.
     pub fn activate_window(&self) {
+        println!("WindowContext.activate_window called");
         self.window.platform_window.activate();
     }
 

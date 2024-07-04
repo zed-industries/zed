@@ -221,6 +221,10 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn activate(&self, ignoring_other_apps: bool) {
+        println!(
+            "Platform.activate(ignoring_other_apps: {}) called",
+            ignoring_other_apps
+        );
         log::info!("activate is not implemented on Linux, ignoring the call")
     }
 

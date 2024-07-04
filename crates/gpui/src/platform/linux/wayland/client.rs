@@ -21,6 +21,7 @@ use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_data_device_manager::DndAction;
 use wayland_client::protocol::wl_data_offer::WlDataOffer;
 use wayland_client::protocol::wl_pointer::AxisSource;
+use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::protocol::{
     wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output, wl_region,
 };
@@ -221,6 +222,7 @@ pub(crate) struct WaylandClientState {
     primary_data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
     cursor: Cursor,
     pending_open_uri: Option<String>,
+    pub pending_window_activation: Option<WlSurface>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
 }
@@ -532,6 +534,7 @@ impl WaylandClient {
             cursor,
             pending_open_uri: None,
             event_loop: Some(event_loop),
+            pending_window_activation: None,
         }));
 
         WaylandSource::new(conn, event_queue)
@@ -957,8 +960,17 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
         if let xdg_activation_token_v1::Event::Done { token } = event {
             if let Some(uri) = state.pending_open_uri.take() {
                 open_uri_internal(&uri, Some(&token));
-            } else {
-                log::error!("called while pending_open_uri is None");
+            } else if let Some(surface) = state.pending_window_activation.take() {
+                println!("we got a surface");
+                if let Some(ref manager) = state.globals.activation {
+                    println!("we're calling activate. token: {:?}", token);
+                    manager.activate(token, &surface);
+                }
+                // if let Some(surface) = state.pending_activations.remove(&token) {
+                //     if let Some(ref manager) = state.globals.activation {
+                //         manager.activate(token, &surface);
+                //     }
+                // }
             }
         }
         token.destroy();

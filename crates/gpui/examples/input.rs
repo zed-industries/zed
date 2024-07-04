@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, time::Duration};
 
 use gpui::*;
 use unicode_segmentation::*;
@@ -479,10 +479,31 @@ fn main() {
                 },
             )
             .unwrap();
+
         window
             .update(cx, |view, cx| {
                 view.focus_handle.focus(cx);
-                cx.activate(true)
+                cx.activate(true);
+
+                cx.spawn(|this, mut cx| async move {
+                    cx.background_executor().timer(Duration::from_secs(5)).await;
+                    this.update(&mut cx, |_, cx| {
+                        println!("calling cx.activate()");
+                        cx.activate(true);
+                        println!("cx.activate() called.");
+                    })
+                    .unwrap();
+
+                    println!("----------");
+
+                    cx.update(|cx| {
+                        println!("calling cx.activate_window()");
+                        cx.activate_window();
+                        println!("cx.activate_window() called");
+                    })
+                    .unwrap();
+                })
+                .detach();
             })
             .unwrap();
     });

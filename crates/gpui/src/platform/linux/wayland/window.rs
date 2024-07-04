@@ -74,6 +74,7 @@ struct InProgressConfigure {
 pub struct WaylandWindowState {
     xdg_surface: xdg_surface::XdgSurface,
     acknowledged_first_configure: bool,
+    app_id: Option<String>,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     appearance: WindowAppearance,
@@ -156,6 +157,7 @@ impl WaylandWindowState {
 
         Ok(Self {
             xdg_surface,
+            app_id: None,
             acknowledged_first_configure: false,
             surface,
             decoration,
@@ -808,7 +810,36 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn activate(&self) {
-        log::info!("Wayland does not support this API");
+        println!("WaylandWindow.activate called");
+
+        let state = self.borrow();
+        let activation = state.globals.activation.as_ref().cloned();
+
+        if let Some(manager) = activation {
+            let token = manager.get_activation_token(&state.globals.qh, ());
+            let serial = state.client.get_serial(SerialKind::MousePress);
+
+            println!("Creating activation token...");
+            token.set_serial(serial, &state.globals.seat);
+            println!("Token serial set: {:?}", serial);
+            token.set_surface(&state.surface);
+            println!("Surface set for activation: {:?}", &state.surface);
+            if let Some(app_id) = state.app_id.as_ref() {
+                token.set_app_id(app_id.clone());
+                println!("App ID set for activation: {}", app_id);
+            }
+
+            state
+                .client
+                .get_client()
+                .borrow_mut()
+                .pending_window_activation = Some(state.surface.clone());
+
+            token.commit();
+            println!("Activation token committed, waiting for done event.");
+        } else {
+            log::warn!("Wayland compositor does not support xdg_activation_v1");
+        }
     }
 
     fn is_active(&self) -> bool {
@@ -820,7 +851,9 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_app_id(&mut self, app_id: &str) {
-        self.borrow().toplevel.set_app_id(app_id.to_owned());
+        let mut state = self.borrow_mut();
+        state.app_id = Some(app_id.to_owned());
+        state.toplevel.set_app_id(app_id.to_owned());
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
