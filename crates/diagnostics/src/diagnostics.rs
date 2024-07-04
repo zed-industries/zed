@@ -9,8 +9,7 @@ use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
-    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
-    highlight_diagnostic_message,
+    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, DisplayRow},
     scroll::Autoscroll,
     Bias, Editor, EditorEvent, ExcerptId, MultiBuffer,
 };
@@ -19,14 +18,12 @@ use futures::{
     StreamExt as _,
 };
 use gpui::{
-    actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
-    FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
-    SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    actions, div, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, SharedString,
+    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{
-    Buffer, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt,
-    ToPoint,
+    Buffer, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, ToPoint,
 };
 use lsp::LanguageServerId;
 use multi_buffer::{build_excerpt_ranges, ExpandExcerptDirection};
@@ -560,15 +557,14 @@ impl ProjectDiagnosticsEditor {
                 }
             }
 
+            // TODO kb warnings toggle keeps one last warning
+            // TODO kb diagnostics rendered have X button that does not work (need to hide it)
+            // TODO kb deduplicate identical diagnostics text for the same line
             loop {
                 match current_diagnostics.peek() {
                     None => {
                         blocks_to_add.push(BlockProperties {
-                            position: (
-                                diagnostic_index,
-                                latest_excerpt_id,
-                                new_diagnostic.entry.range.start,
-                            ),
+                            position: (diagnostic_index, new_diagnostic.entry.range.start),
                             height: new_diagnostic
                                 .entry
                                 .diagnostic
@@ -576,12 +572,13 @@ impl ProjectDiagnosticsEditor {
                                 .matches('\n')
                                 .count() as u8
                                 + 1,
-                            style: BlockStyle::Fixed,
+                            style: BlockStyle::Sticky,
                             render: diagnostic_block_renderer(
                                 new_diagnostic.entry.diagnostic.clone(),
+                                // TODO kb could be invalid?
                                 true,
                             ),
-                            disposition: BlockDisposition::Below,
+                            disposition: BlockDisposition::Above,
                         });
                         break;
                     }
@@ -600,7 +597,6 @@ impl ProjectDiagnosticsEditor {
                                     blocks_to_add.push(BlockProperties {
                                         position: (
                                             diagnostic_index,
-                                            latest_excerpt_id,
                                             new_diagnostic.entry.range.start,
                                         ),
                                         height: new_diagnostic
@@ -611,12 +607,12 @@ impl ProjectDiagnosticsEditor {
                                             .count()
                                             as u8
                                             + 1,
-                                        style: BlockStyle::Fixed,
+                                        style: BlockStyle::Sticky,
                                         render: diagnostic_block_renderer(
                                             new_diagnostic.entry.diagnostic.clone(),
                                             true,
                                         ),
-                                        disposition: BlockDisposition::Below,
+                                        disposition: BlockDisposition::Above,
                                     });
                                 }
                             }
@@ -656,7 +652,7 @@ impl ProjectDiagnosticsEditor {
             }
         }
 
-        // TODO kb need to merge/extend intersecting ranges, but why cannot multi buffer do that?
+        drop(multi_buffer_snapshot);
         self.excerpts.update(cx, |multi_buffer, cx| {
             let max_point = buffer_snapshot.max_point();
             for (after_excerpt_id, ranges) in excerpts_to_add {
@@ -692,29 +688,54 @@ impl ProjectDiagnosticsEditor {
             multi_buffer.remove_excerpts(excerpts_to_remove, cx);
         });
 
+        let updated_multi_buffer_snapshot = self.excerpts.read(cx).snapshot(cx);
+        let mut updated_excerpts = updated_multi_buffer_snapshot.excerpts().fuse().peekable();
         let mut diagnostics_with_blocks = HashMap::default();
+        let new_blocks = blocks_to_add
+            .into_iter()
+            .enumerate()
+            .flat_map(|(block_index, block)| {
+                let excerpt_id = loop {
+                    match updated_excerpts.peek() {
+                        None => break None,
+                        Some((excerpt_id, excerpt_buffer_snapshot, excerpt_range)) => {
+                            let block_position = block.position.1;
+                            let excerpt_range = &excerpt_range.context;
+
+                            match block_position.cmp(&excerpt_range.start, excerpt_buffer_snapshot)
+                            {
+                                Ordering::Less => break None,
+                                Ordering::Equal | Ordering::Greater => {
+                                    match block_position
+                                        .cmp(&excerpt_range.end, excerpt_buffer_snapshot)
+                                    {
+                                        Ordering::Equal | Ordering::Less => {
+                                            break Some(*excerpt_id)
+                                        }
+                                        Ordering::Greater => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let _ = updated_excerpts.next();
+                }?;
+                let (diagnostic_index, text_anchor) = block.position;
+                diagnostics_with_blocks.insert(diagnostic_index, block_index);
+
+                Some(BlockProperties {
+                    position: updated_multi_buffer_snapshot
+                        .anchor_in_excerpt(excerpt_id, text_anchor)?,
+                    height: block.height,
+                    style: block.style,
+                    render: block.render,
+                    disposition: block.disposition,
+                })
+            });
+        // TODO kb rework block approach: need to unite them if they belong to the same display_row
         let new_block_ids = self.editor.update(cx, |editor, cx| {
             editor.remove_blocks(blocks_to_remove, None, cx);
-            editor.insert_blocks(
-                blocks_to_add
-                    .into_iter()
-                    .enumerate()
-                    .flat_map(|(block_index, block)| {
-                        let (diagnostic_index, excerpt_id, text_anchor) = block.position;
-                        diagnostics_with_blocks.insert(diagnostic_index, block_index);
-                        Some(BlockProperties {
-                            position: multi_buffer_snapshot
-                                // TODO kb this is always None, fix
-                                .anchor_in_excerpt(excerpt_id, text_anchor)?,
-                            height: block.height,
-                            style: block.style,
-                            render: block.render,
-                            disposition: block.disposition,
-                        })
-                    }),
-                Some(Autoscroll::fit()),
-                cx,
-            )
+            editor.insert_blocks(new_blocks, Some(Autoscroll::fit()), cx)
         });
         if new_diagnostics.is_empty() {
             self.path_states.remove(path_ix);
@@ -768,12 +789,12 @@ impl ProjectDiagnosticsEditor {
         //                 Ok(ix) | Err(ix) => ix,
         //             };
         //             if let Some(group) = groups.get(group_ix) {
-        //                 if let Some(offset) = multi_buffer_snapshot
+        //                 if let Some(offset) = updated_multi_buffer_snapshot
         //                     .anchor_in_excerpt(
         //                         group.excerpts[group.primary_excerpt_ix],
         //                         group.primary_diagnostic.range.start,
         //                     )
-        //                     .map(|anchor| anchor.to_offset(&multi_buffer_snapshot))
+        //                     .map(|anchor| anchor.to_offset(&updated_multi_buffer_snapshot))
         //                 {
         //                     selection.start = offset;
         //                     selection.end = offset;
@@ -1003,75 +1024,6 @@ impl Item for ProjectDiagnosticsEditor {
     ) -> Task<Result<View<Self>>> {
         Task::ready(Ok(cx.new_view(|cx| Self::new(project, workspace, cx))))
     }
-}
-
-const DIAGNOSTIC_HEADER: &'static str = "diagnostic header";
-
-fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
-    let (message, code_ranges) = highlight_diagnostic_message(&diagnostic);
-    let message: SharedString = message;
-    Box::new(move |cx| {
-        let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
-        h_flex()
-            .id(DIAGNOSTIC_HEADER)
-            .py_2()
-            .pl_10()
-            .pr_5()
-            .w_full()
-            .justify_between()
-            .gap_2()
-            .child(
-                h_flex()
-                    .gap_3()
-                    .map(|stack| {
-                        stack.child(
-                            svg()
-                                .size(cx.text_style().font_size)
-                                .flex_none()
-                                .map(|icon| {
-                                    if diagnostic.severity == DiagnosticSeverity::ERROR {
-                                        icon.path(IconName::XCircle.path())
-                                            .text_color(Color::Error.color(cx))
-                                    } else {
-                                        icon.path(IconName::ExclamationTriangle.path())
-                                            .text_color(Color::Warning.color(cx))
-                                    }
-                                }),
-                        )
-                    })
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                StyledText::new(message.clone()).with_highlights(
-                                    &cx.text_style(),
-                                    code_ranges
-                                        .iter()
-                                        .map(|range| (range.clone(), highlight_style)),
-                                ),
-                            )
-                            .when_some(diagnostic.code.as_ref(), |stack, code| {
-                                stack.child(
-                                    div()
-                                        .child(SharedString::from(format!("({code})")))
-                                        .text_color(cx.theme().colors().text_muted),
-                                )
-                            }),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .when_some(diagnostic.source.as_ref(), |stack, source| {
-                        stack.child(
-                            div()
-                                .child(SharedString::from(source.clone()))
-                                .text_color(cx.theme().colors().text_muted),
-                        )
-                    }),
-            )
-            .into_any_element()
-    })
 }
 
 fn compare_data_locations(
