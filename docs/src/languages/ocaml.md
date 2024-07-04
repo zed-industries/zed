@@ -1,13 +1,12 @@
 # OCaml
 
-- Tree Sitter: [tree-sitter-ocaml](https://github.com/tree-sitter/tree-sitter-ocaml)
-- Language Server: [ocamllsp](https://github.com/ocaml/ocaml-lsp)
+OCaml support is available through the [OCaml extension](https://github.com/zed-industries/zed/tree/main/extensions/ocaml).
 
 ## Setup Instructions
 
 If you have the development environment already setup, you can skip to [Launching Zed](#launching-zed)
 
-### Using OPAM
+### Using Opam
 
 Opam is the official package manager for OCaml and is highly recommended for getting started with OCaml. To get started using Opam, please follow the instructions provided [here](https://ocaml.org/install).
 
