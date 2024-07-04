@@ -488,7 +488,7 @@ impl EditorElement {
                 SelectPhase::BeginColumnar {
                     position,
                     reset: false,
-                    goal_column: point_for_position.exact_unclipped.column(),
+                    goal_position: point_for_position.exact_unclipped,
                 },
                 cx,
             );
@@ -560,7 +560,7 @@ impl EditorElement {
             SelectPhase::BeginColumnar {
                 position,
                 reset: true,
-                goal_column: point_for_position.exact_unclipped.column(),
+                goal_position: point_for_position.exact_unclipped,
             },
             cx,
         );
@@ -654,7 +654,7 @@ impl EditorElement {
         editor.select(
             SelectPhase::Update {
                 position: point_for_position.previous_valid,
-                goal_column: point_for_position.exact_unclipped.column(),
+                goal_position: point_for_position.exact_unclipped,
                 scroll_delta,
             },
             cx,
@@ -4636,9 +4636,7 @@ impl Element for EditorElement {
                             SoftWrap::None => None,
                             SoftWrap::PreferLine => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
                             SoftWrap::EditorWidth => Some(editor_width),
-                            SoftWrap::Column(column) => {
-                                Some(editor_width.min(column as f32 * em_advance))
-                            }
+                            SoftWrap::Column(column) => Some(column as f32 * em_advance),
                         };
 
                         if editor.set_wrap_width(wrap_width, cx) {

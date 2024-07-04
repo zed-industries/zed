@@ -311,7 +311,7 @@ pub enum SelectPhase {
     BeginColumnar {
         position: DisplayPoint,
         reset: bool,
-        goal_column: u32,
+        goal_position: DisplayPoint,
     },
     Extend {
         position: DisplayPoint,
@@ -319,7 +319,7 @@ pub enum SelectPhase {
     },
     Update {
         position: DisplayPoint,
-        goal_column: u32,
+        goal_position: DisplayPoint,
         scroll_delta: gpui::Point<f32>,
     },
     End,
@@ -2474,18 +2474,18 @@ impl Editor {
             } => self.begin_selection(position, add, click_count, cx),
             SelectPhase::BeginColumnar {
                 position,
-                goal_column,
+                goal_position,
                 reset,
-            } => self.begin_columnar_selection(position, goal_column, reset, cx),
+            } => self.begin_columnar_selection(position, goal_position, reset, cx),
             SelectPhase::Extend {
                 position,
                 click_count,
             } => self.extend_selection(position, click_count, cx),
             SelectPhase::Update {
                 position,
-                goal_column,
+                goal_position,
                 scroll_delta,
-            } => self.update_selection(position, goal_column, scroll_delta, cx),
+            } => self.update_selection(position, goal_position, scroll_delta, cx),
             SelectPhase::End => self.end_selection(cx),
         }
     }
@@ -2629,7 +2629,7 @@ impl Editor {
     fn begin_columnar_selection(
         &mut self,
         position: DisplayPoint,
-        goal_column: u32,
+        goal_position: DisplayPoint,
         reset: bool,
         cx: &mut ViewContext<Self>,
     ) {
@@ -2661,7 +2661,7 @@ impl Editor {
             self.select_columns(
                 tail.to_display_point(&display_map),
                 position,
-                goal_column,
+                goal_position,
                 &display_map,
                 cx,
             );
@@ -2671,7 +2671,7 @@ impl Editor {
     fn update_selection(
         &mut self,
         position: DisplayPoint,
-        goal_column: u32,
+        goal_position: DisplayPoint,
         scroll_delta: gpui::Point<f32>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -2679,7 +2679,7 @@ impl Editor {
 
         if let Some(tail) = self.columnar_selection_tail.as_ref() {
             let tail = tail.to_display_point(&display_map);
-            self.select_columns(tail, position, goal_column, &display_map, cx);
+            self.select_columns(tail, position, goal_position, &display_map, cx);
         } else if let Some(mut pending) = self.selections.pending_anchor() {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let head;
@@ -2687,6 +2687,7 @@ impl Editor {
             let mode = self.selections.pending_mode().unwrap();
             match &mode {
                 SelectMode::Character => {
+                    // head = goal_position.to_point(&display_map);
                     head = position.to_point(&display_map);
                     tail = pending.tail().to_point(&buffer);
                 }
@@ -2753,6 +2754,11 @@ impl Editor {
                 pending.reversed = false;
             }
 
+            println!(
+                "------1-----{:?}-----{:?}------{:?}------{:?}----",
+                position, goal_position, head, tail
+            );
+
             self.change_selections(None, cx, |s| {
                 s.set_pending(pending, mode);
             });
@@ -2780,14 +2786,14 @@ impl Editor {
         &mut self,
         tail: DisplayPoint,
         head: DisplayPoint,
-        goal_column: u32,
+        goal_position: DisplayPoint,
         display_map: &DisplaySnapshot,
         cx: &mut ViewContext<Self>,
     ) {
         let start_row = cmp::min(tail.row(), head.row());
         let end_row = cmp::max(tail.row(), head.row());
-        let start_column = cmp::min(tail.column(), goal_column);
-        let end_column = cmp::max(tail.column(), goal_column);
+        let start_column = cmp::min(tail.column(), goal_position.column());
+        let end_column = cmp::max(tail.column(), goal_position.column());
         let reversed = start_column < tail.column();
 
         let selection_ranges = (start_row.0..=end_row.0)
