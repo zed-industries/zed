@@ -561,8 +561,6 @@ impl ProjectDiagnosticsEditor {
                 }
             }
 
-            // TODO kb diagnostics rendered have X button that does not work (need to hide it)
-            // TODO kb deduplicate identical diagnostics text for the same line
             loop {
                 match current_diagnostics.peek() {
                     None => {
@@ -705,7 +703,11 @@ impl ProjectDiagnosticsEditor {
                             .anchor_in_excerpt(excerpt_id, block_position)?,
                         height: new_diagnostic.diagnostic.message.matches('\n').count() as u8 + 1,
                         style: BlockStyle::Sticky,
-                        render: diagnostic_block_renderer(new_diagnostic.diagnostic.clone(), true),
+                        render: diagnostic_block_renderer(
+                            new_diagnostic.diagnostic.clone(),
+                            false,
+                            true,
+                        ),
                         disposition: BlockDisposition::Above,
                     })
                 });

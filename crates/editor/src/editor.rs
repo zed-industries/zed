@@ -9762,7 +9762,7 @@ impl Editor {
                         *block_id,
                         (
                             None,
-                            diagnostic_block_renderer(diagnostic.clone(), is_valid),
+                            diagnostic_block_renderer(diagnostic.clone(), true, is_valid),
                         ),
                     );
                 }
@@ -9815,7 +9815,7 @@ impl Editor {
                             style: BlockStyle::Fixed,
                             position: buffer.anchor_after(entry.range.start),
                             height: message_height,
-                            render: diagnostic_block_renderer(diagnostic, true),
+                            render: diagnostic_block_renderer(diagnostic, true, true),
                             disposition: BlockDisposition::Below,
                         }
                     }),
@@ -12684,7 +12684,11 @@ impl InvalidationRegion for SnippetState {
     }
 }
 
-pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> RenderBlock {
+pub fn diagnostic_block_renderer(
+    diagnostic: Diagnostic,
+    allow_closing: bool,
+    _is_valid: bool,
+) -> RenderBlock {
     let (text_without_backticks, code_ranges) = highlight_diagnostic_message(&diagnostic);
 
     Box::new(move |cx: &mut BlockContext| {
@@ -12706,15 +12710,17 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
             } else {
                 h_flex()
             }
-            .children(diagnostic.is_primary.then(|| {
-                IconButton::new(("close-block", block_id), IconName::XCircle)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::Compact)
-                    .style(ButtonStyle::Transparent)
-                    .visible_on_hover(group_id.clone())
-                    .on_click(move |_click, cx| cx.dispatch_action(Box::new(Cancel)))
-                    .tooltip(|cx| Tooltip::for_action("Close Diagnostics", &Cancel, cx))
-            }))
+            .when(allow_closing, |div| {
+                div.children(diagnostic.is_primary.then(|| {
+                    IconButton::new(("close-block", block_id), IconName::XCircle)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::Compact)
+                        .style(ButtonStyle::Transparent)
+                        .visible_on_hover(group_id.clone())
+                        .on_click(move |_click, cx| cx.dispatch_action(Box::new(Cancel)))
+                        .tooltip(|cx| Tooltip::for_action("Close Diagnostics", &Cancel, cx))
+                }))
+            })
             .child(
                 IconButton::new(("copy-block", block_id), IconName::Copy)
                     .icon_color(Color::Muted)
