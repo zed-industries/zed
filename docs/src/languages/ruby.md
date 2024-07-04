@@ -2,6 +2,8 @@
 
 Ruby support is available through the [Ruby extension](https://github.com/zed-industries/zed/tree/main/extensions/ruby).
 
+The Ruby extension also provides support for ERB files.
+
 ## Choosing a language server
 
 The Ruby extension offers both `solargraph` and `ruby-lsp` language server support.
