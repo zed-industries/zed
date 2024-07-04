@@ -1194,7 +1194,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                         && state.repeat.current_keycode.is_some()
                                         && state.keyboard_focused_window.is_some();
 
-                                    if !is_repeating {
+                                    if !is_repeating || rate == 0 {
                                         return TimeoutAction::Drop;
                                     }
 
