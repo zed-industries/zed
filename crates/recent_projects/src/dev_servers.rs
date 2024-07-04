@@ -114,12 +114,17 @@ impl DevServerProjects {
             cx.notify();
         });
 
+        let mut base_style = cx.text_style();
+        base_style.refine(&gpui::TextStyleRefinement {
+            color: Some(cx.theme().colors().editor_foreground),
+            ..Default::default()
+        });
+
         let markdown_style = MarkdownStyle {
+            base_text_style: base_style,
             code_block: gpui::StyleRefinement {
                 text: Some(gpui::TextStyleRefinement {
                     font_family: Some("Zed Plex Mono".into()),
-                    color: Some(cx.theme().colors().editor_foreground),
-                    background_color: Some(cx.theme().colors().editor_background),
                     ..Default::default()
                 }),
                 ..Default::default()
