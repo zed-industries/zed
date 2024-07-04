@@ -685,6 +685,27 @@ mod test {
         cx.assert_editor_state("«oneˇ» two one");
         cx.simulate_keystrokes("*");
         cx.assert_state("one two ˇone", Mode::Normal);
+
+        // check that searching with unable search wrap
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<EditorSettings>(cx, |s| s.search_wrap = Some(false));
+        });
+        cx.set_state("aa\nbˇb\ncc\ncc\ncc\n", Mode::Normal);
+        cx.simulate_keystrokes("/ c c enter");
+
+        cx.assert_state("aa\nbb\nˇcc\ncc\ncc\n", Mode::Normal);
+
+        // n to go to next/N to go to previous
+        cx.simulate_keystrokes("n");
+        cx.assert_state("aa\nbb\ncc\nˇcc\ncc\n", Mode::Normal);
+        cx.simulate_keystrokes("shift-n");
+        cx.assert_state("aa\nbb\nˇcc\ncc\ncc\n", Mode::Normal);
+
+        // ?<enter> to go to previous
+        cx.simulate_keystrokes("? enter");
+        cx.assert_state("aa\nbb\nˇcc\ncc\ncc\n", Mode::Normal);
+        cx.simulate_keystrokes("? enter");
+        cx.assert_state("aa\nbb\nˇcc\ncc\ncc\n", Mode::Normal);
     }
 
     #[gpui::test]
