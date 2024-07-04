@@ -295,7 +295,7 @@ impl DebugAdapterClient {
     pub async fn resume(&self, thread_id: u64) {
         self.request::<Continue>(ContinueArguments {
             thread_id,
-            single_thread: None,
+            single_thread: Some(true),
         })
         .await
         .log_err();
@@ -305,7 +305,7 @@ impl DebugAdapterClient {
         self.request::<Next>(NextArguments {
             thread_id,
             granularity: Some(SteppingGranularity::Statement),
-            single_thread: None,
+            single_thread: Some(true),
         })
         .await
         .log_err();
@@ -316,7 +316,7 @@ impl DebugAdapterClient {
             thread_id,
             target_id: None,
             granularity: Some(SteppingGranularity::Statement),
-            single_thread: None,
+            single_thread: Some(true),
         })
         .await
         .log_err();
@@ -326,7 +326,7 @@ impl DebugAdapterClient {
         self.request::<StepOut>(StepOutArguments {
             thread_id,
             granularity: Some(SteppingGranularity::Statement),
-            single_thread: None,
+            single_thread: Some(true),
         })
         .await
         .log_err();
@@ -335,7 +335,7 @@ impl DebugAdapterClient {
     pub async fn step_back(&self, thread_id: u64) {
         self.request::<StepBack>(StepBackArguments {
             thread_id,
-            single_thread: None,
+            single_thread: Some(true),
             granularity: Some(SteppingGranularity::Statement),
         })
         .await
@@ -345,7 +345,7 @@ impl DebugAdapterClient {
     pub async fn restart(&self, thread_id: u64) {
         self.request::<StepBack>(StepBackArguments {
             thread_id,
-            single_thread: None,
+            single_thread: Some(true),
             granularity: Some(SteppingGranularity::Statement),
         })
         .await
