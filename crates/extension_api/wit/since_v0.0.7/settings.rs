@@ -26,4 +26,6 @@ pub struct BinarySettings {
     pub path: Option<String>,
     /// The arguments to pass to the binary.
     pub arguments: Option<Vec<String>>,
+    /// Whether to look up the path in the system's PATH.
+    pub path_lookup: Option<bool>,
 }
