@@ -431,30 +431,36 @@ impl Dock {
             }),
         ];
 
-        let name = panel.persistent_name().to_string();
-
         self.panel_entries.push(PanelEntry {
             panel: Arc::new(panel.clone()),
             _subscriptions: subscriptions,
         });
-        if let Some(serialized) = self.serialized_dock.clone() {
-            if serialized.active_panel == Some(name) {
-                self.activate_panel(self.panel_entries.len() - 1, cx);
-                if serialized.visible {
-                    self.set_open(true, cx);
-                }
-                if serialized.zoom {
-                    if let Some(panel) = self.active_panel() {
-                        panel.set_zoomed(true, cx)
-                    };
-                }
-            }
-        } else if panel.read(cx).starts_open(cx) {
+
+        if !self.restore_state(cx) && panel.read(cx).starts_open(cx) {
             self.activate_panel(self.panel_entries.len() - 1, cx);
             self.set_open(true, cx);
         }
 
         cx.notify()
+    }
+
+    pub fn restore_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(serialized) = self.serialized_dock.clone() {
+            if let Some(active_panel) = serialized.active_panel {
+                if let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx) {
+                    self.activate_panel(idx, cx);
+                }
+            }
+
+            if serialized.zoom {
+                if let Some(panel) = self.active_panel() {
+                    panel.set_zoomed(true, cx)
+                }
+            }
+            self.set_open(serialized.visible, cx);
+            return true;
+        }
+        return false;
     }
 
     pub fn remove_panel<T: Panel>(&mut self, panel: &View<T>, cx: &mut ViewContext<Self>) {
