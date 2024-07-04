@@ -9,7 +9,7 @@ use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
-    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, DisplayRow},
+    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle},
     scroll::Autoscroll,
     Bias, Editor, EditorEvent, ExcerptId, MultiBuffer,
 };
@@ -367,7 +367,6 @@ impl ProjectDiagnosticsEditor {
         let mut excerpts_to_expand =
             HashMap::<ExcerptId, HashMap<ExpandExcerptDirection, u32>>::default();
         let mut latest_excerpt_id = ExcerptId::min();
-
         for (diagnostic_index, (new_diagnostic, _)) in new_diagnostics.iter().enumerate() {
             loop {
                 match current_excerpts.peek() {
@@ -563,23 +562,7 @@ impl ProjectDiagnosticsEditor {
             loop {
                 match current_diagnostics.peek() {
                     None => {
-                        blocks_to_add.push(BlockProperties {
-                            position: (diagnostic_index, new_diagnostic.entry.range.start),
-                            height: new_diagnostic
-                                .entry
-                                .diagnostic
-                                .message
-                                .matches('\n')
-                                .count() as u8
-                                + 1,
-                            style: BlockStyle::Sticky,
-                            render: diagnostic_block_renderer(
-                                new_diagnostic.entry.diagnostic.clone(),
-                                // TODO kb could be invalid?
-                                true,
-                            ),
-                            disposition: BlockDisposition::Above,
-                        });
+                        blocks_to_add.push(diagnostic_index);
                         break;
                     }
                     Some((current_diagnostic, current_block)) => {
@@ -594,26 +577,7 @@ impl ProjectDiagnosticsEditor {
                             Ordering::Equal => {
                                 if current_diagnostic != new_diagnostic {
                                     blocks_to_remove.insert(*current_block);
-                                    blocks_to_add.push(BlockProperties {
-                                        position: (
-                                            diagnostic_index,
-                                            new_diagnostic.entry.range.start,
-                                        ),
-                                        height: new_diagnostic
-                                            .entry
-                                            .diagnostic
-                                            .message
-                                            .matches('\n')
-                                            .count()
-                                            as u8
-                                            + 1,
-                                        style: BlockStyle::Sticky,
-                                        render: diagnostic_block_renderer(
-                                            new_diagnostic.entry.diagnostic.clone(),
-                                            true,
-                                        ),
-                                        disposition: BlockDisposition::Above,
-                                    });
+                                    blocks_to_add.push(diagnostic_index);
                                 }
                             }
                             Ordering::Greater => break,
@@ -688,50 +652,51 @@ impl ProjectDiagnosticsEditor {
             multi_buffer.remove_excerpts(excerpts_to_remove, cx);
         });
 
-        let updated_multi_buffer_snapshot = self.excerpts.read(cx).snapshot(cx);
-        let mut updated_excerpts = updated_multi_buffer_snapshot.excerpts().fuse().peekable();
+        let editor_snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
+        let mut updated_excerpts = editor_snapshot.buffer_snapshot.excerpts().fuse().peekable();
         let mut diagnostics_with_blocks = HashMap::default();
-        let new_blocks = blocks_to_add
-            .into_iter()
-            .enumerate()
-            .flat_map(|(block_index, block)| {
-                let excerpt_id = loop {
-                    match updated_excerpts.peek() {
-                        None => break None,
-                        Some((excerpt_id, excerpt_buffer_snapshot, excerpt_range)) => {
-                            let block_position = block.position.1;
-                            let excerpt_range = &excerpt_range.context;
+        let new_blocks =
+            blocks_to_add
+                .into_iter()
+                .enumerate()
+                .flat_map(|(block_index, diagnostic_index)| {
+                    let new_diagnostic = &new_diagnostics[diagnostic_index].0.entry;
+                    let block_position = new_diagnostic.range.start;
+                    let excerpt_id = loop {
+                        match updated_excerpts.peek() {
+                            None => break None,
+                            Some((excerpt_id, excerpt_buffer_snapshot, excerpt_range)) => {
+                                let excerpt_range = &excerpt_range.context;
 
-                            match block_position.cmp(&excerpt_range.start, excerpt_buffer_snapshot)
-                            {
-                                Ordering::Less => break None,
-                                Ordering::Equal | Ordering::Greater => {
-                                    match block_position
+                                match block_position
+                                    .cmp(&excerpt_range.start, excerpt_buffer_snapshot)
+                                {
+                                    Ordering::Less => break None,
+                                    Ordering::Equal | Ordering::Greater => match block_position
                                         .cmp(&excerpt_range.end, excerpt_buffer_snapshot)
                                     {
                                         Ordering::Equal | Ordering::Less => {
                                             break Some(*excerpt_id)
                                         }
                                         Ordering::Greater => {}
-                                    }
+                                    },
                                 }
                             }
                         }
-                    }
-                    let _ = updated_excerpts.next();
-                }?;
-                let (diagnostic_index, text_anchor) = block.position;
-                diagnostics_with_blocks.insert(diagnostic_index, block_index);
+                        let _ = updated_excerpts.next();
+                    }?;
+                    diagnostics_with_blocks.insert(diagnostic_index, block_index);
 
-                Some(BlockProperties {
-                    position: updated_multi_buffer_snapshot
-                        .anchor_in_excerpt(excerpt_id, text_anchor)?,
-                    height: block.height,
-                    style: block.style,
-                    render: block.render,
-                    disposition: block.disposition,
-                })
-            });
+                    Some(BlockProperties {
+                        position: editor_snapshot
+                            .buffer_snapshot
+                            .anchor_in_excerpt(excerpt_id, block_position)?,
+                        height: new_diagnostic.diagnostic.message.matches('\n').count() as u8 + 1,
+                        style: BlockStyle::Sticky,
+                        render: diagnostic_block_renderer(new_diagnostic.diagnostic.clone(), true),
+                        disposition: BlockDisposition::Above,
+                    })
+                });
         // TODO kb rework block approach: need to unite them if they belong to the same display_row
         let new_block_ids = self.editor.update(cx, |editor, cx| {
             editor.remove_blocks(blocks_to_remove, None, cx);
@@ -789,12 +754,12 @@ impl ProjectDiagnosticsEditor {
         //                 Ok(ix) | Err(ix) => ix,
         //             };
         //             if let Some(group) = groups.get(group_ix) {
-        //                 if let Some(offset) = updated_multi_buffer_snapshot
+        //                 if let Some(offset) = editor_snapshot.buffer_snapshot
         //                     .anchor_in_excerpt(
         //                         group.excerpts[group.primary_excerpt_ix],
         //                         group.primary_diagnostic.range.start,
         //                     )
-        //                     .map(|anchor| anchor.to_offset(&updated_multi_buffer_snapshot))
+        //                     .map(|anchor| anchor.to_offset(&editor_snapshot.buffer_snapshot))
         //                 {
         //                     selection.start = offset;
         //                     selection.end = offset;
