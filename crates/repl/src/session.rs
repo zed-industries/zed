@@ -159,7 +159,8 @@ impl Session {
                                     .await;
                                 this.update(&mut cx, |this, _cx| {
                                     this.send(KernelInfoRequest {}.into(), _cx).ok();
-                                });
+                                })
+                                .ok();
                             })
                             .detach();
                         })
