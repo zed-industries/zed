@@ -12,7 +12,7 @@ use editor::{
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
     highlight_diagnostic_message,
     scroll::Autoscroll,
-    Bias, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, DEFAULT_MULTIBUFFER_CONTEXT,
+    Bias, Editor, EditorEvent, ExcerptId, MultiBuffer,
 };
 use futures::{
     channel::mpsc::{self, UnboundedSender},
@@ -29,7 +29,7 @@ use language::{
     ToPoint,
 };
 use lsp::LanguageServerId;
-use multi_buffer::ExpandExcerptDirection;
+use multi_buffer::{build_excerpt_ranges, ExpandExcerptDirection};
 use project::{DiagnosticSummary, Project, ProjectPath};
 use project_diagnostics_settings::ProjectDiagnosticsSettings;
 use settings::Settings;
@@ -660,10 +660,9 @@ impl ProjectDiagnosticsEditor {
         self.excerpts.update(cx, |multi_buffer, cx| {
             let max_point = buffer_snapshot.max_point();
             for (after_excerpt_id, ranges) in excerpts_to_add {
-                multi_buffer.insert_excerpts_after(
-                    after_excerpt_id,
-                    buffer.clone(),
-                    ranges.into_iter().map(|range| {
+                let ranges = ranges
+                    .into_iter()
+                    .map(|range| {
                         let mut extended_point_range = range.to_point(&buffer_snapshot);
                         extended_point_range.start.row =
                             extended_point_range.start.row.saturating_sub(self.context);
@@ -675,11 +674,15 @@ impl ProjectDiagnosticsEditor {
                             buffer_snapshot.clip_point(extended_point_range.start, Bias::Left);
                         let extended_end =
                             buffer_snapshot.clip_point(extended_point_range.end, Bias::Right);
-                        ExcerptRange {
-                            context: extended_start..extended_end,
-                            primary: None,
-                        }
-                    }),
+                        extended_start..extended_end
+                    })
+                    .collect::<Vec<_>>();
+                let (joined_ranges, _) =
+                    build_excerpt_ranges(&buffer_snapshot, &ranges, self.context);
+                multi_buffer.insert_excerpts_after(
+                    after_excerpt_id,
+                    buffer.clone(),
+                    joined_ranges,
                     cx,
                 );
             }

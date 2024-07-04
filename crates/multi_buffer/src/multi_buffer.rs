@@ -4680,7 +4680,7 @@ impl ToPointUtf16 for PointUtf16 {
     }
 }
 
-fn build_excerpt_ranges<T>(
+pub fn build_excerpt_ranges<T>(
     buffer: &BufferSnapshot,
     ranges: &[Range<T>],
     context_line_count: u32,
