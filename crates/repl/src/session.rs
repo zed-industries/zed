@@ -129,16 +129,12 @@ impl Session {
         let pending_kernel = cx
             .spawn(|this, mut cx| async move {
                 let kernel = kernel.await;
-                // In reality, this is like the "starting" kernel
 
                 match kernel {
                     Ok((kernel, mut messages_rx)) => {
                         this.update(&mut cx, |this, cx| {
                             // At this point we can create a new kind of kernel that has the process and our long running background tasks
                             this.kernel = Kernel::RunningKernel(kernel);
-
-                            // todo!(): await the kernel info reply, with a timeout duration
-                            this.send(KernelInfoRequest {}.into(), cx).ok();
 
                             this.messaging_task = cx.spawn(|session, mut cx| async move {
                                 while let Some(message) = messages_rx.next().await {
@@ -149,6 +145,23 @@ impl Session {
                                         .ok();
                                 }
                             });
+
+                            // For some reason sending a kernel info request will brick the ark (R) kernel.
+                            // Note that Deno and Python do not have this issue.
+                            if this.kernel_specification.name == "ark" {
+                                return;
+                            }
+
+                            // Get kernel info after (possibly) letting the kernel start
+                            cx.spawn(|this, mut cx| async move {
+                                cx.background_executor()
+                                    .timer(Duration::from_millis(120))
+                                    .await;
+                                this.update(&mut cx, |this, _cx| {
+                                    this.send(KernelInfoRequest {}.into(), _cx).ok();
+                                });
+                            })
+                            .detach();
                         })
                         .ok();
                     }
