@@ -1,6 +1,6 @@
 use crate::{size, DevicePixels, Result, SharedString, Size};
 
-use image::RgbaImage;
+use image::{Delay, Frame};
 use std::{
     borrow::Cow,
     fmt,
@@ -34,18 +34,19 @@ pub struct ImageId(usize);
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub(crate) struct RenderImageParams {
     pub(crate) image_id: ImageId,
+    pub(crate) frame_index: usize,
 }
 
 /// A cached and processed image.
 pub struct ImageData {
     /// The ID associated with this image
     pub id: ImageId,
-    data: RgbaImage,
+    data: Vec<Frame>,
 }
 
 impl ImageData {
     /// Create a new image from the given data.
-    pub fn new(data: RgbaImage) -> Self {
+    pub fn new(data: Vec<Frame>) -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
         Self {
@@ -55,14 +56,24 @@ impl ImageData {
     }
 
     /// Convert this image into a byte slice.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.data
+    pub fn as_bytes(&self, frame_index: usize) -> &[u8] {
+        &self.data[frame_index].buffer()
     }
 
-    /// Get the size of this image, in pixels
-    pub fn size(&self) -> Size<DevicePixels> {
-        let (width, height) = self.data.dimensions();
+    /// Get the size of this image, in pixels.
+    pub fn size(&self, frame_index: usize) -> Size<DevicePixels> {
+        let (width, height) = self.data[frame_index].buffer().dimensions();
         size(width.into(), height.into())
+    }
+
+    /// Get the delay of this frame from the previous
+    pub fn delay(&self, frame_index: usize) -> Delay {
+        self.data[frame_index].delay()
+    }
+
+    /// Get the number of frames for this image.
+    pub fn frame_count(&self) -> usize {
+        self.data.len()
     }
 }
 
@@ -70,7 +81,7 @@ impl fmt::Debug for ImageData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ImageData")
             .field("id", &self.id)
-            .field("size", &self.data.dimensions())
+            .field("size", &self.size(0))
             .finish()
     }
 }

@@ -1,6 +1,6 @@
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::{fs, io::Cursor};
 
 use crate::{
     point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element,
@@ -8,12 +8,15 @@ use crate::{
     LayoutId, Length, Pixels, SharedUri, Size, StyleRefinement, Styled, SvgSize, UriOrPath,
     WindowContext,
 };
+
 use futures::{AsyncReadExt, Future};
-use image::{ImageBuffer, ImageError};
+use image::codecs::gif::GifDecoder;
+use image::{AnimationDecoder, Frame, ImageBuffer, ImageError, ImageFormat};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 
 use http;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use util::ResultExt;
 
@@ -230,8 +233,15 @@ impl Img {
     }
 }
 
+/// The image state between frames
+#[derive(Clone)]
+pub struct ImgState {
+    frame_index: usize,
+    last_frame_time: Instant,
+}
+
 impl Element for Img {
-    type RequestLayoutState = ();
+    type RequestLayoutState = usize;
     type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
@@ -243,29 +253,70 @@ impl Element for Img {
         global_id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id = self
-            .interactivity
-            .request_layout(global_id, cx, |mut style, cx| {
-                if let Some(data) = self.source.data(cx) {
-                    let image_size = data.size();
-                    match (style.size.width, style.size.height) {
-                        (Length::Auto, Length::Auto) => {
-                            style.size = Size {
-                                width: Length::Definite(DefiniteLength::Absolute(
-                                    AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
-                                )),
-                                height: Length::Definite(DefiniteLength::Absolute(
-                                    AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
-                                )),
+        cx.with_optional_element_state(global_id, |state, cx| {
+            let mut state = state.map(|state| {
+                state.unwrap_or(ImgState {
+                    frame_index: 0,
+                    last_frame_time: Instant::now(),
+                })
+            });
+
+            let frame_index = state
+                .as_ref()
+                .map(|state| state.frame_index.clone())
+                .unwrap_or(0);
+
+            let layout_id = self
+                .interactivity
+                .request_layout(global_id, cx, |mut style, cx| {
+                    if let Some(data) = self.source.data(cx) {
+                        if let Some(state) = &mut state {
+                            let frame_count = data.frame_count();
+                            if frame_count > 1 && state.frame_index != frame_count - 1 {
+                                if state.last_frame_time.elapsed()
+                                    > Duration::from(data.delay(state.frame_index + 1))
+                                {
+                                    state.frame_index += 1;
+                                    state.last_frame_time = Instant::now()
+                                }
+                            } else {
+                                state.frame_index = 0;
+                                state.last_frame_time = Instant::now()
                             }
                         }
-                        _ => {}
-                    }
-                }
 
-                cx.request_layout(style, [])
-            });
-        (layout_id, ())
+                        let image_size = data.size(frame_index);
+                        match (style.size.width, style.size.height) {
+                            (Length::Auto, Length::Auto) => {
+                                style.size = Size {
+                                    width: Length::Definite(DefiniteLength::Absolute(
+                                        AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
+                                    )),
+                                    height: Length::Definite(DefiniteLength::Absolute(
+                                        AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
+                                    )),
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        if data.frame_count() > 1 {
+                            let parent_id = cx.parent_view_id();
+                            cx.on_next_frame(move |cx| {
+                                if let Some(parent_id) = parent_id {
+                                    cx.notify(parent_id)
+                                } else {
+                                    cx.refresh()
+                                }
+                            })
+                        }
+                    }
+
+                    cx.request_layout(style, [])
+                });
+
+            ((layout_id, frame_index), state)
+        })
     }
 
     fn prepaint(
@@ -283,7 +334,7 @@ impl Element for Img {
         &mut self,
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut Self::RequestLayoutState,
+        frame_index: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
@@ -293,9 +344,17 @@ impl Element for Img {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
                 if let Some(data) = source.data(cx) {
-                    let new_bounds = self.object_fit.get_bounds(bounds, data.size());
-                    cx.paint_image(new_bounds, corner_radii, data.clone(), self.grayscale)
-                        .log_err();
+                    let new_bounds = self
+                        .object_fit
+                        .get_bounds(bounds, data.size(frame_index.clone()));
+                    cx.paint_image(
+                        new_bounds,
+                        corner_radii,
+                        data.clone(),
+                        frame_index.clone(),
+                        self.grayscale,
+                    )
+                    .log_err();
                 }
 
                 match source {
@@ -384,12 +443,33 @@ impl Asset for Image {
             };
 
             let data = if let Ok(format) = image::guess_format(&bytes) {
-                let mut data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
+                let data = match format {
+                    ImageFormat::Gif => {
+                        let mut gif = GifDecoder::new(Cursor::new(&bytes))?
+                            .into_frames()
+                            .collect_frames()?;
 
-                // Convert from RGBA to BGRA.
-                for pixel in data.chunks_exact_mut(4) {
-                    pixel.swap(0, 2);
-                }
+                        for frame in &mut gif {
+                            // Convert from RGBA to BGRA.
+                            for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                                pixel.swap(0, 2);
+                            }
+                        }
+
+                        gif
+                    }
+                    _ => {
+                        let mut data =
+                            image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
+
+                        // Convert from RGBA to BGRA.
+                        for pixel in data.chunks_exact_mut(4) {
+                            pixel.swap(0, 2);
+                        }
+
+                        vec![Frame::new(data)]
+                    }
+                };
 
                 ImageData::new(data)
             } else {
@@ -399,7 +479,7 @@ impl Asset for Image {
                 let buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
 
-                ImageData::new(buffer)
+                ImageData::new(vec![Frame::new(buffer)])
             };
 
             Ok(Arc::new(data))

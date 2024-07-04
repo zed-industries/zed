@@ -2567,6 +2567,7 @@ impl<'a> WindowContext<'a> {
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
         data: Arc<ImageData>,
+        frame_index: usize,
         grayscale: bool,
     ) -> Result<()> {
         debug_assert_eq!(
@@ -2577,13 +2578,19 @@ impl<'a> WindowContext<'a> {
 
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
-        let params = RenderImageParams { image_id: data.id };
+        let params = RenderImageParams {
+            image_id: data.id,
+            frame_index,
+        };
 
         let tile = self
             .window
             .sprite_atlas
             .get_or_insert_with(&params.clone().into(), &mut || {
-                Ok(Some((data.size(), Cow::Borrowed(data.as_bytes()))))
+                Ok(Some((
+                    data.size(frame_index),
+                    Cow::Borrowed(data.as_bytes(frame_index)),
+                )))
             })?
             .expect("Callback above only returns Some");
         let content_mask = self.content_mask().scale(scale_factor);
