@@ -640,13 +640,13 @@ impl ProjectDiagnosticsEditor {
                         .max()
                         .copied()
                         .unwrap_or_default()
-                        .max(DEFAULT_MULTIBUFFER_CONTEXT),
+                        .max(self.context),
                 ))
             } else {
                 directions
                     .into_iter()
                     .next()
-                    .map(|(direction, expand)| (direction, expand.max(DEFAULT_MULTIBUFFER_CONTEXT)))
+                    .map(|(direction, expand)| (direction, expand.max(self.context)))
             };
             if let Some(expand) = excerpt_expand {
                 excerpt_expands
@@ -656,21 +656,21 @@ impl ProjectDiagnosticsEditor {
             }
         }
 
+        // TODO kb need to merge/extend intersecting ranges, but why cannot multi buffer do that?
         self.excerpts.update(cx, |multi_buffer, cx| {
             let max_point = buffer_snapshot.max_point();
-            for (mut after_excerpt_id, ranges) in excerpts_to_add {
-                let new_excerpts = multi_buffer.insert_excerpts_after(
+            for (after_excerpt_id, ranges) in excerpts_to_add {
+                multi_buffer.insert_excerpts_after(
                     after_excerpt_id,
                     buffer.clone(),
                     ranges.into_iter().map(|range| {
                         let mut extended_point_range = range.to_point(&buffer_snapshot);
-                        extended_point_range.start.row = extended_point_range
-                            .start
-                            .row
-                            .saturating_sub(DEFAULT_MULTIBUFFER_CONTEXT);
-                        extended_point_range.end.row = (extended_point_range.end.row
-                            + DEFAULT_MULTIBUFFER_CONTEXT)
-                            .min(max_point.row);
+                        extended_point_range.start.row =
+                            extended_point_range.start.row.saturating_sub(self.context);
+                        extended_point_range.start.column = 0;
+                        extended_point_range.end.row =
+                            (extended_point_range.end.row + self.context).min(max_point.row);
+                        extended_point_range.end.column = u32::MAX;
                         let extended_start =
                             buffer_snapshot.clip_point(extended_point_range.start, Bias::Left);
                         let extended_end =
@@ -682,7 +682,6 @@ impl ProjectDiagnosticsEditor {
                     }),
                     cx,
                 );
-                after_excerpt_id = new_excerpts.last().copied().unwrap_or(after_excerpt_id);
             }
             for ((direction, line_count), excerpts) in excerpt_expands {
                 multi_buffer.expand_excerpts(excerpts, line_count, direction, cx);
@@ -702,6 +701,7 @@ impl ProjectDiagnosticsEditor {
                         diagnostics_with_blocks.insert(diagnostic_index, block_index);
                         Some(BlockProperties {
                             position: multi_buffer_snapshot
+                                // TODO kb this is always None, fix
                                 .anchor_in_excerpt(excerpt_id, text_anchor)?,
                             height: block.height,
                             style: block.style,
