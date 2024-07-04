@@ -533,14 +533,10 @@ impl Element for MarkdownElement {
                         MarkdownTag::BlockQuote => {
                             builder.push_text_style(self.style.block_quote.clone());
                             builder.push_div(
-                                // if self.style.pad_blocks {
                                 div()
                                     .pl_4()
                                     .mb_2()
                                     .border_l_4()
-                                    // } else {
-                                    //     div()pl_4().mb_2().border_l_4()
-                                    // }
                                     .border_color(self.style.block_quote_border_color),
                                 range,
                                 markdown_end,
@@ -647,13 +643,7 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::Code => {
                     builder.push_text_style(self.style.inline_code.clone());
-
-                    // let mut div = div().m_0().p_0().w_;
-                    // div.style().refine(&self.style.inline_code);
-                    // builder.push_div(div, range, markdown_end);
-
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
-                    // builder.pop_div();
                     builder.pop_text_style();
                 }
 
