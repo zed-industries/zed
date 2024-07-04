@@ -250,59 +250,20 @@ impl AssistantPanel {
                 h_flex()
                     .gap(Spacing::Small.rems(cx))
                     .child(
-                        IconButton::new("plus", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .tooltip(|cx| Tooltip::for_action("New Context", &NewFile, cx))
-                            .on_click({
-                                let pane_handle = cx.view().downgrade();
-                                move |_, cx| {
-                                    if let Ok(focus_handle) =
-                                        pane_handle.update(cx, |pane, cx| pane.focus_handle(cx))
-                                    {
-                                        focus_handle.dispatch_action(&NewFile, cx);
-                                    }
-                                }
-                            }),
-                    )
-                    .child({
-                        let zoomed = pane.is_zoomed();
-                        IconButton::new("toggle_zoom", IconName::Maximize)
-                            .icon_size(IconSize::Small)
-                            .selected(zoomed)
-                            .selected_icon(IconName::Minimize)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                pane.toggle_zoom(&Default::default(), cx);
-                            }))
-                            .tooltip(move |cx| {
-                                Tooltip::for_action(
-                                    if zoomed { "Zoom Out" } else { "Zoom In" },
-                                    &ToggleZoom,
-                                    cx,
-                                )
-                            })
-                    })
-                    .child(
                         IconButton::new("menu", IconName::Menu)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(|pane, _, cx| {
+                                let zoom_label = if pane.is_zoomed() {
+                                    "Zoom Out"
+                                } else {
+                                    "Zoom In"
+                                };
                                 let menu = ContextMenu::build(cx, |menu, cx| {
-                                    menu.entry("History", Some(Box::new(DeployHistory)), {
-                                        let focus_handle = pane.focus_handle(cx);
-                                        move |cx| {
-                                            focus_handle.dispatch_action(&DeployHistory, cx);
-                                        }
-                                    })
-                                    .entry(
-                                        "Prompt Library",
-                                        Some(Box::new(DeployPromptLibrary)),
-                                        {
-                                            let focus_handle = pane.focus_handle(cx);
-                                            move |cx| {
-                                                focus_handle
-                                                    .dispatch_action(&DeployPromptLibrary, cx);
-                                            }
-                                        },
-                                    )
+                                    menu.context(pane.focus_handle(cx))
+                                        .action("New Context", Box::new(NewFile))
+                                        .action("History", Box::new(DeployHistory))
+                                        .action("Prompt Library", Box::new(DeployPromptLibrary))
+                                        .action(zoom_label, Box::new(ToggleZoom))
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
                                     pane.new_item_menu = None;
@@ -2059,6 +2020,8 @@ pub struct ContextEditor {
 }
 
 impl ContextEditor {
+    const MAX_TAB_TITLE_LEN: usize = 16;
+
     fn new(
         language_registry: Arc<LanguageRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
@@ -3146,9 +3109,12 @@ impl Item for ContextEditor {
         } else {
             Color::Muted
         };
-        Label::new(util::truncate_and_trailoff(&self.title(cx), 16))
-            .color(color)
-            .into_any_element()
+        Label::new(util::truncate_and_trailoff(
+            &self.title(cx),
+            Self::MAX_TAB_TITLE_LEN,
+        ))
+        .color(color)
+        .into_any_element()
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
@@ -3181,15 +3147,18 @@ impl Item for ContextEditor {
         let multibuffer = &editor.buffer().read(cx);
         let (_, symbols) = multibuffer.symbols_containing(cursor, Some(&theme.syntax()), cx)?;
 
-        let text = self.title(cx);
-
         let settings = ThemeSettings::get_global(cx);
 
-        let mut breadcrumbs = vec![BreadcrumbText {
-            text,
-            highlights: None,
-            font: Some(settings.buffer_font.clone()),
-        }];
+        let mut breadcrumbs = Vec::new();
+
+        let title = self.title(cx);
+        if title.chars().count() > Self::MAX_TAB_TITLE_LEN {
+            breadcrumbs.push(BreadcrumbText {
+                text: title,
+                highlights: None,
+                font: Some(settings.buffer_font.clone()),
+            });
+        }
 
         breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
             text: symbol.text,
