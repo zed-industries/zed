@@ -457,10 +457,10 @@ async fn parse_blocks(
                         ..Default::default()
                     }),
                     margin: gpui::EdgesRefinement {
-                        top: Some(Length::Definite(Rems(1_f32).into())),
+                        top: Some(Length::Definite(rems(1.).into())),
                         left: None,
                         right: None,
-                        bottom: Some(Length::Definite(Rems(1_f32).into())),
+                        bottom: Some(Length::Definite(rems(1.).into())),
                     },
                     ..Default::default()
                 },

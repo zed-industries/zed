@@ -814,7 +814,7 @@ impl MarkdownElementBuilder {
                     top: None,
                     left: None,
                     right: None,
-                    bottom: Some(Length::Definite(Rems(0_f32).into())),
+                    bottom: Some(Length::Definite(rems(0.).into())),
                 },
                 ..Default::default()
             });

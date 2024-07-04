@@ -53,10 +53,10 @@ pub fn main() {
                             ..Default::default()
                         }),
                         margin: gpui::EdgesRefinement {
-                            top: Some(Length::Definite(Rems(4_f32).into())),
-                            left: Some(Length::Definite(Rems(4_f32).into())),
-                            right: Some(Length::Definite(Rems(4_f32).into())),
-                            bottom: Some(Length::Definite(Rems(4_f32).into())),
+                            top: Some(Length::Definite(rems(4.).into())),
+                            left: Some(Length::Definite(rems(4.).into())),
+                            right: Some(Length::Definite(rems(4.).into())),
+                            bottom: Some(Length::Definite(rems(4.).into())),
                         },
                         ..Default::default()
                     },
