@@ -58,12 +58,13 @@ A common tool for formatting python code is [Black](https://black.readthedocs.io
 {
   "languages": {
     "Python": {
-      "format_on_save": {
-        "external": {
+      "formatter": {
+         "external": {
           "command": "black",
           "arguments": ["-"]
         }
-      }
+      },
+      "format_on_save": "on"
     }
   }
 }
