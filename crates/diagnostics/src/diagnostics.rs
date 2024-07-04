@@ -6,10 +6,12 @@ mod toolbar_controls;
 mod diagnostics_tests;
 
 use anyhow::Result;
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
-    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle},
+    display_map::{
+        BlockDisposition, BlockId, BlockProperties, BlockStyle, DisplayRow, ToDisplayPoint,
+    },
     scroll::Autoscroll,
     Bias, Editor, EditorEvent, ExcerptId, MultiBuffer,
 };
@@ -38,7 +40,7 @@ use std::{
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{h_flex, prelude::*, Icon, IconName, Label};
-use util::ResultExt;
+use util::{debug_panic, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
@@ -334,7 +336,7 @@ impl ProjectDiagnosticsEditor {
             .filter(|(diagnostic_data, _)| {
                 diagnostic_data.entry.diagnostic.severity <= max_severity
             })
-            .map(|(diagnostic, block_id)| (diagnostic.clone(), Some(block_id)))
+            .map(|(diagnostic, block_id)| (diagnostic.clone(), Some(*block_id)))
             .collect::<Vec<_>>();
         for (server_id, group) in buffer_snapshot
             .diagnostic_groups(server_to_update)
@@ -357,10 +359,10 @@ impl ProjectDiagnosticsEditor {
         }
 
         let multi_buffer_snapshot = self.excerpts.read(cx).snapshot(cx);
+        // TODO kb: this is not correct, other files' excerpts are affected by this and similar, need to skip those
         let mut current_excerpts = multi_buffer_snapshot.excerpts().fuse().peekable();
         let mut current_diagnostics = path_state.diagnostics.iter().fuse().peekable();
         let mut blocks_to_remove = HashSet::default();
-        let mut blocks_to_add = Vec::new();
         let mut unchanged_blocks = HashMap::default();
         let mut excerpts_with_new_diagnostics = HashSet::default();
         let mut excerpts_to_remove = HashSet::default();
@@ -368,7 +370,13 @@ impl ProjectDiagnosticsEditor {
         let mut excerpts_to_expand =
             HashMap::<ExcerptId, HashMap<ExpandExcerptDirection, u32>>::default();
         let mut latest_excerpt_id = ExcerptId::min();
-        for (diagnostic_index, (new_diagnostic, _)) in new_diagnostics.iter().enumerate() {
+        for (diagnostic_index, (new_diagnostic, existing_block)) in
+            new_diagnostics.iter().enumerate()
+        {
+            if let Some(existing_block) = existing_block {
+                unchanged_blocks.insert(diagnostic_index, *existing_block);
+            }
+
             loop {
                 match current_excerpts.peek() {
                     None => {
@@ -563,10 +571,7 @@ impl ProjectDiagnosticsEditor {
 
             loop {
                 match current_diagnostics.peek() {
-                    None => {
-                        blocks_to_add.push(diagnostic_index);
-                        break;
-                    }
+                    None => break,
                     Some((current_diagnostic, current_block)) => {
                         match compare_data_locations(
                             current_diagnostic,
@@ -581,7 +586,6 @@ impl ProjectDiagnosticsEditor {
                                     unchanged_blocks.insert(diagnostic_index, *current_block);
                                 } else {
                                     blocks_to_remove.insert(*current_block);
-                                    blocks_to_add.push(diagnostic_index);
                                 }
                                 let _ = current_diagnostics.next();
                                 break;
@@ -593,6 +597,7 @@ impl ProjectDiagnosticsEditor {
                 }
             }
         }
+
         excerpts_to_remove.extend(
             current_excerpts
                 .filter(|(excerpt_id, ..)| !excerpts_with_new_diagnostics.contains(excerpt_id))
@@ -664,21 +669,22 @@ impl ProjectDiagnosticsEditor {
 
         let editor_snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
         let mut updated_excerpts = editor_snapshot.buffer_snapshot.excerpts().fuse().peekable();
-        let mut diagnostics_with_blocks = HashMap::default();
-        let new_blocks =
-            blocks_to_add
-                .into_iter()
-                .enumerate()
-                .flat_map(|(block_index, diagnostic_index)| {
-                    diagnostics_with_blocks.insert(diagnostic_index, block_index);
-                    let new_diagnostic = &new_diagnostics[diagnostic_index].0.entry;
+        let diagnostics_by_row_label = new_diagnostics
+            .iter()
+            .enumerate()
+            .fold(
+                BTreeMap::<
+                    (DisplayRow, Option<&str>, &str),
+                    (usize, Option<BlockId>, multi_buffer::Anchor, Vec<usize>),
+                >::new(),
+                |mut diagnostics_by_row_label, (diagnostic_index, (diagnostic, existing_block))| {
+                    let new_diagnostic = &diagnostic.entry;
                     let block_position = new_diagnostic.range.start;
                     let excerpt_id = loop {
                         match updated_excerpts.peek() {
                             None => break None,
                             Some((excerpt_id, excerpt_buffer_snapshot, excerpt_range)) => {
                                 let excerpt_range = &excerpt_range.context;
-
                                 match block_position
                                     .cmp(&excerpt_range.start, excerpt_buffer_snapshot)
                                 {
@@ -689,105 +695,106 @@ impl ProjectDiagnosticsEditor {
                                         Ordering::Equal | Ordering::Less => {
                                             break Some(*excerpt_id)
                                         }
-                                        Ordering::Greater => {}
+                                        Ordering::Greater => {
+                                            let _ = updated_excerpts.next();
+                                        }
                                     },
                                 }
                             }
                         }
-                        let _ = updated_excerpts.next();
-                    }?;
-
-                    Some(BlockProperties {
-                        position: editor_snapshot
+                    };
+                    let Some(position_in_multi_buffer) = excerpt_id.and_then(|excerpt_id| {
+                        editor_snapshot
                             .buffer_snapshot
-                            .anchor_in_excerpt(excerpt_id, block_position)?,
-                        height: new_diagnostic.diagnostic.message.matches('\n').count() as u8 + 1,
-                        style: BlockStyle::Sticky,
-                        render: diagnostic_block_renderer(
-                            new_diagnostic.diagnostic.clone(),
-                            false,
-                            true,
-                        ),
-                        disposition: BlockDisposition::Above,
-                    })
+                            .anchor_in_excerpt(excerpt_id, block_position)
+                    }) else {
+                        return diagnostics_by_row_label;
+                    };
+                    let display_row = position_in_multi_buffer
+                        .to_display_point(&editor_snapshot)
+                        .row();
+
+                    match diagnostics_by_row_label.entry((
+                        display_row,
+                        new_diagnostic.diagnostic.source.as_deref(),
+                        new_diagnostic.diagnostic.message.as_str(),
+                    )) {
+                        btree_map::Entry::Vacant(v) => {
+                            v.insert((
+                                diagnostic_index,
+                                *existing_block,
+                                position_in_multi_buffer,
+                                Vec::new(),
+                            ));
+                        }
+                        btree_map::Entry::Occupied(mut o) => {
+                            let (first_index, first_index_block, _, other_indices) = o.get_mut();
+                            if other_indices.is_empty() {
+                                unchanged_blocks.remove(first_index);
+                            }
+                            other_indices.push(diagnostic_index);
+                            if let Some(existing_block) = existing_block {
+                                blocks_to_remove.insert(*existing_block);
+                            }
+                            if let Some(first_index_block) = first_index_block {
+                                blocks_to_remove.insert(*first_index_block);
+                            }
+                        }
+                    }
+
+                    diagnostics_by_row_label
+                },
+            )
+            .into_values()
+            .collect::<Vec<_>>();
+
+        let blocks_to_insert =
+            diagnostics_by_row_label
+                .iter()
+                .filter_map(|(index, _, position, _)| {
+                    if unchanged_blocks.contains_key(index) {
+                        None
+                    } else {
+                        let new_diagnostic = new_diagnostics[*index].0.entry.diagnostic.clone();
+                        Some(BlockProperties {
+                            position: *position,
+                            height: new_diagnostic.message.matches('\n').count() as u8 + 1,
+                            style: BlockStyle::Sticky,
+                            render: diagnostic_block_renderer(new_diagnostic, false, true),
+                            disposition: BlockDisposition::Above,
+                        })
+                    }
                 });
-        // TODO kb rework block approach: need to unite them if they belong to the same display_row
-        let new_block_ids = self.editor.update(cx, |editor, cx| {
-            editor.remove_blocks(blocks_to_remove, None, cx);
-            editor.insert_blocks(new_blocks, Some(Autoscroll::fit()), cx)
-        });
-        if new_diagnostics.is_empty() {
-            self.path_states.remove(path_ix);
-        } else {
-            path_state.diagnostics = new_diagnostics
-                .into_iter()
-                .enumerate()
-                .filter_map(|(diagnostic_index, (diagnostic, block_id))| {
-                    let &block_id = block_id
-                        .or_else(|| unchanged_blocks.get(&diagnostic_index))
-                        .or_else(|| {
-                            let &block_index = diagnostics_with_blocks.get(&diagnostic_index)?;
-                            new_block_ids.get(block_index)
-                        })?;
-                    Some((diagnostic, block_id))
-                })
-                .collect();
+        let mut new_block_ids = self
+            .editor
+            .update(cx, |editor, cx| {
+                editor.remove_blocks(blocks_to_remove, None, cx);
+                editor.insert_blocks(blocks_to_insert, Some(Autoscroll::fit()), cx)
+            })
+            .into_iter()
+            .fuse();
+
+        for (index, _, _, other_indices) in diagnostics_by_row_label.into_iter() {
+            if unchanged_blocks.contains_key(&index) {
+                debug_assert!(
+                    other_indices.is_empty(),
+                    "Should only allow unchanged blocks for labels without duplicates"
+                );
+            } else {
+                let Some(block_id) = new_block_ids.next() else {
+                    debug_panic!("Expected a new block for each new diagnostic");
+                    continue;
+                };
+                for new_diagnostic_index in other_indices.into_iter().chain(Some(index)) {
+                    new_diagnostics[new_diagnostic_index].1 = Some(block_id);
+                }
+            }
         }
 
-        // TODO kb
-        // self.editor.update(cx, |editor, cx| {
-        //     let groups;
-        //     let mut selections;
-        //     let new_excerpt_ids_by_selection_id;
-        //     if was_empty {
-        //         groups = self.path_states.first()?.diagnostic_groups.as_slice();
-        //         new_excerpt_ids_by_selection_id = [(0, ExcerptId::min())].into_iter().collect();
-        //         selections = vec![Selection {
-        //             id: 0,
-        //             start: 0,
-        //             end: 0,
-        //             reversed: false,
-        //             goal: SelectionGoal::None,
-        //         }];
-        //     } else {
-        //         groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
-        //         new_excerpt_ids_by_selection_id =
-        //             editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.refresh());
-        //         selections = editor.selections.all::<usize>(cx);
-        //     }
-
-        //     // If any selection has lost its position, move it to start of the next primary diagnostic.
-        //     let snapshot = editor.snapshot(cx);
-        //     for selection in &mut selections {
-        //         if let Some(new_excerpt_id) = new_excerpt_ids_by_selection_id.get(&selection.id) {
-        //             let group_ix = match groups.binary_search_by(|probe| {
-        //                 probe
-        //                     .excerpts
-        //                     .last()
-        //                     .unwrap()
-        //                     .cmp(new_excerpt_id, &snapshot.buffer_snapshot)
-        //             }) {
-        //                 Ok(ix) | Err(ix) => ix,
-        //             };
-        //             if let Some(group) = groups.get(group_ix) {
-        //                 if let Some(offset) = editor_snapshot.buffer_snapshot
-        //                     .anchor_in_excerpt(
-        //                         group.excerpts[group.primary_excerpt_ix],
-        //                         group.primary_diagnostic.range.start,
-        //                     )
-        //                     .map(|anchor| anchor.to_offset(&editor_snapshot.buffer_snapshot))
-        //                 {
-        //                     selection.start = offset;
-        //                     selection.end = offset;
-        //                 }
-        //             }
-        //         }
-        //     }
-        //     editor.change_selections(None, cx, |s| {
-        //         s.select(selections);
-        //     });
-        //     Some(())
-        // });
+        path_state.diagnostics = new_diagnostics
+            .into_iter()
+            .filter_map(|(diagnostic, block_id)| Some((diagnostic, block_id?)))
+            .collect();
 
         if self.path_states.is_empty() {
             if self.editor.focus_handle(cx).is_focused(cx) {
