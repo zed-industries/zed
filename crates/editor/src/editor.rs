@@ -2687,8 +2687,8 @@ impl Editor {
             let mode = self.selections.pending_mode().unwrap();
             match &mode {
                 SelectMode::Character => {
-                    // head = goal_position.to_point(&display_map);
-                    head = position.to_point(&display_map);
+                    head = goal_position.to_point(&display_map);
+                    // head = position.to_point(&display_map);
                     tail = pending.tail().to_point(&buffer);
                 }
                 SelectMode::Word(original_range) => {
@@ -2753,11 +2753,6 @@ impl Editor {
                 pending.end = buffer.anchor_before(head);
                 pending.reversed = false;
             }
-
-            println!(
-                "------1-----{:?}-----{:?}------{:?}------{:?}----",
-                position, goal_position, head, tail
-            );
 
             self.change_selections(None, cx, |s| {
                 s.set_pending(pending, mode);
