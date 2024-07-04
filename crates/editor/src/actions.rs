@@ -292,6 +292,7 @@ gpui::actions!(
         SplitSelectionIntoLines,
         Tab,
         TabPrev,
+        ToggleBreakpoint,
         ToggleGitBlame,
         ToggleGitBlameInline,
         ToggleSelectionMenu,

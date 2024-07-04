@@ -131,7 +131,6 @@ actions!(
         SaveAs,
         SaveWithoutFormat,
         StartDebugger,
-        ToggleBreakpoint,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,
