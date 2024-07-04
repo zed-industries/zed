@@ -207,6 +207,7 @@ impl AssistantPanel {
                 .update(&mut cx, |workspace, cx| {
                     let app_state = workspace.app_state();
                     ContextStore::new(
+                        workspace.project().clone(),
                         app_state.fs.clone(),
                         app_state.languages.clone(),
                         Some(app_state.client.telemetry().clone()),
@@ -617,7 +618,9 @@ impl AssistantPanel {
             return Task::ready(Ok(()));
         }
 
-        let context = self.context_store.read(cx).load(path.clone(), cx);
+        let context = self
+            .context_store
+            .update(cx, |store, cx| store.load(path.clone(), cx));
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
 

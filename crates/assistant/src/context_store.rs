@@ -14,16 +14,17 @@ use futures::{future::Shared, FutureExt, StreamExt};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Subscription,
-    Task,
+    Task, WeakModel,
 };
 use language::{AnchorRangeExt, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use paths::contexts_dir;
+use project::Project;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::{self, Ordering, Reverse},
     ffi::OsStr,
-    iter,
+    iter, mem,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -1330,15 +1331,41 @@ pub struct SavedContextMetadata {
 }
 
 pub struct ContextStore {
+    contexts: Vec<ContextHandle>,
     contexts_metadata: Vec<SavedContextMetadata>,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
     telemetry: Option<Arc<Telemetry>>,
     _watch_updates: Task<Option<()>>,
+    project: Model<Project>,
+    project_is_shared: bool,
+    _project_subscription: gpui::Subscription,
+}
+
+enum ContextHandle {
+    Weak(WeakModel<Context>),
+    Strong(Model<Context>),
+}
+
+impl ContextHandle {
+    fn upgrade(&self) -> Option<Model<Context>> {
+        match self {
+            ContextHandle::Weak(weak) => weak.upgrade(),
+            ContextHandle::Strong(strong) => Some(strong.clone()),
+        }
+    }
+
+    fn downgrade(&self) -> WeakModel<Context> {
+        match self {
+            ContextHandle::Weak(weak) => weak.clone(),
+            ContextHandle::Strong(strong) => strong.downgrade(),
+        }
+    }
 }
 
 impl ContextStore {
     pub fn new(
+        project: Model<Project>,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
         telemetry: Option<Arc<Telemetry>>,
@@ -1349,6 +1376,7 @@ impl ContextStore {
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
             let this = cx.new_model(|cx: &mut ModelContext<Self>| Self {
+                contexts: Vec::new(),
                 contexts_metadata: Vec::new(),
                 fs,
                 languages,
@@ -1364,6 +1392,9 @@ impl ContextStore {
                     }
                     .log_err()
                 }),
+                _project_subscription: cx.observe(&project, Self::project_changed),
+                project_is_shared: project.read(cx).is_shared(),
+                project,
             })?;
             this.update(&mut cx, |this, cx| this.reload(cx))?
                 .await
@@ -1372,12 +1403,38 @@ impl ContextStore {
         })
     }
 
-    pub fn create(&self, cx: &mut ModelContext<Self>) -> Model<Context> {
-        // todo!("register context")
-        cx.new_model(|cx| Context::new(self.languages.clone(), self.telemetry.clone(), cx))
+    fn project_changed(&mut self, _: Model<Project>, cx: &mut ModelContext<Self>) {
+        let is_shared = self.project.read(cx).is_shared();
+        let was_shared = mem::replace(&mut self.project_is_shared, is_shared);
+        if is_shared != was_shared {
+            self.contexts.retain_mut(|context| {
+                if is_shared {
+                    if let Some(strong_context) = context.upgrade() {
+                        *context = ContextHandle::Strong(strong_context);
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    *context = ContextHandle::Weak(context.downgrade());
+                    true
+                }
+            });
+        }
     }
 
-    pub fn load(&self, path: PathBuf, cx: &AppContext) -> Task<Result<Model<Context>>> {
+    pub fn create(&mut self, cx: &mut ModelContext<Self>) -> Model<Context> {
+        let context =
+            cx.new_model(|cx| Context::new(self.languages.clone(), self.telemetry.clone(), cx));
+        self.register_context(&context);
+        context
+    }
+
+    pub fn load(&mut self, path: PathBuf, cx: &ModelContext<Self>) -> Task<Result<Model<Context>>> {
+        if let Some(existing_context) = self.loaded_context_for_path(&path, cx) {
+            return Task::ready(Ok(existing_context));
+        }
+
         let fs = self.fs.clone();
         let languages = self.languages.clone();
         let telemetry = self.telemetry.clone();
@@ -1429,11 +1486,40 @@ impl ContextStore {
             }
         });
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let saved_context = load.await?;
-            // todo!("register context")
-            Context::deserialize(saved_context, path, languages, telemetry, &mut cx).await
+            let context =
+                Context::deserialize(saved_context, path.clone(), languages, telemetry, &mut cx)
+                    .await?;
+            this.update(&mut cx, |this, cx| {
+                if let Some(existing_context) = this.loaded_context_for_path(&path, cx) {
+                    existing_context
+                } else {
+                    this.register_context(&context);
+                    context
+                }
+            })
         })
+    }
+
+    fn loaded_context_for_path(&self, path: &Path, cx: &AppContext) -> Option<Model<Context>> {
+        self.contexts.iter().find_map(|context| {
+            let context = context.upgrade()?;
+            if context.read(cx).path.as_deref() == Some(path) {
+                Some(context)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn register_context(&mut self, context: &Model<Context>) {
+        let handle = if self.project_is_shared {
+            ContextHandle::Strong(context.clone())
+        } else {
+            ContextHandle::Weak(context.downgrade())
+        };
+        self.contexts.push(handle);
     }
 
     pub fn search(&self, query: String, cx: &AppContext) -> Task<Vec<SavedContextMetadata>> {
