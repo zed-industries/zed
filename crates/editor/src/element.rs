@@ -4636,7 +4636,9 @@ impl Element for EditorElement {
                             SoftWrap::None => None,
                             SoftWrap::PreferLine => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
                             SoftWrap::EditorWidth => Some(editor_width),
-                            SoftWrap::Column(column) => Some(column as f32 * em_advance),
+                            SoftWrap::Column(column) => {
+                                Some(editor_width.min(column as f32 * em_advance))
+                            }
                         };
 
                         if editor.set_wrap_width(wrap_width, cx) {
