@@ -234,8 +234,7 @@ impl Img {
 }
 
 /// The image state between frames
-#[derive(Clone)]
-pub struct ImgState {
+struct ImgState {
     frame_index: usize,
     last_frame_time: Instant,
 }
@@ -261,10 +260,7 @@ impl Element for Img {
                 })
             });
 
-            let frame_index = state
-                .as_ref()
-                .map(|state| state.frame_index.clone())
-                .unwrap_or(0);
+            let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
 
             let layout_id = self
                 .interactivity
@@ -344,14 +340,12 @@ impl Element for Img {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
                 if let Some(data) = source.data(cx) {
-                    let new_bounds = self
-                        .object_fit
-                        .get_bounds(bounds, data.size(frame_index.clone()));
+                    let new_bounds = self.object_fit.get_bounds(bounds, data.size(*frame_index));
                     cx.paint_image(
                         new_bounds,
                         corner_radii,
                         data.clone(),
-                        frame_index.clone(),
+                        *frame_index,
                         self.grayscale,
                     )
                     .log_err();
