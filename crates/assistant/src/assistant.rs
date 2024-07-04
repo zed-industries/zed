@@ -49,7 +49,8 @@ actions!(
         ResetKey,
         InlineAssist,
         InsertActivePrompt,
-        ToggleHistory,
+        DeployHistory,
+        DeployPromptLibrary,
         ApplyEdit,
         ConfirmCommand,
         ToggleModelSelector
