@@ -266,11 +266,9 @@ impl MarkdownElement {
 
         let language_name = match language_test.now_or_never() {
             Some(Ok(_)) => String::from(name),
-            Some(Err(_)) if !name.is_empty() => self
-                .fallback_code_block_language
-                .as_ref()
-                .map(|s| s.clone())
-                .unwrap_or_else(|| String::new()),
+            Some(Err(_)) if !name.is_empty() && self.fallback_code_block_language.is_some() => {
+                self.fallback_code_block_language.clone().unwrap()
+            }
             _ => String::new(),
         };
 
