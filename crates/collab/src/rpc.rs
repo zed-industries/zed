@@ -2583,14 +2583,13 @@ async fn rejoin_dev_server_projects(
         )
         .await?
     };
-    notify_rejoined_projects(&mut rejoined_projects, &session)?;
-
     response.send(proto::RejoinRemoteProjectsResponse {
         rejoined_projects: rejoined_projects
-            .into_iter()
+            .iter()
             .map(|project| project.to_proto())
             .collect(),
-    })
+    })?;
+    notify_rejoined_projects(&mut rejoined_projects, &session)
 }
 
 async fn reconnect_dev_server(
@@ -4503,6 +4502,7 @@ async fn complete_with_google_ai(
         session.http_client.clone(),
         google_ai::API_URL,
         api_key.as_ref(),
+        &request.model.clone(),
         crate::ai::language_model_request_to_google_ai(request)?,
     )
     .await

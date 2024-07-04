@@ -10,8 +10,8 @@ use crate::{
 };
 use futures::StreamExt;
 use gpui::{
-    div, AssetSource, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions,
+    div, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds,
+    WindowOptions,
 };
 use indoc::indoc;
 use language::{
@@ -433,6 +433,57 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
             .update(cx, |view, cx| view.selections.display_ranges(cx))
             .unwrap(),
         [DisplayPoint::new(DisplayRow(3), 3)..DisplayPoint::new(DisplayRow(0), 0)]
+    );
+}
+
+#[gpui::test]
+fn test_multiple_cursor_removal(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
+        build_editor(buffer, cx)
+    });
+
+    _ = editor.update(cx, |view, cx| {
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 1), false, 1, cx);
+    });
+
+    _ = editor.update(cx, |view, cx| {
+        view.end_selection(cx);
+    });
+
+    _ = editor.update(cx, |view, cx| {
+        view.begin_selection(DisplayPoint::new(DisplayRow(3), 2), true, 1, cx);
+    });
+
+    _ = editor.update(cx, |view, cx| {
+        view.end_selection(cx);
+    });
+
+    assert_eq!(
+        editor
+            .update(cx, |view, cx| view.selections.display_ranges(cx))
+            .unwrap(),
+        [
+            DisplayPoint::new(DisplayRow(2), 1)..DisplayPoint::new(DisplayRow(2), 1),
+            DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 2)
+        ]
+    );
+
+    _ = editor.update(cx, |view, cx| {
+        view.begin_selection(DisplayPoint::new(DisplayRow(2), 1), true, 1, cx);
+    });
+
+    _ = editor.update(cx, |view, cx| {
+        view.end_selection(cx);
+    });
+
+    assert_eq!(
+        editor
+            .update(cx, |view, cx| view.selections.display_ranges(cx))
+            .unwrap(),
+        [DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 2)]
     );
 }
 
@@ -6969,6 +7020,73 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.lsp
+        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "first".into(),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "last".into(),
+                    ..Default::default()
+                },
+            ])))
+        });
+    cx.set_state("variableˇ");
+    cx.simulate_keystroke(".");
+    cx.executor().run_until_parked();
+
+    cx.update_editor(|editor, _| {
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+            assert_eq!(
+                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                &["first", "last"]
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_page_down(&MovePageDown::default(), cx);
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+            assert!(
+                menu.selected_item == 1,
+                "expected PageDown to select the last item from the context menu"
+            );
+        } else {
+            panic!("expected completion menu to stay open after PageDown");
+        }
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_page_up(&MovePageUp::default(), cx);
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+            assert!(
+                menu.selected_item == 0,
+                "expected PageUp to select the first item from the context menu"
+            );
+        } else {
+            panic!("expected completion menu to stay open after PageUp");
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_no_duplicated_completion_requests(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -12438,12 +12556,7 @@ pub(crate) fn update_test_project_settings(
 
 pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
     _ = cx.update(|cx| {
-        cx.text_system()
-            .add_fonts(vec![assets::Assets
-                .load("fonts/zed-mono/zed-mono-extended.ttf")
-                .unwrap()
-                .unwrap()])
-            .unwrap();
+        assets::Assets.load_test_fonts(cx);
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);

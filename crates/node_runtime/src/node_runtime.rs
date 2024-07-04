@@ -1,6 +1,7 @@
 mod archive;
 
 use anyhow::{anyhow, bail, Context, Result};
+pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;

@@ -70,12 +70,25 @@
   {
     "context": "ProjectPanel",
     "bindings": {
+      "f2": "project_panel::Rename",
+      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "cmd-x": "project_panel::Cut",
+      "cmd-c": "project_panel::Copy",
+      "cmd-v": "project_panel::Paste",
       "ctrl-[": "project_panel::CollapseSelectedEntry",
       "ctrl-b": "project_panel::CollapseSelectedEntry",
       "alt-b": "project_panel::CollapseSelectedEntry",
       "ctrl-]": "project_panel::ExpandSelectedEntry",
       "ctrl-f": "project_panel::ExpandSelectedEntry",
       "ctrl-shift-c": "project_panel::CopyPath"
+    }
+  },
+  {
+    "context": "ProjectPanel && not_editing",
+    "bindings": {
+      "a": "project_panel::NewFile",
+      "shift-a": "project_panel::NewDirectory",
+      "shift-d": "project_panel::Duplicate"
     }
   }
 ]

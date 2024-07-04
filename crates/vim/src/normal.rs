@@ -23,11 +23,11 @@ use crate::{
 };
 use case::{change_case_motion, change_case_object, CaseTarget};
 use collections::BTreeSet;
-use editor::display_map::ToDisplayPoint;
 use editor::scroll::Autoscroll;
 use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
+use editor::{display_map::ToDisplayPoint, movement};
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, SelectionGoal};
 use log::error;
@@ -64,6 +64,7 @@ actions!(
         JoinLines,
         Indent,
         Outdent,
+        ToggleComments,
     ]
 );
 
@@ -79,6 +80,7 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(convert_to_upper_case);
     workspace.register_action(convert_to_lower_case);
     workspace.register_action(yank_line);
+    workspace.register_action(toggle_comments);
 
     workspace.register_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
@@ -437,6 +439,22 @@ fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
     })
 }
 
+fn toggle_comments(_: &mut Workspace, _: &ToggleComments, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.record_current_action(cx);
+        vim.update_active_editor(cx, |_, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                let mut original_positions = save_selection_starts(editor, cx);
+                editor.toggle_comments(&Default::default(), cx);
+                restore_selection_cursors(editor, cx, &mut original_positions);
+            });
+        });
+        if vim.state().mode.is_visual() {
+            vim.switch_mode(Mode::Normal, false, cx)
+        }
+    });
+}
+
 fn save_selection_starts(editor: &Editor, cx: &mut ViewContext<Editor>) -> HashMap<usize, Anchor> {
     let (map, selections) = editor.selections.all_display(cx);
     selections
@@ -466,45 +484,40 @@ fn restore_selection_cursors(
 
 pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
+        let count = vim.take_count(cx).unwrap_or(1);
         vim.stop_recording();
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let (map, display_selections) = editor.selections.all_display(cx);
-                // Selections are biased right at the start. So we need to store
-                // anchors that are biased left so that we can restore the selections
-                // after the change
-                let stable_anchors = editor
-                    .selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| {
-                        let start = selection.start.bias_left(&map.buffer_snapshot);
-                        start..start
-                    })
-                    .collect::<Vec<_>>();
 
-                let edits = display_selections
-                    .into_iter()
-                    .map(|selection| {
-                        let mut range = selection.range();
-                        *range.end.column_mut() += 1;
-                        range.end = map.clip_point(range.end, Bias::Right);
+                let mut edits = Vec::new();
+                for selection in display_selections {
+                    let mut range = selection.range();
+                    for _ in 0..count {
+                        let new_point = movement::saturating_right(&map, range.end);
+                        if range.end == new_point {
+                            return;
+                        }
+                        range.end = new_point;
+                    }
 
-                        (
-                            range.start.to_offset(&map, Bias::Left)
-                                ..range.end.to_offset(&map, Bias::Left),
-                            text.clone(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
+                    edits.push((
+                        range.start.to_offset(&map, Bias::Left)
+                            ..range.end.to_offset(&map, Bias::Left),
+                        text.repeat(count),
+                    ))
+                }
 
                 editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 });
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(None, cx, |s| {
-                    s.select_anchor_ranges(stable_anchors);
+                    s.move_with(|map, selection| {
+                        let point = movement::saturating_left(map, selection.head());
+                        selection.collapse_to(point, SelectionGoal::None)
+                    });
                 });
             });
         });
@@ -1396,5 +1409,30 @@ mod test {
             indoc! {"assert_bindinˇg"},
             indoc! {"asserˇt_binding"},
         );
+    }
+
+    #[gpui::test]
+    async fn test_r(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("r -").await;
+        cx.shared_state().await.assert_eq("ˇ-ello\n");
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("3 r -").await;
+        cx.shared_state().await.assert_eq("--ˇ-lo\n");
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes("r - 2 l .").await;
+        cx.shared_state().await.assert_eq("-eˇ-lo\n");
+
+        cx.set_shared_state("ˇhello world\n").await;
+        cx.simulate_shared_keystrokes("2 r - f w .").await;
+        cx.shared_state().await.assert_eq("--llo -ˇ-rld\n");
+
+        cx.set_shared_state("ˇhello world\n").await;
+        cx.simulate_shared_keystrokes("2 0 r - ").await;
+        cx.shared_state().await.assert_eq("ˇhello world\n");
     }
 }
