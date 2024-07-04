@@ -6,18 +6,22 @@ use dap::{
     Scope, ScopesArguments, StackFrame, StackTraceArguments, StoppedEvent, ThreadEvent,
     ThreadEventReason, Variable, VariablesArguments,
 };
+use editor::Editor;
 use futures::future::try_join_all;
 use gpui::{
     actions, list, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
     FocusableView, ListState, Model, Subscription, Task, View, ViewContext, WeakView,
 };
 use project::Project;
+use std::path::Path;
 use std::{collections::HashMap, sync::Arc};
 use ui::{prelude::*, Tooltip};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
+
+enum DebugCurrentRowHighlight {}
 
 actions!(
     debug_panel,
@@ -362,6 +366,7 @@ impl DebugPanel {
                 })
                 .await?;
 
+            let current_stack_frame = stack_trace_response.stack_frames.first().unwrap().clone();
             let mut scope_tasks = Vec::new();
             for stack_frame in stack_trace_response.stack_frames.clone().into_iter() {
                 let frame_id = stack_frame.id.clone();
@@ -407,30 +412,54 @@ impl DebugPanel {
                 variables.insert(scope_reference, response.variables.clone());
             }
 
-            this.update(&mut cx, |this, cx| {
-                if let Some(entry) = client.thread_state().get_mut(&thread_id) {
-                    client.update_current_thread_id(Some(thread_id));
+            let task = this.update(&mut cx, |this, cx| {
+                {
+                    if let Some(entry) = client.thread_state().get_mut(&thread_id) {
+                        client.update_current_thread_id(Some(thread_id));
 
-                    entry.current_stack_frame_id = stack_trace_response
-                        .stack_frames
-                        .clone()
-                        .first()
-                        .map(|f| f.id);
-                    entry.stack_frames = stack_trace_response.stack_frames.clone();
-                    entry.scopes = scopes;
-                    entry.variables = variables;
+                        entry.current_stack_frame_id = Some(current_stack_frame.clone().id);
+                        entry.stack_frames = stack_trace_response.stack_frames.clone();
+                        entry.scopes = scopes;
+                        entry.variables = variables;
 
-                    if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
-                        this.stack_frame_list.reset(entry.stack_frames.len());
+                        if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
+                            this.stack_frame_list.reset(entry.stack_frames.len());
+                        }
+
+                        cx.notify();
                     }
-
-                    cx.notify();
                 }
 
-                anyhow::Ok(())
+                let path = current_stack_frame.clone().source.unwrap().path.unwrap();
+
+                this.workspace.update(cx, |workspace, cx| {
+                    let project_path = workspace.project().read_with(cx, |project, cx| {
+                        project.project_path_for_absolute_path(&Path::new(&path), cx)
+                    });
+
+                    if let Some(project_path) = project_path {
+                        workspace.open_path_preview(project_path, None, false, true, cx)
+                    } else {
+                        Task::ready(Err(anyhow::anyhow!(
+                            "No project path found for path: {}",
+                            path
+                        )))
+                    }
+                })
+            })??;
+
+            let editor = task.await?.downcast::<Editor>().unwrap();
+
+            editor.update(&mut cx, |editor, cx| {
+                editor.go_to_line::<DebugCurrentRowHighlight>(
+                    (current_stack_frame.line - 1) as u32,
+                    (current_stack_frame.column - 1) as u32,
+                    Some(cx.theme().colors().editor_highlighted_line_background),
+                    cx,
+                );
             })
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn handle_thread_event(

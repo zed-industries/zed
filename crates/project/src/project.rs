@@ -23,7 +23,7 @@ use clock::ReplicaId;
 use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use dap::{
     client::{DebugAdapterClient, DebugAdapterClientId},
-    transport::{self, Events},
+    transport::Events,
     SourceBreakpoint,
 };
 use debounced_delay::DebouncedDelay;

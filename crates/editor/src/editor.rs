@@ -8883,6 +8883,31 @@ impl Editor {
         }
     }
 
+    pub fn go_to_line<T: 'static>(
+        &mut self,
+        row: u32,
+        column: u32,
+        highlight_color: Option<Hsla>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let snapshot = self.snapshot(cx).display_snapshot;
+        let point = snapshot
+            .buffer_snapshot
+            .clip_point(Point::new(row, column), Bias::Left);
+        let anchor = snapshot.buffer_snapshot.anchor_before(point);
+        self.clear_row_highlights::<T>();
+        self.highlight_rows::<T>(
+            anchor..=anchor,
+            Some(
+                highlight_color
+                    .unwrap_or_else(|| cx.theme().colors().editor_highlighted_line_background),
+            ),
+            true,
+            cx,
+        );
+        self.request_autoscroll(Autoscroll::center(), cx);
+    }
+
     fn seek_in_direction(
         &mut self,
         snapshot: &DisplaySnapshot,
