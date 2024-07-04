@@ -60,7 +60,7 @@ actions!(
 #[derive(
     Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
-struct MessageId(usize);
+pub struct MessageId(usize);
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -229,7 +229,7 @@ struct MessageMetadata {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-enum MessageStatus {
+pub enum MessageStatus {
     Pending,
     Done,
     Error(SharedString),
