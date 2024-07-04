@@ -234,7 +234,7 @@ impl RuntimePanel {
             .with_context(|| format!("No kernel found for language: {language_name}"))?;
 
         let session = self.sessions.entry(entity_id).or_insert_with(|| {
-            let view = cx.new_view(|cx| Session::new(editor, fs, kernel_specification, cx));
+            let view = cx.new_view(|cx| Session::new(editor, fs.clone(), kernel_specification, cx));
             cx.notify();
 
             let subscription = cx.subscribe(
