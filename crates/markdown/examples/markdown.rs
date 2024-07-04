@@ -177,7 +177,8 @@ impl MarkdownExample {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut WindowContext,
     ) -> Self {
-        let markdown = cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), cx));
+        let markdown =
+            cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), cx, None));
         Self { markdown }
     }
 }

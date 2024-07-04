@@ -58,6 +58,7 @@ pub struct Markdown {
     pending_parse: Option<Task<Option<()>>>,
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
+    fallback_code_block_language: Option<String>,
 }
 
 actions!(markdown, [Copy]);
@@ -68,6 +69,7 @@ impl Markdown {
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut ViewContext<Self>,
+        fallback_code_block_language: Option<String>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
@@ -81,6 +83,7 @@ impl Markdown {
             pending_parse: None,
             focus_handle,
             language_registry,
+            fallback_code_block_language,
         };
         this.parse(cx);
         this
@@ -166,6 +169,7 @@ impl Render for Markdown {
             cx.view().clone(),
             self.style.clone(),
             self.language_registry.clone(),
+            self.fallback_code_block_language.clone(),
         )
     }
 }
@@ -239,6 +243,7 @@ pub struct MarkdownElement {
     markdown: View<Markdown>,
     style: MarkdownStyle,
     language_registry: Option<Arc<LanguageRegistry>>,
+    fallback_code_block_language: Option<String>,
 }
 
 impl MarkdownElement {
@@ -246,19 +251,33 @@ impl MarkdownElement {
         markdown: View<Markdown>,
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
+        fallback_code_block_language: Option<String>,
     ) -> Self {
         Self {
             markdown,
             style,
             language_registry,
+            fallback_code_block_language,
         }
     }
 
     fn load_language(&self, name: &str, cx: &mut WindowContext) -> Option<Arc<Language>> {
+        let language_test = self.language_registry.as_ref()?.language_for_name(name);
+
+        let language_name = match language_test.now_or_never() {
+            Some(Ok(_)) => String::from(name),
+            Some(Err(_)) if !name.is_empty() => self
+                .fallback_code_block_language
+                .as_ref()
+                .map(|s| s.clone())
+                .unwrap_or_else(|| String::new()),
+            _ => String::new(),
+        };
+
         let language = self
             .language_registry
             .as_ref()?
-            .language_for_name(name)
+            .language_for_name(language_name.as_str())
             .map(|language| language.ok())
             .shared();
 

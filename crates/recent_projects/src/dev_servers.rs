@@ -137,7 +137,8 @@ impl DevServerProjects {
             selection_background_color: cx.theme().players().local().selection,
             ..Default::default()
         };
-        let markdown = cx.new_view(|cx| Markdown::new("".to_string(), markdown_style, None, cx));
+        let markdown =
+            cx.new_view(|cx| Markdown::new("".to_string(), markdown_style, None, cx, None));
 
         Self {
             mode: Mode::Default(None),
