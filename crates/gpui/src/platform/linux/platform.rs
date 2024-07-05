@@ -314,20 +314,27 @@ impl<P: LinuxClient + 'static> Platform for P {
         let directory = directory.to_owned();
         self.foreground_executor()
             .spawn(async move {
-                let result = SaveFileRequest::default()
+                let request = SaveFileRequest::default()
                     .modal(true)
                     .title("Select new path")
                     .accept_label("Accept")
-                    .send()
-                    .await
-                    .ok()
-                    .and_then(|request| request.response().ok())
-                    .and_then(|response| {
-                        response
-                            .uris()
-                            .first()
-                            .and_then(|uri| uri.to_file_path().ok())
-                    });
+                    .current_folder(directory);
+
+                let result = if let Ok(request) = request {
+                    request
+                        .send()
+                        .await
+                        .ok()
+                        .and_then(|request| request.response().ok())
+                        .and_then(|response| {
+                            response
+                                .uris()
+                                .first()
+                                .and_then(|uri| uri.to_file_path().ok())
+                        })
+                } else {
+                    None
+                };
 
                 done_tx.send(result);
             })
