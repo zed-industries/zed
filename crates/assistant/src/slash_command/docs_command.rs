@@ -104,12 +104,7 @@ impl SlashCommand for DocsSlashCommand {
             .ok_or_else(|| anyhow!("no docs provider specified"))
             .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
         cx.background_executor().spawn(async move {
-            /// HACK: Prefixes the completions with the provider ID so that it doesn't get deleted
-            /// when a completion is accepted.
-            ///
-            /// We will likely want to extend `complete_argument` with support for replacing just
-            /// a particular range of the argument when a completion is accepted.
-            fn prefix_with_provider(
+            fn build_completions(
                 provider: ProviderId,
                 items: Vec<String>,
             ) -> Vec<ArgumentCompletion> {
@@ -149,7 +144,7 @@ impl SlashCommand for DocsSlashCommand {
                     }
 
                     let items = store.search(package).await;
-                    Ok(prefix_with_provider(provider, items))
+                    Ok(build_completions(provider, items))
                 }
                 DocsSlashCommandArgs::SearchItemDocs {
                     provider,
@@ -158,7 +153,7 @@ impl SlashCommand for DocsSlashCommand {
                 } => {
                     let store = store?;
                     let items = store.search(item_path).await;
-                    Ok(prefix_with_provider(provider, items))
+                    Ok(build_completions(provider, items))
                 }
             }
         })
