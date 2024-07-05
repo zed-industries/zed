@@ -423,6 +423,7 @@ impl LspAdapter for EsLintLspAdapter {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("vscode-eslint-{}", version.name));
         let server_path = destination_path.join(Self::SERVER_PATH);
+        println!("--> {:#?}", version);
 
         if fs::metadata(&server_path).await.is_err() {
             remove_matching(&container_dir, |entry| entry != destination_path).await;
@@ -432,22 +433,37 @@ impl LspAdapter for EsLintLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(&destination_path).await?;
+            // let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            // let archive = Archive::new(decompressed_bytes);
+            // archive.unpack(&destination_path).await?;
+            if version.url.ends_with(".zip") {
+                node_runtime::extract_zip(&destination_path, BufReader::new(response.body_mut()))
+                    .await
+                    .unwrap();
+            } else if version.url.ends_with(".tar.gz") {
+                let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                let archive = Archive::new(decompressed_bytes);
+                archive.unpack(&destination_path).await?;
+            }
 
             let mut dir = fs::read_dir(&destination_path).await?;
             let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
             let repo_root = destination_path.join("vscode-eslint");
             fs::rename(first.path(), &repo_root).await?;
 
-            self.node
+            let ret = self
+                .node
                 .run_npm_subcommand(Some(&repo_root), "install", &[])
-                .await?;
+                .await;
+            println!("ret1 ==>{:?}", ret);
+            ret.log_err();
 
-            self.node
+            let ret = self
+                .node
                 .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
-                .await?;
+                .await;
+            println!("ret2 ==>{:?}", ret);
+            ret?;
         }
 
         Ok(LanguageServerBinary {

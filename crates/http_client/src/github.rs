@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use url::Url;
 
+#[derive(Debug)]
 pub struct GitHubLspBinaryVersion {
     pub name: String,
     pub url: String,
@@ -123,7 +124,10 @@ pub fn build_tarball_url(repo_name_with_owner: &str, tag: &str) -> Result<String
     ))?;
     // We're pushing this here, because tags may contain `/` and other characters
     // that need to be escaped.
+    #[cfg(not(target_os = "windows"))]
     let tarball_filename = format!("{}.tar.gz", tag);
+    #[cfg(target_os = "windows")]
+    let tarball_filename = format!("{}.zip", tag);
     url.path_segments_mut()
         .map_err(|_| anyhow!("cannot modify url path segments"))?
         .push(&tarball_filename);
