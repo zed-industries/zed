@@ -6,6 +6,7 @@ use crate::{
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use editor::{Anchor, Editor, RangeToAnchorExt};
+use futures::StreamExt as _;
 use gpui::{
     actions, prelude::*, AppContext, AsyncWindowContext, Entity, EntityId, EventEmitter,
     FocusHandle, FocusOutEvent, FocusableView, Subscription, Task, View, WeakView,
@@ -15,22 +16,21 @@ use project::Fs;
 use settings::{Settings as _, SettingsStore};
 use std::{ops::Range, sync::Arc};
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
+use util::ResultExt as _;
 use workspace::{
     dock::{Panel, PanelEvent},
     Workspace,
 };
 
-actions!(repl, [Run, ToggleFocus, ClearOutputs]);
+actions!(repl, [Run, ClearOutputs]);
+actions!(repl_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
-            workspace
-                .register_action(|workspace, _: &ToggleFocus, cx| {
-                    workspace.toggle_panel_focus::<RuntimePanel>(cx);
-                })
-                .register_action(run)
-                .register_action(clear_outputs);
+            workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+                workspace.toggle_panel_focus::<RuntimePanel>(cx);
+            });
         },
     )
     .detach();
@@ -46,6 +46,11 @@ pub struct RuntimePanel {
     _subscriptions: Vec<Subscription>,
 }
 
+pub enum ReplEvent {
+    Run(View<Editor>),
+    ClearOutputs(View<Editor>),
+}
+
 impl RuntimePanel {
     pub fn load(
         workspace: WeakView<Workspace>,
@@ -58,25 +63,85 @@ impl RuntimePanel {
 
                     let fs = workspace.app_state().fs.clone();
 
+                    // Make a channel that we receive editor events on (for repl::Run, repl::ClearOutputs)
+                    // This allows us to inject actions on the editor from the repl panel without requiring the editor to
+                    // depend on the `repl` crate.
+                    let (repl_editor_event_tx, mut repl_editor_event_rx) =
+                        futures::channel::mpsc::unbounded::<ReplEvent>();
+
                     let subscriptions = vec![
                         cx.on_focus_in(&focus_handle, Self::focus_in),
                         cx.on_focus_out(&focus_handle, Self::focus_out),
                         cx.observe_global::<SettingsStore>(move |this, cx| {
                             this.set_enabled(JupyterSettings::enabled(cx), cx);
                         }),
+                        cx.observe_new_views(
+                            move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
+                                let editor_view = cx.view().clone();
+                                let run_event_tx = repl_editor_event_tx.clone();
+                                let clear_event_tx = repl_editor_event_tx.clone();
+                                editor
+                                    .register_action(move |_: &Run, cx: &mut WindowContext| {
+                                        if !JupyterSettings::enabled(cx) {
+                                            return;
+                                        }
+                                        run_event_tx
+                                            .unbounded_send(ReplEvent::Run(editor_view.clone()))
+                                            .ok();
+                                    })
+                                    .detach();
+
+                                let editor_view = cx.view().clone();
+                                editor
+                                    .register_action(
+                                        move |_: &ClearOutputs, cx: &mut WindowContext| {
+                                            if !JupyterSettings::enabled(cx) {
+                                                return;
+                                            }
+                                            clear_event_tx
+                                                .unbounded_send(ReplEvent::ClearOutputs(
+                                                    editor_view.clone(),
+                                                ))
+                                                .ok();
+                                        },
+                                    )
+                                    .detach();
+                            },
+                        ),
                     ];
 
-                    let enabled = JupyterSettings::enabled(cx);
-
-                    Self {
-                        fs,
+                    let runtime_panel = Self {
+                        fs: fs.clone(),
                         width: None,
                         focus_handle,
                         kernel_specifications: Vec::new(),
                         sessions: Default::default(),
                         _subscriptions: subscriptions,
-                        enabled,
-                    }
+                        enabled: JupyterSettings::enabled(cx),
+                    };
+
+                    // Listen for events from the editor on the `repl_editor_event_rx` channel
+                    cx.spawn(
+                        move |this: WeakView<RuntimePanel>, mut cx: AsyncWindowContext| async move {
+                            while let Some(event) = repl_editor_event_rx.next().await {
+                                this.update(&mut cx, |runtime_panel, cx| match event {
+                                    ReplEvent::Run(editor) => {
+                                        if !JupyterSettings::enabled(cx) {
+                                            return;
+                                        }
+                                        runtime_panel.run(editor, fs.clone(), cx).log_err();
+                                    }
+                                    ReplEvent::ClearOutputs(editor) => {
+                                        runtime_panel.clear_outputs(editor, cx);
+                                    }
+                                })
+                                .ok();
+                            }
+                        },
+                    )
+                    .detach();
+
+                    runtime_panel
                 })
             })?;
 
@@ -268,40 +333,6 @@ impl RuntimePanel {
             });
             cx.notify();
         }
-    }
-}
-
-pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
-    if !JupyterSettings::enabled(cx) {
-        return;
-    }
-
-    let editor = workspace
-        .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx));
-
-    if let (Some(editor), Some(runtime_panel)) = (editor, workspace.panel::<RuntimePanel>(cx)) {
-        runtime_panel.update(cx, |runtime_panel, cx| {
-            runtime_panel
-                .run(editor, workspace.app_state().fs.clone(), cx)
-                .ok();
-        });
-    }
-}
-
-pub fn clear_outputs(workspace: &mut Workspace, _: &ClearOutputs, cx: &mut ViewContext<Workspace>) {
-    if !JupyterSettings::enabled(cx) {
-        return;
-    }
-
-    let editor = workspace
-        .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx));
-
-    if let (Some(editor), Some(runtime_panel)) = (editor, workspace.panel::<RuntimePanel>(cx)) {
-        runtime_panel.update(cx, |runtime_panel, cx| {
-            runtime_panel.clear_outputs(editor, cx);
-        });
     }
 }
 
