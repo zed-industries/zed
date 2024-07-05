@@ -775,7 +775,8 @@
     "PHP": {
       "prettier": {
         "allowed": true,
-        "plugins": ["@prettier/plugin-php"]
+        "plugins": ["@prettier/plugin-php"],
+        "parser": "php"
       }
     },
     "Ruby": {
