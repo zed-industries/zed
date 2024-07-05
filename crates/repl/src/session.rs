@@ -305,7 +305,6 @@ impl Session {
 
     fn shutdown(&mut self, cx: &mut ViewContext<Self>) {
         let kernel = std::mem::replace(&mut self.kernel, Kernel::ShuttingDown);
-        // todo!(): emit event for the runtime panel to remove this session once in shutdown state
 
         match kernel {
             Kernel::RunningKernel(mut kernel) => {
