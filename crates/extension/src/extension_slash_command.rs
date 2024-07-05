@@ -63,9 +63,9 @@ impl SlashCommand for ExtensionSlashCommand {
                                 completions
                                     .into_iter()
                                     .map(|completion| ArgumentCompletion {
-                                        label: completion.clone(),
-                                        new_text: completion,
-                                        run_command: true,
+                                        label: completion.label,
+                                        new_text: completion.new_text,
+                                        run_command: completion.run_command,
                                     })
                                     .collect(),
                             )
