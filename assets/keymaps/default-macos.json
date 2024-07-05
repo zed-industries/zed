@@ -171,7 +171,6 @@
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
       "cmd-shift-enter": "editor::NewlineAbove",
-      "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
       "cmd-alt-f": [
@@ -195,6 +194,12 @@
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol"
+    }
+  },
+  {
+    "context": "Editor && mode == full && !jupyter",
+    "bindings": {
+      "cmd-enter": "editor::NewlineBelow"
     }
   },
   {
@@ -635,6 +640,12 @@
     "context": "ProjectPanel && not_editing",
     "bindings": {
       "space": "project_panel::Open"
+    }
+  },
+  {
+    "context": "Editor && jupyter",
+    "bindings": {
+      "cmd-enter": "repl::Run"
     }
   },
   {
