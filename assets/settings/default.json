@@ -690,6 +690,7 @@
   // }
   //
   "file_types": {
+    "JSON": ["flake.lock"],
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json"]
   },
   // The extensions that Zed should automatically install on startup.
