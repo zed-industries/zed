@@ -35,7 +35,7 @@ pub fn default_settings() -> Cow<'static, str> {
 #[cfg(target_os = "macos")]
 pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-macos.json";
 
-#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+#[cfg(target_os = "linux")]
 pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-linux.json";
 
 #[cfg(target_os = "windows")]
