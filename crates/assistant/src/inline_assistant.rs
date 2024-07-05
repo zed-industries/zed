@@ -2499,6 +2499,8 @@ mod tests {
             codegen.start(LanguageModelRequest::default(), cx)
         });
 
+        cx.background_executor.run_until_parked();
+
         let mut new_text = concat!(
             "       let mut x = 0;\n",
             "       while x < 10 {\n",
@@ -2555,6 +2557,8 @@ mod tests {
         let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
 
+        cx.background_executor.run_until_parked();
+
         let mut new_text = concat!(
             "t mut x = 0;\n",
             "while x < 10 {\n",
@@ -2610,6 +2614,8 @@ mod tests {
 
         let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
+
+        cx.background_executor.run_until_parked();
 
         let mut new_text = concat!(
             "let mut x = 0;\n",
