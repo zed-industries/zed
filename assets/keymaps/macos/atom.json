@@ -1,6 +1,9 @@
+// Default Keymap (Atom) for Zed on MacOS
+// Comments include the Atom command originally bound to this key.
 [
   {
     "bindings": {
+      "ctrl-alt-cmd-l": "workspace::Reload", // window:reload
       "cmd-k cmd-p": "workspace::ActivatePreviousPane", // window:focus-next-pane
       "cmd-k cmd-n": "workspace::ActivateNextPane" // window:focus-previous-pane
     }
@@ -18,6 +21,13 @@
       "ctrl-shift-down": "editor::AddSelectionBelow", // editor:add-selection-below
       "ctrl-shift-up": "editor::AddSelectionAbove", // editor:add-selection-above
       "cmd-shift-backspace": "editor::DeleteToBeginningOfLine", // editor:delete-to-beginning-of-line
+      "cmd-k cmd-u": "editor::ConvertToUpperCase", // editor:upper-case
+      "cmd-k cmd-l": "editor::ConvertToLowerCase", // editor:lower-case
+      "alt-enter": "editor::Newline", // editor:newline
+      "cmd-j": "editor::JoinLines", // editor:join-lines
+      "cmd-shift-d": "editor::DuplicateLineDown", // editor:duplicate-lines
+      "ctrl-cmd-up": "editor::MoveLineUp", // editor:move-line-up
+      "ctrl-cmd-down": "editor::MoveLineDown", // editor:move-line-down
       "ctrl-shift-m": "markdown::OpenPreviewToTheSide" // markdown-preview:toggle
     }
   },
