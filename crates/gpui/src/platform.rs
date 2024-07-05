@@ -281,6 +281,16 @@ pub struct Tiling {
 }
 
 impl Tiling {
+    /// Initializes a [`Tiling`] type with all sides tiled
+    pub fn tiled() -> Self {
+        Self {
+            top: true,
+            left: true,
+            right: true,
+            bottom: true,
+        }
+    }
+
     /// Whether any edge is tiled
     pub fn is_tiled(&self) -> bool {
         self.top || self.left || self.right || self.bottom
