@@ -100,7 +100,6 @@ pub struct WaylandWindowState {
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     inset: Option<Pixels>,
-    requested_inset: Option<Pixels>,
 }
 
 #[derive(Clone)]
@@ -189,7 +188,6 @@ impl WaylandWindowState {
                 window_menu: true,
             },
             inset: None,
-            requested_inset: None,
         })
     }
 
@@ -316,12 +314,11 @@ impl WaylandWindowStatePtr {
         Rc::ptr_eq(&self.state, &other.state)
     }
 
-    pub fn frame(&self, request_frame_callback: bool) {
-        if request_frame_callback {
-            let mut state = self.state.borrow_mut();
-            state.surface.frame(&state.globals.qh, state.surface.id());
-            drop(state);
-        }
+    pub fn frame(&self) {
+        let mut state = self.state.borrow_mut();
+        state.surface.frame(&state.globals.qh, state.surface.id());
+        drop(state);
+
         let mut cb = self.callbacks.borrow_mut();
         if let Some(fun) = cb.request_frame.as_mut() {
             fun();
@@ -351,13 +348,12 @@ impl WaylandWindowStatePtr {
                         state.fullscreen = configure.fullscreen;
                         state.maximized = configure.maximized;
                         state.tiling = configure.tiling;
-                        if got_unmaximized {
-                            configure.size = Some(state.window_bounds.size);
-                        } else if !configure.maximized {
-                            configure.size =
-                                compute_outer_size(state.inset, configure.size, state.tiling);
-                        }
                         if !configure.fullscreen && !configure.maximized {
+                            configure.size = if got_unmaximized {
+                                Some(state.window_bounds.size)
+                            } else {
+                                compute_outer_size(state.inset, configure.size, state.tiling)
+                            };
                             if let Some(size) = configure.size {
                                 state.window_bounds = Bounds {
                                     origin: Point::default(),
@@ -373,12 +369,27 @@ impl WaylandWindowStatePtr {
                 }
                 let mut state = self.state.borrow_mut();
                 state.xdg_surface.ack_configure(serial);
-                let request_frame_callback = !state.acknowledged_first_configure;
-                state.acknowledged_first_configure = true;
 
+                let window_geometry = inset_by_tiling(
+                    state.bounds.map_origin(|_| px(0.0)),
+                    state.inset.unwrap_or(px(0.0)),
+                    state.tiling,
+                )
+                .map(|v| v.0 as i32)
+                .map_size(|v| if v <= 0 { 1 } else { v });
+
+                state.xdg_surface.set_window_geometry(
+                    window_geometry.origin.x,
+                    window_geometry.origin.y,
+                    window_geometry.size.width,
+                    window_geometry.size.height,
+                );
+
+                let request_frame_callback = !state.acknowledged_first_configure;
                 if request_frame_callback {
+                    state.acknowledged_first_configure = true;
                     drop(state);
-                    self.frame(true);
+                    self.frame();
                 }
             }
             _ => {}
@@ -468,6 +479,10 @@ impl WaylandWindowStatePtr {
                             // noop
                         }
                     }
+                }
+
+                if fullscreen || maximized {
+                    tiling = Tiling::tiled();
                 }
 
                 let mut state = self.state.borrow_mut();
@@ -893,26 +908,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn completed_frame(&self) {
-        let mut state = self.borrow_mut();
-        if let Some(area) = state.requested_inset {
-            state.inset = Some(area);
-        }
-
-        let window_geometry = inset_by_tiling(
-            state.bounds.map_origin(|_| px(0.0)),
-            state.inset.unwrap_or(px(0.0)),
-            state.tiling,
-        )
-        .map(|v| v.0 as i32)
-        .map_size(|v| if v <= 0 { 1 } else { v });
-
-        state.xdg_surface.set_window_geometry(
-            window_geometry.origin.x,
-            window_geometry.origin.y,
-            window_geometry.size.width,
-            window_geometry.size.height,
-        );
-
+        let state = self.borrow();
         state.surface.commit();
     }
 
@@ -973,7 +969,7 @@ impl PlatformWindow for WaylandWindow {
     fn set_client_inset(&self, inset: Pixels) {
         let mut state = self.borrow_mut();
         if Some(inset) != state.inset {
-            state.requested_inset = Some(inset);
+            state.inset = Some(inset);
             update_window(state);
         }
     }
