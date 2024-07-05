@@ -123,12 +123,12 @@ impl DebugAdapterClient {
     }
 
     async fn create_stdio_client(
-        id: DebugAdapterClientId,
-        config: DebugAdapterConfig,
-        command: &str,
-        args: Vec<&str>,
-        project_path: PathBuf,
-        cx: &mut AsyncAppContext,
+        _id: DebugAdapterClientId,
+        _config: DebugAdapterConfig,
+        _command: &str,
+        _args: Vec<&str>,
+        _project_path: PathBuf,
+        _cx: &mut AsyncAppContext,
     ) -> Result<Self> {
         todo!("not implemented")
     }
@@ -241,7 +241,7 @@ impl DebugAdapterClient {
     }
 
     pub fn current_thread_id(&self) -> Option<u64> {
-        self.current_thread_id.lock().clone()
+        *self.current_thread_id.lock()
     }
 
     pub fn update_current_thread_id(&self, thread_id: Option<u64>) {
