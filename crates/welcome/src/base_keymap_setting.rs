@@ -32,7 +32,6 @@ impl Display for BaseKeymap {
 }
 
 impl BaseKeymap {
-
     #[cfg(target_os = "macos")]
     pub const OPTIONS: [(&'static str, Self); 5] = [
         ("VSCode (Default)", Self::VSCode),
@@ -43,7 +42,7 @@ impl BaseKeymap {
     ];
 
     #[cfg(not(target_os = "macos"))]
-    pub const OPTIONS: [(&'static str, Self); 5] = [
+    pub const OPTIONS: [(&'static str, Self); 4] = [
         ("VSCode (Default)", Self::VSCode),
         ("Atom", Self::Atom),
         ("JetBrains", Self::JetBrains),
