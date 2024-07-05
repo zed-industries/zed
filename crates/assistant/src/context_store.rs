@@ -525,11 +525,17 @@ impl Context {
         event: &language::Event,
         cx: &mut ModelContext<Self>,
     ) {
-        if *event == language::Event::Edited {
-            self.count_remaining_tokens(cx);
-            self.reparse_edit_suggestions(cx);
-            self.reparse_slash_commands(cx);
-            cx.emit(ContextEvent::MessagesEdited);
+        match event {
+            language::Event::Operation(operation) => cx.emit(ContextEvent::Operation(
+                ContextOperation::BufferOperation(operation.clone()),
+            )),
+            language::Event::Edited => {
+                self.count_remaining_tokens(cx);
+                self.reparse_edit_suggestions(cx);
+                self.reparse_slash_commands(cx);
+                cx.emit(ContextEvent::MessagesEdited);
+            }
+            _ => {}
         }
     }
 
@@ -767,7 +773,7 @@ impl Context {
                             output.text.push('\n');
                         }
 
-                        let event = this.buffer.update(cx, |buffer, cx| {
+                        let events = this.buffer.update(cx, |buffer, cx| {
                             let start = command_range.start.to_offset(buffer);
                             let old_end = command_range.end.to_offset(buffer);
                             let new_end = start + output.text.len();
@@ -790,14 +796,28 @@ impl Context {
                             this.slash_command_output_sections
                                 .sort_by(|a, b| a.range.cmp(&b.range, buffer));
 
-                            ContextEvent::SlashCommandFinished {
-                                output_range: buffer.anchor_after(start)
-                                    ..buffer.anchor_before(new_end),
-                                sections,
-                                run_commands_in_output: output.run_commands_in_text,
-                            }
+                            let command_id = SlashCommandId(this.timestamp.tick());
+                            this.finished_slash_commands.insert(command_id);
+
+                            let output_range =
+                                buffer.anchor_after(start)..buffer.anchor_before(new_end);
+                            [
+                                ContextEvent::Operation(ContextOperation::SlashCommandFinished {
+                                    id: command_id,
+                                    output_range: output_range.clone(),
+                                    sections: sections.clone(),
+                                }),
+                                ContextEvent::SlashCommandFinished {
+                                    output_range,
+                                    sections,
+                                    run_commands_in_output: output.run_commands_in_text,
+                                },
+                            ]
                         });
-                        cx.emit(event);
+
+                        for event in events {
+                            cx.emit(event);
+                        }
                     }
                     Err(error) => {
                         if let Some(pending_command) =
@@ -961,6 +981,7 @@ impl Context {
                             } else {
                                 metadata.status = MessageStatus::Done;
                             }
+                            metadata.timestamp = this.timestamp.tick();
 
                             if let Some(telemetry) = this.telemetry.as_ref() {
                                 let model = CompletionProvider::global(cx).model();
@@ -973,6 +994,10 @@ impl Context {
                                 );
                             }
 
+                            cx.emit(ContextEvent::Operation(ContextOperation::UpdateMessage {
+                                message_id: assistant_message.id,
+                                metadata: metadata.clone(),
+                            }));
                             cx.emit(ContextEvent::MessagesEdited);
                         }
                     })
@@ -1009,16 +1034,21 @@ impl Context {
 
     pub fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {
         for id in ids {
-            if let Some(metadata) = self.messages_metadata.get_mut(&id) {
-                metadata.role.cycle();
-                cx.emit(ContextEvent::MessagesEdited);
-                cx.notify();
+            if let Some(metadata) = self.messages_metadata.get(&id) {
+                let role = metadata.role.cycle();
+                self.set_message_role(id, role, cx);
             }
         }
     }
 
     pub fn set_message_role(&mut self, id: MessageId, role: Role, cx: &mut ModelContext<Self>) {
-        self.messages_metadata.get_mut(&id).unwrap().role = role;
+        let metadata = self.messages_metadata.get_mut(&id).unwrap();
+        metadata.role = role;
+        metadata.timestamp = self.timestamp.tick();
+        cx.emit(ContextEvent::Operation(ContextOperation::UpdateMessage {
+            message_id: id,
+            metadata: metadata.clone(),
+        }));
         cx.emit(ContextEvent::MessagesEdited);
         cx.notify();
     }
@@ -1052,22 +1082,18 @@ impl Context {
                 buffer.edit([(offset..offset, "\n")], None, cx);
                 buffer.anchor_before(offset + 1)
             });
-            let message = MessageAnchor {
+
+            let anchor = MessageAnchor {
                 id: MessageId(self.timestamp.tick()),
                 start,
             };
-            self.message_anchors
-                .insert(next_message_ix, message.clone());
-            self.messages_metadata.insert(
-                message.id,
-                MessageMetadata {
-                    role,
-                    status,
-                    timestamp: message.id.0,
-                },
-            );
-            cx.emit(ContextEvent::MessagesEdited);
-            Some(message)
+            let metadata = MessageMetadata {
+                role,
+                status,
+                timestamp: anchor.id.0,
+            };
+            self.insert_message(next_message_ix, anchor.clone(), metadata, cx);
+            Some(anchor)
         } else {
             None
         }
@@ -1116,15 +1142,15 @@ impl Context {
                 }
             };
 
-            self.message_anchors
-                .insert(message.index_range.end + 1, suffix.clone());
-            self.messages_metadata.insert(
-                suffix.id,
+            self.insert_message(
+                message.index_range.end + 1,
+                suffix.clone(),
                 MessageMetadata {
                     role,
                     status: MessageStatus::Done,
                     timestamp: suffix.id.0,
                 },
+                cx,
             );
 
             let new_messages =
@@ -1145,7 +1171,6 @@ impl Context {
                     }
 
                     let selection = if let Some(prefix_end) = prefix_end {
-                        cx.emit(ContextEvent::MessagesEdited);
                         MessageAnchor {
                             id: MessageId(self.timestamp.tick()),
                             start: self.buffer.read(cx).anchor_before(prefix_end),
@@ -1161,15 +1186,15 @@ impl Context {
                         }
                     };
 
-                    self.message_anchors
-                        .insert(message.index_range.end + 1, selection.clone());
-                    self.messages_metadata.insert(
-                        selection.id,
+                    self.insert_message(
+                        message.index_range.end + 1,
+                        selection.clone(),
                         MessageMetadata {
                             role,
                             status: MessageStatus::Done,
                             timestamp: selection.id.0,
                         },
+                        cx,
                     );
                     (Some(selection), Some(suffix))
                 };
@@ -1181,6 +1206,25 @@ impl Context {
         } else {
             (None, None)
         }
+    }
+
+    fn insert_message(
+        &mut self,
+        index: usize,
+        anchor: MessageAnchor,
+        metadata: MessageMetadata,
+        cx: &mut ModelContext<Self>,
+    ) {
+        assert!(index > 0, "inserting before the first message is forbidden");
+        cx.emit(ContextEvent::Operation(ContextOperation::InsertMessage {
+            id: anchor.id,
+            left_sibling: self.message_anchors[index - 1].id,
+            start: anchor.start,
+            metadata: metadata.clone(),
+        }));
+        cx.emit(ContextEvent::MessagesEdited);
+        self.messages_metadata.insert(anchor.id, metadata);
+        self.message_anchors.insert(index, anchor);
     }
 
     fn summarize(&mut self, cx: &mut ModelContext<Self>) {
@@ -1214,6 +1258,10 @@ impl Context {
                         this.update(&mut cx, |this, cx| {
                             let summary = this.summary.get_or_insert(Default::default());
                             summary.text.extend(lines.next());
+                            summary.timestamp = this.timestamp.tick();
+                            cx.emit(ContextEvent::Operation(ContextOperation::UpdateSummary(
+                                summary.clone(),
+                            )));
                             cx.emit(ContextEvent::SummaryChanged);
                         })?;
 
@@ -1226,6 +1274,10 @@ impl Context {
                     this.update(&mut cx, |this, cx| {
                         if let Some(summary) = this.summary.as_mut() {
                             summary.done = true;
+                            summary.timestamp = this.timestamp.tick();
+                            cx.emit(ContextEvent::Operation(ContextOperation::UpdateSummary(
+                                summary.clone(),
+                            )));
                             cx.emit(ContextEvent::SummaryChanged);
                         }
                     })?;
@@ -1315,6 +1367,8 @@ impl Context {
         fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Context>,
     ) {
+        // todo!("if it's remote, don't save or maybe send a Save message.")
+
         self.pending_save = cx.spawn(|this, mut cx| async move {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;

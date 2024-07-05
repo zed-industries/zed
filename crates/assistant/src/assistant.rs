@@ -75,8 +75,8 @@ pub enum Role {
 }
 
 impl Role {
-    pub fn cycle(&mut self) {
-        *self = match self {
+    pub fn cycle(self) -> Role {
+        match self {
             Role::User => Role::Assistant,
             Role::Assistant => Role::System,
             Role::System => Role::User,
