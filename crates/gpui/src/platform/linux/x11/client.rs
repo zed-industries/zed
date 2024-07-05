@@ -111,6 +111,7 @@ pub struct X11ClientState {
 
     pub(crate) scale_factor: f32,
     pub(crate) xcb_connection: Rc<XCBConnection>,
+    compositor_present: bool,
     pub(crate) x_root_index: usize,
     pub(crate) _resource_database: Database,
     pub(crate) atoms: XcbAtoms,
@@ -225,6 +226,9 @@ impl X11Client {
             "XInput Extension v2 not supported."
         );
 
+        let compositor_present = check_compositor_present(&xcb_connection);
+        log::info!("x11: compositor present: {}", compositor_present);
+
         let master_device_query = xcb_connection
             .xinput_xi_query_device(XINPUT_MASTER_DEVICE)
             .unwrap()
@@ -316,6 +320,7 @@ impl X11Client {
             scale_factor,
 
             xcb_connection,
+            compositor_present,
             x_root_index,
             _resource_database: resource_database,
             atoms,
@@ -1017,6 +1022,7 @@ impl LinuxClient for X11Client {
             state.common.foreground_executor.clone(),
             params,
             &state.xcb_connection,
+            state.compositor_present,
             state.x_root_index,
             x_window,
             &state.atoms,
@@ -1280,4 +1286,78 @@ impl LinuxClient for X11Client {
 
 fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
     value.integral as f32 + value.frac as f32 / u32::MAX as f32
+}
+
+fn check_compositor_present(xcb_connection: &XCBConnection) -> bool {
+    let root = xcb_connection.setup().roots[0].root;
+
+    // Method 1: Check for _NET_WM_CM_S{root}
+    let atom_name = format!("_NET_WM_CM_S{}", root);
+    let atom = xcb_connection
+        .intern_atom(false, atom_name.as_bytes())
+        .unwrap()
+        .reply()
+        .map(|reply| reply.atom)
+        .unwrap_or(0);
+
+    let method1 = if atom != 0 {
+        xcb_connection
+            .get_selection_owner(atom)
+            .unwrap()
+            .reply()
+            .map(|reply| reply.owner != 0)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    // Method 2: Check for _NET_WM_CM_OWNER
+    let atom_name = "_NET_WM_CM_OWNER";
+    let atom = xcb_connection
+        .intern_atom(false, atom_name.as_bytes())
+        .unwrap()
+        .reply()
+        .map(|reply| reply.atom)
+        .unwrap_or(0);
+
+    let method2 = if atom != 0 {
+        xcb_connection
+            .get_property(false, root, atom, xproto::AtomEnum::WINDOW, 0, 1)
+            .unwrap()
+            .reply()
+            .map(|reply| reply.value_len > 0)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    // Method 3: Check for _NET_SUPPORTING_WM_CHECK
+    let atom_name = "_NET_SUPPORTING_WM_CHECK";
+    let atom = xcb_connection
+        .intern_atom(false, atom_name.as_bytes())
+        .unwrap()
+        .reply()
+        .map(|reply| reply.atom)
+        .unwrap_or(0);
+
+    let method3 = if atom != 0 {
+        xcb_connection
+            .get_property(false, root, atom, xproto::AtomEnum::WINDOW, 0, 1)
+            .unwrap()
+            .reply()
+            .map(|reply| reply.value_len > 0)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    // TODO: Remove this
+    log::info!(
+        "Compositor detection: _NET_WM_CM_S?={}, _NET_WM_CM_OWNER={}, _NET_SUPPORTING_WM_CHECK={}",
+        method1,
+        method2,
+        method3
+    );
+
+    method1 || method2 || method3
 }
