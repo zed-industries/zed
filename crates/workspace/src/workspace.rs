@@ -6491,6 +6491,8 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
         cx.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
     }
 
+    println!("decorations: {:?}", decorations);
+
     struct GlobalResizeEdge(ResizeEdge);
     impl Global for GlobalResizeEdge {}
 
