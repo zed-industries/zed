@@ -11,3 +11,7 @@ Icon=$APP_ICON
 Categories=Utility;TextEditor;Development;IDE;
 Keywords=zed;
 MimeType=text/plain;inode/directory;
+
+[Desktop Action NewWorkspace]
+Exec=$APP_CLI --new $APP_ARGS
+Name=Open a new workspace
