@@ -12719,7 +12719,7 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
         })
 }
 
-trait RangeToAnchorExt {
+pub trait RangeToAnchorExt {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor>;
 }
 

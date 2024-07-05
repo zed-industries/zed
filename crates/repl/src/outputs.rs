@@ -301,14 +301,17 @@ impl From<&MimeBundle> for OutputType {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub enum ExecutionStatus {
     #[default]
     Unknown,
-    #[allow(unused)]
     ConnectingToKernel,
+    Queued,
     Executing,
     Finished,
+    ShuttingDown,
+    Shutdown,
+    KernelErrored(String),
 }
 
 pub struct ExecutionView {
@@ -317,10 +320,10 @@ pub struct ExecutionView {
 }
 
 impl ExecutionView {
-    pub fn new(_cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(status: ExecutionStatus, _cx: &mut ViewContext<Self>) -> Self {
         Self {
             outputs: Default::default(),
-            status: ExecutionStatus::Unknown,
+            status,
         }
     }
 
@@ -358,14 +361,16 @@ impl ExecutionView {
                             self.outputs.push(output);
                         }
 
+                        // Comments from @rgbkrk, reach out with questions
+
                         // Set next input adds text to the next cell. Not required to support.
-                        // However, this could be implemented by
+                        // However, this could be implemented by adding text to the buffer.
                         // runtimelib::Payload::SetNextInput { text, replace } => todo!(),
 
                         // Not likely to be used in the context of Zed, where someone could just open the buffer themselves
                         // runtimelib::Payload::EditMagic { filename, line_number } => todo!(),
 
-                        //
+                        // Ask the user if they want to exit the kernel. Not required to support.
                         // runtimelib::Payload::AskExit { keepkernel } => todo!(),
                         _ => {}
                     }
@@ -431,28 +436,24 @@ impl ExecutionView {
         new_terminal.append_text(text);
         Some(OutputType::Stream(new_terminal))
     }
-
-    pub fn set_status(&mut self, status: ExecutionStatus, cx: &mut ViewContext<Self>) {
-        self.status = status;
-        cx.notify();
-    }
 }
 
 impl Render for ExecutionView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if self.outputs.len() == 0 {
-            match self.status {
-                ExecutionStatus::ConnectingToKernel => {
-                    return div().child("Connecting to kernel...").into_any_element()
+            return match &self.status {
+                ExecutionStatus::ConnectingToKernel => div().child("Connecting to kernel..."),
+                ExecutionStatus::Executing => div().child("Executing..."),
+                ExecutionStatus::Finished => div().child(Icon::new(IconName::Check)),
+                ExecutionStatus::Unknown => div().child("..."),
+                ExecutionStatus::ShuttingDown => div().child("Kernel shutting down..."),
+                ExecutionStatus::Shutdown => div().child("Kernel shutdown"),
+                ExecutionStatus::Queued => div().child("Queued"),
+                ExecutionStatus::KernelErrored(error) => {
+                    div().child(format!("Kernel error: {}", error))
                 }
-                ExecutionStatus::Executing => {
-                    return div().child("Executing...").into_any_element()
-                }
-                ExecutionStatus::Finished => {
-                    return div().child(Icon::new(IconName::Check)).into_any_element()
-                }
-                ExecutionStatus::Unknown => return div().child("...").into_any_element(),
             }
+            .into_any_element();
         }
 
         div()
