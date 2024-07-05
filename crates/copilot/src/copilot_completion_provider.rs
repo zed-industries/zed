@@ -5,7 +5,7 @@ use editor::{Direction, InlineCompletionProvider};
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
-    Buffer, OffsetRangeExt, ToOffset,
+    Buffer, OffsetRangeExt, ToOffset, TruncationMode,
 };
 use settings::Settings;
 use std::{path::Path, sync::Arc, time::Duration};
@@ -239,7 +239,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str> {
+    ) -> Option<(&'a str, Option<TruncationMode>)> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
         let completion = self.active_completion()?;
@@ -269,7 +269,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             if completion_text.trim().is_empty() {
                 None
             } else {
-                Some(completion_text)
+                Some((completion_text, None))
             }
         } else {
             None

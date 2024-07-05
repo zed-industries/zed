@@ -4,7 +4,7 @@ use client::telemetry::Telemetry;
 use editor::{Direction, InlineCompletionProvider};
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
-use language::{language_settings::all_language_settings, Anchor, Buffer};
+use language::{language_settings::all_language_settings, Anchor, Buffer, TruncationMode};
 use std::{path::Path, sync::Arc, time::Duration};
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
@@ -139,7 +139,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         buffer: &Model<Buffer>,
         cursor_position: Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str> {
+    ) -> Option<(&'a str, Option<TruncationMode>)> {
         let completion_text = self
             .supermaven
             .read(cx)
@@ -150,7 +150,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         let completion_text = completion_text.trim_end();
 
         if !completion_text.trim().is_empty() {
-            Some(completion_text)
+            Some((completion_text, Some(TruncationMode::EndOfLine)))
         } else {
             None
         }

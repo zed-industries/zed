@@ -1,6 +1,6 @@
 use crate::Direction;
 use gpui::{AppContext, Model, ModelContext};
-use language::Buffer;
+use language::{Buffer, TruncationMode};
 
 pub trait InlineCompletionProvider: 'static + Sized {
     fn name() -> &'static str;
@@ -31,7 +31,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str>;
+    ) -> Option<(&'a str, Option<TruncationMode>)>;
 }
 
 pub trait InlineCompletionProviderHandle {
@@ -62,7 +62,7 @@ pub trait InlineCompletionProviderHandle {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str>;
+    ) -> Option<(&'a str, Option<TruncationMode>)>;
 }
 
 impl<T> InlineCompletionProviderHandle for Model<T>
@@ -117,7 +117,7 @@ where
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str> {
+    ) -> Option<(&'a str, Option<TruncationMode>)> {
         self.read(cx)
             .active_completion_text(buffer, cursor_position, cx)
     }
