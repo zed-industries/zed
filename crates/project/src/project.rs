@@ -113,7 +113,7 @@ use std::{
 };
 use task::{
     static_source::{StaticSource, TrackedFile},
-    RevealStrategy, TaskContext, TaskTemplate, TaskVariables, VariableName,
+    DebugRequestType, RevealStrategy, TaskContext, TaskTemplate, TaskVariables, VariableName,
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
@@ -1083,11 +1083,12 @@ impl Project {
 
         let command = debug_template.command.clone();
         let args = debug_template.args.clone();
+        let request_args = adapter_config.clone().request_args.map(|a| a.args);
 
         let task = cx.spawn(|this, mut cx| async move {
             let mut client = DebugAdapterClient::new(
                 id,
-                adapter_config,
+                adapter_config.clone(),
                 &command,
                 args.iter().map(|ele| &ele[..]).collect(),
                 cwd.into(),
@@ -1099,8 +1100,11 @@ impl Project {
             // initialize request
             client.initialize().await.log_err()?;
 
-            // launch request
-            client.launch().await.log_err()?;
+            // send correct request based on adapter config
+            match adapter_config.request {
+                DebugRequestType::Launch => client.launch(request_args).await.log_err()?,
+                DebugRequestType::Attach => client.attach(request_args).await.log_err()?,
+            };
 
             let client = Arc::new(client);
 

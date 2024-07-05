@@ -72,7 +72,7 @@ pub enum TaskType {
 /// Represents the type of the debugger adapter connection
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
-pub enum TransportType {
+pub enum DebugConnectionType {
     /// Connect to the debug adapter via TCP
     #[default]
     TCP,
@@ -80,25 +80,39 @@ pub enum TransportType {
     STDIO,
 }
 
+/// Represents the type that will determine which request to call on the debug adapter
+#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum DebugRequestType {
+    /// Call the `launch` request on the debug adapter
+    #[default]
+    Launch,
+    /// Call the `attach` request on the debug adapter
+    Attach,
+}
+
 /// Represents the configuration for the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugAdapterConfig {
-    /// The port that the debug adapter is listening on
-    pub port: u16,
     /// The type of connection the adapter should use
     #[serde(default)]
-    pub transport: TransportType,
-    /// The configuration options that are send with the launch request
+    pub connection: DebugConnectionType,
+    /// The port that the debug adapter is listening on
+    pub port: u16,
+    /// The type of request that should be called on the debug adapter
+    #[serde(default)]
+    pub request: DebugRequestType,
+    /// The configuration options that are send with the `launch` or `attach` request
     /// to the debug adapter
-    pub launch_config: Option<DebugLaunchConfig>,
+    pub request_args: Option<DebugRequestArgs>,
 }
 
 /// Represents the configuration for the debug adapter that is send with the launch request
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(transparent)]
-pub struct DebugLaunchConfig {
-    pub config: serde_json::Value,
+pub struct DebugRequestArgs {
+    pub args: serde_json::Value,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.

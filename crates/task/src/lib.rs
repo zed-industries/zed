@@ -13,7 +13,8 @@ use std::str::FromStr;
 use std::{borrow::Cow, path::Path};
 
 pub use task_template::{
-    DebugAdapterConfig, RevealStrategy, TaskTemplate, TaskTemplates, TaskType, TransportType,
+    DebugAdapterConfig, DebugConnectionType, RevealStrategy, TaskTemplate, TaskTemplates, TaskType,
+    DebugRequestType
 };
 pub use vscode_format::VsCodeTaskFile;
 

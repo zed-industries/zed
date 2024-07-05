@@ -3,13 +3,13 @@ use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
     requests::{
-        ConfigurationDone, Continue, Initialize, Launch, Next, Pause, SetBreakpoints, StepBack,
-        StepIn, StepOut,
+        Attach, ConfigurationDone, Continue, Initialize, Launch, Next, Pause, SetBreakpoints,
+        StepBack, StepIn, StepOut,
     },
-    ConfigurationDoneArguments, ContinueArguments, InitializeRequestArgumentsPathFormat,
-    LaunchRequestArguments, NextArguments, PauseArguments, Scope, SetBreakpointsArguments,
-    SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame, StepBackArguments,
-    StepInArguments, StepOutArguments, SteppingGranularity, Variable,
+    AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments,
+    InitializeRequestArgumentsPathFormat, LaunchRequestArguments, NextArguments, PauseArguments,
+    Scope, SetBreakpointsArguments, SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame,
+    StepBackArguments, StepInArguments, StepOutArguments, SteppingGranularity, Variable,
 };
 use futures::{
     channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
@@ -34,7 +34,7 @@ use std::{
     },
     time::Duration,
 };
-use task::{DebugAdapterConfig, TransportType};
+use task::{DebugAdapterConfig, DebugConnectionType};
 use util::ResultExt;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -70,11 +70,11 @@ impl DebugAdapterClient {
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
-        match config.transport {
-            TransportType::TCP => {
+        match config.connection {
+            DebugConnectionType::TCP => {
                 Self::create_tcp_client(id, config, command, args, project_path, cx).await
             }
-            TransportType::STDIO => {
+            DebugConnectionType::STDIO => {
                 Self::create_stdio_client(id, config, command, args, project_path, cx).await
             }
         }
@@ -296,14 +296,16 @@ impl DebugAdapterClient {
         Ok(capabilities)
     }
 
-    pub async fn launch(&self) -> Result<()> {
+    pub async fn launch(&self, args: Option<Value>) -> Result<()> {
         self.request::<Launch>(LaunchRequestArguments {
-            raw: self
-                .config
-                .launch_config
-                .clone()
-                .map(|c| c.config)
-                .unwrap_or(Value::Null),
+            raw: args.unwrap_or(Value::Null),
+        })
+        .await
+    }
+
+    pub async fn attach(&self, args: Option<Value>) -> Result<()> {
+        self.request::<Attach>(AttachRequestArguments {
+            raw: args.unwrap_or(Value::Null),
         })
         .await
     }
@@ -379,7 +381,7 @@ impl DebugAdapterClient {
         path: PathBuf,
         breakpoints: Option<Vec<SourceBreakpoint>>,
     ) -> Result<SetBreakpointsResponse> {
-        let adapter_data = self.config.launch_config.clone().map(|c| c.config);
+        let adapter_data = self.config.request_args.clone().map(|c| c.args);
 
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
