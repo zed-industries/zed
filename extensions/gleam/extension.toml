@@ -24,4 +24,4 @@ description = "Returns Gleam docs."
 requires_argument = true
 tooltip_text = "Insert Gleam docs"
 
-# [indexed_docs_providers.gleam-hexdocs]
+[indexed_docs_providers.gleam-hexdocs]

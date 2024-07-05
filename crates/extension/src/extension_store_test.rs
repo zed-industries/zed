@@ -446,7 +446,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
+async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -456,7 +456,8 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         .parent()
         .unwrap();
     let cache_dir = root_dir.join("target");
-    let gleam_extension_dir = root_dir.join("extensions").join("gleam");
+    let test_extension_id = "test-extension";
+    let test_extension_dir = root_dir.join("extensions").join(test_extension_id);
 
     let fs = Arc::new(RealFs::default());
     let extensions_dir = temp_tree(json!({
@@ -596,7 +597,7 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
 
     extension_store
         .update(cx, |store, cx| {
-            store.install_dev_extension(gleam_extension_dir.clone(), cx)
+            store.install_dev_extension(test_extension_dir.clone(), cx)
         })
         .await
         .unwrap();
@@ -611,7 +612,8 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
-    let expected_server_path = extensions_dir.join("work/gleam/gleam-v1.2.3/gleam");
+    let expected_server_path =
+        extensions_dir.join(format!("work/{test_extension_id}/gleam-v1.2.3/gleam"));
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
 
     assert_eq!(fake_server.binary.path, expected_server_path);
@@ -725,7 +727,8 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
 
     // The extension re-fetches the latest version of the language server.
     let fake_server = fake_servers.next().await.unwrap();
-    let new_expected_server_path = extensions_dir.join("work/gleam/gleam-v2.0.0/gleam");
+    let new_expected_server_path =
+        extensions_dir.join(format!("work/{test_extension_id}/gleam-v2.0.0/gleam"));
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
     assert_eq!(fake_server.binary.path, new_expected_server_path);
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);

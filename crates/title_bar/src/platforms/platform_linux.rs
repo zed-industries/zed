@@ -2,7 +2,7 @@ use gpui::{prelude::*, Action};
 
 use ui::prelude::*;
 
-use super::platform_generic::GenericWindowControls;
+use crate::window_controls::{WindowControl, WindowControlType};
 
 #[derive(IntoElement)]
 pub struct LinuxWindowControls {
@@ -18,7 +18,30 @@ impl LinuxWindowControls {
 }
 
 impl RenderOnce for LinuxWindowControls {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        GenericWindowControls::new(self.close_window_action.boxed_clone()).into_any_element()
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        h_flex()
+            .id("generic-window-controls")
+            .px_3()
+            .gap_3()
+            .child(WindowControl::new(
+                "minimize",
+                WindowControlType::Minimize,
+                cx,
+            ))
+            .child(WindowControl::new(
+                "maximize-or-restore",
+                if cx.is_maximized() {
+                    WindowControlType::Restore
+                } else {
+                    WindowControlType::Maximize
+                },
+                cx,
+            ))
+            .child(WindowControl::new_close(
+                "close",
+                WindowControlType::Close,
+                self.close_window_action,
+                cx,
+            ))
     }
 }

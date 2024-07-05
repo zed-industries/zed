@@ -20,9 +20,9 @@ use util::paths::PathMatcher;
 use util::ResultExt;
 use workspace::Workspace;
 
-pub(crate) struct DiagnosticsCommand;
+pub(crate) struct DiagnosticsSlashCommand;
 
-impl DiagnosticsCommand {
+impl DiagnosticsSlashCommand {
     fn search_paths(
         &self,
         query: String,
@@ -81,7 +81,7 @@ impl DiagnosticsCommand {
     }
 }
 
-impl SlashCommand for DiagnosticsCommand {
+impl SlashCommand for DiagnosticsSlashCommand {
     fn name(&self) -> String {
         "diagnostics".into()
     }
