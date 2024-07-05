@@ -56,7 +56,7 @@ pub struct DebugAdapterClient {
     request_count: AtomicU64,
     capabilities: Option<dap_types::Capabilities>,
     config: DebugAdapterConfig,
-    client_rx: Arc<Mutex<UnboundedReceiver<Payload>>>,
+    client_rx: Arc<smol::lock::Mutex<UnboundedReceiver<Payload>>>,
     thread_state: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
     current_thread_id: Arc<Mutex<Option<u64>>>,
     request_type: DebugRequestType,
@@ -145,7 +145,7 @@ impl DebugAdapterClient {
         let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
         let (client_tx, client_rx) = unbounded::<Payload>();
 
-        let client_rx = Arc::new(Mutex::new(client_rx));
+        let client_rx = Arc::new(smol::lock::Mutex::new(client_rx));
 
         let request_type = config.clone().request;
         let client = Self {
@@ -175,8 +175,7 @@ impl DebugAdapterClient {
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
-        let mut client_rx = client.client_rx.lock();
-        while let Some(payload) = client_rx.next().await {
+        while let Some(payload) = client.client_rx.lock().await.next().await {
             cx.update(|cx| match payload {
                 Payload::Event(event) => event_handler(*event, cx),
                 _ => unreachable!(),
