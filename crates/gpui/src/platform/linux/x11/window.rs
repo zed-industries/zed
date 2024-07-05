@@ -204,8 +204,7 @@ pub struct X11WindowState {
 
 impl X11WindowState {
     fn is_transparent(&self) -> bool {
-        self.decorations == WindowDecorations::Client
-            || self.background_appearance != WindowBackgroundAppearance::Opaque
+        self.background_appearance != WindowBackgroundAppearance::Opaque
     }
 }
 
@@ -441,8 +440,11 @@ impl X11WindowState {
             // Note: this has to be done after the GPU init, or otherwise
             // the sizes are immediately invalidated.
             size: query_render_extent(xcb_connection, x_window),
-            // In case we have window decorations to render
-            transparent: true,
+            // We set it to transparent by default, even if we have client-side
+            // decorations, since those seem to work on X11 even without `true` here.
+            // If the window appearance changes, then the renderer will get updated
+            // too
+            transparent: false,
         };
         xcb_connection.map_window(x_window).unwrap();
 
