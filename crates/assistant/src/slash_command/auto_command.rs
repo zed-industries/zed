@@ -66,11 +66,9 @@ impl SlashCommand for AutoCommand {
         };
 
         let stream = CompletionProvider::global(cx).complete(request);
-
-        println!("/auto {argument}");
-
         let mut wip_action: String = String::new();
-        let task = cx.spawn(|_cx| async move {
+        let task: Task<Result<String>> = cx.spawn(|_cx| async move {
+            let mut actions_text = String::new();
             let stream_completion = async {
                 let mut messages = stream.await?;
 
@@ -78,23 +76,35 @@ impl SlashCommand for AutoCommand {
                     let text = message?;
 
                     chunked_line(&mut wip_action, &text, |line| {
-                        println!("Running action: /{line}")
+                        actions_text.push('/');
+                        actions_text.push_str(line);
+                        actions_text.push('\n');
                     });
 
                     smol::future::yield_now().await;
                 }
 
-                println!("End of actions.");
-
                 anyhow::Ok(())
             };
 
-            stream_completion.await
+            stream_completion.await?;
+
+            Ok(actions_text)
         });
 
+        // As a convenience, append /auto's argument to the end of the prompt so you don't have to write it again.
+        let argument = argument.to_string();
+
         cx.background_executor().spawn(async move {
-            task.await?;
-            Ok(SlashCommandOutput::default())
+            let mut text = task.await?;
+
+            text.push_str(&argument);
+
+            Ok(SlashCommandOutput {
+                text,
+                sections: Vec::new(),
+                run_commands_in_text: true,
+            })
         })
     }
 }
