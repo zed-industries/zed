@@ -51,6 +51,7 @@ x11rb::atom_manager! {
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
         _NET_WM_SYNC,
+        _NET_SUPPORTED,
         _MOTIF_WM_HINTS,
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
@@ -196,7 +197,7 @@ pub struct X11WindowState {
     hidden: bool,
     active: bool,
     fullscreen: bool,
-    compositor_present: bool,
+    client_side_decorations_supported: bool,
     decorations: WindowDecorations,
     pub handle: AnyWindowHandle,
     last_insets: [u32; 4],
@@ -252,7 +253,7 @@ impl X11WindowState {
         executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
-        compositor_present: bool,
+        client_side_decorations_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
@@ -494,7 +495,7 @@ impl X11WindowState {
             handle,
             background_appearance: WindowBackgroundAppearance::Opaque,
             destroyed: false,
-            compositor_present,
+            client_side_decorations_supported,
             decorations: WindowDecorations::Server,
             last_insets: [0, 0, 0, 0],
             counter_id: sync_request_counter,
@@ -563,7 +564,7 @@ impl X11Window {
         executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
-        compositor_present: bool,
+        client_side_decorations_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
@@ -577,7 +578,7 @@ impl X11Window {
                 executor,
                 params,
                 xcb_connection,
-                compositor_present,
+                client_side_decorations_supported,
                 x_main_screen_index,
                 x_window,
                 atoms,
@@ -1182,7 +1183,7 @@ impl PlatformWindow for X11Window {
         let state = self.0.state.borrow();
 
         // Client window decorations require compositor support
-        if !state.compositor_present {
+        if !state.client_side_decorations_supported {
             return Decorations::Server;
         }
 
@@ -1240,7 +1241,9 @@ impl PlatformWindow for X11Window {
     fn request_decorations(&self, mut decorations: crate::WindowDecorations) {
         let mut state = self.0.state.borrow_mut();
 
-        if matches!(decorations, crate::WindowDecorations::Client) && !state.compositor_present {
+        if matches!(decorations, crate::WindowDecorations::Client)
+            && !state.client_side_decorations_supported
+        {
             log::info!(
                 "x11: no compositor present, falling back to server-side window decorations"
             );

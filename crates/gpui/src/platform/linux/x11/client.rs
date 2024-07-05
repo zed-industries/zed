@@ -111,7 +111,7 @@ pub struct X11ClientState {
 
     pub(crate) scale_factor: f32,
     pub(crate) xcb_connection: Rc<XCBConnection>,
-    compositor_present: bool,
+    client_side_decorations_supported: bool,
     pub(crate) x_root_index: usize,
     pub(crate) _resource_database: Database,
     pub(crate) atoms: XcbAtoms,
@@ -226,9 +226,6 @@ impl X11Client {
             "XInput Extension v2 not supported."
         );
 
-        let compositor_present = check_compositor_present(&xcb_connection);
-        log::info!("x11: compositor present: {}", compositor_present);
-
         let master_device_query = xcb_connection
             .xinput_xi_query_device(XINPUT_MASTER_DEVICE)
             .unwrap()
@@ -245,13 +242,25 @@ impl X11Client {
             .map(|class| *class)
             .collect::<Vec<_>>();
 
-        let atoms = XcbAtoms::new(&xcb_connection).unwrap();
+        let atoms = XcbAtoms::new(&xcb_connection).unwrap().reply().unwrap();
+
+        let root = xcb_connection.setup().roots[0].root;
+        let compositor_present = check_compositor_present(&xcb_connection, root);
+        let gtk_frame_extents_supported =
+            check_gtk_frame_extents_supprted(&xcb_connection, &atoms, root);
+        let client_side_decorations_supported = compositor_present && gtk_frame_extents_supported;
+        log::info!(
+            "x11: compositor present: {}, gtk_frame_extents_supported: {}",
+            compositor_present,
+            gtk_frame_extents_supported
+        );
+
         let xkb = xcb_connection
             .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION)
+            .unwrap()
+            .reply()
             .unwrap();
 
-        let atoms = atoms.reply().unwrap();
-        let xkb = xkb.reply().unwrap();
         let events = xkb::EventType::STATE_NOTIFY;
         xcb_connection
             .xkb_select_events(
@@ -320,7 +329,7 @@ impl X11Client {
             scale_factor,
 
             xcb_connection,
-            compositor_present,
+            client_side_decorations_supported,
             x_root_index,
             _resource_database: resource_database,
             atoms,
@@ -1022,7 +1031,7 @@ impl LinuxClient for X11Client {
             state.common.foreground_executor.clone(),
             params,
             &state.xcb_connection,
-            state.compositor_present,
+            state.client_side_decorations_supported,
             state.x_root_index,
             x_window,
             &state.atoms,
@@ -1288,9 +1297,7 @@ fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
     value.integral as f32 + value.frac as f32 / u32::MAX as f32
 }
 
-fn check_compositor_present(xcb_connection: &XCBConnection) -> bool {
-    let root = xcb_connection.setup().roots[0].root;
-
+fn check_compositor_present(xcb_connection: &XCBConnection, root: u32) -> bool {
     // Method 1: Check for _NET_WM_CM_S{root}
     let atom_name = format!("_NET_WM_CM_S{}", root);
     let atom = xcb_connection
@@ -1360,4 +1367,33 @@ fn check_compositor_present(xcb_connection: &XCBConnection) -> bool {
     );
 
     method1 || method2 || method3
+}
+
+fn check_gtk_frame_extents_supprted(
+    xcb_connection: &XCBConnection,
+    atoms: &XcbAtoms,
+    root: xproto::Window,
+) -> bool {
+    let supported_atoms = xcb_connection
+        .get_property(
+            false,
+            root,
+            atoms._NET_SUPPORTED,
+            xproto::AtomEnum::ATOM,
+            0,
+            1024,
+        )
+        .unwrap()
+        .reply()
+        .map(|reply| {
+            // Convert Vec<u8> to Vec<u32>
+            reply
+                .value
+                .chunks_exact(4)
+                .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect::<Vec<u32>>()
+        })
+        .unwrap_or_default();
+
+    supported_atoms.contains(&atoms._GTK_FRAME_EXTENTS)
 }
