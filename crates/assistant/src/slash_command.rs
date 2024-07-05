@@ -178,7 +178,7 @@ impl SlashCommandCompletionProvider {
                                     Arc::new({
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
-                                        let command_argument = command_argument.label.clone();
+                                        let command_argument = command_argument.new_text.clone();
                                         move |cx: &mut WindowContext| {
                                             editor
                                                 .update(cx, |editor, cx| {
@@ -199,7 +199,7 @@ impl SlashCommandCompletionProvider {
                             None
                         };
 
-                        let mut new_text = command_argument.label.clone();
+                        let mut new_text = command_argument.new_text.clone();
                         if !command_argument.run_command {
                             new_text.push(' ');
                         }

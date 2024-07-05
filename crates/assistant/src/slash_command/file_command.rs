@@ -115,13 +115,18 @@ impl SlashCommand for FileSlashCommand {
             Ok(paths
                 .await
                 .into_iter()
-                .map(|path_match| ArgumentCompletion {
-                    label: format!(
+                .map(|path_match| {
+                    let text = format!(
                         "{}{}",
                         path_match.path_prefix,
                         path_match.path.to_string_lossy()
-                    ),
-                    run_command: true,
+                    );
+
+                    ArgumentCompletion {
+                        label: text.clone(),
+                        new_text: text,
+                        run_command: true,
+                    }
                 })
                 .collect())
         })

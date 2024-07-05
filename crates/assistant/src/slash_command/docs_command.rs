@@ -116,7 +116,8 @@ impl SlashCommand for DocsSlashCommand {
                 items
                     .into_iter()
                     .map(|item| ArgumentCompletion {
-                        label: format!("{provider} {item}"),
+                        label: item.clone(),
+                        new_text: format!("{provider} {item}"),
                         run_command: true,
                     })
                     .collect()
@@ -129,6 +130,7 @@ impl SlashCommand for DocsSlashCommand {
                         .into_iter()
                         .map(|provider| ArgumentCompletion {
                             label: provider.to_string(),
+                            new_text: provider.to_string(),
                             run_command: false,
                         })
                         .collect())

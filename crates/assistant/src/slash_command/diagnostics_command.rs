@@ -146,7 +146,8 @@ impl SlashCommand for DiagnosticsSlashCommand {
             Ok(matches
                 .into_iter()
                 .map(|completion| ArgumentCompletion {
-                    label: completion,
+                    label: completion.clone(),
+                    new_text: completion,
                     run_command: true,
                 })
                 .collect())

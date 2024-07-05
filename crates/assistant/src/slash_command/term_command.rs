@@ -47,6 +47,7 @@ impl SlashCommand for TermSlashCommand {
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(vec![ArgumentCompletion {
             label: LINE_COUNT_ARG.to_string(),
+            new_text: LINE_COUNT_ARG.to_string(),
             run_command: true,
         }]))
     }
