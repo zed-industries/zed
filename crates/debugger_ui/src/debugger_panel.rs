@@ -15,6 +15,7 @@ use gpui::{
 use project::Project;
 use std::path::Path;
 use std::{collections::HashMap, sync::Arc};
+use task::DebugRequestType;
 use ui::{prelude::*, Tooltip};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -539,17 +540,28 @@ impl DebugPanel {
         event: &Option<TerminatedEvent>,
         cx: &mut ViewContext<Self>,
     ) {
-        let restart = event.as_ref().is_some_and(|e| e.restart.is_some());
+        let restart_args = event.clone().and_then(|e| e.restart);
         let client = this.debug_client_by_id(*client_id, cx);
 
         cx.spawn(|_, _| async move {
+            let should_restart = restart_args.is_some();
+
             client
                 .request::<Disconnect>(DisconnectArguments {
-                    restart: Some(restart),
+                    restart: Some(should_restart),
                     terminate_debuggee: None,
                     suspend_debuggee: None,
                 })
-                .await
+                .await?;
+
+            if should_restart {
+                match client.request_type() {
+                    DebugRequestType::Launch => client.launch(restart_args).await,
+                    DebugRequestType::Attach => client.attach(restart_args).await,
+                }
+            } else {
+                anyhow::Ok(())
+            }
         })
         .detach_and_log_err(cx);
     }
