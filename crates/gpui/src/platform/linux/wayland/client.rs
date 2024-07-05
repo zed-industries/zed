@@ -809,7 +809,7 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
 
         match event {
             wl_callback::Event::Done { .. } => {
-                window.frame(true);
+                window.frame();
             }
             _ => {}
         }
