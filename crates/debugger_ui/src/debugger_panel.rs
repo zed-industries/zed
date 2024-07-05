@@ -1,10 +1,10 @@
 use anyhow::Result;
 use dap::client::{DebugAdapterClientId, ThreadState};
-use dap::requests::{Scopes, StackTrace, Variables};
+use dap::requests::{Disconnect, Scopes, StackTrace, Variables};
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
-    Scope, ScopesArguments, StackFrame, StackTraceArguments, StoppedEvent, ThreadEvent,
-    ThreadEventReason, Variable, VariablesArguments,
+    DisconnectArguments, Scope, ScopesArguments, StackFrame, StackTraceArguments, StoppedEvent,
+    TerminatedEvent, ThreadEvent, ThreadEventReason, Variable, VariablesArguments,
 };
 use editor::Editor;
 use futures::future::try_join_all;
@@ -52,9 +52,9 @@ impl DebugPanel {
                 .unwrap();
 
             let _subscriptions = vec![cx.subscribe(&project, {
-                move |this: &mut Self, model, event, cx| {
+                move |this: &mut Self, _, event, cx| {
                     if let project::Event::DebugClientEvent { client_id, event } = event {
-                        Self::handle_debug_client_events(this, model, client_id, event, cx);
+                        Self::handle_debug_client_events(this, client_id, event, cx);
                     }
                 }
             })];
@@ -329,7 +329,6 @@ impl DebugPanel {
 
     fn handle_debug_client_events(
         this: &mut Self,
-        model: Model<Project>,
         client_id: &DebugAdapterClientId,
         event: &Events,
         cx: &mut ViewContext<Self>,
@@ -343,11 +342,11 @@ impl DebugPanel {
                 })
                 .detach_and_log_err(cx);
             }
-            Events::Stopped(event) => Self::handle_stopped_event(this, model, client_id, event, cx),
+            Events::Stopped(event) => Self::handle_stopped_event(this, client_id, event, cx),
             Events::Continued(_) => {}
             Events::Exited(_) => {}
-            Events::Terminated(_) => {}
-            Events::Thread(event) => Self::handle_thread_event(this, model, client_id, event, cx),
+            Events::Terminated(event) => Self::handle_terminated_event(this, client_id, event, cx),
+            Events::Thread(event) => Self::handle_thread_event(this, client_id, event, cx),
             Events::Output(_) => {}
             Events::Breakpoint(_) => {}
             Events::Module(_) => {}
@@ -409,7 +408,6 @@ impl DebugPanel {
 
     fn handle_stopped_event(
         this: &mut Self,
-        model: Model<Project>,
         client_id: &DebugAdapterClientId,
         event: &StoppedEvent,
         cx: &mut ViewContext<Self>,
@@ -505,7 +503,6 @@ impl DebugPanel {
 
     fn handle_thread_event(
         this: &mut Self,
-        model: Model<Project>,
         client_id: &DebugAdapterClientId,
         event: &ThreadEvent,
         cx: &mut ViewContext<Self>,
@@ -534,6 +531,27 @@ impl DebugPanel {
 
             cx.notify();
         }
+    }
+
+    fn handle_terminated_event(
+        this: &mut Self,
+        client_id: &DebugAdapterClientId,
+        event: &Option<TerminatedEvent>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let restart = event.as_ref().is_some_and(|e| e.restart.is_some());
+        let client = this.debug_client_by_id(*client_id, cx);
+
+        cx.spawn(|_, _| async move {
+            client
+                .request::<Disconnect>(DisconnectArguments {
+                    restart: Some(restart),
+                    terminate_debuggee: None,
+                    suspend_debuggee: None,
+                })
+                .await
+        })
+        .detach_and_log_err(cx);
     }
 }
 
