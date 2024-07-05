@@ -174,7 +174,7 @@ impl CompletionProvider {
     }
 
     pub fn update_settings(&mut self, version: usize, cx: &mut AppContext) {
-        let result = match &AssistantSettings::get_global(cx).provider {
+        let updated = match &AssistantSettings::get_global(cx).provider {
             AssistantProvider::ZedDotDev { model } => self
                 .update_current_as::<_, CloudCompletionProvider>(|provider| {
                     provider.update(model.clone(), version);
@@ -219,8 +219,8 @@ impl CompletionProvider {
             }),
         };
 
-        // new providers
-        if result.is_none() {
+        // Previously configured provider was changed to another one
+        if updated.is_none() {
             if let Some(client) = self.client.clone() {
                 self.provider = create_provider_from_settings(client, version, cx);
             } else {
@@ -339,6 +339,12 @@ mod tests {
         );
 
         cx.background_executor().run_until_parked();
+
+        // Ensure that another completion request was allowed to acquire the lock.
+        assert_eq!(
+            fake_provider.completion_count(),
+            MAX_CONCURRENT_COMPLETION_REQUESTS
+        );
 
         // Mark all completion requests as finished that are in flight.
         for request in fake_provider.running_completions() {
