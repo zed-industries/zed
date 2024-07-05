@@ -366,7 +366,7 @@ impl ProjectDiagnosticsEditor {
         let mut blocks_to_remove = HashSet::default();
         let mut unchanged_blocks = HashMap::default();
         let mut excerpts_with_new_diagnostics = HashSet::default();
-        let mut excerpts_to_remove = HashSet::default();
+        let mut excerpts_to_remove = Vec::new();
         let mut excerpts_to_add = HashMap::<ExcerptId, Vec<Range<language::Anchor>>>::default();
         let mut excerpts_to_expand =
             HashMap::<ExcerptId, HashMap<ExpandExcerptDirection, u32>>::default();
@@ -418,7 +418,7 @@ impl ProjectDiagnosticsEditor {
                                 Ordering::Greater | Ordering::Equal,
                             ) => {
                                 excerpts_with_new_diagnostics.insert(*current_excerpt_id);
-                                excerpts_to_remove.remove(current_excerpt_id);
+                                excerpts_to_remove.push(*current_excerpt_id);
                                 path_state.last_excerpt_id = Some(*current_excerpt_id);
                                 break;
                             }
@@ -464,7 +464,6 @@ impl ProjectDiagnosticsEditor {
                                     .or_default();
                                 *expand_value = (*expand_value).max(expand_up).max(expand_down);
                                 excerpts_with_new_diagnostics.insert(*current_excerpt_id);
-                                excerpts_to_remove.remove(current_excerpt_id);
                                 path_state.last_excerpt_id = Some(*current_excerpt_id);
                                 break;
                             }
@@ -507,13 +506,12 @@ impl ProjectDiagnosticsEditor {
                                         .or_default();
                                     *expand_value = (*expand_value).max(expand_down);
                                     excerpts_with_new_diagnostics.insert(*current_excerpt_id);
-                                    excerpts_to_remove.remove(current_excerpt_id);
                                     path_state.last_excerpt_id = Some(*current_excerpt_id);
                                     break;
                                 } else if !excerpts_with_new_diagnostics
                                     .contains(current_excerpt_id)
                                 {
-                                    excerpts_to_remove.insert(*current_excerpt_id);
+                                    excerpts_to_remove.push(*current_excerpt_id);
                                 }
                             }
                             /*
@@ -555,7 +553,6 @@ impl ProjectDiagnosticsEditor {
                                         .or_default();
                                     *expand_value = (*expand_value).max(expand_up);
                                     excerpts_with_new_diagnostics.insert(*current_excerpt_id);
-                                    excerpts_to_remove.remove(current_excerpt_id);
                                     path_state.last_excerpt_id = Some(*current_excerpt_id);
                                     break;
                                 } else {
@@ -611,9 +608,16 @@ impl ProjectDiagnosticsEditor {
             }
         }
 
+        excerpts_to_remove.retain(|excerpt_id| {
+            !excerpts_with_new_diagnostics.contains(excerpt_id)
+                && !excerpts_to_expand.contains_key(excerpt_id)
+        });
         excerpts_to_remove.extend(
             current_excerpts
-                .filter(|(excerpt_id, ..)| !excerpts_with_new_diagnostics.contains(excerpt_id))
+                .filter(|(excerpt_id, ..)| {
+                    !excerpts_with_new_diagnostics.contains(excerpt_id)
+                        && !excerpts_to_expand.contains_key(excerpt_id)
+                })
                 .map(|(excerpt_id, ..)| excerpt_id),
         );
         blocks_to_remove.extend(current_diagnostics.map(|&(_, block_id)| block_id));
