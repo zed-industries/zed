@@ -90,6 +90,11 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             .find(|display| display.uuid().ok() == Some(uuid))
     });
     let app_id = ReleaseChannel::global(cx).app_id();
+    let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
+        Ok(val) if val == "server" => gpui::WindowDecorations::Server,
+        Ok(val) if val == "client" => gpui::WindowDecorations::Client,
+        _ => gpui::WindowDecorations::Client,
+    };
 
     WindowOptions {
         titlebar: Some(TitlebarOptions {
@@ -105,7 +110,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
-        window_decorations: Some(gpui::WindowDecorations::Client),
+        window_decorations: Some(window_decorations),
         window_min_size: Some(gpui::Size {
             width: px(360.0),
             height: px(240.0),
