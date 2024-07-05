@@ -9,11 +9,9 @@ use anyhow::Result;
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
-    display_map::{
-        BlockDisposition, BlockId, BlockProperties, BlockStyle, DisplayRow, ToDisplayPoint,
-    },
+    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle},
     scroll::Autoscroll,
-    Bias, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
+    Bias, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToPoint,
 };
 use futures::{
     channel::mpsc::{self, UnboundedSender},
@@ -25,7 +23,8 @@ use gpui::{
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{
-    Buffer, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, ToPoint,
+    Buffer, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, ToOffset,
+    ToPoint as _,
 };
 use lsp::LanguageServerId;
 use multi_buffer::{build_excerpt_ranges, ExpandExcerptDirection};
@@ -72,6 +71,7 @@ struct ProjectDiagnosticsEditor {
 
 struct PathState {
     path: ProjectPath,
+    first_excerpt_id: Option<ExcerptId>,
     last_excerpt_id: Option<ExcerptId>,
     diagnostics: Vec<(DiagnosticData, BlockId)>,
 }
@@ -300,6 +300,7 @@ impl ProjectDiagnosticsEditor {
                 || server_to_update.map_or(false, |to_update| *server_id != to_update)
         });
 
+        // TODO kb change selections as in the old panel, to the next primary diagnostics
         let was_empty = self.path_states.is_empty();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let path_ix = match self
@@ -314,6 +315,7 @@ impl ProjectDiagnosticsEditor {
                         path: path_to_update.clone(),
                         diagnostics: Vec::new(),
                         last_excerpt_id: None,
+                        first_excerpt_id: None,
                     },
                 );
                 ix
@@ -326,7 +328,8 @@ impl ProjectDiagnosticsEditor {
             DiagnosticSeverity::ERROR
         };
 
-        let previous_excerpt_id = self.previous_excerpt_id(path_ix);
+        let (before_first_excerpt_id, after_last_excerpt_id) =
+            self.excerpt_borders_for_path(path_ix);
         let path_state = &mut self.path_states[path_ix];
         let mut new_diagnostics = path_state
             .diagnostics
@@ -371,10 +374,10 @@ impl ProjectDiagnosticsEditor {
         let mut excerpts_to_expand =
             HashMap::<ExcerptId, HashMap<ExpandExcerptDirection, u32>>::default();
 
-        let mut latest_excerpt_id = previous_excerpt_id.unwrap_or_else(|| ExcerptId::min());
+        let mut latest_excerpt_id = before_first_excerpt_id.unwrap_or_else(|| ExcerptId::min());
         let mut current_excerpts = path_state_excerpts(
-            previous_excerpt_id,
-            path_state.last_excerpt_id,
+            before_first_excerpt_id,
+            after_last_excerpt_id,
             &multi_buffer_snapshot,
         )
         .fuse()
@@ -398,15 +401,10 @@ impl ProjectDiagnosticsEditor {
                         break;
                     }
                     Some((current_excerpt_id, _, current_excerpt_range)) => {
-                        match (
-                            current_excerpt_range
-                                .context
-                                .start
-                                .cmp(&new_diagnostic.entry.range.start, &buffer_snapshot),
-                            current_excerpt_range
-                                .context
-                                .end
-                                .cmp(&new_diagnostic.entry.range.end, &buffer_snapshot),
+                        match compare_diagnostic_range_edges(
+                            &current_excerpt_range.context,
+                            &new_diagnostic.entry.range,
+                            &buffer_snapshot,
                         ) {
                             /*
                                   new_s new_e
@@ -419,6 +417,9 @@ impl ProjectDiagnosticsEditor {
                             ) => {
                                 excerpts_with_new_diagnostics.insert(*current_excerpt_id);
                                 excerpts_to_remove.push(*current_excerpt_id);
+                                if path_state.first_excerpt_id.is_none() {
+                                    path_state.first_excerpt_id = Some(*current_excerpt_id);
+                                }
                                 path_state.last_excerpt_id = Some(*current_excerpt_id);
                                 break;
                             }
@@ -464,6 +465,9 @@ impl ProjectDiagnosticsEditor {
                                     .or_default();
                                 *expand_value = (*expand_value).max(expand_up).max(expand_down);
                                 excerpts_with_new_diagnostics.insert(*current_excerpt_id);
+                                if path_state.first_excerpt_id.is_none() {
+                                    path_state.first_excerpt_id = Some(*current_excerpt_id);
+                                }
                                 path_state.last_excerpt_id = Some(*current_excerpt_id);
                                 break;
                             }
@@ -506,6 +510,9 @@ impl ProjectDiagnosticsEditor {
                                         .or_default();
                                     *expand_value = (*expand_value).max(expand_down);
                                     excerpts_with_new_diagnostics.insert(*current_excerpt_id);
+                                    if path_state.first_excerpt_id.is_none() {
+                                        path_state.first_excerpt_id = Some(*current_excerpt_id);
+                                    }
                                     path_state.last_excerpt_id = Some(*current_excerpt_id);
                                     break;
                                 } else if !excerpts_with_new_diagnostics
@@ -553,6 +560,9 @@ impl ProjectDiagnosticsEditor {
                                         .or_default();
                                     *expand_value = (*expand_value).max(expand_up);
                                     excerpts_with_new_diagnostics.insert(*current_excerpt_id);
+                                    if path_state.first_excerpt_id.is_none() {
+                                        path_state.first_excerpt_id = Some(*current_excerpt_id);
+                                    }
                                     path_state.last_excerpt_id = Some(*current_excerpt_id);
                                     break;
                                 } else {
@@ -677,6 +687,9 @@ impl ProjectDiagnosticsEditor {
                     joined_ranges,
                     cx,
                 );
+                if path_state.first_excerpt_id.is_none() {
+                    path_state.first_excerpt_id = excerpts.last().copied();
+                }
                 path_state.last_excerpt_id = excerpts.last().copied();
             }
             for ((direction, line_count), excerpts) in excerpt_expands {
@@ -685,11 +698,11 @@ impl ProjectDiagnosticsEditor {
             multi_buffer.remove_excerpts(excerpts_to_remove, cx);
         });
 
-        let editor_snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
+        let new_multi_buffer_snapshot = self.excerpts.read(cx).snapshot(cx);
         let mut updated_excerpts = path_state_excerpts(
-            previous_excerpt_id,
-            path_state.last_excerpt_id,
-            &editor_snapshot.buffer_snapshot,
+            before_first_excerpt_id,
+            after_last_excerpt_id,
+            &new_multi_buffer_snapshot,
         )
         .fuse()
         .peekable();
@@ -698,7 +711,7 @@ impl ProjectDiagnosticsEditor {
             .enumerate()
             .fold(
                 BTreeMap::<
-                    (DisplayRow, Option<&str>, &str),
+                    (u32, Option<&str>, &str),
                     (usize, Option<BlockId>, editor::Anchor, Vec<usize>),
                 >::new(),
                 |mut diagnostics_by_row_label, (diagnostic_index, (diagnostic, existing_block))| {
@@ -727,19 +740,19 @@ impl ProjectDiagnosticsEditor {
                             }
                         }
                     };
+
                     let Some(position_in_multi_buffer) = excerpt_id.and_then(|excerpt_id| {
-                        editor_snapshot
-                            .buffer_snapshot
-                            .anchor_in_excerpt(excerpt_id, block_position)
+                        new_multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, block_position)
                     }) else {
                         return diagnostics_by_row_label;
                     };
-                    let display_row = position_in_multi_buffer
-                        .to_display_point(&editor_snapshot)
-                        .row();
+
+                    let multi_buffer_row = position_in_multi_buffer
+                        .to_point(&new_multi_buffer_snapshot)
+                        .row;
 
                     match diagnostics_by_row_label.entry((
-                        display_row,
+                        multi_buffer_row,
                         new_diagnostic.diagnostic.source.as_deref(),
                         new_diagnostic.diagnostic.message.as_str(),
                     )) {
@@ -836,13 +849,20 @@ impl ProjectDiagnosticsEditor {
         cx.notify();
     }
 
-    fn previous_excerpt_id(&self, path_ix: usize) -> Option<ExcerptId> {
-        let previous_path_state_ix = Some(path_ix.saturating_sub(1))
-            .filter(|&previous_path_ix| previous_path_ix != path_ix)?;
-        self.path_states[..previous_path_state_ix]
+    fn excerpt_borders_for_path(&self, path_ix: usize) -> (Option<ExcerptId>, Option<ExcerptId>) {
+        let previous_path_state_ix =
+            Some(path_ix.saturating_sub(1)).filter(|&previous_path_ix| previous_path_ix != path_ix);
+        let next_path_state_ix = path_ix + 1;
+        let start = previous_path_state_ix.and_then(|i| {
+            self.path_states[..=i]
+                .iter()
+                .rev()
+                .find_map(|state| state.last_excerpt_id)
+        });
+        let end = self.path_states[next_path_state_ix..]
             .iter()
-            .rev()
-            .find_map(|state| state.last_excerpt_id)
+            .find_map(|state| state.first_excerpt_id);
+        (start, end)
     }
 
     #[cfg(test)]
@@ -868,7 +888,7 @@ impl ProjectDiagnosticsEditor {
 
 fn path_state_excerpts<'a>(
     after_excerpt_id: Option<ExcerptId>,
-    last_excerpt_id: Option<ExcerptId>,
+    before_excerpt_id: Option<ExcerptId>,
     multi_buffer_snapshot: &'a editor::MultiBufferSnapshot,
 ) -> impl Iterator<
     Item = (
@@ -877,7 +897,6 @@ fn path_state_excerpts<'a>(
         ExcerptRange<language::Anchor>,
     ),
 > {
-    let mut visited_last_excerpt_id = false;
     multi_buffer_snapshot
         .excerpts()
         .skip_while(move |&(excerpt_id, ..)| match after_excerpt_id {
@@ -885,17 +904,8 @@ fn path_state_excerpts<'a>(
             None => false,
         })
         .filter(move |&(excerpt_id, ..)| after_excerpt_id != Some(excerpt_id))
-        .take_while(move |&(excerpt_id, ..)| match last_excerpt_id {
-            Some(last_excerpt_id) => {
-                if excerpt_id == last_excerpt_id {
-                    visited_last_excerpt_id = true;
-                    true
-                } else if visited_last_excerpt_id {
-                    false
-                } else {
-                    true
-                }
-            }
+        .take_while(move |&(excerpt_id, ..)| match before_excerpt_id {
+            Some(before_excerpt_id) => before_excerpt_id != excerpt_id,
             None => true,
         })
 }
@@ -1105,8 +1115,6 @@ fn compare_diagnostic_ranges(
     new: &Range<language::Anchor>,
     snapshot: &BufferSnapshot,
 ) -> Ordering {
-    use language::ToOffset;
-
     // The diagnostics may point to a previously open Buffer for this file.
     if !old.start.is_valid(snapshot) || !new.start.is_valid(snapshot) {
         return Ordering::Greater;
@@ -1120,4 +1128,25 @@ fn compare_diagnostic_ranges(
                 .to_offset(snapshot)
                 .cmp(&new.end.to_offset(snapshot))
         })
+}
+
+// TODO kb wrong? What to do here instead?
+fn compare_diagnostic_range_edges(
+    old: &Range<language::Anchor>,
+    new: &Range<language::Anchor>,
+    snapshot: &BufferSnapshot,
+) -> (Ordering, Ordering) {
+    // The diagnostics may point to a previously open Buffer for this file.
+    let start_cmp = match (old.start.is_valid(snapshot), new.start.is_valid(snapshot)) {
+        (false, false) => old.start.offset.cmp(&new.start.offset),
+        (false, true) => Ordering::Greater,
+        (true, false) => Ordering::Less,
+        (true, true) => old.start.cmp(&new.start, snapshot),
+    };
+
+    let end_cmp = old
+        .end
+        .to_offset(snapshot)
+        .cmp(&new.end.to_offset(snapshot));
+    (start_cmp, end_cmp)
 }
