@@ -571,7 +571,11 @@ impl DirectWriteState {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let render_target = &self.components.render_context.emoji_dc_target;
+        let render_target = if params.is_emoji {
+            &self.components.render_context.emoji_dc_target
+        } else {
+            &self.components.render_context.normal_dc_target
+        };
         unsafe {
             render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
             render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
