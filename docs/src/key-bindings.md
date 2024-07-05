@@ -174,7 +174,7 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 #### Editor
 
 | **Command**                      | **Target** | **Default Shortcut**            |
-|----------------------------------| ---------- | ------------------------------- |
+| -------------------------------- | ---------- | ------------------------------- |
 | Add selection above              | Editor     | `⌘ + Alt + Up`                  |
 | Add selection above              | Editor     | `⌘ + Control + P`               |
 | Add selection below              | Editor     | `⌘ + Alt + Down`                |
@@ -465,7 +465,7 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 #### Project Panel
 
 | **Command**             | **Target**    | **Default Shortcut**  |
-|-------------------------| ------------- | --------------------- |
+| ----------------------- | ------------- | --------------------- |
 | Collapse selected entry | Project Panel | `Left`                |
 | Copy                    | Project Panel | `⌘ + C`               |
 | Copy path               | Project Panel | `⌘ + Alt + C`         |
