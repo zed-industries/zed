@@ -10,9 +10,8 @@ use editor::Editor;
 use futures::future::try_join_all;
 use gpui::{
     actions, list, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
-    FocusableView, ListState, Model, Subscription, Task, View, ViewContext, WeakView,
+    FocusableView, ListState, Subscription, Task, View, ViewContext, WeakView,
 };
-use project::Project;
 use std::path::Path;
 use std::{collections::HashMap, sync::Arc};
 use task::DebugRequestType;
@@ -163,9 +162,8 @@ impl DebugPanel {
                 move |this, _, cx| {
                     if let Some(client) = this.debug_client(cx) {
                         client.update_current_stack_frame_id(stack_frame.id);
-                        this.go_to_stack_frame(&stack_frame, cx)
+                        this.go_to_stack_frame(&stack_frame, client.clone(), false, cx)
                             .detach_and_log_err(cx);
-
                         cx.notify();
                     };
                 }
@@ -362,15 +360,75 @@ impl DebugPanel {
         }
     }
 
-    fn go_to_stack_frame(
+    fn remove_highlights(
+        &self,
+        client: Arc<DebugAdapterClient>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let mut tasks = Vec::new();
+        for (_, thread_state) in client.thread_state().clone() {
+            for stack_frame in thread_state.stack_frames {
+                tasks.push(self.remove_editor_highlight(&stack_frame, cx));
+            }
+        }
+
+        cx.spawn(|_, _| async move {
+            try_join_all(tasks).await?;
+
+            anyhow::Ok(())
+        })
+    }
+
+    fn remove_editor_highlight(
         &self,
         stack_frame: &StackFrame,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let path = stack_frame.clone().source.unwrap().path.unwrap().clone();
+
+        cx.spawn(|this, mut cx| async move {
+            let task = this.update(&mut cx, |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    let project_path = workspace.project().read_with(cx, |project, cx| {
+                        project.project_path_for_absolute_path(&Path::new(&path), cx)
+                    });
+
+                    if let Some(project_path) = project_path {
+                        workspace.open_path(project_path, None, false, cx)
+                    } else {
+                        Task::ready(Err(anyhow::anyhow!(
+                            "No project path found for path: {}",
+                            path
+                        )))
+                    }
+                })
+            })??;
+
+            let editor = task.await?.downcast::<Editor>().unwrap();
+
+            editor.update(&mut cx, |editor, _| {
+                editor.clear_row_highlights::<DebugCurrentRowHighlight>();
+            })
+        })
+    }
+
+    fn go_to_stack_frame(
+        &self,
+        stack_frame: &StackFrame,
+        client: Arc<DebugAdapterClient>,
+        clear_highlights: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let path = stack_frame.clone().source.unwrap().path.unwrap().clone();
         let row = (stack_frame.line - 1) as u32;
         let column = (stack_frame.column - 1) as u32;
+
         cx.spawn(move |this, mut cx| async move {
+            if clear_highlights {
+                this.update(&mut cx, |this, cx| this.remove_highlights(client, cx))?
+                    .await?;
+            }
+
             let task = this.update(&mut cx, |this, cx| {
                 this.workspace.update(cx, |workspace, cx| {
                     let project_path = workspace.project().read_with(cx, |project, cx| {
@@ -420,6 +478,11 @@ impl DebugPanel {
         let client = this.debug_client_by_id(*client_id, cx);
 
         cx.spawn(|this, mut cx| async move {
+            this.update(&mut cx, |this, cx| {
+                this.remove_highlights(client.clone(), cx)
+            })?
+            .await?;
+
             let stack_trace_response = client
                 .request::<StackTrace>(StackTraceArguments {
                     thread_id,
@@ -488,7 +551,12 @@ impl DebugPanel {
                         this.stack_frame_list.reset(entry.stack_frames.len());
                         cx.notify();
 
-                        return this.go_to_stack_frame(&current_stack_frame, cx);
+                        return this.go_to_stack_frame(
+                            &current_stack_frame,
+                            client.clone(),
+                            true,
+                            cx,
+                        );
                     }
                 }
 
@@ -524,11 +592,16 @@ impl DebugPanel {
             if current_thread_id == Some(event.thread_id) {
                 client.update_current_thread_id(None);
                 if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
-                    this.stack_frame_list.reset(0);
+                    cx.spawn({
+                        let client = client.clone();
+                        |this, mut cx| async move {
+                            this.update(&mut cx, |this, cx| this.remove_highlights(client, cx))?
+                                .await
+                        }
+                    })
+                    .detach_and_log_err(cx);
                 }
             }
-
-            client.thread_state().remove(&event.thread_id);
 
             cx.notify();
         }
