@@ -1,7 +1,9 @@
 use std::sync::{atomic::AtomicBool, Arc};
 
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+};
 use futures::FutureExt;
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
@@ -41,7 +43,7 @@ impl SlashCommand for ExtensionSlashCommand {
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         cx.background_executor().spawn(async move {
             self.extension
                 .call({
@@ -57,7 +59,16 @@ impl SlashCommand for ExtensionSlashCommand {
                                 .await?
                                 .map_err(|e| anyhow!("{}", e))?;
 
-                            anyhow::Ok(completions)
+                            anyhow::Ok(
+                                completions
+                                    .into_iter()
+                                    .map(|completion| ArgumentCompletion {
+                                        label: completion.clone(),
+                                        new_text: completion,
+                                        run_command: true,
+                                    })
+                                    .collect(),
+                            )
                         }
                         .boxed()
                     }
