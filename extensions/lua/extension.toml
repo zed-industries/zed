@@ -1,7 +1,7 @@
 id = "lua"
 name = "Lua"
 description = "Lua support."
-version = "0.0.2"
+version = "0.0.3"
 schema_version = 1
 authors = ["Max Brunsfeld <max@zed.dev>"]
 repository = "https://github.com/zed-industries/zed"
