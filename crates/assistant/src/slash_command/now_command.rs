@@ -2,7 +2,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+};
 use chrono::Local;
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
@@ -34,7 +36,7 @@ impl SlashCommand for NowSlashCommand {
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
 
