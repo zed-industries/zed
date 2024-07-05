@@ -87,7 +87,7 @@ use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
-    Point, Selection, SelectionGoal, TransactionId,
+    Point, Selection, SelectionGoal, TransactionId, TruncationMode,
 };
 use language::{BufferRow, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -3526,13 +3526,14 @@ impl Editor {
         let autoindent = text.is_empty().not().then(|| AutoindentMode::Block {
             original_indent_columns: Vec::new(),
         });
-        self.insert_with_autoindent_mode(text, autoindent, cx);
+        self.insert_with_modes(text, autoindent, None, cx);
     }
 
-    fn insert_with_autoindent_mode(
+    fn insert_with_modes(
         &mut self,
         text: &str,
         autoindent_mode: Option<AutoindentMode>,
+        truncation_mode: Option<TruncationMode>,
         cx: &mut ViewContext<Self>,
     ) {
         if self.read_only(cx) {
@@ -3540,6 +3541,9 @@ impl Editor {
         }
 
         let text: Arc<str> = text.into();
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
         self.transact(cx, |this, cx| {
             let old_selections = this.selections.all_adjusted(cx);
             let selection_anchors = this.buffer.update(cx, |buffer, cx| {
@@ -3554,9 +3558,14 @@ impl Editor {
                         .collect::<Vec<_>>()
                 };
                 buffer.edit(
-                    old_selections
-                        .iter()
-                        .map(|s| (s.start..s.end, text.clone())),
+                    old_selections.iter().map(|s| {
+                        // truncate the line
+                        let edit_end = display_map.next_line_boundary(s.start).0;
+                        match truncation_mode {
+                            Some(TruncationMode::EndOfLine) => ((s.start..edit_end), text.clone()),
+                            None => ((s.start..s.end), text.clone()),
+                        }
+                    }),
                     autoindent_mode,
                     cx,
                 );
@@ -4870,7 +4879,12 @@ impl Editor {
             utf16_range_to_replace: None,
             text: completion.text.to_string().into(),
         });
-        self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
+        self.insert_with_modes(
+            &completion.text.to_string(),
+            None,
+            Some(TruncationMode::EndOfLine),
+            cx,
+        );
         self.refresh_inline_completion(true, cx);
         cx.notify();
     }
@@ -4901,7 +4915,12 @@ impl Editor {
                     utf16_range_to_replace: None,
                     text: partial_completion.clone().into(),
                 });
-                self.insert_with_autoindent_mode(&partial_completion, None, cx);
+                self.insert_with_modes(
+                    &partial_completion,
+                    None,
+                    Some(TruncationMode::EndOfLine),
+                    cx,
+                );
                 self.refresh_inline_completion(true, cx);
                 cx.notify();
             }
