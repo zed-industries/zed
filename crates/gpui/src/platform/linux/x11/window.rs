@@ -607,6 +607,8 @@ impl X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -994,6 +996,7 @@ impl PlatformWindow for X11Window {
                 xproto::Time::CURRENT_TIME,
             )
             .log_err();
+        self.0.xcb_connection.flush().unwrap();
     }
 
     fn is_active(&self) -> bool {
@@ -1022,6 +1025,7 @@ impl PlatformWindow for X11Window {
                 title.as_bytes(),
             )
             .unwrap();
+        self.0.xcb_connection.flush().unwrap();
     }
 
     fn set_app_id(&mut self, app_id: &str) {
@@ -1039,6 +1043,8 @@ impl PlatformWindow for X11Window {
                 xproto::AtomEnum::STRING,
                 &data,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -1074,6 +1080,8 @@ impl PlatformWindow for X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -1164,6 +1172,8 @@ impl PlatformWindow for X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -1226,6 +1236,8 @@ impl PlatformWindow for X11Window {
                     4,
                     bytemuck::cast_slice::<u32, u8>(&insets),
                 )
+                .unwrap()
+                .check()
                 .unwrap();
         }
     }
@@ -1250,6 +1262,8 @@ impl PlatformWindow for X11Window {
                 5,
                 bytemuck::cast_slice::<u32, u8>(&hints_data),
             )
+            .unwrap()
+            .check()
             .unwrap();
 
         match decorations {
