@@ -1072,7 +1072,9 @@ impl LinuxClient for X11Client {
                     ..Default::default()
                 },
             )
-            .expect("failed to change window cursor");
+            .expect("failed to change window cursor")
+            .check()
+            .unwrap();
     }
 
     fn open_uri(&self, uri: &str) {
