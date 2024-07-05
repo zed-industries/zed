@@ -142,9 +142,9 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
                     String::from_utf8(api_key)?
                 };
                 cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    if let Some(provider) = provider.current_provider_as::<Self>() {
+                    provider.update_current_as::<_, Self>(|provider| {
                         provider.api_key = Some(api_key);
-                    }
+                    });
                 })
             })
         }
@@ -155,9 +155,9 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let Some(provider) = provider.current_provider_as::<Self>() {
+                provider.update_current_as::<_, Self>(|provider| {
                     provider.api_key = None;
-                }
+                });
             })
         })
     }
@@ -213,7 +213,7 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self as &mut dyn std::any::Any
+        self
     }
 }
 
@@ -295,9 +295,9 @@ impl AuthenticationPrompt {
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let Some(provider) = provider.current_provider_as::<OpenAiCompletionProvider>() {
+                provider.update_current_as::<_, OpenAiCompletionProvider>(|provider| {
                     provider.api_key = Some(api_key);
-                }
+                });
             })
         })
         .detach_and_log_err(cx);

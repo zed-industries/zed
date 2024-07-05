@@ -30,11 +30,9 @@ impl CloudCompletionProvider {
         let maintain_client_status = cx.spawn(|mut cx| async move {
             while let Some(status) = status_rx.next().await {
                 let _ = cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    if let Some(provider) = provider.current_provider_as::<Self>() {
+                    provider.update_current_as::<_, Self>(|provider| {
                         provider.status = status;
-                    } else {
-                        unreachable!()
-                    }
+                    });
                 });
             }
         });
@@ -172,7 +170,7 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self as &mut dyn std::any::Any
+        self
     }
 }
 

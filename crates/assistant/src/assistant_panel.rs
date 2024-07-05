@@ -1688,7 +1688,7 @@ impl Context {
             }
 
             let request = self.to_completion_request(cx);
-            let stream = CompletionProvider::global(cx).complete(request);
+            let response = CompletionProvider::global(cx).complete(request, cx);
             let assistant_message = self
                 .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
                 .unwrap();
@@ -1701,11 +1701,12 @@ impl Context {
 
             let task = cx.spawn({
                 |this, mut cx| async move {
+                    let response = response.await;
                     let assistant_message_id = assistant_message.id;
                     let mut response_latency = None;
                     let stream_completion = async {
                         let request_start = Instant::now();
-                        let mut messages = stream.await?;
+                        let mut messages = response.inner.await?;
 
                         while let Some(message) = messages.next().await {
                             if response_latency.is_none() {
@@ -1997,10 +1998,11 @@ impl Context {
                 temperature: 1.0,
             };
 
-            let stream = CompletionProvider::global(cx).complete(request);
+            let response = CompletionProvider::global(cx).complete(request, cx);
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
-                    let mut messages = stream.await?;
+                    let response = response.await;
+                    let mut messages = response.inner.await?;
 
                     while let Some(message) = messages.next().await {
                         let text = message?;

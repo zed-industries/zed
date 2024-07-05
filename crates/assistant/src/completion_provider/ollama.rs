@@ -54,11 +54,11 @@ impl LanguageModelCompletionProvider for OllamaCompletionProvider {
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
         let fetch_models = Box::new(move |cx: &mut WindowContext| {
             cx.update_global::<CompletionProvider, _>(|provider, cx| {
-                if let Some(provider) = provider.current_provider_as::<OllamaCompletionProvider>() {
-                    provider.fetch_models(cx)
-                } else {
-                    Task::ready(Ok(()))
-                }
+                provider
+                    .update_current_as::<_, OllamaCompletionProvider>(|provider| {
+                        provider.fetch_models(cx)
+                    })
+                    .unwrap_or_else(|| Task::ready(Ok(())))
             })
         });
 
@@ -125,7 +125,7 @@ impl LanguageModelCompletionProvider for OllamaCompletionProvider {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self as &mut dyn std::any::Any
+        self
     }
 }
 
@@ -216,13 +216,13 @@ impl OllamaCompletionProvider {
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let Some(provider) = provider.current_provider_as::<OllamaCompletionProvider>() {
+                provider.update_current_as::<_, OllamaCompletionProvider>(|provider| {
                     provider.available_models = models;
 
                     if !provider.available_models.is_empty() && provider.model.name.is_empty() {
                         provider.select_first_available_model()
                     }
-                }
+                });
             })
         })
     }

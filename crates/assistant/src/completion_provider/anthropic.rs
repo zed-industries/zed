@@ -57,11 +57,9 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
                     String::from_utf8(api_key)?
                 };
                 cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    if let Some(provider) =
-                        provider.current_provider_as::<AnthropicCompletionProvider>()
-                    {
+                    provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
                         provider.api_key = Some(api_key);
-                    }
+                    });
                 })
             })
         }
@@ -72,11 +70,9 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let Some(provider) =
-                    provider.current_provider_as::<AnthropicCompletionProvider>()
-                {
+                provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
                     provider.api_key = None;
-                }
+                });
             })
         })
     }
@@ -144,7 +140,7 @@ impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self as &mut dyn std::any::Any
+        self
     }
 }
 
@@ -290,11 +286,9 @@ impl AuthenticationPrompt {
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let Some(provider) =
-                    provider.current_provider_as::<AnthropicCompletionProvider>()
-                {
+                provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
                     provider.api_key = Some(api_key);
-                }
+                });
             })
         })
         .detach_and_log_err(cx);
