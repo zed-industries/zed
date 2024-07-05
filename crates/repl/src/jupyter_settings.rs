@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use editor::EditorSettings;
+use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -16,18 +18,22 @@ pub enum JupyterDockPosition {
 
 #[derive(Debug, Default)]
 pub struct JupyterSettings {
-    pub enabled: bool,
     pub dock: JupyterDockPosition,
     pub default_width: Pixels,
     pub kernel_selections: HashMap<String, String>,
 }
 
+impl JupyterSettings {
+    pub fn enabled(cx: &AppContext) -> bool {
+        // In order to avoid a circular dependency between `editor` and `repl` crates,
+        // we put the `enable` flag on its settings.
+        // This allows the editor to set up context for key bindings/actions.
+        EditorSettings::get_global(cx).jupyter.enabled
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct JupyterSettingsContent {
-    /// Whether the Jupyter feature is enabled.
-    ///
-    /// Default: `false`
-    enabled: Option<bool>,
     /// Where to dock the Jupyter panel.
     ///
     /// Default: `right`
@@ -51,7 +57,6 @@ impl JupyterSettingsContent {
 impl Default for JupyterSettingsContent {
     fn default() -> Self {
         JupyterSettingsContent {
-            enabled: Some(false),
             dock: Some(JupyterDockPosition::Right),
             default_width: Some(640.0),
             kernel_selections: Some(HashMap::new()),
@@ -74,9 +79,6 @@ impl Settings for JupyterSettings {
         let mut settings = JupyterSettings::default();
 
         for value in sources.defaults_and_customizations() {
-            if let Some(enabled) = value.enabled {
-                settings.enabled = enabled;
-            }
             if let Some(dock) = value.dock {
                 settings.dock = dock;
             }
@@ -110,7 +112,7 @@ mod tests {
 
         JupyterSettings::register(cx);
 
-        assert_eq!(JupyterSettings::get_global(cx).enabled, false);
+        assert_eq!(JupyterSettings::enabled(cx), false);
         assert_eq!(
             JupyterSettings::get_global(cx).dock,
             JupyterDockPosition::Right
@@ -136,7 +138,7 @@ mod tests {
                 .unwrap();
         });
 
-        assert_eq!(JupyterSettings::get_global(cx).enabled, true);
+        assert_eq!(JupyterSettings::enabled(cx), true);
         assert_eq!(
             JupyterSettings::get_global(cx).dock,
             JupyterDockPosition::Left

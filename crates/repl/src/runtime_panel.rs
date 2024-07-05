@@ -62,12 +62,11 @@ impl RuntimePanel {
                         cx.on_focus_in(&focus_handle, Self::focus_in),
                         cx.on_focus_out(&focus_handle, Self::focus_out),
                         cx.observe_global::<SettingsStore>(move |this, cx| {
-                            let settings = JupyterSettings::get_global(cx);
-                            this.set_enabled(settings.enabled, cx);
+                            this.set_enabled(JupyterSettings::enabled(cx), cx);
                         }),
                     ];
 
-                    let enabled = JupyterSettings::get_global(cx).enabled;
+                    let enabled = JupyterSettings::enabled(cx);
 
                     Self {
                         fs,
@@ -273,8 +272,7 @@ impl RuntimePanel {
 }
 
 pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) {
-    let settings = JupyterSettings::get_global(cx);
-    if !settings.enabled {
+    if !JupyterSettings::enabled(cx) {
         return;
     }
 
@@ -292,8 +290,7 @@ pub fn run(workspace: &mut Workspace, _: &Run, cx: &mut ViewContext<Workspace>) 
 }
 
 pub fn clear_outputs(workspace: &mut Workspace, _: &ClearOutputs, cx: &mut ViewContext<Workspace>) {
-    let settings = JupyterSettings::get_global(cx);
-    if !settings.enabled {
+    if !JupyterSettings::enabled(cx) {
         return;
     }
 
