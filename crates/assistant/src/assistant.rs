@@ -226,7 +226,7 @@ pub struct LanguageModelChoiceDelta {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum MessageStatus {
     Pending,
     Done,

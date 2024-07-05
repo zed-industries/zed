@@ -421,6 +421,7 @@ dependencies = [
  "telemetry_events",
  "terminal",
  "terminal_view",
+ "text",
  "theme",
  "tiktoken-rs",
  "toml 0.8.10",

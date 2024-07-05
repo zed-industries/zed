@@ -39,7 +39,6 @@ use uuid::Uuid;
 pub enum ContextOperation {
     InsertMessage {
         id: MessageId,
-        left_sibling: MessageId,
         start: language::Anchor,
         metadata: MessageMetadata,
     },
@@ -95,7 +94,7 @@ pub struct ContextSummary {
     timestamp: clock::Lamport,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageAnchor {
     pub id: MessageId,
     pub start: language::Anchor,
@@ -108,7 +107,7 @@ pub struct MessageMetadata {
     timestamp: clock::Lamport,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Message {
     pub offset_range: Range<usize>,
     pub index_range: Range<usize>,
@@ -164,13 +163,20 @@ pub struct Context {
 impl EventEmitter<ContextEvent> for Context {}
 
 impl Context {
+    // todo!("avoid taking a replica id and instead introduce a new from_proto function")
     fn new(
+        replica_id: ReplicaId,
         language_registry: Arc<LanguageRegistry>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::local("", cx);
+            let mut buffer = Buffer::remote(
+                language::BufferId::new(1).unwrap(),
+                replica_id,
+                language::Capability::ReadWrite,
+                "",
+            );
             buffer.set_language_registry(language_registry.clone());
             buffer
         });
@@ -178,7 +184,7 @@ impl Context {
             buffer.update(cx, |buffer, _| buffer.subscribe());
         let mut this = Self {
             id: Some(Uuid::new_v4().to_string()),
-            timestamp: clock::Lamport::new(0),
+            timestamp: clock::Lamport::new(replica_id),
             pending_ops: Vec::new(),
             message_anchors: Default::default(),
             messages_metadata: Default::default(),
@@ -202,16 +208,20 @@ impl Context {
             language_registry,
         };
 
+        let first_message_id = MessageId(clock::Lamport {
+            replica_id: 0,
+            value: 0,
+        });
         let message = MessageAnchor {
-            id: MessageId(this.timestamp.tick()),
+            id: first_message_id,
             start: language::Anchor::MIN,
         };
         this.messages_metadata.insert(
-            message.id,
+            first_message_id,
             MessageMetadata {
                 role: Role::User,
                 status: MessageStatus::Done,
-                timestamp: message.id.0,
+                timestamp: first_message_id.0,
             },
         );
         this.message_anchors.push(message);
@@ -364,18 +374,12 @@ impl Context {
     }
 
     fn flush_ops(&mut self, cx: &mut ModelContext<Context>) {
-        // Ensure that context operations always refer to buffer anchors that
-        // are present in the local replica.
-        if !self.buffer.read(cx).has_deferred_ops() {
-            return;
-        }
-
         let mut messages_changed = false;
         let mut summary_changed = false;
 
         self.pending_ops.sort_unstable_by_key(|op| op.timestamp());
         for op in mem::take(&mut self.pending_ops) {
-            if !self.can_apply_op(&op) {
+            if !self.can_apply_op(&op, cx) {
                 self.pending_ops.push(op);
                 continue;
             }
@@ -384,27 +388,31 @@ impl Context {
             match op {
                 ContextOperation::InsertMessage {
                     id,
-                    left_sibling,
                     start,
                     metadata,
                 } => {
                     if self.messages_metadata.contains_key(&id) {
                         // We already applied this operation.
                     } else {
-                        let left_sibling_ix = self
-                            .message_anchors
-                            .iter()
-                            .position(|anchor| anchor.id == left_sibling)
-                            .unwrap();
+                        println!("====");
+                        let buffer = self.buffer.read(cx);
+                        let mut insertion_ix = 0;
+                        println!("id: {:?}, new offset: {}", id, start.to_offset(buffer));
 
-                        let mut insertion_ix = left_sibling_ix + 1;
-                        for message in &self.message_anchors[insertion_ix..] {
-                            if id > message.id {
-                                break;
-                            } else {
+                        for message in &self.message_anchors {
+                            let comparison = start.cmp(&message.start, buffer);
+                            println!(
+                                "id: {:?}. offset: {}. comparison: {comparison:?}",
+                                message.id,
+                                message.start.to_offset(buffer)
+                            );
+                            if comparison.is_gt() || (comparison.is_eq() && id < message.id) {
                                 insertion_ix += 1;
+                            } else {
+                                break;
                             }
                         }
+                        println!("insertion ix: {}", insertion_ix);
 
                         self.message_anchors
                             .insert(insertion_ix, MessageAnchor { id, start });
@@ -467,16 +475,30 @@ impl Context {
         }
     }
 
-    fn can_apply_op(&self, op: &ContextOperation) -> bool {
+    fn can_apply_op(&self, op: &ContextOperation, cx: &AppContext) -> bool {
         match op {
-            ContextOperation::InsertMessage { left_sibling, .. } => {
-                self.messages_metadata.contains_key(left_sibling)
+            ContextOperation::InsertMessage { start, .. } => {
+                self.buffer.read(cx).version.observed(start.timestamp)
             }
             ContextOperation::UpdateMessage { message_id, .. } => {
                 self.messages_metadata.contains_key(message_id)
             }
             ContextOperation::UpdateSummary { .. } => true,
-            ContextOperation::SlashCommandFinished { .. } => true,
+            ContextOperation::SlashCommandFinished {
+                output_range,
+                sections,
+                ..
+            } => {
+                let version = &self.buffer.read(cx).version;
+                sections
+                    .iter()
+                    .map(|section| &section.range)
+                    .chain([output_range])
+                    .all(|range| {
+                        version.observed(range.start.timestamp)
+                            && version.observed(range.end.timestamp)
+                    })
+            }
             ContextOperation::BufferOperation(_) => {
                 panic!("buffer operations should always be applied")
             }
@@ -1153,6 +1175,15 @@ impl Context {
                 cx,
             );
 
+            println!("== splitting locally ==");
+            for anchor in &self.message_anchors {
+                println!(
+                    "id: {:?}, offset: {}",
+                    anchor.id,
+                    anchor.start.to_offset(self.buffer.read(cx))
+                );
+            }
+
             let new_messages =
                 if range.start == range.end || range.start == message.offset_range.start {
                     (None, Some(suffix))
@@ -1218,7 +1249,6 @@ impl Context {
         assert!(index > 0, "inserting before the first message is forbidden");
         cx.emit(ContextEvent::Operation(ContextOperation::InsertMessage {
             id: anchor.id,
-            left_sibling: self.message_anchors[index - 1].id,
             start: anchor.start,
             metadata: metadata.clone(),
         }));
@@ -1831,8 +1861,14 @@ impl ContextStore {
     }
 
     pub fn create(&mut self, cx: &mut ModelContext<Self>) -> Model<Context> {
-        let context =
-            cx.new_model(|cx| Context::new(self.languages.clone(), self.telemetry.clone(), cx));
+        let context = cx.new_model(|cx| {
+            Context::new(
+                ReplicaId::default(),
+                self.languages.clone(),
+                self.telemetry.clone(),
+                cx,
+            )
+        });
         self.register_context(&context);
         context
     }
@@ -1975,11 +2011,14 @@ mod tests {
     };
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext};
+    use parking_lot::Mutex;
     use project::Project;
+    use rand::prelude::*;
     use rope::Rope;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::{cell::RefCell, path::Path, rc::Rc};
+    use std::{cell::RefCell, env, path::Path, rc::Rc};
+    use text::network::Network;
     use unindent::Unindent;
     use util::test::marked_text_ranges;
 
@@ -1991,7 +2030,7 @@ mod tests {
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let context = cx.new_model(|cx| Context::new(registry, None, cx));
+        let context = cx.new_model(|cx| Context::new(0, registry, None, cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2122,7 +2161,7 @@ mod tests {
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let context = cx.new_model(|cx| Context::new(registry, None, cx));
+        let context = cx.new_model(|cx| Context::new(0, registry, None, cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2215,7 +2254,7 @@ mod tests {
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let context = cx.new_model(|cx| Context::new(registry, None, cx));
+        let context = cx.new_model(|cx| Context::new(0, registry, None, cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2320,7 +2359,7 @@ mod tests {
         slash_command_registry.register_command(active_command::ActiveSlashCommand, false);
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context = cx.new_model(|cx| Context::new(registry.clone(), None, cx));
+        let context = cx.new_model(|cx| Context::new(0, registry.clone(), None, cx));
 
         let output_ranges = Rc::new(RefCell::new(HashSet::default()));
         context.update(cx, |_, cx| {
@@ -2493,7 +2532,7 @@ mod tests {
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context = cx.new_model(|cx| Context::new(registry.clone(), None, cx));
+        let context = cx.new_model(|cx| Context::new(0, registry.clone(), None, cx));
         let buffer = context.read_with(cx, |context, _| context.buffer.clone());
         let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
         let message_1 = context.update(cx, |context, cx| {
@@ -2549,6 +2588,118 @@ mod tests {
                 (message_2.id, Role::System, 6..6),
             ]
         );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_random_context_collaboration(cx: &mut AppContext, mut rng: StdRng) {
+        let min_peers = env::var("MIN_PEERS")
+            .map(|i| i.parse().expect("invalid `MIN_PEERS` variable"))
+            .unwrap_or(2);
+        let max_peers = env::var("MAX_PEERS")
+            .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
+            .unwrap_or(5);
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(50);
+
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        let slash_command_registry = SlashCommandRegistry::default_global(cx);
+        assistant_panel::init(cx);
+
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        let network = Arc::new(Mutex::new(Network::new(rng.clone())));
+        let mut contexts = Vec::new();
+
+        let num_peers = rng.gen_range(min_peers..=max_peers);
+        for i in 0..num_peers {
+            let context = cx.new_model(|cx| Context::new(i, registry.clone(), None, cx));
+
+            cx.subscribe(&context, {
+                let network = network.clone();
+                move |_, event, _| {
+                    if let ContextEvent::Operation(op) = event {
+                        network.lock().broadcast(i as ReplicaId, vec![op.clone()]);
+                    }
+                }
+            })
+            .detach();
+
+            contexts.push(context);
+            network.lock().add_peer(i as ReplicaId);
+        }
+
+        let mut mutation_count = operations;
+
+        while mutation_count > 0 || !network.lock().is_idle() {
+            let context_index = rng.gen_range(0..contexts.len());
+            let context = &contexts[context_index];
+
+            match rng.gen_range(0..100) {
+                0..=49 if mutation_count > 0 => {
+                    log::info!("Context {}: edit buffer", context_index);
+                    context.update(cx, |context, cx| {
+                        context
+                            .buffer
+                            .update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
+                    });
+                    mutation_count -= 1;
+                }
+                50..=74 if mutation_count > 0 => {
+                    context.update(cx, |context, cx| {
+                        let range = context.buffer.read(cx).random_byte_range(0, &mut rng);
+                        log::info!("Context {}: split message at {:?}", context_index, range);
+                        context.split_message(range, cx);
+                    });
+                    mutation_count -= 1;
+                }
+                75..=99 if mutation_count > 0 => {
+                    context.update(cx, |context, cx| {
+                        if let Some(message) = context.messages(cx).choose(&mut rng) {
+                            let role = *[Role::User, Role::Assistant, Role::System]
+                                .choose(&mut rng)
+                                .unwrap();
+                            log::info!(
+                                "Context {}: insert message after {:?} with {:?}",
+                                context_index,
+                                message.id,
+                                role
+                            );
+                            context.insert_message_after(message.id, role, MessageStatus::Done, cx);
+                        }
+                    });
+                    mutation_count -= 1;
+                }
+                _ => {
+                    let replica_id = context_index as ReplicaId;
+                    if network.lock().has_unreceived(replica_id) {
+                        let ops = network.lock().receive(replica_id);
+                        log::info!("Context {}: applying operations", context_index);
+                        context
+                            .update(cx, |context, cx| context.apply_ops(ops, cx))
+                            .unwrap();
+                    }
+                }
+            }
+        }
+
+        let first_context = contexts[0].read(cx);
+        for context in &contexts[1..] {
+            let context = context.read(cx);
+            assert_eq!(
+                context.buffer.read(cx).text(),
+                first_context.buffer.read(cx).text(),
+                "Context {} text != Context 0 text",
+                context.buffer.read(cx).replica_id()
+            );
+            assert_eq!(
+                context.message_anchors,
+                first_context.message_anchors,
+                "Context {} messages != Context 0 messages",
+                context.buffer.read(cx).replica_id()
+            );
+        }
     }
 
     fn messages(context: &Model<Context>, cx: &AppContext) -> Vec<(MessageId, Role, Range<usize>)> {
