@@ -10,7 +10,7 @@ use editor::{
     Anchor, AnchorRangeExt as _, Editor,
 };
 use futures::{FutureExt as _, StreamExt as _};
-use gpui::{div, prelude::*, Entity, EventEmitter, Render, Task, View, ViewContext};
+use gpui::{div, prelude::*, EventEmitter, Render, Task, View, ViewContext, WeakView};
 use project::Fs;
 use runtimelib::{
     ExecuteRequest, InterruptRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest,
@@ -22,16 +22,15 @@ use theme::{ActiveTheme, ThemeSettings};
 use ui::{h_flex, prelude::*, v_flex, ButtonLike, ButtonStyle, Label};
 
 pub struct Session {
-    editor: View<Editor>,
+    editor: WeakView<Editor>,
     kernel: Kernel,
     blocks: HashMap<String, EditorBlock>,
     messaging_task: Task<()>,
     kernel_specification: KernelSpecification,
 }
 
-#[derive(Debug)]
 struct EditorBlock {
-    editor: View<Editor>,
+    editor: WeakView<Editor>,
     code_range: Range<Anchor>,
     block_id: BlockId,
     execution_view: View<ExecutionView>,
@@ -39,11 +38,11 @@ struct EditorBlock {
 
 impl EditorBlock {
     fn new(
-        editor: View<Editor>,
+        editor: WeakView<Editor>,
         code_range: Range<Anchor>,
         status: ExecutionStatus,
         cx: &mut ViewContext<Session>,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let execution_view = cx.new_view(|cx| ExecutionView::new(status, cx));
 
         let block_id = editor.update(cx, |editor, cx| {
@@ -56,14 +55,14 @@ impl EditorBlock {
             };
 
             editor.insert_blocks([block], None, cx)[0]
-        });
+        })?;
 
-        Self {
+        anyhow::Ok(Self {
             editor,
             code_range,
             block_id,
             execution_view,
-        }
+        })
     }
 
     fn handle_message(&mut self, message: &JupyterMessage, cx: &mut ViewContext<Session>) {
@@ -71,17 +70,19 @@ impl EditorBlock {
             execution_view.push_message(&message.content, cx);
         });
 
-        self.editor.update(cx, |editor, cx| {
-            let mut replacements = HashMap::default();
-            replacements.insert(
-                self.block_id,
-                (
-                    Some(self.execution_view.num_lines(cx).saturating_add(1)),
-                    Self::create_output_area_render(self.execution_view.clone()),
-                ),
-            );
-            editor.replace_blocks(replacements, None, cx);
-        })
+        self.editor
+            .update(cx, |editor, cx| {
+                let mut replacements = HashMap::default();
+                replacements.insert(
+                    self.block_id,
+                    (
+                        Some(self.execution_view.num_lines(cx).saturating_add(1)),
+                        Self::create_output_area_render(self.execution_view.clone()),
+                    ),
+                );
+                editor.replace_blocks(replacements, None, cx);
+            })
+            .ok();
     }
 
     fn create_output_area_render(execution_view: View<ExecutionView>) -> RenderBlock {
@@ -118,7 +119,7 @@ impl EditorBlock {
 
 impl Session {
     pub fn new(
-        editor: View<Editor>,
+        editor: WeakView<Editor>,
         fs: Arc<dyn Fs>,
         kernel_specification: KernelSpecification,
         cx: &mut ViewContext<Self>,
@@ -200,14 +201,22 @@ impl Session {
         let blocks_to_remove: HashSet<BlockId> =
             self.blocks.values().map(|block| block.block_id).collect();
 
-        self.editor.update(cx, |editor, cx| {
-            editor.remove_blocks(blocks_to_remove, None, cx);
-        });
+        self.editor
+            .update(cx, |editor, cx| {
+                editor.remove_blocks(blocks_to_remove, None, cx);
+            })
+            .ok();
 
         self.blocks.clear();
     }
 
     pub fn execute(&mut self, code: &str, anchor_range: Range<Anchor>, cx: &mut ViewContext<Self>) {
+        let editor = if let Some(editor) = self.editor.upgrade() {
+            editor
+        } else {
+            return;
+        };
+
         let execute_request = ExecuteRequest {
             code: code.to_string(),
             ..ExecuteRequest::default()
@@ -217,7 +226,7 @@ impl Session {
 
         let mut blocks_to_remove: HashSet<BlockId> = HashSet::default();
 
-        let buffer = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+        let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
 
         self.blocks.retain(|_key, block| {
             if anchor_range.overlaps(&block.code_range, &buffer) {
@@ -228,9 +237,11 @@ impl Session {
             }
         });
 
-        self.editor.update(cx, |editor, cx| {
-            editor.remove_blocks(blocks_to_remove, None, cx);
-        });
+        self.editor
+            .update(cx, |editor, cx| {
+                editor.remove_blocks(blocks_to_remove, None, cx);
+            })
+            .ok();
 
         let status = match &self.kernel {
             Kernel::RunningKernel(_) => ExecutionStatus::Queued,
@@ -240,7 +251,13 @@ impl Session {
             Kernel::Shutdown => ExecutionStatus::Shutdown,
         };
 
-        let editor_block = EditorBlock::new(self.editor.clone(), anchor_range, status, cx);
+        let editor_block = if let Ok(editor_block) =
+            EditorBlock::new(self.editor.clone(), anchor_range, status, cx)
+        {
+            editor_block
+        } else {
+            return;
+        };
 
         self.blocks
             .insert(message.header.msg_id.clone(), editor_block);
@@ -341,7 +358,7 @@ impl Session {
 }
 
 pub enum SessionEvent {
-    Shutdown(View<Editor>),
+    Shutdown(WeakView<Editor>),
 }
 
 impl EventEmitter<SessionEvent> for Session {}

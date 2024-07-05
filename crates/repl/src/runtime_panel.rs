@@ -8,8 +8,8 @@ use collections::HashMap;
 use editor::{Anchor, Editor, RangeToAnchorExt};
 use futures::StreamExt as _;
 use gpui::{
-    actions, prelude::*, AppContext, AsyncWindowContext, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusOutEvent, FocusableView, Subscription, Task, View, WeakView,
+    actions, prelude::*, AppContext, AsyncWindowContext, EntityId, EventEmitter, FocusHandle,
+    FocusOutEvent, FocusableView, Subscription, Task, View, WeakView,
 };
 use language::Point;
 use project::Fs;
@@ -44,11 +44,12 @@ pub struct RuntimePanel {
     sessions: HashMap<EntityId, View<Session>>,
     kernel_specifications: Vec<KernelSpecification>,
     _subscriptions: Vec<Subscription>,
+    _editor_events_task: Task<()>,
 }
 
 pub enum ReplEvent {
-    Run(View<Editor>),
-    ClearOutputs(View<Editor>),
+    Run(WeakView<Editor>),
+    ClearOutputs(WeakView<Editor>),
 }
 
 impl RuntimePanel {
@@ -77,7 +78,7 @@ impl RuntimePanel {
                         }),
                         cx.observe_new_views(
                             move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
-                                let editor_view = cx.view().clone();
+                                let editor_view = cx.view().downgrade();
                                 let run_event_tx = repl_editor_event_tx.clone();
                                 let clear_event_tx = repl_editor_event_tx.clone();
                                 editor
@@ -91,7 +92,7 @@ impl RuntimePanel {
                                     })
                                     .detach();
 
-                                let editor_view = cx.view().clone();
+                                let editor_view = cx.view().downgrade();
                                 editor
                                     .register_action(
                                         move |_: &ClearOutputs, cx: &mut WindowContext| {
@@ -110,26 +111,13 @@ impl RuntimePanel {
                         ),
                     ];
 
-                    let runtime_panel = Self {
-                        fs: fs.clone(),
-                        width: None,
-                        focus_handle,
-                        kernel_specifications: Vec::new(),
-                        sessions: Default::default(),
-                        _subscriptions: subscriptions,
-                        enabled: JupyterSettings::enabled(cx),
-                    };
-
                     // Listen for events from the editor on the `repl_editor_event_rx` channel
-                    cx.spawn(
+                    let _editor_events_task = cx.spawn(
                         move |this: WeakView<RuntimePanel>, mut cx: AsyncWindowContext| async move {
                             while let Some(event) = repl_editor_event_rx.next().await {
                                 this.update(&mut cx, |runtime_panel, cx| match event {
                                     ReplEvent::Run(editor) => {
-                                        if !JupyterSettings::enabled(cx) {
-                                            return;
-                                        }
-                                        runtime_panel.run(editor, fs.clone(), cx).log_err();
+                                        runtime_panel.run(editor, cx).log_err();
                                     }
                                     ReplEvent::ClearOutputs(editor) => {
                                         runtime_panel.clear_outputs(editor, cx);
@@ -138,8 +126,18 @@ impl RuntimePanel {
                                 .ok();
                             }
                         },
-                    )
-                    .detach();
+                    );
+
+                    let runtime_panel = Self {
+                        fs: fs.clone(),
+                        width: None,
+                        focus_handle,
+                        kernel_specifications: Vec::new(),
+                        sessions: Default::default(),
+                        _subscriptions: subscriptions,
+                        enabled: JupyterSettings::enabled(cx),
+                        _editor_events_task,
+                    };
 
                     runtime_panel
                 })
@@ -216,9 +214,11 @@ impl RuntimePanel {
 
     pub fn snippet(
         &self,
-        editor: View<Editor>,
+        editor: WeakView<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> Option<(String, Arc<str>, Range<Anchor>)> {
+        let editor = editor.upgrade()?;
+
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
         let anchor_range = self.selection(editor, cx);
 
@@ -278,8 +278,7 @@ impl RuntimePanel {
 
     pub fn run(
         &mut self,
-        editor: View<Editor>,
-        fs: Arc<dyn Fs>,
+        editor: WeakView<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> anyhow::Result<()> {
         if !self.enabled {
@@ -298,7 +297,8 @@ impl RuntimePanel {
             .with_context(|| format!("No kernel found for language: {language_name}"))?;
 
         let session = self.sessions.entry(entity_id).or_insert_with(|| {
-            let view = cx.new_view(|cx| Session::new(editor, fs.clone(), kernel_specification, cx));
+            let view =
+                cx.new_view(|cx| Session::new(editor, self.fs.clone(), kernel_specification, cx));
             cx.notify();
 
             let subscription = cx.subscribe(
@@ -325,7 +325,7 @@ impl RuntimePanel {
         anyhow::Ok(())
     }
 
-    pub fn clear_outputs(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+    pub fn clear_outputs(&mut self, editor: WeakView<Editor>, cx: &mut ViewContext<Self>) {
         let entity_id = editor.entity_id();
         if let Some(session) = self.sessions.get_mut(&entity_id) {
             session.update(cx, |session, cx| {
