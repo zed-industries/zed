@@ -347,7 +347,7 @@ mod tests {
 
         assert_eq!(fake_provider.completion_count(), 0);
 
-        // Wait until the background tasks aquire the lock again.
+        // Wait until the background tasks acquire the lock again.
         cx.background_executor().run_until_parked();
 
         assert_eq!(
