@@ -9,6 +9,7 @@ use collections::HashMap;
 use futures::channel::oneshot::Receiver;
 
 use raw_window_handle as rwh;
+use util::ResultExt;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{protocol::wl_surface, Proxy};
@@ -705,7 +706,7 @@ impl WaylandWindowStatePtr {
                 .spawn(async move {
                     LauncherEntryProxy::update(&app_uri, UpdateOptions::default().urgent(urgent))
                         .await
-                        .ok();
+                        .log_err();
                 })
                 .detach();
         }
