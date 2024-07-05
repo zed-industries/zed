@@ -6,7 +6,7 @@ mod toolbar_controls;
 mod diagnostics_tests;
 
 use anyhow::Result;
-use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle},
@@ -27,7 +27,7 @@ use language::{
     ToPoint as _,
 };
 use lsp::LanguageServerId;
-use multi_buffer::{build_excerpt_ranges, ExpandExcerptDirection};
+use multi_buffer::{build_excerpt_ranges, ExpandExcerptDirection, MultiBufferRow};
 use project::{DiagnosticSummary, Project, ProjectPath};
 use project_diagnostics_settings::ProjectDiagnosticsSettings;
 use settings::Settings;
@@ -711,8 +711,15 @@ impl ProjectDiagnosticsEditor {
             .enumerate()
             .fold(
                 BTreeMap::<
-                    (u32, Option<&str>, &str),
-                    (usize, Option<BlockId>, editor::Anchor, Vec<usize>),
+                    MultiBufferRow,
+                    (
+                        editor::Anchor,
+                        BTreeMap<
+                            // TODO kb wrong, now it deduplicates by label
+                            (Option<String>, usize, DiagnosticSeverity, String),
+                            Vec<(usize, Option<BlockId>)>,
+                        >,
+                    ),
                 >::new(),
                 |mut diagnostics_by_row_label, (diagnostic_index, (diagnostic, existing_block))| {
                     let new_diagnostic = &diagnostic.entry;
@@ -747,37 +754,43 @@ impl ProjectDiagnosticsEditor {
                         return diagnostics_by_row_label;
                     };
 
-                    let multi_buffer_row = position_in_multi_buffer
-                        .to_point(&new_multi_buffer_snapshot)
-                        .row;
+                    let multi_buffer_row = MultiBufferRow(
+                        position_in_multi_buffer
+                            .to_point(&new_multi_buffer_snapshot)
+                            .row,
+                    );
 
-                    match diagnostics_by_row_label.entry((
-                        multi_buffer_row,
-                        new_diagnostic.diagnostic.source.as_deref(),
-                        new_diagnostic.diagnostic.message.as_str(),
-                    )) {
-                        btree_map::Entry::Vacant(v) => {
-                            v.insert((
-                                diagnostic_index,
-                                *existing_block,
-                                position_in_multi_buffer,
-                                Vec::new(),
-                            ));
+                    let diagnostics_by_labels = &mut diagnostics_by_row_label
+                        .entry(multi_buffer_row)
+                        .or_insert_with(|| (position_in_multi_buffer, BTreeMap::new()))
+                        .1;
+                    let grouped_diagnostics = diagnostics_by_labels
+                        .entry((
+                            new_diagnostic.diagnostic.source.clone(),
+                            new_diagnostic.diagnostic.group_id,
+                            new_diagnostic.diagnostic.severity,
+                            new_diagnostic.diagnostic.message.clone(),
+                        ))
+                        .or_default();
+                    if grouped_diagnostics.len() > 0 {
+                        if grouped_diagnostics.len() == 1 {
+                            if let Some((i, block_id)) = grouped_diagnostics.first() {
+                                if let Some(block_id) = block_id {
+                                    blocks_to_remove.insert(*block_id);
+                                }
+                                if let Some(block_id) = unchanged_blocks.remove(i) {
+                                    blocks_to_remove.insert(block_id);
+                                }
+                            }
                         }
-                        btree_map::Entry::Occupied(mut o) => {
-                            let (first_index, first_index_block, _, other_indices) = o.get_mut();
-                            if other_indices.is_empty() {
-                                unchanged_blocks.remove(first_index);
-                            }
-                            other_indices.push(diagnostic_index);
-                            if let Some(existing_block) = existing_block {
-                                blocks_to_remove.insert(*existing_block);
-                            }
-                            if let Some(first_index_block) = first_index_block {
-                                blocks_to_remove.insert(*first_index_block);
-                            }
+                        if let Some(existing_block) = existing_block {
+                            blocks_to_remove.insert(*existing_block);
+                        }
+                        if let Some(block_id) = unchanged_blocks.remove(&diagnostic_index) {
+                            blocks_to_remove.insert(block_id);
                         }
                     }
+                    grouped_diagnostics.push((diagnostic_index, *existing_block));
 
                     diagnostics_by_row_label
                 },
@@ -785,23 +798,27 @@ impl ProjectDiagnosticsEditor {
             .into_values()
             .collect::<Vec<_>>();
 
-        let blocks_to_insert =
-            diagnostics_by_row_label
-                .iter()
-                .filter_map(|(index, _, position, _)| {
-                    if unchanged_blocks.contains_key(index) {
-                        None
-                    } else {
-                        let new_diagnostic = new_diagnostics[*index].0.entry.diagnostic.clone();
-                        Some(BlockProperties {
-                            position: *position,
-                            height: new_diagnostic.message.matches('\n').count() as u8 + 1,
-                            style: BlockStyle::Sticky,
-                            render: diagnostic_block_renderer(new_diagnostic, false, true),
-                            disposition: BlockDisposition::Above,
-                        })
-                    }
-                });
+        let blocks_to_insert = diagnostics_by_row_label.iter().flat_map(
+            |(earliest_in_row_position, diagnostics_by_label)| {
+                diagnostics_by_label
+                    .values()
+                    .filter_map(|diagnostics_with_same_label| {
+                        let (index, _) = diagnostics_with_same_label.first()?;
+                        if unchanged_blocks.contains_key(index) {
+                            None
+                        } else {
+                            let new_diagnostic = new_diagnostics[*index].0.entry.diagnostic.clone();
+                            Some(BlockProperties {
+                                position: *earliest_in_row_position,
+                                height: new_diagnostic.message.matches('\n').count() as u8 + 1,
+                                style: BlockStyle::Sticky,
+                                render: diagnostic_block_renderer(new_diagnostic, false, true),
+                                disposition: BlockDisposition::Above,
+                            })
+                        }
+                    })
+            },
+        );
         let mut new_block_ids = self
             .editor
             .update(cx, |editor, cx| {
@@ -811,20 +828,35 @@ impl ProjectDiagnosticsEditor {
             .into_iter()
             .fuse();
 
-        for (index, _, _, other_indices) in diagnostics_by_row_label.into_iter() {
-            if let Some(&block_id) = unchanged_blocks.get(&index) {
-                debug_assert!(
-                    other_indices.is_empty(),
-                    "Should only allow unchanged blocks for labels without duplicates"
-                );
-                new_diagnostics[index].1 = Some(block_id);
-            } else {
-                let Some(block_id) = new_block_ids.next() else {
-                    debug_panic!("Expected a new block for each new diagnostic");
-                    continue;
-                };
-                for new_diagnostic_index in other_indices.into_iter().chain(Some(index)) {
-                    new_diagnostics[new_diagnostic_index].1 = Some(block_id);
+        for (_, diagnostics_by_label) in diagnostics_by_row_label {
+            for grouped_diagnostics in diagnostics_by_label
+                .into_values()
+                .map(|grouped_diagnostics| grouped_diagnostics)
+            {
+                let mut created_block_id = None;
+                let grouped_diagnostics_len = grouped_diagnostics.len();
+                for (index, block_id) in grouped_diagnostics {
+                    match block_id {
+                        Some(block_id) => new_diagnostics[index].1 = Some(block_id),
+                        None => match unchanged_blocks.get(&index) {
+                            Some(&block_id) => {
+                                debug_assert!(
+                                    grouped_diagnostics_len == 1,
+                                    "Should only allow unchanged blocks for labels without duplicates"
+                                );
+                                new_diagnostics[index].1 = Some(block_id);
+                            }
+                            None => {
+                                let Some(block_id) =
+                                    created_block_id.get_or_insert_with(|| new_block_ids.next())
+                                else {
+                                    debug_panic!("Expected a new block for each new diagnostic");
+                                    continue;
+                                };
+                                new_diagnostics[index].1 = Some(*block_id);
+                            }
+                        },
+                    }
                 }
             }
         }
