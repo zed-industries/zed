@@ -17,7 +17,7 @@
       "alt-cmd-b": "editor::GoToDefinitionSplit", // N/A: From JetBrains
       "cmd-<": "editor::ScrollCursorCenter", // editor:scroll-to-cursor
       "cmd-g": ["editor::SelectNext", { "replace_newest": true }], // find-and-replace:find-next
-      "ctrl-cmd-g": ["editor::SelectPrevious", { "replace_newest": true }], //find-and-replace:find-previous
+      "cmd-shift-g": ["editor::SelectPrevious", { "replace_newest": true }], //find-and-replace:find-previous
       "ctrl-shift-down": "editor::AddSelectionBelow", // editor:add-selection-below
       "ctrl-shift-up": "editor::AddSelectionAbove", // editor:add-selection-above
       "cmd-shift-backspace": "editor::DeleteToBeginningOfLine", // editor:delete-to-beginning-of-line
