@@ -1,6 +1,6 @@
 use super::{create_label_for_command, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandOutputSection;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use fuzzy::{PathMatch, StringMatchCandidate};
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{
@@ -108,7 +108,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         cancellation_flag: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
@@ -143,7 +143,14 @@ impl SlashCommand for DiagnosticsSlashCommand {
                 .map(|candidate| candidate.string),
             );
 
-            Ok(matches)
+            Ok(matches
+                .into_iter()
+                .map(|completion| ArgumentCompletion {
+                    label: completion.clone(),
+                    new_text: completion,
+                    run_command: true,
+                })
+                .collect())
         })
     }
 

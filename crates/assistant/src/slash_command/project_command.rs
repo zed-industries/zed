@@ -1,6 +1,6 @@
 use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context, Result};
-use assistant_slash_command::SlashCommandOutputSection;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use fs::Fs;
 use gpui::{AppContext, Model, Task, WeakView};
 use language::LspAdapterDelegate;
@@ -107,7 +107,7 @@ impl SlashCommand for ProjectSlashCommand {
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
 
