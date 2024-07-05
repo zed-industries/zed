@@ -13,7 +13,7 @@ use editor::{
         BlockDisposition, BlockId, BlockProperties, BlockStyle, DisplayRow, ToDisplayPoint,
     },
     scroll::Autoscroll,
-    Bias, Editor, EditorEvent, ExcerptId, MultiBuffer,
+    Bias, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
 };
 use futures::{
     channel::mpsc::{self, UnboundedSender},
@@ -72,6 +72,7 @@ struct ProjectDiagnosticsEditor {
 
 struct PathState {
     path: ProjectPath,
+    last_excerpt_id: Option<ExcerptId>,
     diagnostics: Vec<(DiagnosticData, BlockId)>,
 }
 
@@ -312,6 +313,7 @@ impl ProjectDiagnosticsEditor {
                     PathState {
                         path: path_to_update.clone(),
                         diagnostics: Vec::new(),
+                        last_excerpt_id: None,
                     },
                 );
                 ix
@@ -324,6 +326,7 @@ impl ProjectDiagnosticsEditor {
             DiagnosticSeverity::ERROR
         };
 
+        let previous_excerpt_id = self.previous_excerpt_id(path_ix);
         let path_state = &mut self.path_states[path_ix];
         let mut new_diagnostics = path_state
             .diagnostics
@@ -359,8 +362,6 @@ impl ProjectDiagnosticsEditor {
         }
 
         let multi_buffer_snapshot = self.excerpts.read(cx).snapshot(cx);
-        // TODO kb: this is not correct, other files' excerpts are affected by this and similar, need to skip those
-        let mut current_excerpts = multi_buffer_snapshot.excerpts().fuse().peekable();
         let mut current_diagnostics = path_state.diagnostics.iter().fuse().peekable();
         let mut blocks_to_remove = HashSet::default();
         let mut unchanged_blocks = HashMap::default();
@@ -369,7 +370,15 @@ impl ProjectDiagnosticsEditor {
         let mut excerpts_to_add = HashMap::<ExcerptId, Vec<Range<language::Anchor>>>::default();
         let mut excerpts_to_expand =
             HashMap::<ExcerptId, HashMap<ExpandExcerptDirection, u32>>::default();
-        let mut latest_excerpt_id = ExcerptId::min();
+
+        let mut latest_excerpt_id = previous_excerpt_id.unwrap_or_else(|| ExcerptId::min());
+        let mut current_excerpts = path_state_excerpts(
+            previous_excerpt_id,
+            path_state.last_excerpt_id,
+            &multi_buffer_snapshot,
+        )
+        .fuse()
+        .peekable();
         for (diagnostic_index, (new_diagnostic, existing_block)) in
             new_diagnostics.iter().enumerate()
         {
@@ -410,6 +419,7 @@ impl ProjectDiagnosticsEditor {
                             ) => {
                                 excerpts_with_new_diagnostics.insert(*current_excerpt_id);
                                 excerpts_to_remove.remove(current_excerpt_id);
+                                path_state.last_excerpt_id = Some(*current_excerpt_id);
                                 break;
                             }
                             /*
@@ -455,6 +465,7 @@ impl ProjectDiagnosticsEditor {
                                 *expand_value = (*expand_value).max(expand_up).max(expand_down);
                                 excerpts_with_new_diagnostics.insert(*current_excerpt_id);
                                 excerpts_to_remove.remove(current_excerpt_id);
+                                path_state.last_excerpt_id = Some(*current_excerpt_id);
                                 break;
                             }
                             /*
@@ -497,6 +508,7 @@ impl ProjectDiagnosticsEditor {
                                     *expand_value = (*expand_value).max(expand_down);
                                     excerpts_with_new_diagnostics.insert(*current_excerpt_id);
                                     excerpts_to_remove.remove(current_excerpt_id);
+                                    path_state.last_excerpt_id = Some(*current_excerpt_id);
                                     break;
                                 } else if !excerpts_with_new_diagnostics
                                     .contains(current_excerpt_id)
@@ -544,6 +556,7 @@ impl ProjectDiagnosticsEditor {
                                     *expand_value = (*expand_value).max(expand_up);
                                     excerpts_with_new_diagnostics.insert(*current_excerpt_id);
                                     excerpts_to_remove.remove(current_excerpt_id);
+                                    path_state.last_excerpt_id = Some(*current_excerpt_id);
                                     break;
                                 } else {
                                     let excerpt_ranges =
@@ -654,12 +667,13 @@ impl ProjectDiagnosticsEditor {
                     .collect::<Vec<_>>();
                 let (joined_ranges, _) =
                     build_excerpt_ranges(&buffer_snapshot, &ranges, self.context);
-                multi_buffer.insert_excerpts_after(
+                let excerpts = multi_buffer.insert_excerpts_after(
                     after_excerpt_id,
                     buffer.clone(),
                     joined_ranges,
                     cx,
                 );
+                path_state.last_excerpt_id = excerpts.last().copied();
             }
             for ((direction, line_count), excerpts) in excerpt_expands {
                 multi_buffer.expand_excerpts(excerpts, line_count, direction, cx);
@@ -668,14 +682,20 @@ impl ProjectDiagnosticsEditor {
         });
 
         let editor_snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
-        let mut updated_excerpts = editor_snapshot.buffer_snapshot.excerpts().fuse().peekable();
+        let mut updated_excerpts = path_state_excerpts(
+            previous_excerpt_id,
+            path_state.last_excerpt_id,
+            &editor_snapshot.buffer_snapshot,
+        )
+        .fuse()
+        .peekable();
         let diagnostics_by_row_label = new_diagnostics
             .iter()
             .enumerate()
             .fold(
                 BTreeMap::<
                     (DisplayRow, Option<&str>, &str),
-                    (usize, Option<BlockId>, multi_buffer::Anchor, Vec<usize>),
+                    (usize, Option<BlockId>, editor::Anchor, Vec<usize>),
                 >::new(),
                 |mut diagnostics_by_row_label, (diagnostic_index, (diagnostic, existing_block))| {
                     let new_diagnostic = &diagnostic.entry;
@@ -775,11 +795,12 @@ impl ProjectDiagnosticsEditor {
             .fuse();
 
         for (index, _, _, other_indices) in diagnostics_by_row_label.into_iter() {
-            if unchanged_blocks.contains_key(&index) {
+            if let Some(&block_id) = unchanged_blocks.get(&index) {
                 debug_assert!(
                     other_indices.is_empty(),
                     "Should only allow unchanged blocks for labels without duplicates"
                 );
+                new_diagnostics[index].1 = Some(block_id);
             } else {
                 let Some(block_id) = new_block_ids.next() else {
                     debug_panic!("Expected a new block for each new diagnostic");
@@ -811,6 +832,15 @@ impl ProjectDiagnosticsEditor {
         cx.notify();
     }
 
+    fn previous_excerpt_id(&self, path_ix: usize) -> Option<ExcerptId> {
+        let previous_path_state_ix = Some(path_ix.saturating_sub(1))
+            .filter(|&previous_path_ix| previous_path_ix != path_ix)?;
+        self.path_states[..previous_path_state_ix]
+            .iter()
+            .rev()
+            .find_map(|state| state.last_excerpt_id)
+    }
+
     #[cfg(test)]
     fn check_invariants(&self, cx: &mut ViewContext<Self>) {
         let mut excerpts = Vec::new();
@@ -830,6 +860,40 @@ impl ProjectDiagnosticsEditor {
             prev_path = Some(path);
         }
     }
+}
+
+fn path_state_excerpts<'a>(
+    after_excerpt_id: Option<ExcerptId>,
+    last_excerpt_id: Option<ExcerptId>,
+    multi_buffer_snapshot: &'a editor::MultiBufferSnapshot,
+) -> impl Iterator<
+    Item = (
+        ExcerptId,
+        &'a BufferSnapshot,
+        ExcerptRange<language::Anchor>,
+    ),
+> {
+    let mut visited_last_excerpt_id = false;
+    multi_buffer_snapshot
+        .excerpts()
+        .skip_while(move |&(excerpt_id, ..)| match after_excerpt_id {
+            Some(after_excerpt_id) => after_excerpt_id != excerpt_id,
+            None => false,
+        })
+        .filter(move |&(excerpt_id, ..)| after_excerpt_id != Some(excerpt_id))
+        .take_while(move |&(excerpt_id, ..)| match last_excerpt_id {
+            Some(last_excerpt_id) => {
+                if excerpt_id == last_excerpt_id {
+                    visited_last_excerpt_id = true;
+                    true
+                } else if visited_last_excerpt_id {
+                    false
+                } else {
+                    true
+                }
+            }
+            None => true,
+        })
 }
 
 impl FocusableView for ProjectDiagnosticsEditor {
