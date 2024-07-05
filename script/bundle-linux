@@ -82,6 +82,7 @@ cp "crates/zed/resources/app-icon$suffix@2x.png" "${zed_dir}/share/icons/hicolor
 export DO_STARTUP_NOTIFY="true"
 export APP_CLI="zed"
 export APP_ICON="zed"
+export APP_ARGS="%U"
 if [[ "$channel" == "preview" ]]; then
   export APP_NAME="Zed Preview"
 elif [[ "$channel" == "nightly" ]]; then
