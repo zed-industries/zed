@@ -110,6 +110,7 @@ mod tests {
         let store = settings::SettingsStore::test(cx);
         cx.set_global(store);
 
+        EditorSettings::register(cx);
         JupyterSettings::register(cx);
 
         assert_eq!(JupyterSettings::enabled(cx), false);
