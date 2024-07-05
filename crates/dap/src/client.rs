@@ -34,7 +34,7 @@ use std::{
     },
     time::Duration,
 };
-use task::{DebugAdapterConfig, DebugConnectionType};
+use task::{DebugAdapterConfig, DebugConnectionType, DebugRequestType};
 use util::ResultExt;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -59,6 +59,7 @@ pub struct DebugAdapterClient {
     client_rx: Arc<Mutex<UnboundedReceiver<Payload>>>,
     thread_state: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
     current_thread_id: Arc<Mutex<Option<u64>>>,
+    request_type: DebugRequestType,
 }
 
 impl DebugAdapterClient {
@@ -146,10 +147,12 @@ impl DebugAdapterClient {
 
         let client_rx = Arc::new(Mutex::new(client_rx));
 
+        let request_type = config.clone().request;
         let client = Self {
             id,
             config,
             client_rx,
+            request_type,
             _process: process,
             capabilities: None,
             server_tx: server_tx.clone(),
@@ -227,6 +230,10 @@ impl DebugAdapterClient {
 
     pub fn id(&self) -> DebugAdapterClientId {
         self.id
+    }
+
+    pub fn request_type(&self) -> DebugRequestType {
+        self.request_type.clone()
     }
 
     pub fn next_request_id(&self) -> u64 {
