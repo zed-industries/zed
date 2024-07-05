@@ -487,12 +487,13 @@ impl DebugPanel {
 
                     if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
                         this.stack_frame_list.reset(entry.stack_frames.len());
-                    }
+                        cx.notify();
 
-                    cx.notify();
+                        return this.go_to_stack_frame(&current_stack_frame, cx);
+                    }
                 }
 
-                this.go_to_stack_frame(&current_stack_frame, cx)
+                Task::ready(anyhow::Ok(()))
             })?;
 
             task.await?;
