@@ -1,5 +1,5 @@
 use crate::{
-    point, seal::Sealed, Empty, IntoElement, IsZero, Keystroke, Modifiers, Pixels, Point, Render,
+    point, seal::Sealed, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
     ViewContext,
 };
 use smallvec::SmallVec;
