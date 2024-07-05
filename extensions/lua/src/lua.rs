@@ -37,7 +37,7 @@ impl LuaExtension {
 
         let (platform, arch) = zed::current_platform();
         let asset_name = format!(
-            "lua-language-server-{version}-{os}-{arch}.{file_type}",
+            "lua-language-server-{version}-{os}-{arch}.{extension}",
             version = release.version,
             os = match platform {
                 zed::Os::Mac => "darwin",
@@ -49,9 +49,8 @@ impl LuaExtension {
                 zed::Architecture::X8664 => "x64",
                 zed::Architecture::X86 => return Err("unsupported platform x86".into()),
             },
-            file_type = match platform {
-                zed::Os::Mac => "tar.gz",
-                zed::Os::Linux => "tar.gz",
+            extension = match platform {
+                zed::Os::Mac | zed::Os::Linux => "tar.gz",
                 zed::Os::Windows => "zip",
             },
         );
@@ -64,10 +63,9 @@ impl LuaExtension {
 
         let version_dir = format!("lua-language-server-{}", release.version);
         let binary_path = format!(
-            "{version_dir}/bin/lua-language-server{}",
-            match platform {
-                zed::Os::Mac => "",
-                zed::Os::Linux => "",
+            "{version_dir}/bin/lua-language-server{extension}",
+            extension = match platform {
+                zed::Os::Mac | zed::Os::Linux => "",
                 zed::Os::Windows => ".exe",
             },
         );
@@ -82,8 +80,7 @@ impl LuaExtension {
                 &asset.download_url,
                 &version_dir,
                 match platform {
-                    zed::Os::Mac => zed::DownloadedFileType::GzipTar,
-                    zed::Os::Linux => zed::DownloadedFileType::GzipTar,
+                    zed::Os::Mac | zed::Os::Linux => zed::DownloadedFileType::GzipTar,
                     zed::Os::Windows => zed::DownloadedFileType::Zip,
                 },
             )
