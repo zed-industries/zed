@@ -134,6 +134,10 @@ impl DebugPanel {
         let stack_frame = self.stack_frame_for_index(ix, cx).unwrap();
 
         let source = stack_frame.source.clone();
+        let selected_frame_id = self
+            .debug_client(cx)
+            .and_then(|c| c.current_stack_frame_id());
+        let is_selected_frame = Some(stack_frame.id) == selected_frame_id;
 
         let formatted_path = format!(
             "{}:{}",
@@ -150,6 +154,21 @@ impl DebugPanel {
                 move |cx| Tooltip::text(formatted_path.clone(), cx)
             })
             .p_1()
+            .when(is_selected_frame, |this| {
+                this.bg(cx.theme().colors().element_hover)
+            })
+            .on_click(cx.listener({
+                let stack_frame = stack_frame.clone();
+                move |this, _, cx| {
+                    if let Some(client) = this.debug_client(cx) {
+                        client.update_current_stack_frame_id(stack_frame.id);
+                        this.go_to_stack_frame(&stack_frame, cx)
+                            .detach_and_log_err(cx);
+
+                        cx.notify();
+                    };
+                }
+            }))
             .hover(|s| s.bg(cx.theme().colors().element_hover).cursor_pointer())
             .child(
                 h_flex()
@@ -343,6 +362,51 @@ impl DebugPanel {
         }
     }
 
+    fn go_to_stack_frame(
+        &self,
+        stack_frame: &StackFrame,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let path = stack_frame.clone().source.unwrap().path.unwrap().clone();
+        let row = (stack_frame.line - 1) as u32;
+        let column = (stack_frame.column - 1) as u32;
+        cx.spawn(move |this, mut cx| async move {
+            let task = this.update(&mut cx, |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    let project_path = workspace.project().read_with(cx, |project, cx| {
+                        project.project_path_for_absolute_path(&Path::new(&path), cx)
+                    });
+
+                    if let Some(project_path) = project_path {
+                        workspace.open_path_preview(project_path, None, false, true, cx)
+                    } else {
+                        Task::ready(Err(anyhow::anyhow!(
+                            "No project path found for path: {}",
+                            path
+                        )))
+                    }
+                })
+            })??;
+
+            let editor = task.await?.downcast::<Editor>().unwrap();
+
+            this.update(&mut cx, |this, cx| {
+                this.workspace.update(cx, |_, cx| {
+                    editor.update(cx, |editor, cx| {
+                        editor.go_to_line::<DebugCurrentRowHighlight>(
+                            row,
+                            column,
+                            Some(cx.theme().colors().editor_highlighted_line_background),
+                            cx,
+                        );
+                    })
+                })
+            })??;
+
+            anyhow::Ok(())
+        })
+    }
+
     fn handle_stopped_event(
         this: &mut Self,
         model: Model<Project>,
@@ -413,51 +477,27 @@ impl DebugPanel {
             }
 
             let task = this.update(&mut cx, |this, cx| {
-                {
-                    if let Some(entry) = client.thread_state().get_mut(&thread_id) {
-                        client.update_current_thread_id(Some(thread_id));
+                if let Some(entry) = client.thread_state().get_mut(&thread_id) {
+                    client.update_current_thread_id(Some(thread_id));
 
-                        entry.current_stack_frame_id = Some(current_stack_frame.clone().id);
-                        entry.stack_frames = stack_trace_response.stack_frames.clone();
-                        entry.scopes = scopes;
-                        entry.variables = variables;
+                    entry.current_stack_frame_id = Some(current_stack_frame.clone().id);
+                    entry.stack_frames = stack_trace_response.stack_frames.clone();
+                    entry.scopes = scopes;
+                    entry.variables = variables;
 
-                        if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
-                            this.stack_frame_list.reset(entry.stack_frames.len());
-                        }
-
-                        cx.notify();
+                    if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
+                        this.stack_frame_list.reset(entry.stack_frames.len());
                     }
+
+                    cx.notify();
                 }
 
-                let path = current_stack_frame.clone().source.unwrap().path.unwrap();
+                this.go_to_stack_frame(&current_stack_frame, cx)
+            })?;
 
-                this.workspace.update(cx, |workspace, cx| {
-                    let project_path = workspace.project().read_with(cx, |project, cx| {
-                        project.project_path_for_absolute_path(&Path::new(&path), cx)
-                    });
+            task.await?;
 
-                    if let Some(project_path) = project_path {
-                        workspace.open_path_preview(project_path, None, false, true, cx)
-                    } else {
-                        Task::ready(Err(anyhow::anyhow!(
-                            "No project path found for path: {}",
-                            path
-                        )))
-                    }
-                })
-            })??;
-
-            let editor = task.await?.downcast::<Editor>().unwrap();
-
-            editor.update(&mut cx, |editor, cx| {
-                editor.go_to_line::<DebugCurrentRowHighlight>(
-                    (current_stack_frame.line - 1) as u32,
-                    (current_stack_frame.column - 1) as u32,
-                    Some(cx.theme().colors().editor_highlighted_line_background),
-                    cx,
-                );
-            })
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }

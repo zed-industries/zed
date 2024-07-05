@@ -253,6 +253,22 @@ impl DebugAdapterClient {
         }
     }
 
+    pub fn update_current_stack_frame_id(&self, stack_frame_id: u64) {
+        if let Some(id) = self.current_thread_id() {
+            if let Some(thread_state) = self.thread_state().get_mut(&id) {
+                thread_state.current_stack_frame_id = Some(stack_frame_id);
+            };
+        }
+    }
+
+    pub fn current_stack_frame_id(&self) -> Option<u64> {
+        if let Some(thread_state) = self.current_thread_state() {
+            thread_state.current_stack_frame_id
+        } else {
+            None
+        }
+    }
+
     pub async fn initialize(&mut self) -> Result<dap_types::Capabilities> {
         let args = dap_types::InitializeRequestArguments {
             client_id: Some("zed".to_owned()),
