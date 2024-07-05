@@ -669,7 +669,6 @@ impl Element for MarkdownElement {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                     builder.pop_text_style();
                 }
-
                 MarkdownEvent::Html => {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                 }
@@ -747,8 +746,8 @@ impl Element for MarkdownElement {
         });
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, cx);
-        self.paint_selection(bounds, &rendered_markdown.text, cx);
         rendered_markdown.element.paint(cx);
+        self.paint_selection(bounds, &rendered_markdown.text, cx);
     }
 }
 
