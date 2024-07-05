@@ -1,13 +1,13 @@
 use crate::{
     assistant_settings::OpenAiModel, slash_command::SlashCommandLine, CompletionProvider,
-    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
-    Role,
+    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageStatus, Role,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     SlashCommandOutput, SlashCommandOutputSection, SlashCommandRegistry,
 };
-use client::telemetry::Telemetry;
+use client::{telemetry::Telemetry, Client};
+use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{future::Shared, FutureExt, StreamExt};
@@ -22,7 +22,7 @@ use project::Project;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::{self, Ordering, Reverse},
+    cmp::{Ordering, Reverse},
     ffi::OsStr,
     iter, mem,
     ops::Range,
@@ -34,6 +34,41 @@ use telemetry_events::AssistantKind;
 use ui::SharedString;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
+
+#[derive(Clone)]
+pub enum ContextOperation {
+    InsertMessage {
+        id: MessageId,
+        left_sibling: MessageId,
+        start: language::Anchor,
+        metadata: MessageMetadata,
+    },
+    UpdateMessage {
+        message_id: MessageId,
+        metadata: MessageMetadata,
+    },
+    UpdateSummary(ContextSummary),
+    SlashCommandFinished {
+        id: SlashCommandId,
+        output_range: Range<language::Anchor>,
+        sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+    },
+    BufferOperation(language::Operation),
+}
+
+impl ContextOperation {
+    fn timestamp(&self) -> clock::Lamport {
+        match self {
+            Self::InsertMessage { id, .. } => id.0,
+            Self::UpdateMessage { metadata, .. } => metadata.timestamp,
+            Self::UpdateSummary(summary) => summary.timestamp,
+            Self::SlashCommandFinished { id, .. } => id.0,
+            Self::BufferOperation(_) => {
+                panic!("reading the timestamp of a buffer operation is not supported")
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub enum ContextEvent {
@@ -50,18 +85,27 @@ pub enum ContextEvent {
         sections: Vec<SlashCommandOutputSection<language::Anchor>>,
         run_commands_in_output: bool,
     },
+    Operation(ContextOperation),
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ContextSummary {
     pub text: String,
     done: bool,
+    timestamp: clock::Lamport,
 }
 
 #[derive(Clone, Debug)]
 pub struct MessageAnchor {
     pub id: MessageId,
     pub start: language::Anchor,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MessageMetadata {
+    role: Role,
+    status: MessageStatus,
+    timestamp: clock::Lamport,
 }
 
 #[derive(Clone, Debug)]
@@ -88,16 +132,21 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct SlashCommandId(clock::Lamport);
+
 pub struct Context {
     id: Option<String>,
+    timestamp: clock::Lamport,
+    pending_ops: Vec<ContextOperation>,
     buffer: Model<Buffer>,
     edit_suggestions: Vec<EditSuggestion>,
     pending_slash_commands: Vec<PendingSlashCommand>,
     edits_since_last_slash_command_parse: language::Subscription,
+    finished_slash_commands: HashSet<SlashCommandId>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
-    next_message_id: MessageId,
     summary: Option<ContextSummary>,
     pending_summary: Task<Option<()>>,
     completion_count: usize,
@@ -129,11 +178,13 @@ impl Context {
             buffer.update(cx, |buffer, _| buffer.subscribe());
         let mut this = Self {
             id: Some(Uuid::new_v4().to_string()),
+            timestamp: clock::Lamport::new(0),
+            pending_ops: Vec::new(),
             message_anchors: Default::default(),
             messages_metadata: Default::default(),
-            next_message_id: Default::default(),
             edit_suggestions: Vec::new(),
             pending_slash_commands: Vec::new(),
+            finished_slash_commands: HashSet::default(),
             slash_command_output_sections: Vec::new(),
             edits_since_last_slash_command_parse,
             summary: None,
@@ -152,17 +203,18 @@ impl Context {
         };
 
         let message = MessageAnchor {
-            id: MessageId(post_inc(&mut this.next_message_id.0)),
+            id: MessageId(this.timestamp.tick()),
             start: language::Anchor::MIN,
         };
-        this.message_anchors.push(message.clone());
         this.messages_metadata.insert(
             message.id,
             MessageMetadata {
                 role: Role::User,
                 status: MessageStatus::Done,
+                timestamp: message.id.0,
             },
         );
+        this.message_anchors.push(message);
 
         this.set_language(cx);
         this.count_remaining_tokens(cx);
@@ -195,7 +247,7 @@ impl Context {
                 .filter_map(|section| {
                     let range = section.range.to_offset(buffer);
                     if section.range.start.is_valid(buffer) && !range.is_empty() {
-                        Some(SlashCommandOutputSection {
+                        Some(assistant_slash_command::SlashCommandOutputSection {
                             range,
                             icon: section.icon,
                             label: section.label.clone(),
@@ -223,7 +275,7 @@ impl Context {
 
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
-        let mut next_message_id = MessageId(0);
+        let mut timestamp = clock::Lamport::new(ReplicaId::default());
         let buffer = cx.new_model(|cx| {
             let mut buffer = Buffer::local(saved_context.text, cx);
             for message in saved_context.messages {
@@ -231,7 +283,7 @@ impl Context {
                     id: message.id,
                     start: buffer.anchor_before(message.start),
                 });
-                next_message_id = cmp::max(next_message_id, MessageId(message.id.0 + 1));
+                timestamp.observe(message.id.0);
             }
             buffer.set_language_registry(language_registry.clone());
             cx.spawn(|buffer, mut cx| async move {
@@ -250,11 +302,13 @@ impl Context {
                 buffer.update(cx, |buffer, _| buffer.subscribe());
             let mut this = Self {
                 id,
+                timestamp,
+                pending_ops: Vec::new(),
                 message_anchors,
                 messages_metadata: saved_context.message_metadata,
-                next_message_id,
                 edit_suggestions: Vec::new(),
                 pending_slash_commands: Vec::new(),
+                finished_slash_commands: HashSet::default(),
                 slash_command_output_sections: saved_context
                     .slash_command_output_sections
                     .into_iter()
@@ -272,6 +326,7 @@ impl Context {
                 summary: Some(ContextSummary {
                     text: saved_context.summary,
                     done: true,
+                    timestamp,
                 }),
                 pending_summary: Task::ready(None),
                 completion_count: Default::default(),
@@ -291,6 +346,141 @@ impl Context {
             this.count_remaining_tokens(cx);
             this
         })
+    }
+
+    fn apply_ops(&mut self, ops: Vec<ContextOperation>, cx: &mut ModelContext<Self>) -> Result<()> {
+        let mut buffer_ops = Vec::new();
+        for op in ops {
+            match op {
+                ContextOperation::BufferOperation(buffer_op) => buffer_ops.push(buffer_op),
+                op @ _ => self.pending_ops.push(op),
+            }
+        }
+        self.buffer
+            .update(cx, |buffer, cx| buffer.apply_ops(buffer_ops, cx))?;
+        self.flush_ops(cx);
+
+        Ok(())
+    }
+
+    fn flush_ops(&mut self, cx: &mut ModelContext<Context>) {
+        // Ensure that context operations always refer to buffer anchors that
+        // are present in the local replica.
+        if !self.buffer.read(cx).has_deferred_ops() {
+            return;
+        }
+
+        let mut messages_changed = false;
+        let mut summary_changed = false;
+
+        self.pending_ops.sort_unstable_by_key(|op| op.timestamp());
+        for op in mem::take(&mut self.pending_ops) {
+            if !self.can_apply_op(&op) {
+                self.pending_ops.push(op);
+                continue;
+            }
+
+            let timestamp = op.timestamp();
+            match op {
+                ContextOperation::InsertMessage {
+                    id,
+                    left_sibling,
+                    start,
+                    metadata,
+                } => {
+                    if self.messages_metadata.contains_key(&id) {
+                        // We already applied this operation.
+                    } else {
+                        let left_sibling_ix = self
+                            .message_anchors
+                            .iter()
+                            .position(|anchor| anchor.id == left_sibling)
+                            .unwrap();
+
+                        let mut insertion_ix = left_sibling_ix + 1;
+                        for message in &self.message_anchors[insertion_ix..] {
+                            if id > message.id {
+                                break;
+                            } else {
+                                insertion_ix += 1;
+                            }
+                        }
+
+                        self.message_anchors
+                            .insert(insertion_ix, MessageAnchor { id, start });
+                        self.messages_metadata.insert(id, metadata);
+                        messages_changed = true;
+                    }
+                }
+                ContextOperation::UpdateMessage {
+                    message_id,
+                    metadata: new_metadata,
+                } => {
+                    let metadata = self.messages_metadata.get_mut(&message_id).unwrap();
+                    if new_metadata.timestamp > metadata.timestamp {
+                        *metadata = new_metadata;
+                        messages_changed = true;
+                    }
+                }
+                ContextOperation::UpdateSummary(new_summary) => {
+                    if self
+                        .summary
+                        .as_ref()
+                        .map_or(true, |summary| new_summary.timestamp > summary.timestamp)
+                    {
+                        self.summary = Some(new_summary);
+                        summary_changed = true;
+                    }
+                }
+                ContextOperation::SlashCommandFinished {
+                    id,
+                    output_range,
+                    sections,
+                } => {
+                    if self.finished_slash_commands.insert(id) {
+                        let buffer = self.buffer.read(cx);
+                        self.slash_command_output_sections
+                            .extend(sections.iter().cloned());
+                        self.slash_command_output_sections
+                            .sort_by(|a, b| a.range.cmp(&b.range, buffer));
+                        cx.emit(ContextEvent::SlashCommandFinished {
+                            output_range,
+                            sections,
+                            run_commands_in_output: false,
+                        });
+                    }
+                }
+                ContextOperation::BufferOperation(_) => unreachable!(),
+            }
+
+            self.timestamp.observe(timestamp);
+        }
+
+        if messages_changed {
+            cx.emit(ContextEvent::MessagesEdited);
+            cx.notify();
+        }
+
+        if summary_changed {
+            cx.emit(ContextEvent::SummaryChanged);
+            cx.notify();
+        }
+    }
+
+    fn can_apply_op(&self, op: &ContextOperation) -> bool {
+        match op {
+            ContextOperation::InsertMessage { left_sibling, .. } => {
+                self.messages_metadata.contains_key(left_sibling)
+            }
+            ContextOperation::UpdateMessage { message_id, .. } => {
+                self.messages_metadata.contains_key(message_id)
+            }
+            ContextOperation::UpdateSummary { .. } => true,
+            ContextOperation::SlashCommandFinished { .. } => true,
+            ContextOperation::BufferOperation(_) => {
+                panic!("buffer operations should always be applied")
+            }
+        }
     }
 
     pub fn buffer(&self) -> &Model<Buffer> {
@@ -863,13 +1053,19 @@ impl Context {
                 buffer.anchor_before(offset + 1)
             });
             let message = MessageAnchor {
-                id: MessageId(post_inc(&mut self.next_message_id.0)),
+                id: MessageId(self.timestamp.tick()),
                 start,
             };
             self.message_anchors
                 .insert(next_message_ix, message.clone());
-            self.messages_metadata
-                .insert(message.id, MessageMetadata { role, status });
+            self.messages_metadata.insert(
+                message.id,
+                MessageMetadata {
+                    role,
+                    status,
+                    timestamp: message.id.0,
+                },
+            );
             cx.emit(ContextEvent::MessagesEdited);
             Some(message)
         } else {
@@ -906,7 +1102,7 @@ impl Context {
 
             let suffix = if let Some(suffix_start) = suffix_start {
                 MessageAnchor {
-                    id: MessageId(post_inc(&mut self.next_message_id.0)),
+                    id: MessageId(self.timestamp.tick()),
                     start: self.buffer.read(cx).anchor_before(suffix_start),
                 }
             } else {
@@ -915,7 +1111,7 @@ impl Context {
                 });
                 edited_buffer = true;
                 MessageAnchor {
-                    id: MessageId(post_inc(&mut self.next_message_id.0)),
+                    id: MessageId(self.timestamp.tick()),
                     start: self.buffer.read(cx).anchor_before(range.end + 1),
                 }
             };
@@ -927,6 +1123,7 @@ impl Context {
                 MessageMetadata {
                     role,
                     status: MessageStatus::Done,
+                    timestamp: suffix.id.0,
                 },
             );
 
@@ -950,7 +1147,7 @@ impl Context {
                     let selection = if let Some(prefix_end) = prefix_end {
                         cx.emit(ContextEvent::MessagesEdited);
                         MessageAnchor {
-                            id: MessageId(post_inc(&mut self.next_message_id.0)),
+                            id: MessageId(self.timestamp.tick()),
                             start: self.buffer.read(cx).anchor_before(prefix_end),
                         }
                     } else {
@@ -959,7 +1156,7 @@ impl Context {
                         });
                         edited_buffer = true;
                         MessageAnchor {
-                            id: MessageId(post_inc(&mut self.next_message_id.0)),
+                            id: MessageId(self.timestamp.tick()),
                             start: self.buffer.read(cx).anchor_before(range.end + 1),
                         }
                     };
@@ -971,6 +1168,7 @@ impl Context {
                         MessageMetadata {
                             role,
                             status: MessageStatus::Done,
+                            timestamp: selection.id.0,
                         },
                     );
                     (Some(selection), Some(suffix))
@@ -1278,36 +1476,145 @@ pub enum PendingSlashCommandStatus {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SavedMessage {
-    pub id: MessageId,
-    pub start: usize,
+struct SavedMessage {
+    id: MessageId,
+    start: usize,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SavedContext {
-    pub id: Option<String>,
-    pub zed: String,
-    pub version: String,
-    pub text: String,
-    pub messages: Vec<SavedMessage>,
-    pub message_metadata: HashMap<MessageId, MessageMetadata>,
-    pub summary: String,
-    pub slash_command_output_sections: Vec<SlashCommandOutputSection<usize>>,
+struct SavedContext {
+    id: Option<String>,
+    zed: String,
+    version: String,
+    text: String,
+    messages: Vec<SavedMessage>,
+    message_metadata: HashMap<MessageId, MessageMetadata>,
+    summary: String,
+    slash_command_output_sections: Vec<assistant_slash_command::SlashCommandOutputSection<usize>>,
 }
 
 impl SavedContext {
-    pub const VERSION: &'static str = "0.3.0";
+    const VERSION: &'static str = "0.4.0";
+
+    fn deserialize(json: &str) -> Result<Self> {
+        let saved_context_json = serde_json::from_str::<serde_json::Value>(json)?;
+        match saved_context_json
+            .get("version")
+            .ok_or_else(|| anyhow!("version not found"))?
+        {
+            serde_json::Value::String(version) => match version.as_str() {
+                SavedContext::VERSION => {
+                    Ok(serde_json::from_value::<SavedContext>(saved_context_json)?)
+                }
+                SavedContextV0_3_0::VERSION => {
+                    let saved_context =
+                        serde_json::from_value::<SavedContextV0_3_0>(saved_context_json)?;
+                    Ok(saved_context.upgrade())
+                }
+                SavedContextV0_2_0::VERSION => {
+                    let saved_context =
+                        serde_json::from_value::<SavedContextV0_2_0>(saved_context_json)?;
+                    Ok(saved_context.upgrade())
+                }
+                SavedContextV0_1_0::VERSION => {
+                    let saved_context =
+                        serde_json::from_value::<SavedContextV0_1_0>(saved_context_json)?;
+                    Ok(saved_context.upgrade())
+                }
+                _ => Err(anyhow!("unrecognized saved context version: {}", version)),
+            },
+            _ => Err(anyhow!("version not found on saved context")),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+struct SavedMessageIdPreV0_4_0(usize);
+
+#[derive(Serialize, Deserialize)]
+struct SavedMessagePreV0_4_0 {
+    id: SavedMessageIdPreV0_4_0,
+    start: usize,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SavedContextV0_2_0 {
-    pub id: Option<String>,
-    pub zed: String,
-    pub version: String,
-    pub text: String,
-    pub messages: Vec<SavedMessage>,
-    pub message_metadata: HashMap<MessageId, MessageMetadata>,
-    pub summary: String,
+struct SavedContextV0_3_0 {
+    id: Option<String>,
+    zed: String,
+    version: String,
+    text: String,
+    messages: Vec<SavedMessagePreV0_4_0>,
+    message_metadata: HashMap<SavedMessageIdPreV0_4_0, MessageMetadata>,
+    summary: String,
+    slash_command_output_sections: Vec<assistant_slash_command::SlashCommandOutputSection<usize>>,
+}
+
+impl SavedContextV0_3_0 {
+    const VERSION: &'static str = "0.3.0";
+
+    fn upgrade(self) -> SavedContext {
+        SavedContext {
+            id: self.id,
+            zed: self.zed,
+            version: SavedContext::VERSION.into(),
+            text: self.text,
+            messages: self
+                .messages
+                .into_iter()
+                .map(|message| SavedMessage {
+                    id: MessageId(clock::Lamport {
+                        replica_id: ReplicaId::default(),
+                        value: message.id.0 as u32,
+                    }),
+                    start: message.start,
+                })
+                .collect(),
+            message_metadata: self
+                .message_metadata
+                .into_iter()
+                .map(|(id, metadata)| {
+                    (
+                        MessageId(clock::Lamport {
+                            replica_id: ReplicaId::default(),
+                            value: id.0 as u32,
+                        }),
+                        metadata,
+                    )
+                })
+                .collect(),
+            summary: self.summary,
+            slash_command_output_sections: self.slash_command_output_sections,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedContextV0_2_0 {
+    id: Option<String>,
+    zed: String,
+    version: String,
+    text: String,
+    messages: Vec<SavedMessagePreV0_4_0>,
+    message_metadata: HashMap<SavedMessageIdPreV0_4_0, MessageMetadata>,
+    summary: String,
+}
+
+impl SavedContextV0_2_0 {
+    const VERSION: &'static str = "0.2.0";
+
+    fn upgrade(self) -> SavedContext {
+        SavedContextV0_3_0 {
+            id: self.id,
+            zed: self.zed,
+            version: SavedContextV0_3_0::VERSION.to_string(),
+            text: self.text,
+            messages: self.messages,
+            message_metadata: self.message_metadata,
+            summary: self.summary,
+            slash_command_output_sections: Vec::new(),
+        }
+        .upgrade()
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1316,11 +1623,28 @@ struct SavedContextV0_1_0 {
     zed: String,
     version: String,
     text: String,
-    messages: Vec<SavedMessage>,
-    message_metadata: HashMap<MessageId, MessageMetadata>,
+    messages: Vec<SavedMessagePreV0_4_0>,
+    message_metadata: HashMap<SavedMessageIdPreV0_4_0, MessageMetadata>,
     summary: String,
     api_url: Option<String>,
     model: OpenAiModel,
+}
+
+impl SavedContextV0_1_0 {
+    const VERSION: &'static str = "0.1.0";
+
+    fn upgrade(self) -> SavedContext {
+        SavedContextV0_2_0 {
+            id: self.id,
+            zed: self.zed,
+            version: SavedContextV0_2_0::VERSION.to_string(),
+            text: self.text,
+            messages: self.messages,
+            message_metadata: self.message_metadata,
+            summary: self.summary,
+        }
+        .upgrade()
+    }
 }
 
 #[derive(Clone)]
@@ -1337,8 +1661,10 @@ pub struct ContextStore {
     languages: Arc<LanguageRegistry>,
     telemetry: Option<Arc<Telemetry>>,
     _watch_updates: Task<Option<()>>,
+    client: Arc<Client>,
     project: Model<Project>,
     project_is_shared: bool,
+    client_subscription: Option<client::Subscription>,
     _project_subscription: gpui::Subscription,
 }
 
@@ -1375,26 +1701,33 @@ impl ContextStore {
             const CONTEXT_WATCH_DURATION: Duration = Duration::from_millis(100);
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
-            let this = cx.new_model(|cx: &mut ModelContext<Self>| Self {
-                contexts: Vec::new(),
-                contexts_metadata: Vec::new(),
-                fs,
-                languages,
-                telemetry,
-                _watch_updates: cx.spawn(|this, mut cx| {
-                    async move {
-                        while events.next().await.is_some() {
-                            this.update(&mut cx, |this, cx| this.reload(cx))?
-                                .await
-                                .log_err();
+            let this = cx.new_model(|cx: &mut ModelContext<Self>| {
+                let mut this = Self {
+                    contexts: Vec::new(),
+                    contexts_metadata: Vec::new(),
+                    fs,
+                    languages,
+                    telemetry,
+                    _watch_updates: cx.spawn(|this, mut cx| {
+                        async move {
+                            while events.next().await.is_some() {
+                                this.update(&mut cx, |this, cx| this.reload(cx))?
+                                    .await
+                                    .log_err();
+                            }
+                            anyhow::Ok(())
                         }
-                        anyhow::Ok(())
-                    }
-                    .log_err()
-                }),
-                _project_subscription: cx.observe(&project, Self::project_changed),
-                project_is_shared: project.read(cx).is_shared(),
-                project,
+                        .log_err()
+                    }),
+                    client_subscription: None,
+                    _project_subscription: cx.observe(&project, Self::project_changed),
+                    project_is_shared: false,
+                    client: project.read(cx).client(),
+                    project: project.clone(),
+                };
+                this.register_handlers();
+                this.project_changed(project, cx);
+                this
             })?;
             this.update(&mut cx, |this, cx| this.reload(cx))?
                 .await
@@ -1403,23 +1736,43 @@ impl ContextStore {
         })
     }
 
+    fn register_handlers(&self) {
+        todo!();
+        // self.client
+        //     .add_model_request_handler(Self::handle_open_context);
+        // self.client
+        //     .add_model_request_handler(Self::handle_context_update);
+        // self.client.add_model_request_handler(Self::handle_resync);
+    }
+
     fn project_changed(&mut self, _: Model<Project>, cx: &mut ModelContext<Self>) {
         let is_shared = self.project.read(cx).is_shared();
         let was_shared = mem::replace(&mut self.project_is_shared, is_shared);
-        if is_shared != was_shared {
+        if is_shared == was_shared {
+            return;
+        }
+
+        if is_shared {
             self.contexts.retain_mut(|context| {
-                if is_shared {
-                    if let Some(strong_context) = context.upgrade() {
-                        *context = ContextHandle::Strong(strong_context);
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    *context = ContextHandle::Weak(context.downgrade());
+                *context = ContextHandle::Weak(context.downgrade());
+                true
+            });
+            let remote_id = self.project.read(cx).remote_id().unwrap();
+            self.client_subscription = self
+                .client
+                .subscribe_to_entity(remote_id)
+                .log_err()
+                .map(|subscription| subscription.set_model(&cx.handle(), &mut cx.to_async()));
+        } else {
+            self.contexts.retain_mut(|context| {
+                if let Some(strong_context) = context.upgrade() {
+                    *context = ContextHandle::Strong(strong_context);
                     true
+                } else {
+                    false
                 }
             });
+            self.client_subscription = None;
         }
     }
 
@@ -1442,47 +1795,7 @@ impl ContextStore {
             let path = path.clone();
             async move {
                 let saved_context = fs.load(&path).await?;
-                let saved_context_json = serde_json::from_str::<serde_json::Value>(&saved_context)?;
-                match saved_context_json
-                    .get("version")
-                    .ok_or_else(|| anyhow!("version not found"))?
-                {
-                    serde_json::Value::String(version) => match version.as_str() {
-                        SavedContext::VERSION => {
-                            Ok(serde_json::from_value::<SavedContext>(saved_context_json)?)
-                        }
-                        "0.2.0" => {
-                            let saved_context =
-                                serde_json::from_value::<SavedContextV0_2_0>(saved_context_json)?;
-                            Ok(SavedContext {
-                                id: saved_context.id,
-                                zed: saved_context.zed,
-                                version: saved_context.version,
-                                text: saved_context.text,
-                                messages: saved_context.messages,
-                                message_metadata: saved_context.message_metadata,
-                                summary: saved_context.summary,
-                                slash_command_output_sections: Vec::new(),
-                            })
-                        }
-                        "0.1.0" => {
-                            let saved_context =
-                                serde_json::from_value::<SavedContextV0_1_0>(saved_context_json)?;
-                            Ok(SavedContext {
-                                id: saved_context.id,
-                                zed: saved_context.zed,
-                                version: saved_context.version,
-                                text: saved_context.text,
-                                messages: saved_context.messages,
-                                message_metadata: saved_context.message_metadata,
-                                summary: saved_context.summary,
-                                slash_command_output_sections: Vec::new(),
-                            })
-                        }
-                        _ => Err(anyhow!("unrecognized saved context version: {}", version)),
-                    },
-                    _ => Err(anyhow!("version not found on saved context")),
-                }
+                SavedContext::deserialize(&saved_context)
             }
         });
 

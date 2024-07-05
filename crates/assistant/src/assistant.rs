@@ -57,10 +57,14 @@ actions!(
     ]
 );
 
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
-pub struct MessageId(usize);
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct MessageId(clock::Lamport);
+
+impl MessageId {
+    pub fn as_u64(self) -> u64 {
+        self.0.as_u64()
+    }
+}
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -220,12 +224,6 @@ pub struct LanguageModelChoiceDelta {
     pub index: u32,
     pub delta: LanguageModelResponseMessage,
     pub finish_reason: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct MessageMetadata {
-    role: Role,
-    status: MessageStatus,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1903,6 +1903,10 @@ impl Buffer {
         self.deferred_ops.insert(deferred_ops);
     }
 
+    pub fn has_deferred_ops(&self) -> bool {
+        !self.deferred_ops.is_empty() || self.text.has_deferred_ops()
+    }
+
     fn can_apply_op(&self, operation: &Operation) -> bool {
         match operation {
             Operation::Buffer(_) => {

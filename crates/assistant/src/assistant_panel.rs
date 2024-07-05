@@ -11,9 +11,9 @@ use crate::{
     terminal_inline_assistant::TerminalInlineAssistant,
     ApplyEdit, Assist, CompletionProvider, ConfirmCommand, Context, ContextEvent, ContextStore,
     CycleMessageRole, DeployHistory, DeployPromptLibrary, EditSuggestion, InlineAssist,
-    InlineAssistant, InsertIntoEditor, MessageId, MessageStatus, ModelSelector,
-    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, ResetKey, Role,
-    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
+    PendingSlashCommandStatus, QuoteSelection, ResetKey, Role, SavedContextMetadata, Split,
+    ToggleFocus, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -874,7 +874,8 @@ impl ContextEditor {
         });
         self.split(&Split, cx);
         let command = self.context.update(cx, |context, cx| {
-            context.set_message_role(MessageId::default(), Role::System, cx);
+            let first_message_id = context.messages(cx).next().unwrap().id;
+            context.set_message_role(first_message_id, Role::System, cx);
             context.reparse_slash_commands(cx);
             context.pending_slash_commands()[0].clone()
         });
@@ -1269,6 +1270,7 @@ impl ContextEditor {
                     }
                 }
             }
+            ContextEvent::Operation(_) => {}
         }
     }
 
@@ -1439,7 +1441,7 @@ impl ContextEditor {
                                 });
 
                             h_flex()
-                                .id(("message_header", message_id.0))
+                                .id(("message_header", message_id.as_u64()))
                                 .pl(cx.gutter_dimensions.full_width())
                                 .h_11()
                                 .w_full()

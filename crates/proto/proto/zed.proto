@@ -255,7 +255,13 @@ message Envelope {
         TaskTemplates task_templates = 206;
 
         LinkedEditingRange linked_editing_range = 209;
-        LinkedEditingRangeResponse linked_editing_range_response = 210; // current max
+        LinkedEditingRangeResponse linked_editing_range_response = 210;
+
+        OpenContext open_context = 211;
+        OpenContextResponse open_context_response = 212;
+        UpdateContext update_context = 213;
+        SynchronizeContexts synchronize_contexts = 214;
+        SynchronizeContextsResponse synchronize_contexts_response = 215; // current max
     }
 
     reserved 158 to 161;
@@ -2221,4 +2227,89 @@ message TaskSourceKind {
     message Language {
         string name = 1;
     }
+}
+
+message ContextId {
+    uint64 high_bits = 1;
+    uint64 low_bits = 2;
+}
+
+message SlashCommandOutputSection {
+    AnchorRange range = 1;
+    string icon_name = 2;
+    string label = 3;
+}
+
+message ContextMessage {
+    LamportTimestamp id = 1;
+    LamportTimestamp left_sibling = 2;
+    LanguageModelRole role = 3;
+}
+
+message ContextOperation {
+    oneof kind {
+        InsertMessage insert_message = 1;
+        ChangeMessageRole change_message_role = 2;
+        BufferOperation buffer_operation = 3;
+        UpdateSummary summary = 4;
+    }
+
+    message InsertMessage {
+        ContextMessage message = 1;
+    }
+
+    message ChangeMessageRole {
+        LamportTimestamp message_id = 1;
+        LanguageModelRole role = 2;
+        LamportTimestamp timestamp = 3;
+    }
+
+    message BufferOperation {
+        Operation operation = 1;
+    }
+
+    message UpdateSummary {
+        string summary = 1;
+        LamportTimestamp timestamp = 2;
+    }
+}
+
+message Context {
+    BufferState buffer = 1;
+    repeated ContextMessage messages = 2;
+    repeated SlashCommandOutputSection sections = 3;
+    string summary = 4;
+    repeated VectorClockEntry version = 5;
+    repeated ContextOperation deferred_operations = 6;
+}
+
+message OpenContext {
+    uint64 project_id = 1;
+    PeerId owner_id = 2;
+    ContextId context_id = 3;
+}
+
+message OpenContextResponse {
+    Context context = 1;
+}
+
+message UpdateContext {
+    uint64 project_id = 1;
+    ContextOperation operation = 2;
+}
+
+message ContextVersion {
+    PeerId owner_id = 1;
+    ContextId context_id = 2;
+    repeated VectorClockEntry context_version = 3;
+    repeated VectorClockEntry buffer_version = 4;
+}
+
+message SynchronizeContexts {
+    uint64 project_id = 1;
+    repeated ContextVersion contexts = 2;
+}
+
+message SynchronizeContextsResponse {
+    repeated ContextVersion contexts = 1;
 }
