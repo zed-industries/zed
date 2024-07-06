@@ -16,7 +16,7 @@ use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Subscription,
     Task, WeakModel,
 };
-use language::{AnchorRangeExt, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
+use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
@@ -31,7 +31,6 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::AssistantKind;
-use text::Bias;
 use ui::SharedString;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -100,7 +99,7 @@ pub struct MessageAnchor {
     pub start: language::Anchor,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MessageMetadata {
     role: Role,
     status: MessageStatus,
@@ -1995,7 +1994,7 @@ mod tests {
     use std::{cell::RefCell, env, path::Path, rc::Rc};
     use text::network::Network;
     use unindent::Unindent;
-    use util::test::marked_text_ranges;
+    use util::{test::marked_text_ranges, RandomCharIter};
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
@@ -2612,7 +2611,7 @@ mod tests {
             let context = &contexts[context_index];
 
             match rng.gen_range(0..100) {
-                0..=49 if mutation_count > 0 => {
+                0..=39 if mutation_count > 0 => {
                     log::info!("Context {}: edit buffer", context_index);
                     context.update(cx, |context, cx| {
                         context
@@ -2621,7 +2620,7 @@ mod tests {
                     });
                     mutation_count -= 1;
                 }
-                50..=74 if mutation_count > 0 => {
+                40..=59 if mutation_count > 0 => {
                     context.update(cx, |context, cx| {
                         let range = context.buffer.read(cx).random_byte_range(0, &mut rng);
                         log::info!("Context {}: split message at {:?}", context_index, range);
@@ -2629,7 +2628,7 @@ mod tests {
                     });
                     mutation_count -= 1;
                 }
-                75..=99 if mutation_count > 0 => {
+                60..=79 if mutation_count > 0 => {
                     context.update(cx, |context, cx| {
                         if let Some(message) = context.messages(cx).choose(&mut rng) {
                             let role = *[Role::User, Role::Assistant, Role::System]
@@ -2644,6 +2643,50 @@ mod tests {
                             context.insert_message_after(message.id, role, MessageStatus::Done, cx);
                         }
                     });
+                    mutation_count -= 1;
+                }
+                80..=99 if mutation_count > 0 => {
+                    context.update(cx, |context, cx| {
+                        let buffer = context.buffer.read(cx);
+                        let command_range = buffer.random_byte_range(0, &mut rng);
+                        let output_len = rng.gen_range(1..=10);
+                        let output_text = RandomCharIter::new(&mut rng)
+                            .take(output_len)
+                            .collect::<String>();
+
+                        let num_sections = rng.gen_range(0..=3);
+                        let mut sections = Vec::with_capacity(num_sections);
+                        for _ in 0..num_sections {
+                            let section_start = rng.gen_range(0..output_len);
+                            let section_end = rng.gen_range(section_start..=output_len);
+                            sections.push(SlashCommandOutputSection {
+                                range: section_start..section_end,
+                                icon: ui::IconName::Ai,
+                                label: "section".into(),
+                            });
+                        }
+
+                        log::info!(
+                            "Context {}: insert slash command output at {:?} with {:?}",
+                            context_index,
+                            command_range,
+                            sections
+                        );
+
+                        let range = buffer.anchor_before(command_range.start)
+                            ..buffer.anchor_after(command_range.end);
+                        context.insert_command_output(
+                            range,
+                            Task::ready(Ok(SlashCommandOutput {
+                                text: output_text,
+                                sections,
+                                run_commands_in_text: false,
+                            })),
+                            true,
+                            cx,
+                        );
+                    });
+                    cx.background_executor().run_until_parked();
                     mutation_count -= 1;
                 }
                 _ => {
@@ -2672,6 +2715,18 @@ mod tests {
                 context.message_anchors,
                 first_context.message_anchors,
                 "Context {} messages != Context 0 messages",
+                context.buffer.read(cx).replica_id()
+            );
+            assert_eq!(
+                context.messages_metadata,
+                first_context.messages_metadata,
+                "Context {} message metadata != Context 0 message metadata",
+                context.buffer.read(cx).replica_id()
+            );
+            assert_eq!(
+                context.slash_command_output_sections,
+                first_context.slash_command_output_sections,
+                "Context {} slash command output sections != Context 0 slash command output sections",
                 context.buffer.read(cx).replica_id()
             );
         }

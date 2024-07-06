@@ -77,7 +77,7 @@ impl IconSize {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone, EnumIter, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, EnumIter, Serialize, Deserialize)]
 pub enum IconName {
     Ai,
     ArrowCircle,
