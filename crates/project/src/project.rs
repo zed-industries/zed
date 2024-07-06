@@ -11701,11 +11701,12 @@ async fn load_direnv_environment(dir: &Path) -> Result<Option<HashMap<String, St
 
     let direnv_output = match direnv_res {
         Ok(output) => output,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(None);
-        }
-        Err(err) => {
-            return Err(err).context("failed to spawn direnv to get local environment variables")
+        Err(e) => {
+            return if e.kind() == std::io::ErrorKind::NotFound {
+                Ok(None)
+            } else {
+                Err(e).context("failed to spawn direnv to get local environment variables")
+            }
         }
     };
 
@@ -11721,8 +11722,7 @@ async fn load_direnv_environment(dir: &Path) -> Result<Option<HashMap<String, St
     }
 
     Ok(Some(
-        serde_json::from_str(&output)
-            .context("failed to parse direnv output")?,
+        serde_json::from_str(&output).context("failed to parse direnv output")?,
     ))
 }
 
