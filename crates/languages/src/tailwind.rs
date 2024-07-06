@@ -18,7 +18,10 @@ use std::{
 };
 use util::{maybe, ResultExt};
 
+#[cfg(target_os = "windows")]
 const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server.ps1";
+#[cfg(not(target_os = "windows"))]
+const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -108,28 +111,39 @@ impl LspAdapter for TailwindLspAdapter {
                 .await?;
         }
 
-        let mut env_path = vec![self
-            .node
-            .binary_path()
-            .await?
-            .parent()
-            .expect("invalid node binary path")
-            .to_path_buf()];
+        #[cfg(target_os = "windows")]
+        {
+            let mut env_path = vec![self
+                .node
+                .binary_path()
+                .await?
+                .parent()
+                .expect("invalid node binary path")
+                .to_path_buf()];
 
-        if let Some(existing_path) = std::env::var_os("PATH") {
-            let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
-            env_path.append(&mut paths);
+            if let Some(existing_path) = std::env::var_os("PATH") {
+                let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
+                env_path.append(&mut paths);
+            }
+
+            let env_path = std::env::join_paths(env_path)?;
+            let mut env = HashMap::default();
+            env.insert("PATH".to_string(), env_path.to_string_lossy().to_string());
+
+            Ok(LanguageServerBinary {
+                path: "powershell.exe".into(),
+                env: Some(env),
+                arguments: server_binary_arguments(&server_path),
+            })
         }
-
-        let env_path = std::env::join_paths(env_path)?;
-        let mut env = HashMap::default();
-        env.insert("PATH".to_string(), env_path.to_string_lossy().to_string());
-
-        Ok(LanguageServerBinary {
-            path: "powershell.exe".into(),
-            env: Some(env),
-            arguments: server_binary_arguments(&server_path),
-        })
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(LanguageServerBinary {
+                path: self.node.binary_path().await?,
+                env: None,
+                arguments: server_binary_arguments(&server_path),
+            })
+        }
     }
 
     async fn cached_server_binary(
