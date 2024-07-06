@@ -18,7 +18,7 @@ use std::{
 };
 use util::{maybe, ResultExt};
 
-const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
+const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server.ps1";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -108,9 +108,26 @@ impl LspAdapter for TailwindLspAdapter {
                 .await?;
         }
 
+        let mut env_path = vec![self
+            .node
+            .binary_path()
+            .await?
+            .parent()
+            .expect("invalid node binary path")
+            .to_path_buf()];
+
+        if let Some(existing_path) = std::env::var_os("PATH") {
+            let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
+            env_path.append(&mut paths);
+        }
+
+        let env_path = std::env::join_paths(env_path)?;
+        let mut env = HashMap::default();
+        env.insert("PATH".to_string(), env_path.to_string_lossy().to_string());
+
         Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: None,
+            path: "powershell.exe".into(),
+            env: Some(env),
             arguments: server_binary_arguments(&server_path),
         })
     }

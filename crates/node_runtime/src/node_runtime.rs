@@ -56,6 +56,14 @@ pub struct NpmInfoDistTags {
 pub trait NodeRuntime: Send + Sync {
     async fn binary_path(&self) -> Result<PathBuf>;
 
+    async fn run_package_with_powershell(
+        &self,
+        directory: Option<&Path>,
+        script_full_path: &str,
+        subcommand: &str,
+        args: &[&str],
+    ) -> Result<Output>;
+
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
@@ -214,6 +222,103 @@ impl NodeRuntime for RealNodeRuntime {
     async fn binary_path(&self) -> Result<PathBuf> {
         let installation_path = self.install_if_needed().await?;
         Ok(installation_path.join(NODE_PATH))
+    }
+
+    async fn run_package_with_powershell(
+        &self,
+        directory: Option<&Path>,
+        script_full_path: &str,
+        subcommand: &str,
+        args: &[&str],
+    ) -> Result<Output> {
+        let attempt = || async move {
+            let installation_path = self.install_if_needed().await?;
+
+            let node_binary = installation_path.join(NODE_PATH);
+            let npm_file = installation_path.join(NPM_PATH);
+            let mut env_path = vec![node_binary
+                .parent()
+                .expect("invalid node binary path")
+                .to_path_buf()];
+
+            if let Some(existing_path) = std::env::var_os("PATH") {
+                let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
+                env_path.append(&mut paths);
+            }
+
+            let env_path =
+                std::env::join_paths(env_path).context("failed to create PATH env variable")?;
+
+            if smol::fs::metadata(&node_binary).await.is_err() {
+                return Err(anyhow!("missing node binary file"));
+            }
+
+            if smol::fs::metadata(&npm_file).await.is_err() {
+                return Err(anyhow!("missing npm file"));
+            }
+
+            let mut command = Command::new("powershell.exe");
+            command.env_clear();
+            command.env("PATH", env_path);
+            command.arg(script_full_path);
+            command.arg(npm_file).arg(subcommand);
+            command.args(["--cache".into(), installation_path.join("cache")]);
+            command.args([
+                "--userconfig".into(),
+                installation_path.join("blank_user_npmrc"),
+            ]);
+            command.args([
+                "--globalconfig".into(),
+                installation_path.join("blank_global_npmrc"),
+            ]);
+            command.args(args);
+
+            if let Some(directory) = directory {
+                command.current_dir(directory);
+                command.args(["--prefix".into(), directory.to_path_buf()]);
+            }
+
+            if let Some(proxy) = self.http.proxy() {
+                command.args(["--proxy", proxy]);
+            }
+
+            #[cfg(windows)]
+            {
+                // SYSTEMROOT is a critical environment variables for Windows.
+                if let Some(val) = std::env::var("SYSTEMROOT")
+                    .context("Missing environment variable: SYSTEMROOT!")
+                    .log_err()
+                {
+                    command.env("SYSTEMROOT", val);
+                }
+                command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+            }
+
+            command.output().await.map_err(|e| anyhow!("{e}"))
+        };
+
+        let mut output = attempt().await;
+        if output.is_err() {
+            output = attempt().await;
+            if output.is_err() {
+                return Err(anyhow!(
+                    "failed to launch npm subcommand {subcommand} subcommand\nerr: {:?}",
+                    output.err()
+                ));
+            }
+        }
+
+        if let Ok(output) = &output {
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+        }
+
+        output.map_err(|e| anyhow!("{e}"))
     }
 
     async fn run_npm_subcommand(
@@ -405,6 +510,16 @@ impl FakeNodeRuntime {
 impl NodeRuntime for FakeNodeRuntime {
     async fn binary_path(&self) -> anyhow::Result<PathBuf> {
         unreachable!()
+    }
+
+    async fn run_package_with_powershell(
+        &self,
+        _: Option<&Path>,
+        _: &str,
+        subcommand: &str,
+        args: &[&str],
+    ) -> Result<Output> {
+        unreachable!("Should not run npm subcommand '{subcommand}' with args {args:?}")
     }
 
     async fn run_npm_subcommand(
