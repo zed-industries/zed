@@ -299,7 +299,6 @@
       "cmd-ctrl-p": "editor::AddSelectionAbove",
       "cmd-alt-down": "editor::AddSelectionBelow",
       "cmd-ctrl-n": "editor::AddSelectionBelow",
-      "cmd-shift-e": "pane::RevealInProjectPanel",
       "cmd-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
