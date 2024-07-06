@@ -8,22 +8,8 @@
   {
     "context": "Editor && VimControl && !VimWaiting && !menu",
     "bindings": {
-      "i": [
-        "vim::PushOperator",
-        {
-          "Object": {
-            "around": false
-          }
-        }
-      ],
-      "a": [
-        "vim::PushOperator",
-        {
-          "Object": {
-            "around": true
-          }
-        }
-      ],
+      "i": ["vim::PushOperator", { "Object": { "around": false } }],
+      "a": ["vim::PushOperator", { "Object": { "around": true } }],
       ":": "command_palette::Toggle",
       "h": "vim::Left",
       "left": "vim::Left",
@@ -57,92 +43,25 @@
       // "b": "vim::PreviousSubwordStart",
       // "e": "vim::NextSubwordEnd",
       // "g e": "vim::PreviousSubwordEnd",
-      "shift-w": [
-        "vim::NextWordStart",
-        {
-          "ignorePunctuation": true
-        }
-      ],
-      "shift-e": [
-        "vim::NextWordEnd",
-        {
-          "ignorePunctuation": true
-        }
-      ],
-      "shift-b": [
-        "vim::PreviousWordStart",
-        {
-          "ignorePunctuation": true
-        }
-      ],
-      "g shift-e": [
-        "vim::PreviousWordEnd",
-        {
-          "ignorePunctuation": true
-        }
-      ],
+      "shift-w": ["vim::NextWordStart", { "ignorePunctuation": true }],
+      "shift-e": ["vim::NextWordEnd", { "ignorePunctuation": true }],
+      "shift-b": ["vim::PreviousWordStart", { "ignorePunctuation": true }],
+      "g shift-e": ["vim::PreviousWordEnd", { "ignorePunctuation": true }],
       "/": "vim::Search",
       "g /": "pane::DeploySearch",
-      "?": [
-        "vim::Search",
-        {
-          "backwards": true
-        }
-      ],
+      "?": ["vim::Search", { "backwards": true }],
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       "n": "vim::MoveToNextMatch",
       "shift-n": "vim::MoveToPrevMatch",
       "%": "vim::Matching",
-      "f": [
-        "vim::PushOperator",
-        {
-          "FindForward": {
-            "before": false
-          }
-        }
-      ],
-      "t": [
-        "vim::PushOperator",
-        {
-          "FindForward": {
-            "before": true
-          }
-        }
-      ],
-      "shift-f": [
-        "vim::PushOperator",
-        {
-          "FindBackward": {
-            "after": false
-          }
-        }
-      ],
-      "shift-t": [
-        "vim::PushOperator",
-        {
-          "FindBackward": {
-            "after": true
-          }
-        }
-      ],
+      "f": ["vim::PushOperator", { "FindForward": { "before": false } }],
+      "t": ["vim::PushOperator", { "FindForward": { "before": true } }],
+      "shift-f": ["vim::PushOperator", { "FindBackward": { "after": false } }],
+      "shift-t": ["vim::PushOperator", { "FindBackward": { "after": true } }],
       "m": ["vim::PushOperator", "Mark"],
-      "'": [
-        "vim::PushOperator",
-        {
-          "Jump": {
-            "line": true
-          }
-        }
-      ],
-      "`": [
-        "vim::PushOperator",
-        {
-          "Jump": {
-            "line": false
-          }
-        }
-      ],
+      "'": ["vim::PushOperator", { "Jump": { "line": true } }],
+      "`": ["vim::PushOperator", { "Jump": { "line": false } }],
       ";": "vim::RepeatFind",
       ",": "vim::RepeatFindReversed",
       "ctrl-o": "pane::GoBack",
@@ -179,90 +98,25 @@
       "g shift-n": "vim::SelectPreviousMatch",
       "g l": "vim::SelectNext",
       "g shift-l": "vim::SelectPrevious",
-      "g >": [
-        "editor::SelectNext",
-        {
-          "replace_newest": true
-        }
-      ],
-      "g <": [
-        "editor::SelectPrevious",
-        {
-          "replace_newest": true
-        }
-      ],
+      "g >": ["editor::SelectNext", { "replace_newest": true }],
+      "g <": ["editor::SelectPrevious", { "replace_newest": true }],
       "g a": "editor::SelectAllMatches",
       "g s": "outline::Toggle",
       "g shift-s": "project_symbols::Toggle",
       "g .": "editor::ToggleCodeActions", // zed specific
       "g shift-a": "editor::FindAllReferences", // zed specific
       "g space": "editor::OpenExcerpts", // zed specific
-      "g *": [
-        "vim::MoveToNext",
-        {
-          "partialWord": true
-        }
-      ],
-      "g #": [
-        "vim::MoveToPrev",
-        {
-          "partialWord": true
-        }
-      ],
-      "g j": [
-        "vim::Down",
-        {
-          "displayLines": true
-        }
-      ],
-      "g down": [
-        "vim::Down",
-        {
-          "displayLines": true
-        }
-      ],
-      "g k": [
-        "vim::Up",
-        {
-          "displayLines": true
-        }
-      ],
-      "g up": [
-        "vim::Up",
-        {
-          "displayLines": true
-        }
-      ],
-      "g $": [
-        "vim::EndOfLine",
-        {
-          "displayLines": true
-        }
-      ],
-      "g end": [
-        "vim::EndOfLine",
-        {
-          "displayLines": true
-        }
-      ],
-      "g 0": [
-        "vim::StartOfLine",
-        {
-          "displayLines": true
-        }
-      ],
-      "g home": [
-        "vim::StartOfLine",
-        {
-          "displayLines": true
-        }
-      ],
-      "g ^": [
-        "vim::FirstNonWhitespace",
-        {
-          "displayLines": true
-        }
-      ],
+      "g *": ["vim::MoveToNext", { "partialWord": true }],
+      "g #": ["vim::MoveToPrev", { "partialWord": true }],
+      "g j": ["vim::Down", { "displayLines": true }],
+      "g down": ["vim::Down", { "displayLines": true }],
+      "g k": ["vim::Up", { "displayLines": true }],
+      "g up": ["vim::Up", { "displayLines": true }],
+      "g $": ["vim::EndOfLine", { "displayLines": true }],
+      "g end": ["vim::EndOfLine", { "displayLines": true }],
+      "g 0": ["vim::StartOfLine", { "displayLines": true }],
+      "g home": ["vim::StartOfLine", { "displayLines": true }],
+      "g ^": ["vim::FirstNonWhitespace", { "displayLines": true }],
       "g v": "vim::RestoreVisualSelection",
       "g ]": "editor::GoToDiagnostic",
       "g [": "editor::GoToPrevDiagnostic",
@@ -280,18 +134,8 @@
       "z c": "editor::Fold",
       "z o": "editor::UnfoldLines",
       "z f": "editor::FoldSelectedRanges",
-      "shift-z shift-q": [
-        "pane::CloseActiveItem",
-        {
-          "saveIntent": "skip"
-        }
-      ],
-      "shift-z shift-z": [
-        "pane::CloseActiveItem",
-        {
-          "saveIntent": "saveAll"
-        }
-      ],
+      "shift-z shift-q": ["pane::CloseActiveItem", { "saveIntent": "skip" }],
+      "shift-z shift-z": ["pane::CloseActiveItem", { "saveIntent": "saveAll" }],
       // Count support
       "1": ["vim::Number", 1],
       "2": ["vim::Number", 2],
@@ -386,12 +230,7 @@
       "ctrl-a": "vim::Increment",
       "ctrl-x": "vim::Decrement",
       "p": "vim::Paste",
-      "shift-p": [
-        "vim::Paste",
-        {
-          "before": true
-        }
-      ],
+      "shift-p": ["vim::Paste", { "before": true }],
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
       "r": ["vim::PushOperator", "Replace"],
@@ -442,12 +281,7 @@
   {
     "context": "Editor && vim_mode == normal && vim_operator == c",
     "bindings": {
-      "s": [
-        "vim::PushOperator",
-        {
-          "ChangeSurrounds": {}
-        }
-      ]
+      "s": ["vim::PushOperator", { "ChangeSurrounds": {} }]
     }
   },
   {
@@ -492,12 +326,7 @@
   {
     "context": "Editor && vim_mode == normal && vim_operator == y",
     "bindings": {
-      "s": [
-        "vim::PushOperator",
-        {
-          "AddSurrounds": {}
-        }
-      ]
+      "s": ["vim::PushOperator", { "AddSurrounds": {} }]
     }
   },
   {
@@ -522,12 +351,7 @@
     "context": "Editor && VimObject",
     "bindings": {
       "w": "vim::Word",
-      "shift-w": [
-        "vim::Word",
-        {
-          "ignorePunctuation": true
-        }
-      ],
+      "shift-w": ["vim::Word", { "ignorePunctuation": true }],
       "t": "vim::Tag",
       "s": "vim::Sentence",
       "p": "vim::Paragraph",
@@ -562,43 +386,18 @@
       "y": "vim::VisualYank",
       "shift-y": "vim::VisualYank",
       "p": "vim::Paste",
-      "shift-p": [
-        "vim::Paste",
-        {
-          "preserveClipboard": true
-        }
-      ],
+      "shift-p": ["vim::Paste", { "preserveClipboard": true }],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
       "shift-r": "vim::SubstituteLine",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",
-      "*": [
-        "vim::MoveToNext",
-        {
-          "partialWord": true
-        }
-      ],
-      "#": [
-        "vim::MoveToPrev",
-        {
-          "partialWord": true
-        }
-      ],
+      "*": ["vim::MoveToNext", { "partialWord": true }],
+      "#": ["vim::MoveToPrev", { "partialWord": true }],
       "ctrl-a": "vim::Increment",
       "ctrl-x": "vim::Decrement",
-      "g ctrl-a": [
-        "vim::Increment",
-        {
-          "step": true
-        }
-      ],
-      "g ctrl-x": [
-        "vim::Decrement",
-        {
-          "step": true
-        }
-      ],
+      "g ctrl-a": ["vim::Increment", { "step": true }],
+      "g ctrl-x": ["vim::Decrement", { "step": true }],
       "shift-i": "vim::InsertBefore",
       "shift-a": "vim::InsertAfter",
       "shift-j": "vim::JoinLines",
@@ -608,22 +407,8 @@
       "ctrl-[": ["vim::SwitchMode", "Normal"],
       ">": "vim::Indent",
       "<": "vim::Outdent",
-      "i": [
-        "vim::PushOperator",
-        {
-          "Object": {
-            "around": false
-          }
-        }
-      ],
-      "a": [
-        "vim::PushOperator",
-        {
-          "Object": {
-            "around": true
-          }
-        }
-      ]
+      "i": ["vim::PushOperator", { "Object": { "around": false } }],
+      "a": ["vim::PushOperator", { "Object": { "around": true } }]
     }
   },
   {
