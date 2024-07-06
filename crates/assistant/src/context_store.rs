@@ -2619,6 +2619,8 @@ mod tests {
             let context_index = rng.gen_range(0..contexts.len());
             let context = &contexts[context_index];
 
+            // todo!("add a mutation for ::assist")
+            // todo!("add a mutation for changing roles")
             match rng.gen_range(0..100) {
                 0..=39 if mutation_count > 0 => {
                     log::info!("Context {}: edit buffer", context_index);
