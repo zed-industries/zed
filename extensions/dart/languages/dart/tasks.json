@@ -1,11 +1,5 @@
 [
   {
-    "label": "dart run",
-    "command": "dart",
-    "args": ["run"],
-    "tags": ["dart-main"]
-  },
-  {
     "label": "flutter run",
     "command": "flutter",
     "args": ["run"],
