@@ -54,7 +54,6 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 project.workspace = true
 rand.workspace = true
-rich_text.workspace = true
 rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true

@@ -1,59 +1,52 @@
-use crate::Editor;
+use crate::{Editor, EditorStyle};
 use gpui::{
-    div, AnyElement, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, Size, StatefulInteractiveElement, Styled, UnderlineStyle,
-    ViewContext,
+    div, AnyElement, FontWeight, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    Pixels, Size, StatefulInteractiveElement, Styled, ViewContext, WeakView,
 };
+use language::markdown::{MarkdownHighlight, MarkdownHighlightStyle};
+use language::ParsedMarkdown;
 use lsp::SignatureHelp;
-use rich_text::{Highlight, RichText};
-use std::sync::Arc;
+use std::ops::Range;
 use ui::StyledExt;
+use workspace::Workspace;
 
-pub const SIGNATURE_HELP_HIGHLIGHT_STYLE: HighlightStyle = HighlightStyle {
-    color: None,
-    font_weight: Some(FontWeight::EXTRA_BOLD),
-    font_style: Some(FontStyle::Normal),
-    background_color: None,
-    underline: Some(UnderlineStyle {
-        thickness: Pixels(1.),
-        color: None,
-        wavy: false,
-    }),
-    strikethrough: None,
-    fade_out: None,
-};
+pub const SIGNATURE_HELP_HIGHLIGHT: MarkdownHighlight =
+    MarkdownHighlight::Style(MarkdownHighlightStyle {
+        italic: false,
+        underline: true,
+        strikethrough: false,
+        weight: FontWeight::EXTRA_BOLD,
+    });
 
-pub const SIGNATURE_HELP_OVERLOAD_HIGHLIGHT_STYLE: HighlightStyle = HighlightStyle {
-    color: None,
-    font_weight: Some(FontWeight::NORMAL),
-    font_style: Some(FontStyle::Italic),
-    background_color: None,
-    underline: None,
-    strikethrough: None,
-    fade_out: None,
-};
+pub const SIGNATURE_HELP_OVERLOAD_HIGHLIGHT: MarkdownHighlight =
+    MarkdownHighlight::Style(MarkdownHighlightStyle {
+        italic: true,
+        underline: false,
+        strikethrough: false,
+        weight: FontWeight::NORMAL,
+    });
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SignatureHelpPopover {
-    pub text: RichText,
+    pub parsed_content: ParsedMarkdown,
 }
 
-pub fn create_signature_help_popover(
+/// create_signature_help_markdown_string generates the markdown text that is displayed in the `SignatureHelp` window.
+pub fn create_signature_help_markdown_string(
     SignatureHelp {
         signatures: signature_information,
         active_signature: maybe_active_signature,
         active_parameter: maybe_active_parameter,
         ..
     }: SignatureHelp,
-    background_color: Hsla,
-) -> Option<SignatureHelpPopover> {
+) -> Option<(String, Vec<(Range<usize>, MarkdownHighlight)>)> {
     let function_options_count = signature_information.len();
 
     let signature_information = maybe_active_signature
         .and_then(|active_signature| signature_information.get(active_signature as usize))
         .or_else(|| signature_information.first())?;
 
-    let str_for_join = ",  ";
+    let str_for_join = ", ";
     let parameter_length = signature_information
         .parameters
         .as_ref()
@@ -79,13 +72,11 @@ pub fn create_signature_help_popover(
 
             let result = if let Some(active_parameter) = maybe_active_parameter {
                 if i == active_parameter as usize {
-                    let mut highlight = SIGNATURE_HELP_HIGHLIGHT_STYLE;
-                    highlight.background_color = Some(background_color);
                     Some((
                         string,
                         Some((
                             highlight_start..(highlight_start + string_length),
-                            Highlight::Highlight(highlight),
+                            SIGNATURE_HELP_HIGHLIGHT,
                         )),
                     ))
                 } else {
@@ -106,11 +97,9 @@ pub fn create_signature_help_popover(
     let markdown = if function_options_count >= 2 {
         let suffix = format!("(+{} overload)", function_options_count - 1);
         let highlight_start = markdown.len() + 1;
-        let mut highlight_style = SIGNATURE_HELP_OVERLOAD_HIGHLIGHT_STYLE;
-        highlight_style.background_color = Some(background_color);
         highlights.push(Some((
             highlight_start..(highlight_start + suffix.len()),
-            Highlight::Highlight(highlight_style),
+            SIGNATURE_HELP_OVERLOAD_HIGHLIGHT,
         )));
         format!("{markdown} {suffix}")
     } else {
@@ -121,20 +110,19 @@ pub fn create_signature_help_popover(
         None
     } else {
         let highlights = highlights.into_iter().flatten().collect::<Vec<_>>();
-        let text = RichText {
-            text: markdown.into(),
-            highlights,
-            link_ranges: Vec::new(),
-            link_urls: Arc::new([]),
-            custom_ranges: Vec::new(),
-            custom_ranges_tooltip_fn: None,
-        };
-        Some(SignatureHelpPopover { text })
+        let markdown = markdown.replace("<", "&lt;").replace(">", "&gt;");
+        Some((markdown, highlights))
     }
 }
 
 impl SignatureHelpPopover {
-    pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
+    pub fn render(
+        &mut self,
+        style: &EditorStyle,
+        max_size: Size<Pixels>,
+        workspace: Option<WeakView<Workspace>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> AnyElement {
         div()
             .id("signature_help_popover")
             .elevation_2(cx)
@@ -143,12 +131,13 @@ impl SignatureHelpPopover {
             .max_h(max_size.height)
             .on_mouse_move(|_, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-            .child(
-                div().p_2().child(
-                    self.text
-                        .element("signature_help_popover_rich_text".into(), cx),
-                ),
-            )
+            .child(div().p_2().child(crate::render_parsed_markdown(
+                "content",
+                &self.parsed_content,
+                style,
+                workspace,
+                cx,
+            )))
             .into_any_element()
     }
 }
@@ -156,27 +145,10 @@ impl SignatureHelpPopover {
 #[cfg(test)]
 mod tests {
     use crate::signature_help_popover::{
-        create_signature_help_popover, SIGNATURE_HELP_HIGHLIGHT_STYLE,
-        SIGNATURE_HELP_OVERLOAD_HIGHLIGHT_STYLE,
+        create_signature_help_markdown_string, SIGNATURE_HELP_HIGHLIGHT,
+        SIGNATURE_HELP_OVERLOAD_HIGHLIGHT,
     };
-    use gpui::{HighlightStyle, Hsla};
     use lsp::{SignatureHelp, SignatureInformation};
-    use rich_text::Highlight;
-
-    const SIGNATURE_HELP_HIGHLIGHT: Highlight = Highlight::Highlight(HighlightStyle {
-        background_color: Some(BACKGROUND_COLOR),
-        ..SIGNATURE_HELP_HIGHLIGHT_STYLE
-    });
-    const SIGNATURE_HELP_OVERLOAD_HIGHLIGHT: Highlight = Highlight::Highlight(HighlightStyle {
-        background_color: Some(BACKGROUND_COLOR),
-        ..SIGNATURE_HELP_OVERLOAD_HIGHLIGHT_STYLE
-    });
-    const BACKGROUND_COLOR: Hsla = Hsla {
-        h: 0.0,
-        s: 0.0,
-        l: 0.0,
-        a: 0.0,
-    };
 
     #[test]
     fn test_create_signature_help_markdown_string_1() {
@@ -199,17 +171,14 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = create_signature_help_popover(signature_help, BACKGROUND_COLOR);
+        let maybe_markdown = create_signature_help_markdown_string(signature_help);
         assert!(maybe_markdown.is_some());
 
-        let signature_help_popover = maybe_markdown.unwrap();
+        let markdown = maybe_markdown.unwrap();
         assert_eq!(
+            markdown,
             (
-                signature_help_popover.text.text,
-                signature_help_popover.text.highlights
-            ),
-            (
-                "foo: u8,  bar: &str".to_string().into(),
+                "foo: u8, bar: &str".to_string(),
                 vec![(0..7, SIGNATURE_HELP_HIGHLIGHT)]
             )
         );
@@ -236,15 +205,15 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(1),
         };
-        let maybe_markdown = create_signature_help_popover(signature_help, BACKGROUND_COLOR);
+        let maybe_markdown = create_signature_help_markdown_string(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
         assert_eq!(
-            (markdown.text.text, markdown.text.highlights),
+            markdown,
             (
-                "foo: u8,  bar: &str".to_string().into(),
-                vec![(10..19, SIGNATURE_HELP_HIGHLIGHT)]
+                "foo: u8, bar: &str".to_string(),
+                vec![(9..18, SIGNATURE_HELP_HIGHLIGHT)]
             )
         );
     }
@@ -287,17 +256,17 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = create_signature_help_popover(signature_help, BACKGROUND_COLOR);
+        let maybe_markdown = create_signature_help_markdown_string(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
         assert_eq!(
-            (markdown.text.text, markdown.text.highlights),
+            markdown,
             (
-                "foo: u8,  bar: &str (+1 overload)".to_string().into(),
+                "foo: u8, bar: &str (+1 overload)".to_string(),
                 vec![
                     (0..7, SIGNATURE_HELP_HIGHLIGHT),
-                    (20..33, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
+                    (19..32, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
                 ]
             )
         );
@@ -341,17 +310,17 @@ mod tests {
             active_signature: Some(1),
             active_parameter: Some(0),
         };
-        let maybe_markdown = create_signature_help_popover(signature_help, BACKGROUND_COLOR);
+        let maybe_markdown = create_signature_help_markdown_string(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
         assert_eq!(
-            (markdown.text.text, markdown.text.highlights),
+            markdown,
             (
-                "hoge: String,  fuga: bool (+1 overload)".to_string().into(),
+                "hoge: String, fuga: bool (+1 overload)".to_string(),
                 vec![
                     (0..12, SIGNATURE_HELP_HIGHLIGHT),
-                    (26..39, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
+                    (25..38, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
                 ]
             )
         );
@@ -395,17 +364,17 @@ mod tests {
             active_signature: Some(1),
             active_parameter: Some(1),
         };
-        let maybe_markdown = create_signature_help_popover(signature_help, BACKGROUND_COLOR);
+        let maybe_markdown = create_signature_help_markdown_string(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
         assert_eq!(
-            (markdown.text.text, markdown.text.highlights),
+            markdown,
             (
-                "hoge: String,  fuga: bool (+1 overload)".to_string().into(),
+                "hoge: String, fuga: bool (+1 overload)".to_string(),
                 vec![
-                    (15..25, SIGNATURE_HELP_HIGHLIGHT),
-                    (26..39, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
+                    (14..24, SIGNATURE_HELP_HIGHLIGHT),
+                    (25..38, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
                 ]
             )
         );
@@ -449,15 +418,15 @@ mod tests {
             active_signature: Some(1),
             active_parameter: None,
         };
-        let maybe_markdown = create_signature_help_popover(signature_help, BACKGROUND_COLOR);
+        let maybe_markdown = create_signature_help_markdown_string(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
         assert_eq!(
-            (markdown.text.text, markdown.text.highlights),
+            markdown,
             (
-                "hoge: String,  fuga: bool (+1 overload)".to_string().into(),
-                vec![(26..39, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)]
+                "hoge: String, fuga: bool (+1 overload)".to_string(),
+                vec![(25..38, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)]
             )
         );
     }
@@ -515,17 +484,17 @@ mod tests {
             active_signature: Some(2),
             active_parameter: Some(1),
         };
-        let maybe_markdown = create_signature_help_popover(signature_help, BACKGROUND_COLOR);
+        let maybe_markdown = create_signature_help_markdown_string(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
         assert_eq!(
-            (markdown.text.text, markdown.text.highlights),
+            markdown,
             (
-                "one: usize,  two: u32 (+2 overload)".to_string().into(),
+                "one: usize, two: u32 (+2 overload)".to_string(),
                 vec![
-                    (13..21, SIGNATURE_HELP_HIGHLIGHT),
-                    (22..35, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
+                    (12..20, SIGNATURE_HELP_HIGHLIGHT),
+                    (21..34, SIGNATURE_HELP_OVERLOAD_HIGHLIGHT)
                 ]
             )
         );
@@ -538,7 +507,7 @@ mod tests {
             active_signature: None,
             active_parameter: None,
         };
-        let maybe_markdown = create_signature_help_popover(signature_help, BACKGROUND_COLOR);
+        let maybe_markdown = create_signature_help_markdown_string(signature_help);
         assert!(maybe_markdown.is_none());
     }
 
@@ -563,14 +532,14 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = create_signature_help_popover(signature_help, BACKGROUND_COLOR);
+        let maybe_markdown = create_signature_help_markdown_string(signature_help);
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
         assert_eq!(
-            (markdown.text.text, markdown.text.highlights),
+            markdown,
             (
-                "foo: u8,  bar: &str".to_string().into(),
+                "foo: u8, bar: &str".to_string(),
                 vec![(0..7, SIGNATURE_HELP_HIGHLIGHT)]
             )
         );
