@@ -83,48 +83,13 @@
       "ctrl-a": "editor::SelectAll",
       "ctrl-l": "editor::SelectLine",
       "ctrl-shift-i": "editor::Format",
-      // "cmd-shift-left": [
-      //   "editor::SelectToBeginningOfLine",
-      //   {
-      //     "stop_at_soft_wraps": true
-      //   }
-      // ],
-      "shift-home": [
-        "editor::SelectToBeginningOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      // "ctrl-shift-a": [
-      //   "editor::SelectToBeginningOfLine",
-      //   {
-      //     "stop_at_soft_wraps": true
-      //   }
-      // ],
-      // "cmd-shift-right": [
-      //   "editor::SelectToEndOfLine",
-      //   {
-      //     "stop_at_soft_wraps": true
-      //   }
-      // ],
-      "shift-end": [
-        "editor::SelectToEndOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      // "ctrl-shift-e": [
-      //   "editor::SelectToEndOfLine",
-      //   {
-      //     "stop_at_soft_wraps": true
-      //   }
-      // ],
-      // "alt-v": [
-      //   "editor::MovePageUp",
-      //   {
-      //     "center_cursor": true
-      //   }
-      // ],
+      // "cmd-shift-left": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true }],
+      "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
+      // "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
+      // "cmd-shift-right": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      // "ctrl-shift-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      // "alt-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
       "ctrl-k ctrl-r": "editor::RevertSelectedHunks",
@@ -148,12 +113,7 @@
           "replace_enabled": true
         }
       ],
-      // "cmd-e": [
-      //   "buffer_search::Deploy",
-      //   {
-      //     "focus": false
-      //   }
-      // ],
+      // "cmd-e": ["buffer_search::Deploy", { "focus": false }],
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
       "ctrl-alt-e": "editor::SelectEnclosingSymbol"
@@ -310,38 +270,13 @@
       "ctrl-shift-right": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::SelectLargerSyntaxNode", //todo(linux) tmp keybinding
       "ctrl-shift-down": "editor::SelectSmallerSyntaxNode", //todo(linux) tmp keybinding
-      "ctrl-d": [
-        "editor::SelectNext",
-        {
-          "replace_newest": false
-        }
-      ],
+      "ctrl-d": ["editor::SelectNext", { "replace_newest": false }],
       "ctrl-shift-l": "editor::SelectAllMatches",
-      "ctrl-shift-d": [
-        "editor::SelectPrevious",
-        {
-          "replace_newest": false
-        }
-      ],
-      "ctrl-k ctrl-d": [
-        "editor::SelectNext",
-        {
-          "replace_newest": true
-        }
-      ],
-      "ctrl-k ctrl-shift-d": [
-        "editor::SelectPrevious",
-        {
-          "replace_newest": true
-        }
-      ],
+      "ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": false }],
+      "ctrl-k ctrl-d": ["editor::SelectNext", { "replace_newest": true }],
+      "ctrl-k ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": true }],
       "ctrl-k ctrl-i": "editor::Hover",
-      "ctrl-/": [
-        "editor::ToggleComments",
-        {
-          "advance_downwards": false
-        }
-      ],
+      "ctrl-/": ["editor::ToggleComments", { "advance_downwards": false }],
       "ctrl-u": "editor::UndoSelection",
       "ctrl-shift-u": "editor::RedoSelection",
       "f8": "editor::GoToDiagnostic",
@@ -392,12 +327,7 @@
     "context": "Workspace",
     "bindings": {
       // Change the default action on `menu::Confirm` by setting the parameter
-      // "alt-cmd-o": [
-      //     "projects::OpenRecent",
-      //     {
-      //         "create_new_window": true
-      //     }
-      // ]
+      // "alt-cmd-o": ["projects::OpenRecent", { "create_new_window": true }],
       "alt-ctrl-o": "projects::OpenRecent",
       "alt-ctrl-shift-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
@@ -421,12 +351,7 @@
       "ctrl-j": "workspace::ToggleBottomDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "ctrl-shift-f": "pane::DeploySearch",
-      "ctrl-shift-h": [
-        "pane::DeploySearch",
-        {
-          "replace_enabled": true
-        }
-      ],
+      "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-shift-t": "project_symbols::Toggle",
