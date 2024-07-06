@@ -4,6 +4,7 @@ use super::{
     SlashCommand, SlashCommandOutput,
 };
 use anyhow::{anyhow, Result};
+use assistant_slash_command::ArgumentCompletion;
 use collections::HashMap;
 use editor::Editor;
 use gpui::{AppContext, Entity, Task, WeakView};
@@ -37,7 +38,7 @@ impl SlashCommand for TabsSlashCommand {
         _cancel: Arc<std::sync::atomic::AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
 

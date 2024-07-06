@@ -26,6 +26,7 @@ use calloop::{EventLoop, LoopHandle, LoopSignal};
 use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
+use mio::Waker;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use util::ResultExt;
@@ -84,6 +85,16 @@ pub(crate) struct PlatformHandlers {
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
 
+pub trait QuitSignal {
+    fn quit(&mut self);
+}
+
+impl QuitSignal for LoopSignal {
+    fn quit(&mut self) {
+        self.stop();
+    }
+}
+
 pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
@@ -91,17 +102,20 @@ pub(crate) struct LinuxCommon {
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
-    pub(crate) signal: LoopSignal,
+    pub(crate) quit_signal: Box<dyn QuitSignal>,
     pub(crate) menus: Vec<OwnedMenu>,
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
+    pub fn new(
+        quit_signal: Box<dyn QuitSignal>,
+        main_waker: Option<Arc<Waker>>,
+    ) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
 
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone(), main_waker));
 
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
 
@@ -112,7 +126,7 @@ impl LinuxCommon {
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
             callbacks,
-            signal,
+            quit_signal,
             menus: Vec::new(),
         };
 
@@ -146,7 +160,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn quit(&self) {
-        self.with_common(|common| common.signal.stop());
+        self.with_common(|common| common.quit_signal.quit());
     }
 
     fn compositor_name(&self) -> &'static str {
@@ -300,20 +314,27 @@ impl<P: LinuxClient + 'static> Platform for P {
         let directory = directory.to_owned();
         self.foreground_executor()
             .spawn(async move {
-                let result = SaveFileRequest::default()
+                let request = SaveFileRequest::default()
                     .modal(true)
                     .title("Select new path")
                     .accept_label("Accept")
-                    .send()
-                    .await
-                    .ok()
-                    .and_then(|request| request.response().ok())
-                    .and_then(|response| {
-                        response
-                            .uris()
-                            .first()
-                            .and_then(|uri| uri.to_file_path().ok())
-                    });
+                    .current_folder(directory);
+
+                let result = if let Ok(request) = request {
+                    request
+                        .send()
+                        .await
+                        .ok()
+                        .and_then(|request| request.response().ok())
+                        .and_then(|response| {
+                            response
+                                .uris()
+                                .first()
+                                .and_then(|uri| uri.to_file_path().ok())
+                        })
+                } else {
+                    None
+                };
 
                 done_tx.send(result);
             })
@@ -558,6 +579,8 @@ impl CursorStyle {
             CursorStyle::ResizeUp => Shape::NResize,
             CursorStyle::ResizeDown => Shape::SResize,
             CursorStyle::ResizeUpDown => Shape::NsResize,
+            CursorStyle::ResizeUpLeftDownRight => Shape::NwseResize,
+            CursorStyle::ResizeUpRightDownLeft => Shape::NeswResize,
             CursorStyle::ResizeColumn => Shape::ColResize,
             CursorStyle::ResizeRow => Shape::RowResize,
             CursorStyle::IBeamCursorForVerticalLayout => Shape::VerticalText,
@@ -585,6 +608,8 @@ impl CursorStyle {
             CursorStyle::ResizeUp => "n-resize",
             CursorStyle::ResizeDown => "s-resize",
             CursorStyle::ResizeUpDown => "ns-resize",
+            CursorStyle::ResizeUpLeftDownRight => "nwse-resize",
+            CursorStyle::ResizeUpRightDownLeft => "nesw-resize",
             CursorStyle::ResizeColumn => "col-resize",
             CursorStyle::ResizeRow => "row-resize",
             CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",

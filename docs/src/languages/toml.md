@@ -1,4 +1,3 @@
 # TOML
 
-- Tree Sitter: [tree-sitter-toml](https://github.com/tree-sitter/tree-sitter-toml)
-- Language Server: [taplo](https://taplo.tamasfe.dev)
+TOML support is available through the [TOML extension](https://github.com/zed-industries/zed/tree/main/extensions/toml).

@@ -2,7 +2,7 @@ use crate::{
     assistant_settings::AnthropicModel, CompletionProvider, LanguageModel, LanguageModelRequest,
     Role,
 };
-use crate::{count_open_ai_tokens, LanguageModelRequestMessage};
+use crate::{count_open_ai_tokens, LanguageModelCompletionProvider, LanguageModelRequestMessage};
 use anthropic::{stream_completion, Request, RequestMessage};
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
@@ -26,50 +26,22 @@ pub struct AnthropicCompletionProvider {
     settings_version: usize,
 }
 
-impl AnthropicCompletionProvider {
-    pub fn new(
-        model: AnthropicModel,
-        api_url: String,
-        http_client: Arc<dyn HttpClient>,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-    ) -> Self {
-        Self {
-            api_key: None,
-            api_url,
-            model,
-            http_client,
-            low_speed_timeout,
-            settings_version,
-        }
-    }
-
-    pub fn update(
-        &mut self,
-        model: AnthropicModel,
-        api_url: String,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-    ) {
-        self.model = model;
-        self.api_url = api_url;
-        self.low_speed_timeout = low_speed_timeout;
-        self.settings_version = settings_version;
-    }
-
-    pub fn available_models(&self) -> impl Iterator<Item = AnthropicModel> {
+impl LanguageModelCompletionProvider for AnthropicCompletionProvider {
+    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
         AnthropicModel::iter()
+            .map(LanguageModel::Anthropic)
+            .collect()
     }
 
-    pub fn settings_version(&self) -> usize {
+    fn settings_version(&self) -> usize {
         self.settings_version
     }
 
-    pub fn is_authenticated(&self) -> bool {
+    fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
     }
 
-    pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
         if self.is_authenticated() {
             Task::ready(Ok(()))
         } else {
@@ -85,36 +57,36 @@ impl AnthropicCompletionProvider {
                     String::from_utf8(api_key)?
                 };
                 cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    if let CompletionProvider::Anthropic(provider) = provider {
+                    provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
                         provider.api_key = Some(api_key);
-                    }
+                    });
                 })
             })
         }
     }
 
-    pub fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
         let delete_credentials = cx.delete_credentials(&self.api_url);
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let CompletionProvider::Anthropic(provider) = provider {
+                provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
                     provider.api_key = None;
-                }
+                });
             })
         })
     }
 
-    pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
+    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
         cx.new_view(|cx| AuthenticationPrompt::new(self.api_url.clone(), cx))
             .into()
     }
 
-    pub fn model(&self) -> AnthropicModel {
-        self.model.clone()
+    fn model(&self) -> LanguageModel {
+        LanguageModel::Anthropic(self.model.clone())
     }
 
-    pub fn count_tokens(
+    fn count_tokens(
         &self,
         request: LanguageModelRequest,
         cx: &AppContext,
@@ -122,7 +94,7 @@ impl AnthropicCompletionProvider {
         count_open_ai_tokens(request, cx.background_executor())
     }
 
-    pub fn complete(
+    fn complete(
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
@@ -167,12 +139,48 @@ impl AnthropicCompletionProvider {
         .boxed()
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+impl AnthropicCompletionProvider {
+    pub fn new(
+        model: AnthropicModel,
+        api_url: String,
+        http_client: Arc<dyn HttpClient>,
+        low_speed_timeout: Option<Duration>,
+        settings_version: usize,
+    ) -> Self {
+        Self {
+            api_key: None,
+            api_url,
+            model,
+            http_client,
+            low_speed_timeout,
+            settings_version,
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        model: AnthropicModel,
+        api_url: String,
+        low_speed_timeout: Option<Duration>,
+        settings_version: usize,
+    ) {
+        self.model = model;
+        self.api_url = api_url;
+        self.low_speed_timeout = low_speed_timeout;
+        self.settings_version = settings_version;
+    }
+
     fn to_anthropic_request(&self, mut request: LanguageModelRequest) -> Request {
         preprocess_anthropic_request(&mut request);
 
         let model = match request.model {
             LanguageModel::Anthropic(model) => model,
-            _ => self.model(),
+            _ => self.model.clone(),
         };
 
         let mut system_message = String::new();
@@ -278,9 +286,9 @@ impl AuthenticationPrompt {
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let CompletionProvider::Anthropic(provider) = provider {
+                provider.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
                     provider.api_key = Some(api_key);
-                }
+                });
             })
         })
         .detach_and_log_err(cx);

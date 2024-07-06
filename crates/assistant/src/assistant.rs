@@ -9,6 +9,7 @@ mod prompts;
 mod search;
 mod slash_command;
 mod streaming_diff;
+mod terminal_inline_assistant;
 
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::{AnthropicModel, AssistantSettings, CloudModel, OllamaModel, OpenAiModel};
@@ -19,15 +20,16 @@ pub(crate) use completion_provider::*;
 pub(crate) use context_store::*;
 use fs::Fs;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 pub(crate) use model_selector::*;
-use rustdoc::RustdocStore;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, diagnostics_command, fetch_command, file_command, now_command,
-    project_command, prompt_command, rustdoc_command, search_command, tabs_command, term_command,
+    active_command, default_command, diagnostics_command, docs_command, fetch_command,
+    file_command, now_command, project_command, prompt_command, search_command, tabs_command,
+    term_command,
 };
 use std::{
     fmt::{self, Display},
@@ -42,11 +44,13 @@ actions!(
         Split,
         CycleMessageRole,
         QuoteSelection,
+        InsertIntoEditor,
         ToggleFocus,
         ResetKey,
         InlineAssist,
         InsertActivePrompt,
-        ToggleHistory,
+        DeployHistory,
+        DeployPromptLibrary,
         ApplyEdit,
         ConfirmCommand,
         ToggleModelSelector
@@ -159,7 +163,7 @@ impl LanguageModelRequestMessage {
     }
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct LanguageModelRequest {
     pub model: LanguageModel,
     pub messages: Vec<LanguageModelRequestMessage>,
@@ -289,7 +293,8 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     register_slash_commands(cx);
     assistant_panel::init(cx);
     inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
-    RustdocStore::init_global(cx);
+    terminal_inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
+    IndexedDocsRegistry::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(Assistant::NAMESPACE);
@@ -319,8 +324,8 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
     slash_command_registry.register_command(term_command::TermSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, true);
-    slash_command_registry.register_command(diagnostics_command::DiagnosticsCommand, true);
-    slash_command_registry.register_command(rustdoc_command::RustdocSlashCommand, false);
+    slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
+    slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 }
 

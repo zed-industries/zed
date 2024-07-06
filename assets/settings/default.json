@@ -38,11 +38,11 @@
   // Set the buffer's line height.
   // May take 3 values:
   //  1. Use a line height that's comfortable for reading (1.618)
-  //         "line_height": "comfortable"
+  //         "buffer_line_height": "comfortable"
   //  2. Use a standard line height, (1.3)
-  //         "line_height": "standard",
+  //         "buffer_line_height": "standard",
   //  3. Use a custom line height
-  //         "line_height": {
+  //         "buffer_line_height": {
   //           "custom": 2
   //         },
   "buffer_line_height": "comfortable",
@@ -130,7 +130,14 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
+  "private_files": [
+    "**/.env*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.cert",
+    "**/*.crt",
+    "**/secrets.yml"
+  ],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -157,11 +164,11 @@
   // 1. Draw tabs and spaces only for the selected text (default):
   //    "selection"
   // 2. Do not draw any tabs or spaces:
-  //   "none"
+  //    "none"
   // 3. Draw all invisible symbols:
-  //   "all"
+  //    "all"
   // 4. Draw whitespaces at boundaries only:
-  //   "boundaries"
+  //    "boundary"
   // For a whitespace to be on a boundary, any of the following conditions need to be met:
   // - It is a tab
   // - It is adjacent to an edge (start or end)
@@ -302,8 +309,8 @@
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
     "auto_reveal_entries": true,
-    /// Whether to fold directories automatically
-    /// when a directory has only one directory inside.
+    // Whether to fold directories automatically and show compact folders
+    // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": false,
     /// Scrollbar-related settings
     "scrollbar": {
@@ -668,6 +675,10 @@
     // "max_scroll_history_lines": 10000,
   },
   "code_actions_on_format": {},
+  /// Settings related to running tasks.
+  "tasks": {
+    "variables": {}
+  },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
   // use those languages.
@@ -681,6 +692,7 @@
   // }
   //
   "file_types": {
+    "JSON": ["flake.lock"],
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json"]
   },
   // The extensions that Zed should automatically install on startup.
@@ -766,7 +778,8 @@
     "PHP": {
       "prettier": {
         "allowed": true,
-        "plugins": ["@prettier/plugin-php"]
+        "plugins": ["@prettier/plugin-php"],
+        "parser": "php"
       }
     },
     "Ruby": {
