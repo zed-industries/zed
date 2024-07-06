@@ -1,5 +1,4 @@
 // Default Keymap (Atom) for Zed on Linux
-// Comments include the Atom command originally bound to this key.
 [
   {
     "bindings": {
