@@ -10,8 +10,9 @@
 # To use this file locally, run:
 #   git blame --ignore-revs-file .git-blame-ignore-revs
 # To always use this file by-default, run:
-#   git config blame.ignoreRevsFile .git-blame-ignore-revs
-#
+#   git config --local blame.ignoreRevsFile .git-blame-ignore-revs
+# To disable this functionality, run:
+#   git config --local blame.ignoreRevsFile ""
 # Comments are optional, but may provide helpful context.
 
 # 2023-04-20 Set default tab_size for JSON to 2 and apply new formatting
