@@ -460,7 +460,7 @@ impl LspAdapter for EsLintLspAdapter {
 
             let ret = self
                 .node
-                .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
+                .run_npm_subcommand(Some(&repo_root), "run-script", &["compile:server"])
                 .await;
             println!("ret2 ==>{:?}", ret);
             ret?;
