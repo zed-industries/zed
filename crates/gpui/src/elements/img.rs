@@ -268,16 +268,21 @@ impl Element for Img {
                     if let Some(data) = self.source.data(cx) {
                         if let Some(state) = &mut state {
                             let frame_count = data.frame_count();
-                            if frame_count > 1 && state.frame_index != frame_count - 1 {
+                            if frame_count > 1 {
                                 if state.last_frame_time.elapsed()
-                                    > Duration::from(data.delay(state.frame_index + 1))
+                                    >= Duration::from(data.delay(state.frame_index))
                                 {
-                                    state.frame_index += 1;
-                                    state.last_frame_time = Instant::now()
+                                    let time_difference = state.last_frame_time.elapsed()
+                                        - Duration::from(data.delay(state.frame_index));
+
+                                    if state.frame_index == frame_count - 1 {
+                                        state.frame_index = 0;
+                                    } else {
+                                        state.frame_index = state.frame_index + 1;
+                                    };
+
+                                    state.last_frame_time = Instant::now() - time_difference
                                 }
-                            } else {
-                                state.frame_index = 0;
-                                state.last_frame_time = Instant::now()
                             }
                         }
 
@@ -296,7 +301,7 @@ impl Element for Img {
                             _ => {}
                         }
 
-                        if data.frame_count() > 1 {
+                        if global_id.is_some() && data.frame_count() > 1 {
                             let parent_id = cx.parent_view_id();
                             cx.on_next_frame(move |cx| {
                                 if let Some(parent_id) = parent_id {
