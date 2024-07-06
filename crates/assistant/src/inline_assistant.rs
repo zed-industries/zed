@@ -1986,13 +1986,14 @@ impl Codegen {
             .unwrap_or_else(|| snapshot.indent_size_for_line(MultiBufferRow(selection_start.row)));
 
         let model_telemetry_id = prompt.model.telemetry_id();
-        let response = CompletionProvider::global(cx).complete(prompt);
+        let response = CompletionProvider::global(cx).complete(prompt, cx);
         let telemetry = self.telemetry.clone();
         self.edit_position = range.start;
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
         self.generation = cx.spawn(|this, mut cx| {
             async move {
+                let response = response.await;
                 let generate = async {
                     let mut edit_start = range.start.to_offset(&snapshot);
 
@@ -2002,7 +2003,7 @@ impl Codegen {
                             let mut response_latency = None;
                             let request_start = Instant::now();
                             let diff = async {
-                                let chunks = StripInvalidSpans::new(response.await?);
+                                let chunks = StripInvalidSpans::new(response.inner.await?);
                                 futures::pin_mut!(chunks);
                                 let mut diff = StreamingDiff::new(selected_text.to_string());
 
@@ -2473,9 +2474,8 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
-        let provider = FakeCompletionProvider::default();
         cx.set_global(cx.update(SettingsStore::test));
-        cx.set_global(CompletionProvider::Fake(provider.clone()));
+        let provider = cx.update(|cx| FakeCompletionProvider::setup_test(cx));
         cx.update(language_settings::init);
 
         let text = indoc! {"
@@ -2495,8 +2495,11 @@ mod tests {
         });
         let codegen = cx.new_model(|cx| Codegen::new(buffer.clone(), range, None, cx));
 
-        let request = LanguageModelRequest::default();
-        codegen.update(cx, |codegen, cx| codegen.start(request, cx));
+        codegen.update(cx, |codegen, cx| {
+            codegen.start(LanguageModelRequest::default(), cx)
+        });
+
+        cx.background_executor.run_until_parked();
 
         let mut new_text = concat!(
             "       let mut x = 0;\n",
@@ -2508,11 +2511,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.send_completion(chunk.into());
+            provider.send_completion(&LanguageModelRequest::default(), chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.finish_completion();
+        provider.finish_completion(&LanguageModelRequest::default());
         cx.background_executor.run_until_parked();
 
         assert_eq!(
@@ -2533,8 +2536,7 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        let provider = FakeCompletionProvider::default();
-        cx.set_global(CompletionProvider::Fake(provider.clone()));
+        let provider = cx.update(|cx| FakeCompletionProvider::setup_test(cx));
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
@@ -2555,6 +2557,8 @@ mod tests {
         let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
 
+        cx.background_executor.run_until_parked();
+
         let mut new_text = concat!(
             "t mut x = 0;\n",
             "while x < 10 {\n",
@@ -2565,11 +2569,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.send_completion(chunk.into());
+            provider.send_completion(&LanguageModelRequest::default(), chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.finish_completion();
+        provider.finish_completion(&LanguageModelRequest::default());
         cx.background_executor.run_until_parked();
 
         assert_eq!(
@@ -2590,8 +2594,7 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        let provider = FakeCompletionProvider::default();
-        cx.set_global(CompletionProvider::Fake(provider.clone()));
+        let provider = cx.update(|cx| FakeCompletionProvider::setup_test(cx));
         cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
@@ -2612,6 +2615,8 @@ mod tests {
         let request = LanguageModelRequest::default();
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
 
+        cx.background_executor.run_until_parked();
+
         let mut new_text = concat!(
             "let mut x = 0;\n",
             "while x < 10 {\n",
@@ -2622,11 +2627,11 @@ mod tests {
             let max_len = cmp::min(new_text.len(), 10);
             let len = rng.gen_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
-            provider.send_completion(chunk.into());
+            provider.send_completion(&LanguageModelRequest::default(), chunk.into());
             new_text = suffix;
             cx.background_executor.run_until_parked();
         }
-        provider.finish_completion();
+        provider.finish_completion(&LanguageModelRequest::default());
         cx.background_executor.run_until_parked();
 
         assert_eq!(

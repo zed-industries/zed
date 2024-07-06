@@ -3813,18 +3813,18 @@ impl Workspace {
 
                 let docks = serialized_workspace.docks;
 
-                let right = docks.right.clone();
-                workspace
-                    .right_dock
-                    .update(cx, |dock, _| dock.serialized_dock = Some(right));
-                let left = docks.left.clone();
-                workspace
-                    .left_dock
-                    .update(cx, |dock, _| dock.serialized_dock = Some(left));
-                let bottom = docks.bottom.clone();
-                workspace
-                    .bottom_dock
-                    .update(cx, |dock, _| dock.serialized_dock = Some(bottom));
+                for (dock, serialized_dock) in [
+                    (&mut workspace.right_dock, docks.right),
+                    (&mut workspace.left_dock, docks.left),
+                    (&mut workspace.bottom_dock, docks.bottom),
+                ]
+                .iter_mut()
+                {
+                    dock.update(cx, |dock, cx| {
+                        dock.serialized_dock = Some(serialized_dock.clone());
+                        dock.restore_state(cx);
+                    });
+                }
 
                 cx.notify();
             })?;

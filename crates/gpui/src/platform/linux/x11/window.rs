@@ -54,6 +54,7 @@ x11rb::atom_manager! {
         _MOTIF_WM_HINTS,
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
+        _GTK_EDGE_CONSTRAINTS,
     }
 }
 
@@ -81,6 +82,49 @@ impl ResizeEdge {
             ResizeEdge::Bottom => 5,
             ResizeEdge::BottomLeft => 6,
             ResizeEdge::Left => 7,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct EdgeConstraints {
+    top_tiled: bool,
+    #[allow(dead_code)]
+    top_resizable: bool,
+
+    right_tiled: bool,
+    #[allow(dead_code)]
+    right_resizable: bool,
+
+    bottom_tiled: bool,
+    #[allow(dead_code)]
+    bottom_resizable: bool,
+
+    left_tiled: bool,
+    #[allow(dead_code)]
+    left_resizable: bool,
+}
+
+impl EdgeConstraints {
+    fn from_atom(atom: u32) -> Self {
+        EdgeConstraints {
+            top_tiled: (atom & (1 << 0)) != 0,
+            top_resizable: (atom & (1 << 1)) != 0,
+            right_tiled: (atom & (1 << 2)) != 0,
+            right_resizable: (atom & (1 << 3)) != 0,
+            bottom_tiled: (atom & (1 << 4)) != 0,
+            bottom_resizable: (atom & (1 << 5)) != 0,
+            left_tiled: (atom & (1 << 6)) != 0,
+            left_resizable: (atom & (1 << 7)) != 0,
+        }
+    }
+
+    fn to_tiling(&self) -> Tiling {
+        Tiling {
+            top: self.top_tiled,
+            right: self.right_tiled,
+            bottom: self.bottom_tiled,
+            left: self.left_tiled,
         }
     }
 }
@@ -197,14 +241,14 @@ pub struct X11WindowState {
     active: bool,
     fullscreen: bool,
     decorations: WindowDecorations,
+    edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
     last_insets: [u32; 4],
 }
 
 impl X11WindowState {
     fn is_transparent(&self) -> bool {
-        self.decorations == WindowDecorations::Client
-            || self.background_appearance != WindowBackgroundAppearance::Opaque
+        self.background_appearance != WindowBackgroundAppearance::Opaque
     }
 }
 
@@ -440,8 +484,11 @@ impl X11WindowState {
             // Note: this has to be done after the GPU init, or otherwise
             // the sizes are immediately invalidated.
             size: query_render_extent(xcb_connection, x_window),
-            // In case we have window decorations to render
-            transparent: true,
+            // We set it to transparent by default, even if we have client-side
+            // decorations, since those seem to work on X11 even without `true` here.
+            // If the window appearance changes, then the renderer will get updated
+            // too
+            transparent: false,
         };
         xcb_connection.map_window(x_window).unwrap();
 
@@ -494,6 +541,7 @@ impl X11WindowState {
             destroyed: false,
             decorations: WindowDecorations::Server,
             last_insets: [0, 0, 0, 0],
+            edge_constraints: None,
             counter_id: sync_request_counter,
             last_sync_counter: None,
             refresh_rate,
@@ -606,6 +654,8 @@ impl X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -683,6 +733,30 @@ impl X11WindowStatePtr {
         let mut state = self.state.borrow_mut();
         if event.atom == state.atoms._NET_WM_STATE {
             self.set_wm_properties(state);
+        } else if event.atom == state.atoms._GTK_EDGE_CONSTRAINTS {
+            self.set_edge_constraints(state);
+        }
+    }
+
+    fn set_edge_constraints(&self, mut state: std::cell::RefMut<X11WindowState>) {
+        let reply = self
+            .xcb_connection
+            .get_property(
+                false,
+                self.x_window,
+                state.atoms._GTK_EDGE_CONSTRAINTS,
+                xproto::AtomEnum::CARDINAL,
+                0,
+                4,
+            )
+            .unwrap()
+            .reply()
+            .unwrap();
+
+        if reply.value_len != 0 {
+            let atom = u32::from_ne_bytes(reply.value[0..4].try_into().unwrap());
+            let edge_constraints = EdgeConstraints::from_atom(atom);
+            state.edge_constraints.replace(edge_constraints);
         }
     }
 
@@ -991,6 +1065,7 @@ impl PlatformWindow for X11Window {
                 xproto::Time::CURRENT_TIME,
             )
             .log_err();
+        self.0.xcb_connection.flush().unwrap();
     }
 
     fn is_active(&self) -> bool {
@@ -1019,6 +1094,7 @@ impl PlatformWindow for X11Window {
                 title.as_bytes(),
             )
             .unwrap();
+        self.0.xcb_connection.flush().unwrap();
     }
 
     fn set_app_id(&mut self, app_id: &str) {
@@ -1036,6 +1112,8 @@ impl PlatformWindow for X11Window {
                 xproto::AtomEnum::STRING,
                 &data,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -1071,6 +1149,8 @@ impl PlatformWindow for X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -1161,6 +1241,8 @@ impl PlatformWindow for X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -1179,15 +1261,19 @@ impl PlatformWindow for X11Window {
         match state.decorations {
             WindowDecorations::Server => Decorations::Server,
             WindowDecorations::Client => {
-                // https://source.chromium.org/chromium/chromium/src/+/main:ui/ozone/platform/x11/x11_window.cc;l=2519;drc=1f14cc876cc5bf899d13284a12c451498219bb2d
-                Decorations::Client {
-                    tiling: Tiling {
+                let tiling = if let Some(edge_constraints) = &state.edge_constraints {
+                    edge_constraints.to_tiling()
+                } else {
+                    // https://source.chromium.org/chromium/chromium/src/+/main:ui/ozone/platform/x11/x11_window.cc;l=2519;drc=1f14cc876cc5bf899d13284a12c451498219bb2d
+                    Tiling {
                         top: state.maximized_vertical,
                         bottom: state.maximized_vertical,
                         left: state.maximized_horizontal,
                         right: state.maximized_horizontal,
-                    },
-                }
+                    }
+                };
+
+                Decorations::Client { tiling }
             }
         }
     }
@@ -1197,17 +1283,26 @@ impl PlatformWindow for X11Window {
 
         let dp = (inset.0 * state.scale_factor) as u32;
 
-        let (left, right) = if state.maximized_horizontal {
-            (0, 0)
+        let insets = if let Some(edge_constraints) = &state.edge_constraints {
+            let left = if edge_constraints.left_tiled { 0 } else { dp };
+            let top = if edge_constraints.top_tiled { 0 } else { dp };
+            let right = if edge_constraints.right_tiled { 0 } else { dp };
+            let bottom = if edge_constraints.bottom_tiled { 0 } else { dp };
+
+            [left, right, top, bottom]
         } else {
-            (dp, dp)
+            let (left, right) = if state.maximized_horizontal {
+                (0, 0)
+            } else {
+                (dp, dp)
+            };
+            let (top, bottom) = if state.maximized_vertical {
+                (0, 0)
+            } else {
+                (dp, dp)
+            };
+            [left, right, top, bottom]
         };
-        let (top, bottom) = if state.maximized_vertical {
-            (0, 0)
-        } else {
-            (dp, dp)
-        };
-        let insets = [left, right, top, bottom];
 
         if state.last_insets != insets {
             state.last_insets = insets;
@@ -1223,6 +1318,8 @@ impl PlatformWindow for X11Window {
                     4,
                     bytemuck::cast_slice::<u32, u8>(&insets),
                 )
+                .unwrap()
+                .check()
                 .unwrap();
         }
     }
@@ -1247,6 +1344,8 @@ impl PlatformWindow for X11Window {
                 5,
                 bytemuck::cast_slice::<u32, u8>(&hints_data),
             )
+            .unwrap()
+            .check()
             .unwrap();
 
         match decorations {

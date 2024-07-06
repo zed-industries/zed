@@ -94,22 +94,12 @@ impl IndexedDocsStore {
         self.indexing_tasks_by_package.read().contains_key(package)
     }
 
-    pub async fn load(
-        &self,
-        package: PackageName,
-        item_path: Option<String>,
-    ) -> Result<MarkdownDocs> {
-        let item_path = if let Some(item_path) = item_path {
-            format!("{package}::{item_path}")
-        } else {
-            package.to_string()
-        };
-
+    pub async fn load(&self, key: String) -> Result<MarkdownDocs> {
         self.database_future
             .clone()
             .await
             .map_err(|err| anyhow!(err))?
-            .load(item_path)
+            .load(key)
             .await
     }
 
@@ -160,10 +150,6 @@ impl IndexedDocsStore {
         let executor = self.executor.clone();
         let database_future = self.database_future.clone();
         self.executor.spawn(async move {
-            if query.is_empty() {
-                return Vec::new();
-            }
-
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
                 return Vec::new();
             };

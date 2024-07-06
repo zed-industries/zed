@@ -817,10 +817,15 @@ impl X11Client {
 
                             if let Some(old_scroll) = old_scroll {
                                 let delta_scroll = old_scroll - new_scroll;
+                                let (x, y) = if !modifiers.shift {
+                                    (0.0, delta_scroll)
+                                } else {
+                                    (delta_scroll, 0.0)
+                                };
                                 window.handle_input(PlatformInput::ScrollWheel(
                                     crate::ScrollWheelEvent {
                                         position,
-                                        delta: ScrollDelta::Lines(Point::new(0.0, delta_scroll)),
+                                        delta: ScrollDelta::Lines(Point::new(x, y)),
                                         modifiers,
                                         touch_phase: TouchPhase::default(),
                                     },
@@ -1067,7 +1072,9 @@ impl LinuxClient for X11Client {
                     ..Default::default()
                 },
             )
-            .expect("failed to change window cursor");
+            .expect("failed to change window cursor")
+            .check()
+            .unwrap();
     }
 
     fn open_uri(&self, uri: &str) {
