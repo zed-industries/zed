@@ -1983,18 +1983,22 @@ mod tests {
         slash_command::{active_command, file_command},
         FakeCompletionProvider, MessageId,
     };
+    use assistant_slash_command::SlashCommand;
     use fs::FakeFs;
-    use gpui::{AppContext, TestAppContext};
+    use gpui::{AppContext, TestAppContext, WeakView};
+    use language::LspAdapterDelegate;
     use parking_lot::Mutex;
     use project::Project;
     use rand::prelude::*;
     use rope::Rope;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::{cell::RefCell, env, path::Path, rc::Rc};
+    use std::{cell::RefCell, env, path::Path, rc::Rc, sync::atomic::AtomicBool};
     use text::network::Network;
+    use ui::WindowContext;
     use unindent::Unindent;
     use util::{test::marked_text_ranges, RandomCharIter};
+    use workspace::Workspace;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
@@ -2565,7 +2569,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_context_collaboration(cx: &mut AppContext, mut rng: StdRng) {
+    async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: StdRng) {
         let min_peers = env::var("MIN_PEERS")
             .map(|i| i.parse().expect("invalid `MIN_PEERS` variable"))
             .unwrap_or(2);
@@ -2576,13 +2580,16 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(50);
 
-        let settings_store = SettingsStore::test(cx);
+        let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
-        let slash_command_registry = SlashCommandRegistry::default_global(cx);
-        assistant_panel::init(cx);
+        cx.update(assistant_panel::init);
+        let slash_commands = cx.update(SlashCommandRegistry::default_global);
+        slash_commands.register_command(FakeSlashCommand("cmd-1".into()), false);
+        slash_commands.register_command(FakeSlashCommand("cmd-2".into()), false);
+        slash_commands.register_command(FakeSlashCommand("cmd-3".into()), false);
 
-        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
         let network = Arc::new(Mutex::new(Network::new(rng.clone())));
         let mut contexts = Vec::new();
 
@@ -2590,15 +2597,17 @@ mod tests {
         for i in 0..num_peers {
             let context = cx.new_model(|cx| Context::new(i, registry.clone(), None, cx));
 
-            cx.subscribe(&context, {
-                let network = network.clone();
-                move |_, event, _| {
-                    if let ContextEvent::Operation(op) = event {
-                        network.lock().broadcast(i as ReplicaId, vec![op.clone()]);
+            cx.update(|cx| {
+                cx.subscribe(&context, {
+                    let network = network.clone();
+                    move |_, event, _| {
+                        if let ContextEvent::Operation(op) = event {
+                            network.lock().broadcast(i as ReplicaId, vec![op.clone()]);
+                        }
                     }
-                }
-            })
-            .detach();
+                })
+                .detach();
+            });
 
             contexts.push(context);
             network.lock().add_peer(i as ReplicaId);
@@ -2647,8 +2656,24 @@ mod tests {
                 }
                 80..=99 if mutation_count > 0 => {
                     context.update(cx, |context, cx| {
-                        let buffer = context.buffer.read(cx);
-                        let command_range = buffer.random_byte_range(0, &mut rng);
+                        let command_text = "/".to_string()
+                            + slash_commands
+                                .command_names()
+                                .choose(&mut rng)
+                                .unwrap()
+                                .clone()
+                                .as_ref();
+
+                        let command_range = context.buffer.update(cx, |buffer, cx| {
+                            let offset = buffer.random_byte_range(0, &mut rng).start;
+                            buffer.edit(
+                                [(offset..offset, format!("\n{}\n", command_text))],
+                                None,
+                                cx,
+                            );
+                            offset + 1..offset + 1 + command_text.len()
+                        });
+
                         let output_len = rng.gen_range(1..=10);
                         let output_text = RandomCharIter::new(&mut rng)
                             .take(output_len)
@@ -2673,10 +2698,11 @@ mod tests {
                             sections
                         );
 
-                        let range = buffer.anchor_before(command_range.start)
-                            ..buffer.anchor_after(command_range.end);
+                        let command_range =
+                            context.buffer.read(cx).anchor_after(command_range.start)
+                                ..context.buffer.read(cx).anchor_after(command_range.end);
                         context.insert_command_output(
-                            range,
+                            command_range,
                             Task::ready(Ok(SlashCommandOutput {
                                 text: output_text,
                                 sections,
@@ -2686,7 +2712,7 @@ mod tests {
                             cx,
                         );
                     });
-                    cx.background_executor().run_until_parked();
+                    cx.run_until_parked();
                     mutation_count -= 1;
                 }
                 _ => {
@@ -2702,34 +2728,37 @@ mod tests {
             }
         }
 
-        let first_context = contexts[0].read(cx);
-        for context in &contexts[1..] {
-            let context = context.read(cx);
-            assert_eq!(
-                context.buffer.read(cx).text(),
-                first_context.buffer.read(cx).text(),
-                "Context {} text != Context 0 text",
-                context.buffer.read(cx).replica_id()
-            );
-            assert_eq!(
-                context.message_anchors,
-                first_context.message_anchors,
-                "Context {} messages != Context 0 messages",
-                context.buffer.read(cx).replica_id()
-            );
-            assert_eq!(
-                context.messages_metadata,
-                first_context.messages_metadata,
-                "Context {} message metadata != Context 0 message metadata",
-                context.buffer.read(cx).replica_id()
-            );
-            assert_eq!(
-                context.slash_command_output_sections,
-                first_context.slash_command_output_sections,
-                "Context {} slash command output sections != Context 0 slash command output sections",
-                context.buffer.read(cx).replica_id()
-            );
-        }
+        cx.read(|cx| {
+            let first_context = contexts[0].read(cx);
+            for context in &contexts[1..] {
+                let context = context.read(cx);
+                assert!(context.pending_ops.is_empty());
+                assert_eq!(
+                    context.buffer.read(cx).text(),
+                    first_context.buffer.read(cx).text(),
+                    "Context {} text != Context 0 text",
+                    context.buffer.read(cx).replica_id()
+                );
+                assert_eq!(
+                    context.message_anchors,
+                    first_context.message_anchors,
+                    "Context {} messages != Context 0 messages",
+                    context.buffer.read(cx).replica_id()
+                );
+                assert_eq!(
+                    context.messages_metadata,
+                    first_context.messages_metadata,
+                    "Context {} message metadata != Context 0 message metadata",
+                    context.buffer.read(cx).replica_id()
+                );
+                assert_eq!(
+                    context.slash_command_output_sections,
+                    first_context.slash_command_output_sections,
+                    "Context {} slash command output sections != Context 0 slash command output sections",
+                    context.buffer.read(cx).replica_id()
+                );
+            }
+        });
     }
 
     fn messages(context: &Model<Context>, cx: &AppContext) -> Vec<(MessageId, Role, Range<usize>)> {
@@ -2738,5 +2767,50 @@ mod tests {
             .messages(cx)
             .map(|message| (message.id, message.role, message.offset_range))
             .collect()
+    }
+
+    #[derive(Clone)]
+    struct FakeSlashCommand(String);
+
+    impl SlashCommand for FakeSlashCommand {
+        fn name(&self) -> String {
+            self.0.clone()
+        }
+
+        fn description(&self) -> String {
+            format!("Fake slash command: {}", self.0)
+        }
+
+        fn menu_text(&self) -> String {
+            format!("Run fake command: {}", self.0)
+        }
+
+        fn complete_argument(
+            self: Arc<Self>,
+            _query: String,
+            _cancel: Arc<AtomicBool>,
+            _workspace: Option<WeakView<Workspace>>,
+            _cx: &mut AppContext,
+        ) -> Task<Result<Vec<String>>> {
+            Task::ready(Ok(vec![]))
+        }
+
+        fn requires_argument(&self) -> bool {
+            false
+        }
+
+        fn run(
+            self: Arc<Self>,
+            _argument: Option<&str>,
+            _workspace: WeakView<Workspace>,
+            _delegate: Arc<dyn LspAdapterDelegate>,
+            _cx: &mut WindowContext,
+        ) -> Task<Result<SlashCommandOutput>> {
+            Task::ready(Ok(SlashCommandOutput {
+                text: format!("Executed fake command: {}", self.0),
+                sections: vec![],
+                run_commands_in_text: false,
+            }))
+        }
     }
 }
