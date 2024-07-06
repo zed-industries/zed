@@ -31,6 +31,7 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::AssistantKind;
+use text::Bias;
 use ui::SharedString;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -38,8 +39,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub enum ContextOperation {
     InsertMessage {
-        id: MessageId,
-        start: language::Anchor,
+        anchor: MessageAnchor,
         metadata: MessageMetadata,
     },
     UpdateMessage {
@@ -58,7 +58,7 @@ pub enum ContextOperation {
 impl ContextOperation {
     fn timestamp(&self) -> clock::Lamport {
         match self {
-            Self::InsertMessage { id, .. } => id.0,
+            Self::InsertMessage { anchor, .. } => anchor.id.0,
             Self::UpdateMessage { metadata, .. } => metadata.timestamp,
             Self::UpdateSummary(summary) => summary.timestamp,
             Self::SlashCommandFinished { id, .. } => id.0,
@@ -386,37 +386,11 @@ impl Context {
 
             let timestamp = op.timestamp();
             match op {
-                ContextOperation::InsertMessage {
-                    id,
-                    start,
-                    metadata,
-                } => {
-                    if self.messages_metadata.contains_key(&id) {
+                ContextOperation::InsertMessage { anchor, metadata } => {
+                    if self.messages_metadata.contains_key(&anchor.id) {
                         // We already applied this operation.
                     } else {
-                        println!("====");
-                        let buffer = self.buffer.read(cx);
-                        let mut insertion_ix = 0;
-                        println!("id: {:?}, new offset: {}", id, start.to_offset(buffer));
-
-                        for message in &self.message_anchors {
-                            let comparison = start.cmp(&message.start, buffer);
-                            println!(
-                                "id: {:?}. offset: {}. comparison: {comparison:?}",
-                                message.id,
-                                message.start.to_offset(buffer)
-                            );
-                            if comparison.is_gt() || (comparison.is_eq() && id < message.id) {
-                                insertion_ix += 1;
-                            } else {
-                                break;
-                            }
-                        }
-                        println!("insertion ix: {}", insertion_ix);
-
-                        self.message_anchors
-                            .insert(insertion_ix, MessageAnchor { id, start });
-                        self.messages_metadata.insert(id, metadata);
+                        self.insert_message(anchor, metadata, cx);
                         messages_changed = true;
                     }
                 }
@@ -477,9 +451,11 @@ impl Context {
 
     fn can_apply_op(&self, op: &ContextOperation, cx: &AppContext) -> bool {
         match op {
-            ContextOperation::InsertMessage { start, .. } => {
-                self.buffer.read(cx).version.observed(start.timestamp)
-            }
+            ContextOperation::InsertMessage { anchor, .. } => self
+                .buffer
+                .read(cx)
+                .version
+                .observed(anchor.start.timestamp),
             ContextOperation::UpdateMessage { message_id, .. } => {
                 self.messages_metadata.contains_key(message_id)
             }
@@ -1100,7 +1076,9 @@ impl Context {
                 let offset = self
                     .message_anchors
                     .get(next_message_ix)
-                    .map_or(buffer.len(), |message| message.start.to_offset(buffer) - 1);
+                    .map_or(buffer.len(), |message| {
+                        buffer.clip_offset(message.start.to_offset(buffer) - 1, Bias::Left)
+                    });
                 buffer.edit([(offset..offset, "\n")], None, cx);
                 buffer.anchor_before(offset + 1)
             });
@@ -1114,7 +1092,7 @@ impl Context {
                 status,
                 timestamp: anchor.id.0,
             };
-            self.insert_message(next_message_ix, anchor.clone(), metadata, cx);
+            self.insert_message(anchor.clone(), metadata, cx);
             Some(anchor)
         } else {
             None
@@ -1165,7 +1143,6 @@ impl Context {
             };
 
             self.insert_message(
-                message.index_range.end + 1,
                 suffix.clone(),
                 MessageMetadata {
                     role,
@@ -1174,15 +1151,6 @@ impl Context {
                 },
                 cx,
             );
-
-            println!("== splitting locally ==");
-            for anchor in &self.message_anchors {
-                println!(
-                    "id: {:?}, offset: {}",
-                    anchor.id,
-                    anchor.start.to_offset(self.buffer.read(cx))
-                );
-            }
 
             let new_messages =
                 if range.start == range.end || range.start == message.offset_range.start {
@@ -1218,7 +1186,6 @@ impl Context {
                     };
 
                     self.insert_message(
-                        message.index_range.end + 1,
                         selection.clone(),
                         MessageMetadata {
                             role,
@@ -1241,20 +1208,28 @@ impl Context {
 
     fn insert_message(
         &mut self,
-        index: usize,
-        anchor: MessageAnchor,
-        metadata: MessageMetadata,
+        new_anchor: MessageAnchor,
+        new_metadata: MessageMetadata,
         cx: &mut ModelContext<Self>,
     ) {
-        assert!(index > 0, "inserting before the first message is forbidden");
         cx.emit(ContextEvent::Operation(ContextOperation::InsertMessage {
-            id: anchor.id,
-            start: anchor.start,
-            metadata: metadata.clone(),
+            anchor: new_anchor.clone(),
+            metadata: new_metadata.clone(),
         }));
         cx.emit(ContextEvent::MessagesEdited);
-        self.messages_metadata.insert(anchor.id, metadata);
-        self.message_anchors.insert(index, anchor);
+
+        self.messages_metadata.insert(new_anchor.id, new_metadata);
+
+        let buffer = self.buffer.read(cx);
+        let insertion_ix = self
+            .message_anchors
+            .iter()
+            .position(|anchor| {
+                let comparison = new_anchor.start.cmp(&anchor.start, buffer);
+                comparison.is_lt() || (comparison.is_eq() && new_anchor.id > anchor.id)
+            })
+            .unwrap_or(self.message_anchors.len());
+        self.message_anchors.insert(insertion_ix, new_anchor);
     }
 
     fn summarize(&mut self, cx: &mut ModelContext<Self>) {
