@@ -11692,7 +11692,46 @@ fn include_text(server: &lsp::LanguageServer) -> bool {
         .unwrap_or(false)
 }
 
+async fn load_direnv_environment(dir: &Path) -> Result<Option<HashMap<String, String>>> {
+    let direnv_res = smol::process::Command::new("direnv")
+        .args(["export", "json"])
+        .current_dir(dir)
+        .output()
+        .await;
+
+    let direnv_output = match direnv_res {
+        Ok(output) => output,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(err) => {
+            return Err(err).context("failed to spawn direnv to get local environment variables")
+        }
+    };
+
+    anyhow::ensure!(
+        direnv_output.status.success(),
+        "direnv exited with error {:?}",
+        direnv_output.status
+    );
+
+    let output = String::from_utf8_lossy(&direnv_output.stdout);
+    if output.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        serde_json::from_str(&output)
+            .context("failed to parse direnv output")?,
+    ))
+}
+
 async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
+    // Start by loading the direnv environment
+    let direnv_environment = load_direnv_environment(dir)
+        .await?
+        .unwrap_or(HashMap::default());
+
     let marker = "ZED_SHELL_START";
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
@@ -11730,6 +11769,7 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
 
     let output = smol::process::Command::new(&shell)
         .args(["-i", "-c", &command])
+        .envs(direnv_environment)
         .output()
         .await
         .context("failed to spawn login shell to source login environment variables")?;
