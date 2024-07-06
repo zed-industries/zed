@@ -1,6 +1,7 @@
 pub mod assistant_panel;
 pub mod assistant_settings;
 mod completion_provider;
+mod context;
 mod context_store;
 mod inline_assistant;
 mod model_selector;
@@ -17,6 +18,7 @@ use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub(crate) use completion_provider::*;
+pub(crate) use context::*;
 pub(crate) use context_store::*;
 use fs::Fs;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
