@@ -1,5 +1,5 @@
 use super::*;
-use crate::signature_help_popover::SIGNATURE_HELP_HIGHLIGHT;
+use crate::signature_help_popover::SIGNATURE_HELP_HIGHLIGHT_CURRENT;
 use crate::{
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -6891,7 +6891,7 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
             text, highlights, ..
         } = signature_help_state.unwrap().parsed_content;
         assert_eq!(text, "param1: u8, param2: u8");
-        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT)]);
+        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
     });
 
     // When exiting outside from inside the brackets, `signature_help` is closed.

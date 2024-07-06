@@ -4095,15 +4095,18 @@ impl Editor {
                 .update(&mut cx, |editor, cx| {
                     let language = editor.language_at(position, cx);
                     let project = editor.project.clone()?;
-                    let (markdown, language_registry) = project.update(cx, |project, mut cx| {
-                        let language_registry = project.languages().clone();
-                        let markdown = project
-                            .signature_help(&buffer, buffer_position, &mut cx)
-                            .map(|signature_help| {
-                                create_signature_help_markdown_string(signature_help?)
-                            });
-                        (markdown, language_registry)
-                    });
+                    let (markdown, language_registry) = {
+                        let language = language.clone();
+                        project.update(cx, |project, mut cx| {
+                            let language_registry = project.languages().clone();
+                            let markdown = project
+                                .signature_help(&buffer, buffer_position, &mut cx)
+                                .map(|signature_help| {
+                                    create_signature_help_markdown_string(signature_help?, language)
+                                });
+                            (markdown, language_registry)
+                        })
+                    };
                     Some((markdown, language_registry, language))
                 })
                 .ok()
@@ -4111,10 +4114,10 @@ impl Editor {
             let signature_help_popover =
                 if let Some((markdown, language_registry, language)) = markdown_task {
                     let markdown = markdown.await;
-                    if let Some((markdown, markdown_highlights)) = markdown {
+                    if let Some((markdown, mut markdown_highlights)) = markdown {
                         let mut parsed_content =
                             parse_markdown(markdown.as_str(), &language_registry, language).await;
-                        parsed_content.highlights = markdown_highlights;
+                        parsed_content.highlights.append(&mut markdown_highlights);
                         Some(SignatureHelpPopover { parsed_content })
                     } else {
                         None
