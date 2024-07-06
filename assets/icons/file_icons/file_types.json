@@ -44,6 +44,7 @@
     "eslintrc.json": "eslint",
     "ex": "elixir",
     "exs": "elixir",
+    "fc": "func",
     "fish": "terminal",
     "flac": "audio",
     "fmp": "storage",
@@ -146,6 +147,7 @@
     "scm": "code",
     "sdf": "storage",
     "sh": "terminal",
+    "sol": "solidity",
     "sql": "storage",
     "sqlite": "storage",
     "svelte": "template",
@@ -252,6 +254,9 @@
     "fsharp": {
       "icon": "icons/file_icons/fsharp.svg"
     },
+    "func": {
+      "icon": "icons/file_icons/func.svg"
+    },
     "go": {
       "icon": "icons/file_icons/go.svg"
     },
@@ -323,6 +328,9 @@
     },
     "settings": {
       "icon": "icons/file_icons/settings.svg"
+    },
+    "solidity": {
+      "icon": "icons/file_icons/solidity.svg"
     },
     "storage": {
       "icon": "icons/file_icons/database.svg"
