@@ -454,16 +454,20 @@ impl LspAdapter for EsLintLspAdapter {
             let ret = self
                 .node
                 .run_npm_subcommand(Some(&repo_root), "install", &[])
-                .await;
+                .await?;
             println!("ret1 ==>{:?}", ret);
-            ret.log_err();
+            {
+                println!("err: {}", String::from_utf8_lossy(&ret.stderr));
+            }
 
             let ret = self
                 .node
-                .run_npm_subcommand(Some(&repo_root), "run-script", &["compile:server"])
-                .await;
+                .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
+                .await?;
             println!("ret2 ==>{:?}", ret);
-            ret?;
+            {
+                println!("err: {}", String::from_utf8_lossy(&ret.stderr));
+            }
         }
 
         Ok(LanguageServerBinary {
