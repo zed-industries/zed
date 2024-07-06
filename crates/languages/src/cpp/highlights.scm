@@ -51,7 +51,7 @@
   "co_await"
   "co_return"
   "co_yield"
-  "const"
+  "concept"
   "constexpr"
   "continue"
   "default"
@@ -60,14 +60,10 @@
   "else"
   "enum"
   "explicit"
-  "extern"
   "final"
   "for"
   "friend"
   "if"
-  "if"
-  "inline"
-  "mutable"
   "namespace"
   "new"
   "noexcept"
@@ -75,9 +71,9 @@
   "private"
   "protected"
   "public"
+  "requires"
   "return"
   "sizeof"
-  "static"
   "struct"
   "switch"
   "template"
@@ -88,10 +84,10 @@
   "union"
   "using"
   "virtual"
-  "volatile"
   "while"
   (primitive_type)
   (sized_type_specifier)
+  (storage_class_specifier)
   (type_qualifier)
 ] @keyword
 
