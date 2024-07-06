@@ -107,12 +107,7 @@
       "ctrl-enter": "editor::NewlineAbove",
       "alt-z": "editor::ToggleSoftWrap",
       "ctrl-f": "buffer_search::Deploy",
-      "ctrl-h": [
-        "buffer_search::Deploy",
-        {
-          "replace_enabled": true
-        }
-      ],
+      "ctrl-h": ["buffer_search::Deploy", { "replace_enabled": true }],
       // "cmd-e": ["buffer_search::Deploy", { "focus": false }],
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",

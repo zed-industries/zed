@@ -6,8 +6,7 @@
       "ctrl-pagedown": "pane::ActivatePrevItem",
       "ctrl-pageup": "pane::ActivateNextItem",
       "ctrl-shift-tab": "pane::ActivateNextItem",
-      "ctrl-tab": "pane::ActivatePrevItem",
-      "cmd-+": "zed::IncreaseBufferFontSize"
+      "ctrl-tab": "pane::ActivatePrevItem"
     }
   },
   {
@@ -26,6 +25,7 @@
       "alt-shift-cmd-down": "editor::FindAllReferences",
       "ctrl-.": "editor::GoToHunk",
       "ctrl-,": "editor::GoToPrevHunk",
+      "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd"
     }
@@ -33,7 +33,7 @@
   {
     "context": "Editor && mode == full",
     "bindings": {
-      "cmd-r": "outline::Toggle"
+      "ctrl-r": "outline::Toggle"
     }
   },
   {
@@ -48,9 +48,8 @@
     "bindings": {
       "cmd-k cmd-b": "workspace::ToggleLeftDock",
       "cmd-t": "file_finder::Toggle",
-      "shift-cmd-r": "project_symbols::Toggle",
-      // Currently busted: https://github.com/zed-industries/feedback/issues/898
-      "ctrl-0": "project_panel::ToggleFocus"
+      // "ctrl-0": "project_panel::ToggleFocus", // normally resets zoom
+      "shift-ctrl-r": "project_symbols::Toggle"
     }
   }
 ]

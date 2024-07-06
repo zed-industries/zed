@@ -53,7 +53,7 @@
   {
     "context": "Pane",
     "bindings": {
-      "ctrl-0": "project_panel::ToggleFocus", // tree-view:toggle-focus
+      // "ctrl-0": "project_panel::ToggleFocus", // tree-view:toggle-focus
       "ctrl-1": ["pane::ActivateItem", 0], // tree-view:open-selected-entry-in-pane-1
       "ctrl-2": ["pane::ActivateItem", 1], // tree-view:open-selected-entry-in-pane-2
       "ctrl-3": ["pane::ActivateItem", 2], // tree-view:open-selected-entry-in-pane-3
