@@ -83,48 +83,13 @@
       "ctrl-a": "editor::SelectAll",
       "ctrl-l": "editor::SelectLine",
       "ctrl-shift-i": "editor::Format",
-      // "cmd-shift-left": [
-      //   "editor::SelectToBeginningOfLine",
-      //   {
-      //     "stop_at_soft_wraps": true
-      //   }
-      // ],
-      "shift-home": [
-        "editor::SelectToBeginningOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      // "ctrl-shift-a": [
-      //   "editor::SelectToBeginningOfLine",
-      //   {
-      //     "stop_at_soft_wraps": true
-      //   }
-      // ],
-      // "cmd-shift-right": [
-      //   "editor::SelectToEndOfLine",
-      //   {
-      //     "stop_at_soft_wraps": true
-      //   }
-      // ],
-      "shift-end": [
-        "editor::SelectToEndOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      // "ctrl-shift-e": [
-      //   "editor::SelectToEndOfLine",
-      //   {
-      //     "stop_at_soft_wraps": true
-      //   }
-      // ],
-      // "alt-v": [
-      //   "editor::MovePageUp",
-      //   {
-      //     "center_cursor": true
-      //   }
-      // ],
+      // "cmd-shift-left": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true}],
+      "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
+      // "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
+      // "cmd-shift-right": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      // "ctrl-shift-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      // "alt-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
       "ctrl-k ctrl-r": "editor::RevertSelectedHunks",
