@@ -540,7 +540,7 @@ impl DebugPanel {
 
             this.update(&mut cx, |this, cx| {
                 if let Some(thread_state) = client.thread_state().get_mut(&thread_id) {
-                    client.update_current_thread_id(Some(thread_id));
+                    client.update_current_thread_id(thread_id);
 
                     thread_state.current_stack_frame_id = Some(current_stack_frame.clone().id);
                     thread_state.stack_frames = stack_trace_response.stack_frames.clone();
@@ -584,7 +584,7 @@ impl DebugPanel {
                 .insert(event.thread_id, ThreadState::default());
 
             if current_thread_id.is_none() {
-                client.update_current_thread_id(Some(event.thread_id));
+                client.update_current_thread_id(event.thread_id);
             }
         } else {
             if current_thread_id == Some(event.thread_id) {

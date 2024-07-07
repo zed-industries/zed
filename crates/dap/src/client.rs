@@ -252,8 +252,8 @@ impl DebugAdapterClient {
         *self.current_thread_id.lock()
     }
 
-    pub fn update_current_thread_id(&self, thread_id: Option<u64>) {
-        *self.current_thread_id.lock() = thread_id;
+    pub fn update_current_thread_id(&self, thread_id: u64) {
+        *self.current_thread_id.lock() = Some(thread_id);
     }
 
     pub fn update_thread_state_status(&self, thread_id: u64, status: ThreadStatus) {
