@@ -46,6 +46,8 @@
 (this) @variable.special
 
 [
+  "alignas"
+  "alignof"
   "break"
   "case"
   "catch"
@@ -56,6 +58,7 @@
   "concept"
   "constexpr"
   "continue"
+  "decltype"
   "default"
   "delete"
   "do"
