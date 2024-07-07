@@ -88,6 +88,7 @@ members = [
     "crates/semantic_version",
     "crates/settings",
     "crates/snippet",
+    "crates/snippet_provider",
     "crates/sqlez",
     "crates/sqlez_macros",
     "crates/story",
@@ -239,6 +240,7 @@ semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
 settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
+snippet_provider = { path = "crates/snippet_provider" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
