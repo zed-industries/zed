@@ -1700,6 +1700,32 @@ impl EditorElement {
         aegean
     }
 
+    fn calculate_urdu_numerals(&self, number: &DisplayRowDelta) -> String {
+        let base10 = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
+
+        let mut num = *number;
+        let mut urdu = String::with_capacity(15);
+        while num > 0 {
+            let digit = num % 10;
+            urdu.push_str(base10[digit as usize]);
+            num /= 10;
+        }
+        urdu.chars().rev().collect()
+    }
+
+    fn calculate_devanagari_numerals(&self, number: &DisplayRowDelta) -> String {
+        let base10 = ["०", "१", "२", "३", "४", "५", "६", "७", "८", "९"];
+
+        let mut num = *number;
+        let mut devanagari = String::with_capacity(15);
+        while num > 0 {
+            let digit = num % 10;
+            devanagari.push_str(base10[digit as usize]);
+            num /= 10;
+        }
+        devanagari.chars().rev().collect()
+    }
+
     fn calculate_relative_line_numbers(
         &self,
         snapshot: &EditorSnapshot,
@@ -1814,6 +1840,8 @@ impl EditorElement {
                     NumeralStyle::Arabic => raw_number.to_string(),
                     NumeralStyle::Roman => self.calculate_roman_numeral(raw_number),
                     NumeralStyle::Aegean => self.calculate_aegean_numeral(raw_number),
+                    NumeralStyle::Urdu => self.calculate_urdu_numerals(raw_number),
+                    NumeralStyle::Devanagari => self.calculate_devanagari_numerals(raw_number),
                 };
                 write!(&mut line_number, "{number}").unwrap();
                 let run = TextRun {

@@ -101,6 +101,10 @@ pub enum NumeralStyle {
     Roman,
     /// Use Aegean Numerals, for all the Linear A fans coding since 1500 BCE.
     Aegean,
+    /// Use Urdu Numerals, a one to one mapping to arabic with different symbols.
+    Urdu,
+    /// Use Devanagari / Hindi Numerals, a clean and historic base ten system.
+    Devanagari,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
