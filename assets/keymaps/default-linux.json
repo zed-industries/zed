@@ -44,6 +44,7 @@
       "ctrl-t": "editor::Transpose",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "shift-delete": "editor::Cut",
       "ctrl-x": "editor::Cut",
       "ctrl-insert": "editor::Copy",
       "ctrl-c": "editor::Copy",
