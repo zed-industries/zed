@@ -1,9 +1,10 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
-    AnyView, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
-    WindowContext,
+    AnyView, Decorations, IntoElement, ParentElement, Render, Styled, Subscription, View,
+    ViewContext, WindowContext,
 };
 use std::any::TypeId;
+use theme::CLIENT_SIDE_DECORATION_ROUNDING;
 use ui::{h_flex, prelude::*};
 use util::ResultExt;
 
@@ -40,8 +41,17 @@ impl Render for StatusBar {
             .gap(Spacing::Large.rems(cx))
             .py(Spacing::Small.rems(cx))
             .px(Spacing::Large.rems(cx))
-            // .h_8()
             .bg(cx.theme().colors().status_bar_background)
+            .map(|el| match cx.window_decorations() {
+                Decorations::Server => el,
+                Decorations::Client { tiling, .. } => el
+                    .when(!(tiling.bottom || tiling.right), |el| {
+                        el.rounded_br(CLIENT_SIDE_DECORATION_ROUNDING)
+                    })
+                    .when(!(tiling.bottom || tiling.left), |el| {
+                        el.rounded_bl(CLIENT_SIDE_DECORATION_ROUNDING)
+                    }),
+            })
             .child(self.render_left_tools(cx))
             .child(self.render_right_tools(cx))
     }

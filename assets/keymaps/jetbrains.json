@@ -21,24 +21,9 @@
       "cmd--": "editor::Fold",
       "cmd-+": "editor::UnfoldLines",
       "alt-shift-g": "editor::SplitSelectionIntoLines",
-      "ctrl-g": [
-        "editor::SelectNext",
-        {
-          "replace_newest": false
-        }
-      ],
-      "ctrl-cmd-g": [
-        "editor::SelectPrevious",
-        {
-          "replace_newest": false
-        }
-      ],
-      "cmd-/": [
-        "editor::ToggleComments",
-        {
-          "advance_downwards": true
-        }
-      ],
+      "ctrl-g": ["editor::SelectNext", { "replace_newest": false }],
+      "ctrl-cmd-g": ["editor::SelectPrevious", { "replace_newest": false }],
+      "cmd-/": ["editor::ToggleComments", { "advance_downwards": true }],
       "alt-up": "editor::SelectLargerSyntaxNode",
       "alt-down": "editor::SelectSmallerSyntaxNode",
       "shift-alt-up": "editor::MoveLineUp",

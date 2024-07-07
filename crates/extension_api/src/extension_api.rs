@@ -25,9 +25,11 @@ pub use wit::{
         npm_package_latest_version,
     },
     zed::extension::platform::{current_platform, Architecture, Os},
-    zed::extension::slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection},
+    zed::extension::slash_command::{
+        SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
+    },
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    LanguageServerInstallationStatus, Range, Worktree,
+    KeyValueStore, LanguageServerInstallationStatus, Range, Worktree,
 };
 
 // Undocumented WIT re-exports.
@@ -114,7 +116,7 @@ pub trait Extension: Send + Sync {
         &self,
         _command: SlashCommand,
         _query: String,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<SlashCommandArgumentCompletion>, String> {
         Ok(Vec::new())
     }
 
@@ -126,6 +128,15 @@ pub trait Extension: Send + Sync {
         _worktree: &Worktree,
     ) -> Result<SlashCommandOutput, String> {
         Err("`run_slash_command` not implemented".to_string())
+    }
+
+    fn index_docs(
+        &self,
+        _provider: String,
+        _package: String,
+        _database: &KeyValueStore,
+    ) -> Result<(), String> {
+        Err("`index_docs` not implemented".to_string())
     }
 }
 
@@ -238,7 +249,7 @@ impl wit::Guest for Component {
     fn complete_slash_command_argument(
         command: SlashCommand,
         query: String,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<SlashCommandArgumentCompletion>, String> {
         extension().complete_slash_command_argument(command, query)
     }
 
@@ -248,6 +259,14 @@ impl wit::Guest for Component {
         worktree: &Worktree,
     ) -> Result<SlashCommandOutput, String> {
         extension().run_slash_command(command, argument, worktree)
+    }
+
+    fn index_docs(
+        provider: String,
+        package: String,
+        database: &KeyValueStore,
+    ) -> Result<(), String> {
+        extension().index_docs(provider, package, database)
     }
 }
 

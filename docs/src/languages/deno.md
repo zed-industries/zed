@@ -1,4 +1,3 @@
 # Deno
 
-- Tree Sitter: [tree-sitter-typescript](https://github.com/tree-sitter/tree-sitter-typescript)
-- Language Server: [deno](https://github.com/denoland/deno)
+Deno support is available through the [Deno extension](https://github.com/zed-industries/zed/tree/main/extensions/deno).

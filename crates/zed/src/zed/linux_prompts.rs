@@ -1,7 +1,7 @@
 use gpui::{
-    div, opaque_grey, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight,
-    InteractiveElement, IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse,
-    Render, RenderablePromptHandle, Styled, ViewContext, VisualContext, WindowContext,
+    div, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
+    IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Render,
+    RenderablePromptHandle, Styled, ViewContext, VisualContext, WindowContext,
 };
 use settings::Settings;
 use theme::ThemeSettings;
@@ -101,35 +101,24 @@ impl Render for FallbackPromptRenderer {
                 }),
             ));
 
-        div()
-            .size_full()
-            .occlude()
-            .child(
-                div()
-                    .size_full()
-                    .bg(opaque_grey(0.5, 0.6))
-                    .absolute()
-                    .top_0()
-                    .left_0(),
-            )
-            .child(
-                div()
-                    .size_full()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .flex()
-                    .flex_col()
-                    .justify_around()
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_row()
-                            .justify_around()
-                            .child(prompt),
-                    ),
-            )
+        div().size_full().occlude().child(
+            div()
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+                .flex()
+                .flex_col()
+                .justify_around()
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .justify_around()
+                        .child(prompt),
+                ),
+        )
     }
 }
 

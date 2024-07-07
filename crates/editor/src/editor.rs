@@ -1927,6 +1927,11 @@ impl Editor {
             EditorMode::AutoHeight { .. } => "auto_height",
             EditorMode::Full => "full",
         };
+
+        if EditorSettings::get_global(cx).jupyter.enabled {
+            key_context.add("jupyter");
+        }
+
         key_context.set("mode", mode);
         if self.pending_rename.is_some() {
             key_context.add("renaming");
@@ -3123,14 +3128,24 @@ impl Editor {
             let anchor = snapshot.anchor_after(selection.end);
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.start);
-                if let Some(ranges) =
-                    self.linked_editing_ranges_for(start_anchor.text_anchor..anchor.text_anchor, cx)
-                {
-                    for (buffer, edits) in ranges {
-                        linked_edits
-                            .entry(buffer.clone())
-                            .or_default()
-                            .extend(edits.into_iter().map(|range| (range, text.clone())));
+
+                let is_word_char = text.chars().next().map_or(true, |char| {
+                    let scope = snapshot.language_scope_at(start_anchor.to_offset(&snapshot));
+                    let kind = char_kind(&scope, char);
+
+                    kind == CharKind::Word
+                });
+
+                if is_word_char {
+                    if let Some(ranges) = self
+                        .linked_editing_ranges_for(start_anchor.text_anchor..anchor.text_anchor, cx)
+                    {
+                        for (buffer, edits) in ranges {
+                            linked_edits
+                                .entry(buffer.clone())
+                                .or_default()
+                                .extend(edits.into_iter().map(|range| (range, text.clone())));
+                        }
                     }
                 }
             }
@@ -12709,7 +12724,7 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
         })
 }
 
-trait RangeToAnchorExt {
+pub trait RangeToAnchorExt {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor>;
 }
 

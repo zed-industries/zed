@@ -518,7 +518,7 @@ impl ContextProvider for GoContextProvider {
                     "test".into(),
                     GO_PACKAGE_TASK_VARIABLE.template_value(),
                     "-run".into(),
-                    VariableName::Symbol.template_value(),
+                    format!("^{}$", VariableName::Symbol.template_value(),),
                 ],
                 tags: vec!["go-test".to_owned()],
                 ..TaskTemplate::default()

@@ -28,7 +28,8 @@ pub use settings::*;
 pub use styles::*;
 
 use gpui::{
-    AppContext, AssetSource, Hsla, SharedString, WindowAppearance, WindowBackgroundAppearance,
+    px, AppContext, AssetSource, Hsla, Pixels, SharedString, WindowAppearance,
+    WindowBackgroundAppearance,
 };
 use serde::Deserialize;
 
@@ -37,6 +38,9 @@ pub enum Appearance {
     Light,
     Dark,
 }
+
+pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
+pub const CLIENT_SIDE_DECORATION_SHADOW: Pixels = px(10.0);
 
 impl Appearance {
     pub fn is_light(&self) -> bool {

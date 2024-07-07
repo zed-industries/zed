@@ -3,64 +3,79 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use collections::HashMap;
 use derive_more::{Deref, Display};
 use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt;
 use fuzzy::StringMatchCandidate;
-use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, Task, UpdateGlobal};
+use gpui::{AppContext, BackgroundExecutor, Task};
 use heed::types::SerdeBincode;
 use heed::Database;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::indexer::{RustdocIndexer, RustdocProvider};
-use crate::{RustdocItem, RustdocItemKind};
+use crate::IndexedDocsRegistry;
 
-/// The name of a crate.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
-pub struct CrateName(Arc<str>);
+pub struct ProviderId(pub Arc<str>);
 
-impl From<&str> for CrateName {
+impl ProviderId {
+    pub fn rustdoc() -> Self {
+        Self("rustdoc".into())
+    }
+}
+
+/// The name of a package.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Deref, Display)]
+pub struct PackageName(Arc<str>);
+
+impl From<&str> for PackageName {
     fn from(value: &str) -> Self {
         Self(value.into())
     }
 }
 
-struct GlobalRustdocStore(Arc<RustdocStore>);
+#[async_trait]
+pub trait IndexedDocsProvider {
+    /// Returns the ID of this provider.
+    fn id(&self) -> ProviderId;
 
-impl Global for GlobalRustdocStore {}
+    /// Returns the path to the database for this provider.
+    fn database_path(&self) -> PathBuf;
 
-pub struct RustdocStore {
-    executor: BackgroundExecutor,
-    database_future: Shared<BoxFuture<'static, Result<Arc<RustdocDatabase>, Arc<anyhow::Error>>>>,
-    indexing_tasks_by_crate:
-        RwLock<HashMap<CrateName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
+    /// Indexes the package with the given name.
+    async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()>;
 }
 
-impl RustdocStore {
-    pub fn global(cx: &AppContext) -> Arc<Self> {
-        GlobalRustdocStore::global(cx).0.clone()
+/// A store for indexed docs.
+pub struct IndexedDocsStore {
+    executor: BackgroundExecutor,
+    database_future:
+        Shared<BoxFuture<'static, Result<Arc<IndexedDocsDatabase>, Arc<anyhow::Error>>>>,
+    provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
+    indexing_tasks_by_package:
+        RwLock<HashMap<PackageName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
+}
+
+impl IndexedDocsStore {
+    pub fn try_global(provider: ProviderId, cx: &AppContext) -> Result<Arc<Self>> {
+        let registry = IndexedDocsRegistry::global(cx);
+        registry
+            .get_provider_store(provider.clone())
+            .ok_or_else(|| anyhow!("no indexed docs store found for {provider}"))
     }
 
-    pub fn init_global(cx: &mut AppContext) {
-        GlobalRustdocStore::set_global(
-            cx,
-            GlobalRustdocStore(Arc::new(Self::new(cx.background_executor().clone()))),
-        );
-    }
-
-    pub fn new(executor: BackgroundExecutor) -> Self {
+    pub fn new(
+        provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
+        executor: BackgroundExecutor,
+    ) -> Self {
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
-                async move {
-                    RustdocDatabase::new(
-                        paths::support_dir().join("docs/rust/rustdoc-db.0.mdb"),
-                        executor,
-                    )
-                }
+                let database_path = provider.database_path();
+                async move { IndexedDocsDatabase::new(database_path, executor) }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
             .boxed()
@@ -69,34 +84,30 @@ impl RustdocStore {
         Self {
             executor,
             database_future,
-            indexing_tasks_by_crate: RwLock::new(HashMap::default()),
+            provider,
+            indexing_tasks_by_package: RwLock::new(HashMap::default()),
         }
     }
 
-    /// Returns whether the crate with the given name is currently being indexed.
-    pub fn is_indexing(&self, crate_name: &CrateName) -> bool {
-        self.indexing_tasks_by_crate.read().contains_key(crate_name)
+    /// Returns whether the package with the given name is currently being indexed.
+    pub fn is_indexing(&self, package: &PackageName) -> bool {
+        self.indexing_tasks_by_package.read().contains_key(package)
     }
 
-    pub async fn load(
-        &self,
-        crate_name: CrateName,
-        item_path: Option<String>,
-    ) -> Result<RustdocDatabaseEntry> {
+    pub async fn load(&self, key: String) -> Result<MarkdownDocs> {
         self.database_future
             .clone()
             .await
             .map_err(|err| anyhow!(err))?
-            .load(crate_name, item_path)
+            .load(key)
             .await
     }
 
     pub fn index(
         self: Arc<Self>,
-        crate_name: CrateName,
-        provider: Box<dyn RustdocProvider + Send + Sync + 'static>,
+        package: PackageName,
     ) -> Shared<Task<Result<(), Arc<anyhow::Error>>>> {
-        if let Some(existing_task) = self.indexing_tasks_by_crate.read().get(&crate_name) {
+        if let Some(existing_task) = self.indexing_tasks_by_package.read().get(&package) {
             return existing_task.clone();
         }
 
@@ -104,13 +115,13 @@ impl RustdocStore {
             .executor
             .spawn({
                 let this = self.clone();
-                let crate_name = crate_name.clone();
+                let package = package.clone();
                 async move {
                     let _finally = util::defer({
                         let this = this.clone();
-                        let crate_name = crate_name.clone();
+                        let package = package.clone();
                         move || {
-                            this.indexing_tasks_by_crate.write().remove(&crate_name);
+                            this.indexing_tasks_by_package.write().remove(&package);
                         }
                     });
 
@@ -120,9 +131,7 @@ impl RustdocStore {
                             .clone()
                             .await
                             .map_err(|err| anyhow!(err))?;
-                        let indexer = RustdocIndexer::new(database, provider);
-
-                        indexer.index(crate_name.clone()).await
+                        this.provider.index(package, database).await
                     };
 
                     index_task.await.map_err(Arc::new)
@@ -130,9 +139,9 @@ impl RustdocStore {
             })
             .shared();
 
-        self.indexing_tasks_by_crate
+        self.indexing_tasks_by_package
             .write()
-            .insert(crate_name, indexing_task.clone());
+            .insert(package, indexing_task.clone());
 
         indexing_task
     }
@@ -141,10 +150,6 @@ impl RustdocStore {
         let executor = self.executor.clone();
         let database_future = self.database_future.clone();
         self.executor.spawn(async move {
-            if query.is_empty() {
-                return Vec::new();
-            }
-
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
                 return Vec::new();
             };
@@ -177,27 +182,16 @@ impl RustdocStore {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub enum RustdocDatabaseEntry {
-    Crate { docs: String },
-    Item { kind: RustdocItemKind, docs: String },
-}
+#[derive(Debug, PartialEq, Eq, Clone, Display, Serialize, Deserialize)]
+pub struct MarkdownDocs(pub String);
 
-impl RustdocDatabaseEntry {
-    pub fn docs(&self) -> &str {
-        match self {
-            Self::Crate { docs } | Self::Item { docs, .. } => &docs,
-        }
-    }
-}
-
-pub(crate) struct RustdocDatabase {
+pub struct IndexedDocsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
-    entries: Database<SerdeBincode<String>, SerdeBincode<RustdocDatabaseEntry>>,
+    entries: Database<SerdeBincode<String>, SerdeBincode<MarkdownDocs>>,
 }
 
-impl RustdocDatabase {
+impl IndexedDocsDatabase {
     pub fn new(path: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
         std::fs::create_dir_all(&path)?;
 
@@ -236,50 +230,25 @@ impl RustdocDatabase {
         })
     }
 
-    pub fn load(
-        &self,
-        crate_name: CrateName,
-        item_path: Option<String>,
-    ) -> Task<Result<RustdocDatabaseEntry>> {
+    pub fn load(&self, key: String) -> Task<Result<MarkdownDocs>> {
         let env = self.env.clone();
         let entries = self.entries;
-        let item_path = if let Some(item_path) = item_path {
-            format!("{crate_name}::{item_path}")
-        } else {
-            crate_name.to_string()
-        };
 
         self.executor.spawn(async move {
             let txn = env.read_txn()?;
             entries
-                .get(&txn, &item_path)?
-                .ok_or_else(|| anyhow!("no docs found for {item_path}"))
+                .get(&txn, &key)?
+                .ok_or_else(|| anyhow!("no docs found for {key}"))
         })
     }
 
-    pub fn insert(
-        &self,
-        crate_name: CrateName,
-        item: Option<&RustdocItem>,
-        docs: String,
-    ) -> Task<Result<()>> {
+    pub fn insert(&self, key: String, docs: String) -> Task<Result<()>> {
         let env = self.env.clone();
         let entries = self.entries;
-        let (item_path, entry) = if let Some(item) = item {
-            (
-                format!("{crate_name}::{}", item.display()),
-                RustdocDatabaseEntry::Item {
-                    kind: item.kind,
-                    docs,
-                },
-            )
-        } else {
-            (crate_name.to_string(), RustdocDatabaseEntry::Crate { docs })
-        };
 
         self.executor.spawn(async move {
             let mut txn = env.write_txn()?;
-            entries.put(&mut txn, &item_path, &entry)?;
+            entries.put(&mut txn, &key, &MarkdownDocs(docs))?;
             txn.commit()?;
             Ok(())
         })

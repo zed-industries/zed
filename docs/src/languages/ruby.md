@@ -1,7 +1,8 @@
 # Ruby
 
-- Tree Sitter: [tree-sitter-ruby](https://github.com/tree-sitter/tree-sitter-ruby)
-- Language Servers: [solargraph](https://github.com/castwide/solargraph), [ruby-lsp](https://github.com/Shopify/ruby-lsp)
+Ruby support is available through the [Ruby extension](https://github.com/zed-industries/zed/tree/main/extensions/ruby).
+
+The Ruby extension also provides support for ERB files.
 
 ## Choosing a language server
 
@@ -81,7 +82,6 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
   }
 }
 ```
-
 
 ## Using the Tailwind CSS Language Server with Ruby
 
