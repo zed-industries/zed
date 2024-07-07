@@ -539,26 +539,24 @@ impl DebugPanel {
             }
 
             this.update(&mut cx, |this, cx| {
-                if let Some(thread_state) = client.thread_state().get_mut(&thread_id) {
-                    client.update_current_thread_id(thread_id);
+                let mut thread_state = client.thread_state();
+                let thread_state = thread_state
+                    .entry(thread_id)
+                    .or_insert(ThreadState::default());
 
-                    thread_state.current_stack_frame_id = Some(current_stack_frame.clone().id);
-                    thread_state.stack_frames = stack_trace_response.stack_frames.clone();
-                    thread_state.scopes = scopes;
-                    thread_state.variables = variables;
-                    thread_state.status = ThreadStatus::Stopped;
+                client.update_current_thread_id(thread_id);
 
-                    if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
-                        this.stack_frame_list.reset(thread_state.stack_frames.len());
-                        cx.notify();
+                thread_state.current_stack_frame_id = Some(current_stack_frame.clone().id);
+                thread_state.stack_frames = stack_trace_response.stack_frames.clone();
+                thread_state.scopes = scopes;
+                thread_state.variables = variables;
+                thread_state.status = ThreadStatus::Stopped;
 
-                        return this.go_to_stack_frame(
-                            &current_stack_frame,
-                            client.clone(),
-                            true,
-                            cx,
-                        );
-                    }
+                if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
+                    this.stack_frame_list.reset(thread_state.stack_frames.len());
+                    cx.notify();
+
+                    return this.go_to_stack_frame(&current_stack_frame, client.clone(), true, cx);
                 }
 
                 Task::ready(anyhow::Ok(()))
