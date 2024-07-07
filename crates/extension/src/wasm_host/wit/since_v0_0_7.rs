@@ -421,27 +421,10 @@ impl ExtensionImports for WasmState {
                         .await?;
                 }
                 DownloadedFileType::Zip => {
-                    let file_name = destination_path
-                        .file_name()
-                        .ok_or_else(|| anyhow!("invalid download path"))?
-                        .to_string_lossy();
-                    let zip_filename = format!("{file_name}.zip");
-                    let mut zip_path = destination_path.clone();
-                    zip_path.set_file_name(zip_filename);
-
                     futures::pin_mut!(body);
-                    self.host.fs.create_file_with(&zip_path, body).await?;
-
-                    let unzip_status = std::process::Command::new("unzip")
-                        .current_dir(&extension_work_dir)
-                        .arg("-d")
-                        .arg(&destination_path)
-                        .arg(&zip_path)
-                        .output()?
-                        .status;
-                    if !unzip_status.success() {
-                        Err(anyhow!("failed to unzip {} archive", path.display()))?;
-                    }
+                    node_runtime::extract_zip(&destination_path, body)
+                        .await
+                        .with_context(|| format!("failed to unzip {} archive", path.display()))?;
                 }
             }
 

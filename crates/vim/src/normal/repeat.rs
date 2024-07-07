@@ -1,14 +1,17 @@
+use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
+
 use crate::{
     insert::NormalBefore,
     motion::Motion,
-    state::{Mode, RecordedSelection, ReplayableAction},
+    state::{Mode, Operator, RecordedSelection, ReplayableAction},
     visual::visual_motion,
     Vim,
 };
 use gpui::{actions, Action, ViewContext, WindowContext};
+use util::ResultExt;
 use workspace::Workspace;
 
-actions!(vim, [Repeat, EndRepeat]);
+actions!(vim, [Repeat, EndRepeat, ToggleRecord, ReplayLastRecording]);
 
 fn should_replay(action: &Box<dyn Action>) -> bool {
     // skip so that we don't leave the character palette open
@@ -44,24 +47,148 @@ fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
 pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, _: &EndRepeat, cx| {
         Vim::update(cx, |vim, cx| {
-            vim.workspace_state.replaying = false;
+            vim.workspace_state.dot_replaying = false;
             vim.switch_mode(Mode::Normal, false, cx)
         });
     });
 
     workspace.register_action(|_: &mut Workspace, _: &Repeat, cx| repeat(cx, false));
+    workspace.register_action(|_: &mut Workspace, _: &ToggleRecord, cx| {
+        Vim::update(cx, |vim, cx| {
+            if let Some(char) = vim.workspace_state.recording_register.take() {
+                vim.workspace_state.last_recorded_register = Some(char)
+            } else {
+                vim.push_operator(Operator::RecordRegister, cx);
+            }
+        })
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &ReplayLastRecording, cx| {
+        let Some(register) = Vim::read(cx).workspace_state.last_recorded_register else {
+            return;
+        };
+        replay_register(register, cx)
+    });
+}
+
+pub struct ReplayerState {
+    actions: Vec<ReplayableAction>,
+    running: bool,
+    ix: usize,
+}
+
+#[derive(Clone)]
+pub struct Replayer(Rc<RefCell<ReplayerState>>);
+
+impl Replayer {
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(ReplayerState {
+            actions: vec![],
+            running: false,
+            ix: 0,
+        })))
+    }
+
+    pub fn replay(&mut self, actions: Vec<ReplayableAction>, cx: &mut WindowContext) {
+        let mut lock = self.0.borrow_mut();
+        let range = lock.ix..lock.ix;
+        lock.actions.splice(range, actions);
+        if lock.running {
+            return;
+        }
+        lock.running = true;
+        let this = self.clone();
+        cx.defer(move |cx| this.next(cx))
+    }
+
+    pub fn stop(self) {
+        self.0.borrow_mut().actions.clear()
+    }
+
+    pub fn next(self, cx: &mut WindowContext) {
+        let mut lock = self.0.borrow_mut();
+        let action = if lock.ix < 10000 {
+            lock.actions.get(lock.ix).cloned()
+        } else {
+            log::error!("Aborting replay after 10000 actions");
+            None
+        };
+        lock.ix += 1;
+        drop(lock);
+        let Some(action) = action else {
+            Vim::update(cx, |vim, _| vim.workspace_state.replayer.take());
+            return;
+        };
+        match action {
+            ReplayableAction::Action(action) => {
+                if should_replay(&action) {
+                    cx.dispatch_action(action.boxed_clone());
+                    cx.defer(move |cx| observe_action(action.boxed_clone(), cx));
+                }
+            }
+            ReplayableAction::Insertion {
+                text,
+                utf16_range_to_replace,
+            } => {
+                if let Some(editor) = Vim::read(cx).active_editor.clone() {
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.replay_insert_event(&text, utf16_range_to_replace.clone(), cx)
+                        })
+                        .log_err();
+                }
+            }
+        }
+        cx.defer(move |cx| self.next(cx));
+    }
+}
+
+pub(crate) fn record_register(register: char, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
+        vim.workspace_state.recording_register = Some(register);
+        vim.workspace_state.recordings.remove(&register);
+        vim.workspace_state.ignore_current_insertion = true;
+        vim.clear_operator(cx)
+    })
+}
+
+pub(crate) fn replay_register(mut register: char, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
+        let mut count = vim.take_count(cx).unwrap_or(1);
+        vim.clear_operator(cx);
+
+        if register == '@' {
+            let Some(last) = vim.workspace_state.last_replayed_register else {
+                return;
+            };
+            register = last;
+        }
+        let Some(actions) = vim.workspace_state.recordings.get(&register) else {
+            return;
+        };
+
+        let mut repeated_actions = vec![];
+        while count > 0 {
+            repeated_actions.extend(actions.iter().cloned());
+            count -= 1
+        }
+
+        vim.workspace_state.last_replayed_register = Some(register);
+
+        vim.workspace_state
+            .replayer
+            .get_or_insert_with(|| Replayer::new())
+            .replay(repeated_actions, cx);
+    });
 }
 
 pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
-    let Some((mut actions, editor, selection)) = Vim::update(cx, |vim, cx| {
+    let Some((mut actions, selection)) = Vim::update(cx, |vim, cx| {
         let actions = vim.workspace_state.recorded_actions.clone();
         if actions.is_empty() {
             return None;
         }
 
-        let Some(editor) = vim.active_editor.clone() else {
-            return None;
-        };
         let count = vim.take_count(cx);
 
         let selection = vim.workspace_state.recorded_selection.clone();
@@ -85,7 +212,17 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
             }
         }
 
-        Some((actions, editor, selection))
+        if vim.workspace_state.replayer.is_none() {
+            if let Some(recording_register) = vim.workspace_state.recording_register {
+                vim.workspace_state
+                    .recordings
+                    .entry(recording_register)
+                    .or_default()
+                    .push(ReplayableAction::Action(Repeat.boxed_clone()));
+            }
+        }
+
+        Some((actions, selection))
     }) else {
         return;
     };
@@ -167,42 +304,75 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
         actions = new_actions;
     }
 
-    Vim::update(cx, |vim, _| vim.workspace_state.replaying = true);
-    let window = cx.window_handle();
-    cx.spawn(move |mut cx| async move {
-        editor.update(&mut cx, |editor, _| {
-            editor.show_local_selections = false;
-        })?;
-        for action in actions {
-            if !matches!(
-                cx.update(|cx| Vim::read(cx).workspace_state.replaying),
-                Ok(true)
-            ) {
-                break;
-            }
+    actions.push(ReplayableAction::Action(EndRepeat.boxed_clone()));
 
-            match action {
-                ReplayableAction::Action(action) => {
-                    if should_replay(&action) {
-                        window.update(&mut cx, |_, cx| cx.dispatch_action(action))
-                    } else {
-                        Ok(())
-                    }
-                }
-                ReplayableAction::Insertion {
-                    text,
-                    utf16_range_to_replace,
-                } => editor.update(&mut cx, |editor, cx| {
-                    editor.replay_insert_event(&text, utf16_range_to_replace.clone(), cx)
-                }),
-            }?
-        }
-        editor.update(&mut cx, |editor, _| {
-            editor.show_local_selections = true;
-        })?;
-        window.update(&mut cx, |_, cx| cx.dispatch_action(EndRepeat.boxed_clone()))
+    Vim::update(cx, |vim, cx| {
+        vim.workspace_state.dot_replaying = true;
+
+        vim.workspace_state
+            .replayer
+            .get_or_insert_with(|| Replayer::new())
+            .replay(actions, cx);
     })
-    .detach_and_log_err(cx);
+}
+
+pub(crate) fn observe_action(action: Box<dyn Action>, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, _| {
+        if vim.workspace_state.dot_recording {
+            vim.workspace_state
+                .recorded_actions
+                .push(ReplayableAction::Action(action.boxed_clone()));
+
+            if vim.workspace_state.stop_recording_after_next_action {
+                vim.workspace_state.dot_recording = false;
+                vim.workspace_state.stop_recording_after_next_action = false;
+            }
+        }
+        if vim.workspace_state.replayer.is_none() {
+            if let Some(recording_register) = vim.workspace_state.recording_register {
+                vim.workspace_state
+                    .recordings
+                    .entry(recording_register)
+                    .or_default()
+                    .push(ReplayableAction::Action(action));
+            }
+        }
+    })
+}
+
+pub(crate) fn observe_insertion(
+    text: &Arc<str>,
+    range_to_replace: Option<Range<isize>>,
+    cx: &mut WindowContext,
+) {
+    Vim::update(cx, |vim, _| {
+        if vim.workspace_state.ignore_current_insertion {
+            vim.workspace_state.ignore_current_insertion = false;
+            return;
+        }
+        if vim.workspace_state.dot_recording {
+            vim.workspace_state
+                .recorded_actions
+                .push(ReplayableAction::Insertion {
+                    text: text.clone(),
+                    utf16_range_to_replace: range_to_replace.clone(),
+                });
+            if vim.workspace_state.stop_recording_after_next_action {
+                vim.workspace_state.dot_recording = false;
+                vim.workspace_state.stop_recording_after_next_action = false;
+            }
+        }
+        if let Some(recording_register) = vim.workspace_state.recording_register {
+            vim.workspace_state
+                .recordings
+                .entry(recording_register)
+                .or_default()
+                .push(ReplayableAction::Insertion {
+                    text: text.clone(),
+                    utf16_range_to_replace: range_to_replace,
+                });
+        }
+    });
 }
 
 #[cfg(test)]
@@ -509,5 +679,77 @@ mod test {
         cx.shared_state().await.assert_eq("hello..ˇ.");
         cx.simulate_shared_keystrokes("u").await;
         cx.shared_state().await.assert_eq("hellˇo");
+    }
+
+    #[gpui::test]
+    async fn test_record_replay(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello world").await;
+        cx.simulate_shared_keystrokes("q w c w j escape q").await;
+        cx.shared_state().await.assert_eq("ˇj world");
+        cx.simulate_shared_keystrokes("2 l @ w").await;
+        cx.shared_state().await.assert_eq("j ˇj");
+    }
+
+    #[gpui::test]
+    async fn test_record_replay_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello world!!").await;
+        cx.simulate_shared_keystrokes("q a v 3 l s 0 escape l q")
+            .await;
+        cx.shared_state().await.assert_eq("0ˇo world!!");
+        cx.simulate_shared_keystrokes("2 @ a").await;
+        cx.shared_state().await.assert_eq("000ˇ!");
+    }
+
+    #[gpui::test]
+    async fn test_record_replay_dot(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello world").await;
+        cx.simulate_shared_keystrokes("q a r a l r b l q").await;
+        cx.shared_state().await.assert_eq("abˇllo world");
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("abˇblo world");
+        cx.simulate_shared_keystrokes("shift-q").await;
+        cx.shared_state().await.assert_eq("ababˇo world");
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("ababˇb world");
+    }
+
+    #[gpui::test]
+    async fn test_record_replay_of_dot(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello world").await;
+        cx.simulate_shared_keystrokes("r o q w . q").await;
+        cx.shared_state().await.assert_eq("ˇoello world");
+        cx.simulate_shared_keystrokes("d l").await;
+        cx.shared_state().await.assert_eq("ˇello world");
+        cx.simulate_shared_keystrokes("@ w").await;
+        cx.shared_state().await.assert_eq("ˇllo world");
+    }
+
+    #[gpui::test]
+    async fn test_record_replay_interleaved(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello world").await;
+        cx.simulate_shared_keystrokes("q z r a l q").await;
+        cx.shared_state().await.assert_eq("aˇello world");
+        cx.simulate_shared_keystrokes("q b @ z @ z q").await;
+        cx.shared_state().await.assert_eq("aaaˇlo world");
+        cx.simulate_shared_keystrokes("@ @").await;
+        cx.shared_state().await.assert_eq("aaaaˇo world");
+        cx.simulate_shared_keystrokes("@ b").await;
+        cx.shared_state().await.assert_eq("aaaaaaˇworld");
+        cx.simulate_shared_keystrokes("@ @").await;
+        cx.shared_state().await.assert_eq("aaaaaaaˇorld");
+        cx.simulate_shared_keystrokes("q z r b l q").await;
+        cx.shared_state().await.assert_eq("aaaaaaabˇrld");
+        cx.simulate_shared_keystrokes("@ b").await;
+        cx.shared_state().await.assert_eq("aaaaaaabbbˇd");
     }
 }

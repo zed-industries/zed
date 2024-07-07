@@ -9,9 +9,9 @@ use call::{ActiveCall, ParticipantLocation};
 use client::{Client, UserStore};
 use collab::render_color_ribbon;
 use gpui::{
-    actions, div, px, Action, AnyElement, AppContext, Element, InteractiveElement, Interactivity,
-    IntoElement, Model, ParentElement, Render, Stateful, StatefulInteractiveElement, Styled,
-    Subscription, ViewContext, VisualContext, WeakView,
+    actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
+    Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
+    StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
@@ -58,6 +58,7 @@ pub struct TitleBar {
     user_store: Model<UserStore>,
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
+    should_move: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -73,8 +74,10 @@ impl Render for TitleBar {
         let platform_supported = cfg!(target_os = "macos");
 
         let height = Self::height(cx);
+        let supported_controls = cx.window_controls();
+        let decorations = cx.window_decorations();
 
-        let mut title_bar = h_flex()
+        h_flex()
             .id("titlebar")
             .w_full()
             .pt(Self::top_padding(cx))
@@ -86,6 +89,16 @@ impl Render for TitleBar {
                     this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
                 } else {
                     this.pl_2()
+                }
+            })
+            .map(|el| {
+                match decorations {
+                    Decorations::Server => el,
+                    Decorations::Client { tiling, .. } => el
+                        .when(!(tiling.top || tiling.right), |el| {
+                            el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                        })
+                        .when(!(tiling.top || tiling.left), |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING))
                 }
             })
             .bg(cx.theme().colors().title_bar_background)
@@ -113,7 +126,7 @@ impl Render for TitleBar {
                                 .children(self.render_project_host(cx))
                                 .child(self.render_project_name(cx))
                                 .children(self.render_project_branch(cx))
-                                .on_mouse_move(|_, cx| cx.stop_propagation()),
+                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                         )
                         .child(
                             h_flex()
@@ -145,7 +158,7 @@ impl Render for TitleBar {
 
                                         this.children(current_user_face_pile.map(|face_pile| {
                                             v_flex()
-                                                .on_mouse_move(|_, cx| cx.stop_propagation())
+                                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                                                 .child(face_pile)
                                                 .child(render_color_ribbon(player_colors.local().cursor))
                                         }))
@@ -208,7 +221,7 @@ impl Render for TitleBar {
                             h_flex()
                                 .gap_1()
                                 .pr_1()
-                                .on_mouse_move(|_, cx| cx.stop_propagation())
+                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                                 .when_some(room, |this, room| {
                                     let room = room.read(cx);
                                     let project = self.project.read(cx);
@@ -373,34 +386,38 @@ impl Render for TitleBar {
                                     }
                                 }),
                         )
-            );
 
-        // Windows Window Controls
-        title_bar = title_bar.when(
+            ).when(
             self.platform_style == PlatformStyle::Windows && !cx.is_fullscreen(),
             |title_bar| title_bar.child(platform_windows::WindowsWindowControls::new(height)),
-        );
-
-        // Linux Window Controls
-        title_bar = title_bar.when(
+        ).when(
             self.platform_style == PlatformStyle::Linux
                 && !cx.is_fullscreen()
-                && cx.should_render_window_controls(),
+                && matches!(decorations, Decorations::Client { .. }),
             |title_bar| {
                 title_bar
                     .child(platform_linux::LinuxWindowControls::new(close_action))
-                    .on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
-                        cx.show_window_menu(ev.position)
+                    .when(supported_controls.window_menu, |titlebar| {
+                        titlebar.on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
+                            cx.show_window_menu(ev.position)
+                        })
                     })
-                    .on_mouse_move(move |ev, cx| {
-                        if ev.dragging() {
-                            cx.start_system_move();
-                        }
-                    })
-            },
-        );
 
-        title_bar
+                                        .on_mouse_move(cx.listener(move |this, _ev, cx| {
+                                            if this.should_move {
+                                                this.should_move = false;
+                                                cx.start_window_move();
+                                            }
+                                        }))
+                                        .on_mouse_down_out(cx.listener(move |this, _ev, _cx| {
+                                            this.should_move = false;
+                                        }))
+                                        .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _ev, _cx| {
+                                            this.should_move = true;
+                                    }))
+
+            },
+        )
     }
 }
 
@@ -430,6 +447,7 @@ impl TitleBar {
             content: div().id(id.into()),
             children: SmallVec::new(),
             workspace: workspace.weak_handle(),
+            should_move: false,
             project,
             user_store,
             client,

@@ -26,6 +26,7 @@ done
 export ZED_BUNDLE=true
 
 channel=$(<crates/zed/RELEASE_CHANNEL)
+target_dir="${CARGO_TARGET_DIR:-target}"
 
 version="$(script/get-crate-version zed)"
 # Set RELEASE_VERSION so it's compiled into GPUI and it knows about the version.
@@ -43,8 +44,8 @@ cargo build --release --target "${target_triple}" --package zed --package cli
 
 # Strip the binary of all debug symbols
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
-strip --strip-debug "target/${target_triple}/release/zed"
-strip --strip-debug "target/${target_triple}/release/cli"
+strip --strip-debug "${target_dir}/${target_triple}/release/zed"
+strip --strip-debug "${target_dir}/${target_triple}/release/cli"
 
 suffix=""
 if [ "$channel" != "stable" ]; then
@@ -58,12 +59,12 @@ zed_dir="${temp_dir}/zed$suffix.app"
 
 # Binary
 mkdir -p "${zed_dir}/bin" "${zed_dir}/libexec"
-cp "target/${target_triple}/release/zed" "${zed_dir}/libexec/zed-editor"
-cp "target/${target_triple}/release/cli" "${zed_dir}/bin/zed"
+cp "${target_dir}/${target_triple}/release/zed" "${zed_dir}/libexec/zed-editor"
+cp "${target_dir}/${target_triple}/release/cli" "${zed_dir}/bin/zed"
 
 # Libs
 find_libs() {
-    ldd target/${target_triple}/release/zed |\
+    ldd ${target_dir}/${target_triple}/release/zed |\
     cut -d' ' -f3 |\
     grep -v '\<\(libstdc++.so\|libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\)'
 }
@@ -109,5 +110,5 @@ fi
 
 rm -rf "${archive}"
 remove_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
-ls target/release | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f target/release/{} || true
-tar -czvf target/release/$archive -C ${temp_dir} "zed$suffix.app"
+ls "${target_dir}/release" | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f "${target_dir}/release/{}" || true
+tar -czvf "${target_dir}/release/$archive" -C ${temp_dir} "zed$suffix.app"

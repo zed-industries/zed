@@ -9,14 +9,14 @@ use wasmtime_wasi::WasiView;
 
 use crate::wasm_host::{WasmExtension, WasmHost};
 
-pub struct ExtensionDocsIndexer {
+pub struct ExtensionIndexedDocsProvider {
     pub(crate) extension: WasmExtension,
     pub(crate) host: Arc<WasmHost>,
     pub(crate) id: ProviderId,
 }
 
 #[async_trait]
-impl IndexedDocsProvider for ExtensionDocsIndexer {
+impl IndexedDocsProvider for ExtensionIndexedDocsProvider {
     fn id(&self) -> ProviderId {
         self.id.clone()
     }

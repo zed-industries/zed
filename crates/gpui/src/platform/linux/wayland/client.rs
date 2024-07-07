@@ -138,7 +138,7 @@ impl Globals {
             primary_selection_manager: globals.bind(&qh, 1..=1, ()).ok(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             seat,
-            wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
+            wm_base: globals.bind(&qh, 2..=5, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
@@ -310,7 +310,7 @@ impl WaylandClientStatePtr {
             }
         }
         if state.windows.is_empty() {
-            state.common.signal.stop();
+            state.common.quit_signal.quit();
         }
     }
 }
@@ -406,7 +406,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver) = LinuxCommon::new(Box::new(event_loop.get_signal()), None);
 
         let handle = event_loop.handle();
         handle
@@ -443,7 +443,7 @@ impl WaylandClient {
         let mut cursor = Cursor::new(&conn, &globals, 24);
 
         handle
-            .insert_source(XDPEventSource::new(&common.background_executor), {
+            .insert_source(XDPEventSource::new(&common.background_executor, None), {
                 move |event, _, client| match event {
                     XDPEvent::WindowAppearance(appearance) => {
                         if let Some(client) = client.0.upgrade() {
@@ -809,7 +809,7 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
 
         match event {
             wl_callback::Event::Done { .. } => {
-                window.frame(true);
+                window.frame();
             }
             _ => {}
         }
@@ -1508,6 +1508,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 if state.axis_source == AxisSource::Wheel {
                     return;
                 }
+                let axis = if state.modifiers.shift {
+                    wl_pointer::Axis::HorizontalScroll
+                } else {
+                    axis
+                };
                 let axis_modifier = match axis {
                     wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
                     wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
@@ -1533,6 +1538,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 discrete,
             } => {
                 state.scroll_event_received = true;
+                let axis = if state.modifiers.shift {
+                    wl_pointer::Axis::HorizontalScroll
+                } else {
+                    axis
+                };
                 let axis_modifier = match axis {
                     wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
                     wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
@@ -1555,6 +1565,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 value120,
             } => {
                 state.scroll_event_received = true;
+                let axis = if state.modifiers.shift {
+                    wl_pointer::Axis::HorizontalScroll
+                } else {
+                    axis
+                };
                 let axis_modifier = match axis {
                     wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
                     wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,

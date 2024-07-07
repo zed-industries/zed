@@ -1927,6 +1927,11 @@ impl Editor {
             EditorMode::AutoHeight { .. } => "auto_height",
             EditorMode::Full => "full",
         };
+
+        if EditorSettings::get_global(cx).jupyter.enabled {
+            key_context.add("jupyter");
+        }
+
         key_context.set("mode", mode);
         if self.pending_rename.is_some() {
             key_context.add("renaming");
@@ -12719,7 +12724,7 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
         })
 }
 
-trait RangeToAnchorExt {
+pub trait RangeToAnchorExt {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor>;
 }
 

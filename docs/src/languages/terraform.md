@@ -1,7 +1,6 @@
 # Terraform
 
-- Tree Sitter: [tree-sitter-hcl](https://github.com/MichaHoffmann/tree-sitter-hcl)
-- Language Server: [terraform-ls](https://github.com/hashicorp/terraform-ls)
+Terraform support is available through the [Terraform extension](https://github.com/zed-industries/zed/tree/main/extensions/terraform).
 
 ### Configuration
 
