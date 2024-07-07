@@ -420,8 +420,8 @@ impl DebugPanel {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let path = stack_frame.clone().source.unwrap().path.unwrap().clone();
-        let row = (stack_frame.line - 1) as u32;
-        let column = (stack_frame.column - 1) as u32;
+        let row = (stack_frame.line.saturating_sub(1)) as u32;
+        let column = (stack_frame.column.saturating_sub(1)) as u32;
 
         cx.spawn(move |this, mut cx| async move {
             if clear_highlights {
