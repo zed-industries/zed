@@ -37,11 +37,11 @@ actions!(
 );
 
 pub struct DebugPanel {
-    pub focus_handle: FocusHandle,
-    pub size: Pixels,
+    focus_handle: FocusHandle,
+    size: Pixels,
     _subscriptions: Vec<Subscription>,
-    pub workspace: WeakView<Workspace>,
-    pub stack_frame_list: ListState,
+    workspace: WeakView<Workspace>,
+    stack_frame_list: ListState,
 }
 
 impl DebugPanel {
@@ -75,7 +75,7 @@ impl DebugPanel {
                 focus_handle: cx.focus_handle(),
                 size: px(300.),
                 _subscriptions,
-                workspace: workspace.clone(),
+                workspace,
                 stack_frame_list,
             }
         })
