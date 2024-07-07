@@ -61,10 +61,11 @@ impl ModeIndicator {
     }
 
     fn current_operators_description(&self, vim: &Vim) -> String {
-        vim.state()
-            .pre_count
-            .map(|count| format!("{}", count))
+        vim.workspace_state
+            .recording_register
+            .map(|reg| format!("recording @{reg} "))
             .into_iter()
+            .chain(vim.state().pre_count.map(|count| format!("{}", count)))
             .chain(vim.state().selected_register.map(|reg| format!("\"{reg}")))
             .chain(
                 vim.state()

@@ -497,7 +497,6 @@ impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
         WindowParams {
-            window_background,
             bounds,
             titlebar,
             kind,
@@ -603,7 +602,7 @@ impl MacWindow {
                     native_window as *mut _,
                     native_view as *mut _,
                     bounds.size.map(|pixels| pixels.0),
-                    window_background != WindowBackgroundAppearance::Opaque,
+                    false,
                 ),
                 request_frame_callback: None,
                 event_callback: None,
@@ -675,8 +674,6 @@ impl MacWindow {
 
             native_window.setContentView_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
-
-            window.set_background_appearance(window_background);
 
             match kind {
                 WindowKind::Normal => {
@@ -956,7 +953,7 @@ impl PlatformWindow for MacWindow {
 
     fn set_app_id(&mut self, _app_id: &str) {}
 
-    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+    fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut this = self.0.as_ref().lock();
         this.renderer
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
@@ -1091,14 +1088,6 @@ impl PlatformWindow for MacWindow {
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
-    }
-
-    fn show_window_menu(&self, _position: Point<Pixels>) {}
-
-    fn start_system_move(&self) {}
-
-    fn should_render_window_controls(&self) -> bool {
-        false
     }
 }
 

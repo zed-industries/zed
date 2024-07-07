@@ -1,7 +1,6 @@
 # Svelte
 
-- Tree Sitter: [tree-sitter-svelte](https://github.com/Himujjal/tree-sitter-svelte)
-- Language Server: [svelte](https://github.com/sveltejs/language-tools/tree/master/packages/language-server)
+Svelte support is available through the [Svelte extension](https://github.com/zed-industries/zed/tree/main/extensions/svelte).
 
 ## Inlay Hints
 

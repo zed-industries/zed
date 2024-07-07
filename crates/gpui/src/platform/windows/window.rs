@@ -274,7 +274,7 @@ impl WindowsWindow {
             handle,
             hide_title_bar,
             display,
-            transparent: params.window_background != WindowBackgroundAppearance::Opaque,
+            transparent: true,
             executor,
             current_cursor,
         };
@@ -511,21 +511,13 @@ impl PlatformWindow for WindowsWindow {
             .ok();
     }
 
-    fn set_app_id(&mut self, _app_id: &str) {}
-
-    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+    fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         self.0
             .state
             .borrow_mut()
             .renderer
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
     }
-
-    // todo(windows)
-    fn set_edited(&mut self, _edited: bool) {}
-
-    // todo(windows)
-    fn show_character_palette(&self) {}
 
     fn minimize(&self) {
         unsafe { ShowWindowAsync(self.0.hwnd, SW_MINIMIZE).ok().log_err() };
@@ -644,14 +636,6 @@ impl PlatformWindow for WindowsWindow {
 
     fn get_raw_handle(&self) -> HWND {
         self.0.hwnd
-    }
-
-    fn show_window_menu(&self, _position: Point<Pixels>) {}
-
-    fn start_system_move(&self) {}
-
-    fn should_render_window_controls(&self) -> bool {
-        false
     }
 }
 
