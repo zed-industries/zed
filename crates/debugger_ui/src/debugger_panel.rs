@@ -121,11 +121,9 @@ impl DebugPanel {
 
     fn render_stack_frames(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
-            .w_full()
+            .w_1_3()
             .gap_3()
             .h_full()
-            .flex_grow()
-            .flex_shrink_0()
             .child(list(self.stack_frame_list.clone()).size_full())
             .into_any()
     }
@@ -198,6 +196,7 @@ impl DebugPanel {
         };
 
         div()
+            .w_3_4()
             .gap_3()
             .text_ui_sm(cx)
             .children(
@@ -715,6 +714,7 @@ impl Render for DebugPanel {
             .capture_action(cx.listener(Self::handle_step_out_action))
             .capture_action(cx.listener(Self::handle_restart_action))
             .capture_action(cx.listener(Self::handle_pause_action))
+            .size_full()
             .items_start()
             .child(
                 h_flex()
