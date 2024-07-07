@@ -44,6 +44,7 @@
       "ctrl-t": "editor::Transpose",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "shift-delete": "editor::Cut",
       "ctrl-x": "editor::Cut",
       "ctrl-insert": "editor::Copy",
       "ctrl-c": "editor::Copy",
@@ -279,16 +280,23 @@
       "f2": "editor::Rename",
       "f12": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
+      "ctrl-shift-f10": "editor::GoToDefinitionSplit",
       "ctrl-f12": "editor::GoToTypeDefinition",
       "shift-f12": "editor::GoToImplementation",
       "alt-ctrl-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "ctrl-m": "editor::MoveToEnclosingBracket",
+      "ctrl-shift-\\": "editor::MoveToEnclosingBracket",
       "ctrl-shift-[": "editor::Fold",
       "ctrl-shift-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
       "alt-ctrl-r": "editor::RevealInFinder",
+      "ctrl-k r": "editor::RevealInFinder",
+      "ctrl-k p": "editor::CopyPath",
+      "ctrl-\\": "pane::SplitRight",
+      "ctrl-k v": "markdown::OpenPreviewToTheSide",
+      "ctrl-shift-v": "markdown::OpenPreview",
       "ctrl-alt-shift-c": "editor::DisplayCursorNames"
     }
   },
@@ -315,6 +323,8 @@
       "ctrl-alt--": "pane::GoBack",
       "ctrl-alt-_": "pane::GoForward",
       "ctrl-shift-t": "pane::ReopenClosedItem",
+      "f3": "search::SelectNextMatch",
+      "shift-f3": "search::SelectPrevMatch",
       "ctrl-shift-f": "project_search::ToggleFocus"
     }
   },
@@ -355,6 +365,7 @@
       "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "ctrl-e": "file_finder::Toggle",
       "ctrl-shift-p": "command_palette::Toggle",
+      "f1": "command_palette::Toggle",
       "ctrl-shift-m": "diagnostics::Deploy",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-b": "outline_panel::ToggleFocus",
@@ -370,6 +381,7 @@
       "ctrl-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
       "ctrl-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
       "ctrl-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
+      "cmd-shift-x": "zed::Extensions",
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn"
     }
