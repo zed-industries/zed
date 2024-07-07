@@ -3926,6 +3926,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "project",
+ "regex",
  "release_channel",
  "schemars",
  "semantic_version",
