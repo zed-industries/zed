@@ -37,12 +37,21 @@ use std::{
 use task::{DebugAdapterConfig, DebugConnectionType, DebugRequestType};
 use util::ResultExt;
 
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ThreadStatus {
+    #[default]
+    Running,
+    Stopped,
+    Ended,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct DebugAdapterClientId(pub usize);
 
 #[derive(Debug, Default, Clone)]
 pub struct ThreadState {
+    pub status: ThreadStatus,
     pub stack_frames: Vec<StackFrame>,
     pub scopes: HashMap<u64, Vec<Scope>>, // stack_frame_id -> scopes
     pub variables: HashMap<u64, Vec<Variable>>, // scope.variable_reference -> variables
@@ -245,6 +254,12 @@ impl DebugAdapterClient {
 
     pub fn update_current_thread_id(&self, thread_id: Option<u64>) {
         *self.current_thread_id.lock() = thread_id;
+    }
+
+    pub fn update_thread_state_status(&self, thread_id: u64, status: ThreadStatus) {
+        if let Some(thread_state) = self.thread_state().get_mut(&thread_id) {
+            thread_state.status = status;
+        };
     }
 
     pub fn thread_state(&self) -> MutexGuard<HashMap<u64, ThreadState>> {

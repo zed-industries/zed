@@ -1,5 +1,5 @@
 use anyhow::Result;
-use dap::client::{DebugAdapterClientId, ThreadState};
+use dap::client::{DebugAdapterClientId, ThreadState, ThreadStatus};
 use dap::requests::{Disconnect, Scopes, StackTrace, Variables};
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
@@ -538,17 +538,18 @@ impl DebugPanel {
                 variables.insert(scope_reference, response.variables.clone());
             }
 
-            let task = this.update(&mut cx, |this, cx| {
-                if let Some(entry) = client.thread_state().get_mut(&thread_id) {
+            this.update(&mut cx, |this, cx| {
+                if let Some(thread_state) = client.thread_state().get_mut(&thread_id) {
                     client.update_current_thread_id(Some(thread_id));
 
-                    entry.current_stack_frame_id = Some(current_stack_frame.clone().id);
-                    entry.stack_frames = stack_trace_response.stack_frames.clone();
-                    entry.scopes = scopes;
-                    entry.variables = variables;
+                    thread_state.current_stack_frame_id = Some(current_stack_frame.clone().id);
+                    thread_state.stack_frames = stack_trace_response.stack_frames.clone();
+                    thread_state.scopes = scopes;
+                    thread_state.variables = variables;
+                    thread_state.status = ThreadStatus::Stopped;
 
                     if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
-                        this.stack_frame_list.reset(entry.stack_frames.len());
+                        this.stack_frame_list.reset(thread_state.stack_frames.len());
                         cx.notify();
 
                         return this.go_to_stack_frame(
@@ -561,11 +562,8 @@ impl DebugPanel {
                 }
 
                 Task::ready(anyhow::Ok(()))
-            })?;
-
-            task.await?;
-
-            anyhow::Ok(())
+            })?
+            .await
         })
         .detach_and_log_err(cx);
     }
@@ -590,21 +588,20 @@ impl DebugPanel {
             }
         } else {
             if current_thread_id == Some(event.thread_id) {
-                client.update_current_thread_id(None);
-                if Some(client.id()) == this.debug_client(cx).map(|c| c.id()) {
-                    cx.spawn({
-                        let client = client.clone();
-                        |this, mut cx| async move {
-                            this.update(&mut cx, |this, cx| this.remove_highlights(client, cx))?
-                                .await
-                        }
-                    })
-                    .detach_and_log_err(cx);
-                }
-            }
+                client.update_thread_state_status(event.thread_id, ThreadStatus::Ended);
 
-            cx.notify();
+                cx.spawn({
+                    let client = client.clone();
+                    |this, mut cx| async move {
+                        this.update(&mut cx, |this, cx| this.remove_highlights(client, cx))?
+                            .await
+                    }
+                })
+                .detach_and_log_err(cx);
+            }
         }
+
+        cx.notify();
     }
 
     fn handle_terminated_event(
@@ -637,6 +634,13 @@ impl DebugPanel {
             }
         })
         .detach_and_log_err(cx);
+    }
+
+    fn disable_button(&self, cx: &mut ViewContext<Self>) -> bool {
+        let thread_state = self.debug_client(cx).and_then(|c| c.current_thread_state());
+        thread_state
+            .and_then(|s| Some(s.status != ThreadStatus::Stopped))
+            .unwrap_or(true)
     }
 }
 
@@ -702,6 +706,8 @@ impl Panel for DebugPanel {
 
 impl Render for DebugPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let disable_button = self.disable_button(cx);
+
         v_flex()
             .key_context("DebugPanel")
             .track_focus(&self.focus_handle)
@@ -721,6 +727,7 @@ impl Render for DebugPanel {
                             .on_click(
                                 cx.listener(|_, _, cx| cx.dispatch_action(Continue.boxed_clone())),
                             )
+                            .disabled(disable_button)
                             .tooltip(move |cx| Tooltip::text("Continue debug", cx)),
                     )
                     .child(
@@ -728,6 +735,7 @@ impl Render for DebugPanel {
                             .on_click(
                                 cx.listener(|_, _, cx| cx.dispatch_action(StepOver.boxed_clone())),
                             )
+                            .disabled(disable_button)
                             .tooltip(move |cx| Tooltip::text("Step over", cx)),
                     )
                     .child(
@@ -735,6 +743,7 @@ impl Render for DebugPanel {
                             .on_click(
                                 cx.listener(|_, _, cx| cx.dispatch_action(StepIn.boxed_clone())),
                             )
+                            .disabled(disable_button)
                             .tooltip(move |cx| Tooltip::text("Go in", cx)),
                     )
                     .child(
@@ -742,6 +751,7 @@ impl Render for DebugPanel {
                             .on_click(
                                 cx.listener(|_, _, cx| cx.dispatch_action(StepOut.boxed_clone())),
                             )
+                            .disabled(disable_button)
                             .tooltip(move |cx| Tooltip::text("Go out", cx)),
                     )
                     .child(
@@ -749,6 +759,7 @@ impl Render for DebugPanel {
                             .on_click(
                                 cx.listener(|_, _, cx| cx.dispatch_action(Restart.boxed_clone())),
                             )
+                            .disabled(disable_button)
                             .tooltip(move |cx| Tooltip::text("Restart", cx)),
                     )
                     .child(
@@ -756,6 +767,7 @@ impl Render for DebugPanel {
                             .on_click(
                                 cx.listener(|_, _, cx| cx.dispatch_action(Pause.boxed_clone())),
                             )
+                            .disabled(disable_button)
                             .tooltip(move |cx| Tooltip::text("Pause", cx)),
                     ),
             )
