@@ -1,4 +1,5 @@
 (identifier) @variable
+(field_identifier) @property
 
 (call_expression
   function: (qualified_identifier
@@ -44,9 +45,9 @@
 ((identifier) @constant
  (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
-(field_identifier) @property
 (statement_identifier) @label
 (this) @variable.special
+("static_assert") @function.builtin
 
 [
   "alignas"
