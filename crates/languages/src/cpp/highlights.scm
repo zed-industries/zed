@@ -30,6 +30,8 @@
 (function_declarator
   declarator: (field_identifier) @function)
 
+(destructor_name (identifier) @function)
+
 ((namespace_identifier) @type
  (#match? @type "^[A-Z]"))
 
