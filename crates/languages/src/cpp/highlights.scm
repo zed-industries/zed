@@ -30,6 +30,9 @@
 (function_declarator
   declarator: (field_identifier) @function)
 
+(operator_name
+  (identifier)? @operator) @function
+
 (destructor_name (identifier) @function)
 
 ((namespace_identifier) @type
@@ -158,3 +161,5 @@
   ">"
   "||"
 ] @operator
+
+(user_defined_literal (literal_suffix) @operator)
