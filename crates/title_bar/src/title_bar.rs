@@ -4,6 +4,9 @@ mod collab;
 mod platforms;
 mod window_controls;
 
+#[cfg(feature = "stories")]
+mod stories;
+
 use crate::application_menu::ApplicationMenu;
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
@@ -28,6 +31,9 @@ use ui::{
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
+
+#[cfg(feature = "stories")]
+pub use stories::*;
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
