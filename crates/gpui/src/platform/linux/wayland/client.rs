@@ -61,7 +61,6 @@ use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blu
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
-use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
 use crate::platform::linux::wayland::clipboard::{
@@ -72,11 +71,14 @@ use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
 use crate::platform::linux::LinuxClient;
-use crate::platform::linux::{get_xkb_compose_state, is_within_click_distance};
+use crate::platform::linux::{
+    get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
+    reveal_path_internal,
+};
 use crate::platform::PlatformWindow;
 use crate::{
     point, px, size, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor, MouseExitEvent, Size,
-    SCROLL_LINES,
+    DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
 };
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
@@ -220,7 +222,7 @@ pub(crate) struct WaylandClientState {
     data_offers: Vec<DataOffer<WlDataOffer>>,
     primary_data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
     cursor: Cursor,
-    pending_open_uri: Option<String>,
+    pending_activation: Option<PendingActivation>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
 }
@@ -244,6 +246,15 @@ pub(crate) struct KeyRepeat {
     current_keycode: Option<xkb::Keycode>,
 }
 
+pub(crate) enum PendingActivation {
+    /// URI to open in the web browser.
+    Uri(String),
+    /// Path to open in the file explorer.
+    Path(PathBuf),
+    /// A window from ourselves to raise.
+    Window(ObjectId),
+}
+
 /// This struct is required to conform to Rust's orphan rules, so we can dispatch on the state but hand the
 /// window to GPUI.
 #[derive(Clone)]
@@ -258,6 +269,11 @@ impl WaylandClientStatePtr {
 
     pub fn get_serial(&self, kind: SerialKind) -> u32 {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
+    }
+
+    pub fn set_pending_activation(&self, window: ObjectId) {
+        self.0.upgrade().unwrap().borrow_mut().pending_activation =
+            Some(PendingActivation::Window(window));
     }
 
     pub fn enable_ime(&self) {
@@ -530,7 +546,7 @@ impl WaylandClient {
             data_offers: Vec::new(),
             primary_data_offer: None,
             cursor,
-            pending_open_uri: None,
+            pending_activation: None,
             event_loop: Some(event_loop),
         }));
 
@@ -629,14 +645,33 @@ impl LinuxClient for WaylandClient {
             state.globals.activation.clone(),
             state.mouse_focused_window.clone(),
         ) {
-            state.pending_open_uri = Some(uri.to_owned());
+            state.pending_activation = Some(PendingActivation::Uri(uri.to_string()));
             let token = activation.get_activation_token(&state.globals.qh, ());
             let serial = state.serial_tracker.get(SerialKind::MousePress);
             token.set_serial(serial, &state.wl_seat);
             token.set_surface(&window.surface());
             token.commit();
         } else {
-            open_uri_internal(uri, None);
+            let executor = state.common.background_executor.clone();
+            open_uri_internal(executor, uri, None);
+        }
+    }
+
+    fn reveal_path(&self, path: PathBuf) {
+        let mut state = self.0.borrow_mut();
+        if let (Some(activation), Some(window)) = (
+            state.globals.activation.clone(),
+            state.mouse_focused_window.clone(),
+        ) {
+            state.pending_activation = Some(PendingActivation::Path(path));
+            let token = activation.get_activation_token(&state.globals.qh, ());
+            let serial = state.serial_tracker.get(SerialKind::MousePress);
+            token.set_serial(serial, &state.wl_seat);
+            token.set_surface(&window.surface());
+            token.commit();
+        } else {
+            let executor = state.common.background_executor.clone();
+            reveal_path_internal(executor, path, None);
         }
     }
 
@@ -954,13 +989,25 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
     ) {
         let client = this.get_client();
         let mut state = client.borrow_mut();
+
         if let xdg_activation_token_v1::Event::Done { token } = event {
-            if let Some(uri) = state.pending_open_uri.take() {
-                open_uri_internal(&uri, Some(&token));
-            } else {
-                log::error!("called while pending_open_uri is None");
+            let executor = state.common.background_executor.clone();
+            match state.pending_activation.take() {
+                Some(PendingActivation::Uri(uri)) => open_uri_internal(executor, &uri, Some(token)),
+                Some(PendingActivation::Path(path)) => {
+                    reveal_path_internal(executor, path, Some(token))
+                }
+                Some(PendingActivation::Window(window)) => {
+                    let Some(window) = get_window(&mut state, &window) else {
+                        return;
+                    };
+                    let activation = state.globals.activation.as_ref().unwrap();
+                    activation.activate(token, &window.surface());
+                }
+                None => log::error!("activation token received with no pending activation"),
             }
         }
+
         token.destroy();
     }
 }
