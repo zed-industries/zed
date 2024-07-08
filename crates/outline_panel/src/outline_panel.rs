@@ -94,7 +94,7 @@ pub struct OutlinePanel {
     outline_fetch_tasks: HashMap<(BufferId, ExcerptId), Task<()>>,
     excerpts: HashMap<BufferId, HashMap<ExcerptId, Excerpt>>,
     cached_entries_with_depth: Vec<CachedEntry>,
-    query_editor: View<Editor>,
+    filter_editor: View<Editor>,
 }
 
 #[derive(Clone, Debug)]
@@ -286,13 +286,13 @@ impl OutlinePanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
         let outline_panel = cx.new_view(|cx| {
-            let query_editor = cx.new_view(|cx| {
+            let filter_editor = cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
                 editor.set_placeholder_text("Filter...", cx);
                 editor
             });
             let filter_update_subscription =
-                cx.subscribe(&query_editor, |outline_panel: &mut Self, _, event, cx| {
+                cx.subscribe(&filter_editor, |outline_panel: &mut Self, _, event, cx| {
                     if let editor::EditorEvent::BufferEdited = event {
                         outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), cx);
                     }
@@ -348,7 +348,7 @@ impl OutlinePanel {
                 fs: workspace.app_state().fs.clone(),
                 scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
-                query_editor,
+                filter_editor,
                 fs_entries: Vec::new(),
                 fs_entries_depth: HashMap::default(),
                 collapsed_entries: HashSet::default(),
@@ -476,14 +476,14 @@ impl OutlinePanel {
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if self.query_editor.focus_handle(cx).is_focused(cx) {
-            self.query_editor.update(cx, |editor, cx| {
+        if self.filter_editor.focus_handle(cx).is_focused(cx) {
+            self.filter_editor.update(cx, |editor, cx| {
                 if editor.buffer().read(cx).len(cx) > 0 {
                     editor.set_text("", cx);
                 }
             });
         } else {
-            cx.focus_view(&self.query_editor);
+            cx.focus_view(&self.filter_editor);
         }
 
         if self.context_menu.is_some() {
@@ -2001,7 +2001,7 @@ impl OutlinePanel {
     }
 
     fn clear_previous(&mut self, cx: &mut WindowContext<'_>) {
-        self.query_editor.update(cx, |editor, cx| editor.clear(cx));
+        self.filter_editor.update(cx, |editor, cx| editor.clear(cx));
         self.collapsed_entries.clear();
         self.unfolded_dirs.clear();
         self.selected_entry = None;
@@ -2664,7 +2664,7 @@ impl OutlinePanel {
     }
 
     fn query(&self, cx: &AppContext) -> Option<String> {
-        let query = self.query_editor.read(cx).text(cx);
+        let query = self.filter_editor.read(cx).text(cx);
         if query.trim().is_empty() {
             None
         } else {
@@ -2807,8 +2807,8 @@ impl Panel for OutlinePanel {
 }
 
 impl FocusableView for OutlinePanel {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.filter_editor.focus_handle(cx).clone()
     }
 }
 
@@ -2820,6 +2820,46 @@ impl Render for OutlinePanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
         let query = self.query(cx);
+        let outline_panel = v_flex()
+            .id("outline-panel")
+            .size_full()
+            .relative()
+            .key_context(self.dispatch_context(cx))
+            .on_action(cx.listener(Self::open))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::select_parent))
+            .on_action(cx.listener(Self::expand_selected_entry))
+            .on_action(cx.listener(Self::collapse_selected_entry))
+            .on_action(cx.listener(Self::expand_all_entries))
+            .on_action(cx.listener(Self::collapse_all_entries))
+            .on_action(cx.listener(Self::copy_path))
+            .on_action(cx.listener(Self::copy_relative_path))
+            .on_action(cx.listener(Self::unfold_directory))
+            .on_action(cx.listener(Self::fold_directory))
+            .when(project.is_local(), |el| {
+                el.on_action(cx.listener(Self::reveal_in_finder))
+                    .on_action(cx.listener(Self::open_in_terminal))
+            })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |outline_panel, event: &MouseDownEvent, cx| {
+                    if let Some(entry) = outline_panel.selected_entry.clone() {
+                        outline_panel.deploy_context_menu(event.position, entry.to_ref_entry(), cx)
+                    } else if let Some(entry) = outline_panel.fs_entries.first().cloned() {
+                        outline_panel.deploy_context_menu(
+                            event.position,
+                            EntryRef::Entry(&entry),
+                            cx,
+                        )
+                    }
+                }),
+            )
+            .track_focus(&self.focus_handle);
+
         if self.cached_entries_with_depth.is_empty() {
             let header = if self.updating_fs_entries {
                 Cow::Borrowed("Loading outlines")
@@ -2830,154 +2870,103 @@ impl Render for OutlinePanel {
                 Cow::Borrowed("No outlines available")
             };
 
-            v_flex()
-                .id("empty-outline_panel")
-                .size_full()
-                .p_4()
-                .track_focus(&self.focus_handle)
-                .child(
-                    v_flex()
-                        .justify_center()
-                        .size_full()
-                        .child(h_flex().justify_center().child(Label::new(header)))
-                        .child(
-                            h_flex()
-                                .pt(Spacing::Small.rems(cx))
-                                .justify_center()
-                                .child({
-                                    let keystroke = match self.position(cx) {
-                                        DockPosition::Left => {
-                                            cx.keystroke_text_for(&workspace::ToggleLeftDock)
-                                        }
-                                        DockPosition::Bottom => {
-                                            cx.keystroke_text_for(&workspace::ToggleBottomDock)
-                                        }
-                                        DockPosition::Right => {
-                                            cx.keystroke_text_for(&workspace::ToggleRightDock)
-                                        }
-                                    };
-                                    Label::new(format!("Toggle this panel with {keystroke}"))
-                                }),
-                        ),
-                )
-                // TODO kb jumps when no matches
-                .when(query.is_some(), |empty_panel| {
-                    empty_panel.child(
-                        v_flex()
-                            .child(div().mx_2().border_primary(cx).border_t_1())
-                            .child(v_flex().p_2().child(self.query_editor.clone())),
-                    )
-                })
+            outline_panel.child(
+                v_flex()
+                    .justify_center()
+                    .size_full()
+                    .child(h_flex().justify_center().child(Label::new(header)))
+                    .child(
+                        h_flex()
+                            .pt(Spacing::Small.rems(cx))
+                            .justify_center()
+                            .child({
+                                let keystroke = match self.position(cx) {
+                                    DockPosition::Left => {
+                                        cx.keystroke_text_for(&workspace::ToggleLeftDock)
+                                    }
+                                    DockPosition::Bottom => {
+                                        cx.keystroke_text_for(&workspace::ToggleBottomDock)
+                                    }
+                                    DockPosition::Right => {
+                                        cx.keystroke_text_for(&workspace::ToggleRightDock)
+                                    }
+                                };
+                                Label::new(format!("Toggle this panel with {keystroke}"))
+                            }),
+                    ),
+            )
         } else {
-            v_flex()
-                .id("outline-panel")
-                .size_full()
-                .relative()
-                .key_context(self.dispatch_context(cx))
-                .on_action(cx.listener(Self::open))
-                .on_action(cx.listener(Self::cancel))
-                .on_action(cx.listener(Self::select_next))
-                .on_action(cx.listener(Self::select_prev))
-                .on_action(cx.listener(Self::select_first))
-                .on_action(cx.listener(Self::select_last))
-                .on_action(cx.listener(Self::select_parent))
-                .on_action(cx.listener(Self::expand_selected_entry))
-                .on_action(cx.listener(Self::collapse_selected_entry))
-                .on_action(cx.listener(Self::expand_all_entries))
-                .on_action(cx.listener(Self::collapse_all_entries))
-                .on_action(cx.listener(Self::copy_path))
-                .on_action(cx.listener(Self::copy_relative_path))
-                .on_action(cx.listener(Self::unfold_directory))
-                .on_action(cx.listener(Self::fold_directory))
-                .when(project.is_local(), |el| {
-                    el.on_action(cx.listener(Self::reveal_in_finder))
-                        .on_action(cx.listener(Self::open_in_terminal))
-                })
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |outline_panel, event: &MouseDownEvent, cx| {
-                        if let Some(entry) = outline_panel.selected_entry.clone() {
-                            outline_panel.deploy_context_menu(
-                                event.position,
-                                entry.to_ref_entry(),
-                                cx,
-                            )
-                        } else if let Some(entry) = outline_panel.fs_entries.first().cloned() {
-                            outline_panel.deploy_context_menu(
-                                event.position,
-                                EntryRef::Entry(&entry),
-                                cx,
-                            )
-                        }
-                    }),
-                )
-                .track_focus(&self.focus_handle)
-                .child({
-                    let items_len = self.cached_entries_with_depth.len();
-                    uniform_list(cx.view().clone(), "entries", items_len, {
-                        move |outline_panel, range, cx| {
-                            let entries = outline_panel.cached_entries_with_depth.get(range);
-                            entries
-                                .map(|entries| entries.to_vec())
-                                .unwrap_or_default()
-                                .into_iter()
-                                .filter_map(|cached_entry| match cached_entry.entry {
-                                    EntryOwned::Entry(entry) => Some(outline_panel.render_entry(
-                                        &entry,
+            outline_panel.child({
+                let items_len = self.cached_entries_with_depth.len();
+                uniform_list(cx.view().clone(), "entries", items_len, {
+                    move |outline_panel, range, cx| {
+                        let entries = outline_panel.cached_entries_with_depth.get(range);
+                        entries
+                            .map(|entries| entries.to_vec())
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter_map(|cached_entry| match cached_entry.entry {
+                                EntryOwned::Entry(entry) => Some(outline_panel.render_entry(
+                                    &entry,
+                                    cached_entry.depth,
+                                    cached_entry.string_match.as_ref(),
+                                    cx,
+                                )),
+                                EntryOwned::FoldedDirs(worktree_id, entries) => {
+                                    Some(outline_panel.render_folded_dirs(
+                                        worktree_id,
+                                        &entries,
                                         cached_entry.depth,
                                         cached_entry.string_match.as_ref(),
                                         cx,
-                                    )),
-                                    EntryOwned::FoldedDirs(worktree_id, entries) => {
-                                        Some(outline_panel.render_folded_dirs(
-                                            worktree_id,
-                                            &entries,
-                                            cached_entry.depth,
-                                            cached_entry.string_match.as_ref(),
-                                            cx,
-                                        ))
-                                    }
-                                    EntryOwned::Excerpt(buffer_id, excerpt_id, excerpt) => {
-                                        outline_panel.render_excerpt(
-                                            buffer_id,
-                                            excerpt_id,
-                                            &excerpt,
-                                            cached_entry.depth,
-                                            cx,
-                                        )
-                                    }
-                                    EntryOwned::Outline(buffer_id, excerpt_id, outline) => {
-                                        Some(outline_panel.render_outline(
-                                            buffer_id,
-                                            excerpt_id,
-                                            &outline,
-                                            cached_entry.depth,
-                                            cached_entry.string_match.as_ref(),
-                                            cx,
-                                        ))
-                                    }
-                                })
-                                .collect()
-                        }
-                    })
-                    .size_full()
-                    .track_scroll(self.scroll_handle.clone())
+                                    ))
+                                }
+                                EntryOwned::Excerpt(buffer_id, excerpt_id, excerpt) => {
+                                    outline_panel.render_excerpt(
+                                        buffer_id,
+                                        excerpt_id,
+                                        &excerpt,
+                                        cached_entry.depth,
+                                        cx,
+                                    )
+                                }
+                                EntryOwned::Outline(buffer_id, excerpt_id, outline) => {
+                                    Some(outline_panel.render_outline(
+                                        buffer_id,
+                                        excerpt_id,
+                                        &outline,
+                                        cached_entry.depth,
+                                        cached_entry.string_match.as_ref(),
+                                        cx,
+                                    ))
+                                }
+                            })
+                            .collect()
+                    }
                 })
-                .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                    deferred(
-                        anchored()
-                            .position(*position)
-                            .anchor(gpui::AnchorCorner::TopLeft)
-                            .child(menu.clone()),
-                    )
-                    .with_priority(1)
-                }))
-                .child(
+                .size_full()
+                .track_scroll(self.scroll_handle.clone())
+            })
+        }
+        .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+            deferred(
+                anchored()
+                    .position(*position)
+                    .anchor(gpui::AnchorCorner::TopLeft)
+                    .child(menu.clone()),
+            )
+            .with_priority(1)
+        }))
+        .when(
+            query.is_some() || !self.cached_entries_with_depth.is_empty(),
+            |panel| {
+                panel.child(
                     v_flex()
                         .child(div().mx_2().border_primary(cx).border_t_1())
-                        .child(v_flex().p_2().child(self.query_editor.clone())),
+                        .child(v_flex().p_2().child(self.filter_editor.clone())),
                 )
-        }
+            },
+        )
     }
 }
 
