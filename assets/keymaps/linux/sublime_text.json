@@ -1,8 +1,8 @@
 [
   {
     "bindings": {
-      "cmd-shift-[": "pane::ActivatePrevItem",
-      "cmd-shift-]": "pane::ActivateNextItem",
+      "ctrl-shift-[": "pane::ActivatePrevItem",
+      "ctrl-shift-]": "pane::ActivateNextItem",
       "ctrl-pagedown": "pane::ActivatePrevItem",
       "ctrl-pageup": "pane::ActivateNextItem",
       "ctrl-shift-tab": "pane::ActivateNextItem",
@@ -14,15 +14,14 @@
     "bindings": {
       "ctrl-shift-up": "editor::AddSelectionAbove",
       "ctrl-shift-down": "editor::AddSelectionBelow",
-      "cmd-shift-space": "editor::SelectAll",
       "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
-      "cmd-shift-l": "editor::SplitSelectionIntoLines",
-      "cmd-shift-a": "editor::SelectLargerSyntaxNode",
-      "cmd-shift-d": "editor::DuplicateLineDown",
+      "ctrl-shift-l": "editor::SplitSelectionIntoLines",
+      "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
+      "ctrl-shift-d": "editor::DuplicateLineDown",
+      "f12": "editor::GoToDefinition",
+      "ctrl-f12": "editor::GoToDefinitionSplit",
       "shift-f12": "editor::FindAllReferences",
-      "alt-cmd-down": "editor::GoToDefinition",
-      "ctrl-alt-cmd-down": "editor::GoToDefinitionSplit",
-      "alt-shift-cmd-down": "editor::FindAllReferences",
+      "ctrl-shift-f12": "editor::FindAllReferences",
       "ctrl-.": "editor::GoToHunk",
       "ctrl-,": "editor::GoToPrevHunk",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
@@ -46,8 +45,7 @@
   {
     "context": "Workspace",
     "bindings": {
-      "cmd-k cmd-b": "workspace::ToggleLeftDock",
-      "cmd-t": "file_finder::Toggle",
+      "ctrl-k ctrl-b": "workspace::ToggleLeftDock",
       // "ctrl-0": "project_panel::ToggleFocus", // normally resets zoom
       "shift-ctrl-r": "project_symbols::Toggle"
     }
