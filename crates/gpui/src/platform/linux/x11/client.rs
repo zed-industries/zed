@@ -16,7 +16,7 @@ use x11rb::errors::ConnectionError;
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xinput::ConnectionExt;
 use x11rb::protocol::xkb::ConnectionExt as _;
-use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
+use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _, KeyPressEvent};
 use x11rb::protocol::{randr, render, xinput, xkb, xproto, Event};
 use x11rb::resource_manager::Database;
 use x11rb::xcb_ffi::XCBConnection;
@@ -288,65 +288,7 @@ impl X11Client {
                 {
                     let xcb_connection = xcb_connection.clone();
                     move |_readiness, _, client| {
-                        let mut events = Vec::new();
-                        let mut windows_to_refresh = HashSet::new();
-
-                        while let Some(event) = xcb_connection.poll_for_event()? {
-                            if let Event::Expose(event) = event {
-                                windows_to_refresh.insert(event.window);
-                            } else {
-                                events.push(event);
-                            }
-                        }
-
-                        for window in windows_to_refresh.into_iter() {
-                            if let Some(window) = client.get_window(window) {
-                                window.refresh();
-                            }
-                        }
-
-                        for event in events.into_iter() {
-                            let mut state = client.0.borrow_mut();
-                            if state.ximc.is_none() || state.xim_handler.is_none() {
-                                drop(state);
-                                client.handle_event(event);
-                                continue;
-                            }
-
-                            let mut ximc = state.ximc.take().unwrap();
-                            let mut xim_handler = state.xim_handler.take().unwrap();
-                            let xim_connected = xim_handler.connected;
-                            drop(state);
-
-                            let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
-                                Ok(handled) => handled,
-                                Err(err) => {
-                                    log::error!("XIMClientError: {}", err);
-                                    false
-                                }
-                            };
-                            let xim_callback_event = xim_handler.last_callback_event.take();
-
-                            let mut state = client.0.borrow_mut();
-                            state.ximc = Some(ximc);
-                            state.xim_handler = Some(xim_handler);
-                            drop(state);
-
-                            if let Some(event) = xim_callback_event {
-                                client.handle_xim_callback_event(event);
-                            }
-
-                            if xim_filtered {
-                                continue;
-                            }
-
-                            if xim_connected {
-                                client.xim_handle_event(event);
-                            } else {
-                                client.handle_event(event);
-                            }
-                        }
-
+                        client.process_x11_events(&xcb_connection)?;
                         Ok(calloop::PostAction::Continue)
                     }
                 },
@@ -404,6 +346,125 @@ impl X11Client {
             clipboard,
             clipboard_item: None,
         })))
+    }
+
+    pub fn process_x11_events(
+        &self,
+        xcb_connection: &XCBConnection,
+    ) -> Result<(), EventHandlerError> {
+        loop {
+            let mut events = Vec::new();
+            let mut windows_to_refresh = HashSet::new();
+
+            let mut last_key_release = None;
+            let mut last_key_press: Option<KeyPressEvent> = None;
+
+            loop {
+                match xcb_connection.poll_for_event() {
+                    Ok(Some(event)) => {
+                        match event {
+                            Event::Expose(expose_event) => {
+                                windows_to_refresh.insert(expose_event.window);
+                            }
+                            Event::KeyRelease(_) => {
+                                last_key_release = Some(event);
+                            }
+                            Event::KeyPress(key_press) => {
+                                if let Some(last_press) = last_key_press.as_ref() {
+                                    if last_press.detail == key_press.detail {
+                                        continue;
+                                    }
+                                }
+
+                                if let Some(Event::KeyRelease(key_release)) =
+                                    last_key_release.take()
+                                {
+                                    // We ignore that last KeyRelease if it's too close to this KeyPress,
+                                    // suggesting that it's auto-generated by X11 as a key-repeat event.
+                                    if key_release.detail != key_press.detail
+                                        || key_press.time.saturating_sub(key_release.time) > 20
+                                    {
+                                        events.push(Event::KeyRelease(key_release));
+                                    }
+                                }
+                                events.push(Event::KeyPress(key_press));
+                                last_key_press = Some(key_press);
+                            }
+                            _ => {
+                                if let Some(release_event) = last_key_release.take() {
+                                    events.push(release_event);
+                                }
+                                events.push(event);
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        // Add any remaining stored KeyRelease event
+                        if let Some(release_event) = last_key_release.take() {
+                            events.push(release_event);
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        log::warn!("error polling for X11 events: {e:?}");
+                        break;
+                    }
+                }
+            }
+
+            if events.is_empty() && windows_to_refresh.is_empty() {
+                break;
+            }
+
+            for window in windows_to_refresh.into_iter() {
+                if let Some(window) = self.get_window(window) {
+                    window.refresh();
+                }
+            }
+
+            for event in events.into_iter() {
+                let mut state = self.0.borrow_mut();
+                if state.ximc.is_none() || state.xim_handler.is_none() {
+                    drop(state);
+                    self.handle_event(event);
+                    continue;
+                }
+
+                let mut ximc = state.ximc.take().unwrap();
+                let mut xim_handler = state.xim_handler.take().unwrap();
+                let xim_connected = xim_handler.connected;
+                drop(state);
+
+                let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
+                    Ok(handled) => handled,
+                    Err(err) => {
+                        log::error!("XIMClientError: {}", err);
+                        false
+                    }
+                };
+                let xim_callback_event = xim_handler.last_callback_event.take();
+
+                let mut state = self.0.borrow_mut();
+                state.ximc = Some(ximc);
+                state.xim_handler = Some(xim_handler);
+                drop(state);
+
+                if let Some(event) = xim_callback_event {
+                    self.handle_xim_callback_event(event);
+                }
+
+                if xim_filtered {
+                    continue;
+                }
+
+                if xim_connected {
+                    self.xim_handle_event(event);
+                } else {
+                    self.handle_event(event);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn enable_ime(&self) {
@@ -506,10 +567,6 @@ impl X11Client {
             Event::PropertyNotify(event) => {
                 let window = self.get_window(event.window)?;
                 window.property_notify(event);
-            }
-            Event::Expose(event) => {
-                let window = self.get_window(event.window)?;
-                window.refresh();
             }
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
@@ -1017,26 +1074,18 @@ impl LinuxClient for X11Client {
             .insert_source(calloop::timer::Timer::immediate(), {
                 let refresh_duration = mode_refresh_rate(mode);
                 move |mut instant, (), client| {
-                    let state = client.0.borrow_mut();
-                    state
-                        .xcb_connection
-                        .send_event(
-                            false,
-                            x_window,
-                            xproto::EventMask::EXPOSURE,
-                            xproto::ExposeEvent {
-                                response_type: xproto::EXPOSE_EVENT,
-                                sequence: 0,
-                                window: x_window,
-                                x: 0,
-                                y: 0,
-                                width: 0,
-                                height: 0,
-                                count: 1,
-                            },
-                        )
-                        .unwrap();
-                    let _ = state.xcb_connection.flush().unwrap();
+                    let xcb_connection = {
+                        let state = client.0.borrow_mut();
+                        let xcb_connection = state.xcb_connection.clone();
+                        if let Some(window) = state.windows.get(&x_window) {
+                            let window = window.window.clone();
+                            drop(state);
+                            window.refresh();
+                        }
+                        xcb_connection
+                    };
+                    client.process_x11_events(&xcb_connection).log_err();
+
                     // Take into account that some frames have been skipped
                     let now = Instant::now();
                     while instant < now {

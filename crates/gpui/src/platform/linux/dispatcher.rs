@@ -12,7 +12,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use std::{thread, time::Duration};
 use util::ResultExt;
 
 struct TimerAfter {

@@ -25,8 +25,8 @@ use x11rb::{
 };
 
 use std::{
-    cell::RefCell, ffi::c_void, mem::size_of, num::NonZeroU32, num::NonZeroU32, ops::Div, ops::Div,
-    ptr::NonNull, ptr::NonNull, rc::Rc, rc::Rc, sync::Arc, time::Duration,
+    cell::RefCell, ffi::c_void, mem::size_of, num::NonZeroU32, ops::Div, ptr::NonNull, rc::Rc,
+    sync::Arc, time::Duration,
 };
 
 use super::{X11Display, XINPUT_MASTER_DEVICE};
