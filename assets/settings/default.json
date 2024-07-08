@@ -1,19 +1,15 @@
 {
   // The name of the Zed theme to use for the UI.
   //
-  // The theme can also be set to follow system preferences:
-  //
-  // "theme": {
-  //   "mode": "system",
-  //   "light": "One Light",
-  //   "dark": "One Dark"
-  // }
-  //
-  // Where `mode` is one of:
+  // `mode` is one of:
   // - "system": Use the theme that corresponds to the system's appearance
   // - "light": Use the theme indicated by the "light" field
   // - "dark": Use the theme indicated by the "dark" field
-  "theme": "One Dark",
+  "theme": {
+    "mode": "system",
+    "light": "One Light",
+    "dark": "One Dark"
+  },
   // The name of a base set of key bindings to use.
   // This setting can take four values, each named after another
   // text editor:
@@ -29,7 +25,7 @@
     "inline_completion_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
-  "buffer_font_family": "Zed Mono",
+  "buffer_font_family": "Zed Plex Mono",
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
@@ -42,16 +38,17 @@
   // Set the buffer's line height.
   // May take 3 values:
   //  1. Use a line height that's comfortable for reading (1.618)
-  //         "line_height": "comfortable"
+  //         "buffer_line_height": "comfortable"
   //  2. Use a standard line height, (1.3)
-  //         "line_height": "standard",
+  //         "buffer_line_height": "standard",
   //  3. Use a custom line height
-  //         "line_height": {
+  //         "buffer_line_height": {
   //           "custom": 2
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  "ui_font_family": ".SystemUIFont",
+  // (On macOS) You can set this to ".SysmtemUIFont" to use the system font
+  "ui_font_family": "Zed Plex Sans",
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
@@ -119,10 +116,10 @@
   // The debounce delay before re-querying the language server for completion
   // documentation when not included in original completion list.
   "completion_documentation_secondary_query_debounce": 300,
-  // Whether to show wrap guides in the editor. Setting this to true will
-  // show a guide at the 'preferred_line_length' value if 'soft_wrap' is set to
-  // 'preferred_line_length', and will show any additional guides as specified
-  // by the 'wrap_guides' setting.
+  // Whether to show wrap guides (vertical rulers) in the editor.
+  // Setting this to true will show a guide at the 'preferred_line_length' value
+  // if softwrap is set to 'preferred_line_length', and will show any
+  // additional guides as specified by the 'wrap_guides' setting.
   "show_wrap_guides": true,
   // Character counts at which to show wrap guides in the editor.
   "wrap_guides": [],
@@ -131,7 +128,14 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
+  "private_files": [
+    "**/.env*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.cert",
+    "**/*.crt",
+    "**/secrets.yml"
+  ],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -139,26 +143,30 @@
   // opening parenthesis, bracket, brace, single or double quote characters.
   // For example, when you type (, Zed will add a closing ) at the correct position.
   "use_autoclose": true,
+  // Whether to automatically surround selected text when typing opening parenthesis,
+  // bracket, brace, single or double quote characters.
+  // For example, when you select text and type (, Zed will surround the text with ().
+  "use_auto_surround": true,
   // Controls how the editor handles the autoclosed characters.
   // When set to `false`(default), skipping over and auto-removing of the closing characters
   // happen only for auto-inserted characters.
   // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
   // no matter how they were inserted.
   "always_treat_brackets_as_autoclosed": false,
-  // Controls whether copilot provides suggestion immediately
-  // or waits for a `copilot::Toggle`
-  "show_copilot_suggestions": true,
+  // Controls whether inline completions are shown immediately (true)
+  // or manually by triggering `editor::ShowInlineCompletion` (false).
+  "show_inline_completions": true,
   // Whether to show tabs and spaces in the editor.
   // This setting can take three values:
   //
   // 1. Draw tabs and spaces only for the selected text (default):
   //    "selection"
   // 2. Do not draw any tabs or spaces:
-  //   "none"
+  //    "none"
   // 3. Draw all invisible symbols:
-  //   "all"
+  //    "all"
   // 4. Draw whitespaces at boundaries only:
-  //   "boundaries"
+  //    "boundary"
   // For a whitespace to be on a boundary, any of the following conditions need to be met:
   // - It is a tab
   // - It is adjacent to an edge (start or end)
@@ -176,7 +184,9 @@
     // Whether to show breadcrumbs.
     "breadcrumbs": true,
     // Whether to show quick action buttons.
-    "quick_actions": true
+    "quick_actions": true,
+    // Whether to show the Selections menu in the editor toolbar
+    "selections_menu": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -218,6 +228,8 @@
     "line_numbers": true,
     // Whether to show code action buttons in the gutter.
     "code_actions": true,
+    // Whether to show runnables buttons in the gutter.
+    "runnables": true,
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
@@ -226,6 +238,8 @@
     "enabled": true,
     /// The width of the indent guides in pixels, between 1 and 10.
     "line_width": 1,
+    /// The width of the active indent guide in pixels, between 1 and 10.
+    "active_line_width": 1,
     /// Determines how indent guides are colored.
     /// This setting can take the following three values:
     ///
@@ -240,6 +254,8 @@
     /// 2. "indent_aware"
     "background_coloring": "disabled"
   },
+  // Whether the editor will scroll beyond the last line.
+  "scroll_beyond_last_line": "one_page",
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
   // Scroll sensitivity multiplier. This multiplier is applied
@@ -291,9 +307,39 @@
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
     "auto_reveal_entries": true,
+    // Whether to fold directories automatically and show compact folders
+    // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
+    "auto_fold_dirs": false,
+    /// Scrollbar-related settings
+    "scrollbar": {
+      /// When to show the scrollbar in the project panel.
+      ///
+      /// Default: always
+      "show": "always"
+    }
+  },
+  "outline_panel": {
+    // Whether to show the outline panel button in the status bar
+    "button": true,
+    // Default width of the outline panel.
+    "default_width": 300,
+    // Where to dock the outline panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Whether to show file icons in the outline panel.
+    "file_icons": true,
+    // Whether to show folder icons or chevrons for directories in the outline panel.
+    "folder_icons": true,
+    // Whether to show the git status in the outline panel.
+    "git_status": true,
+    // Amount of indentation for nested items.
+    "indent_size": 20,
+    // Whether to reveal it in the outline panel automatically,
+    // when a corresponding outline entry becomes active.
+    // Gitignored entries are never auto revealed.
+    "auto_reveal_entries": true,
     /// Whether to fold directories automatically
     /// when a directory has only one directory inside.
-    "auto_fold_dirs": false
+    "auto_fold_dirs": true
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -354,6 +400,9 @@
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
+  // Whether to perform linked edits of associated ranges, if the language server supports it.
+  // For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
+  "linked_edits": true,
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
@@ -425,16 +474,16 @@
   //    or falling back to formatting via language server:
   //     "formatter": "auto"
   "formatter": "auto",
-  // How to soft-wrap long lines of text. This setting can take
-  // three values:
+  // How to soft-wrap long lines of text.
+  // Possible values:
   //
   // 1. Do not soft wrap.
   //      "soft_wrap": "none",
   // 2. Prefer a single line generally, unless an overly long line is encountered.
   //      "soft_wrap": "prefer_line",
-  // 3. Soft wrap lines that overflow the editor:
+  // 3. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
-  // 4. Soft wrap lines at the preferred line length
+  // 4. Soft wrap lines at the preferred line length.
   //      "soft_wrap": "preferred_line_length",
   "soft_wrap": "prefer_line",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
@@ -490,9 +539,8 @@
       // "delay_ms": 600
     }
   },
-  "copilot": {
-    // The set of glob patterns for which copilot should be disabled
-    // in any matching file.
+  "inline_completions": {
+    // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
   },
   // Settings specific to journaling
@@ -618,13 +666,17 @@
     // "font_size": 15,
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": "Zed Mono",
+    // "font_family": "Zed Plex Mono",
     // Sets the maximum number of lines in the terminal's scrollback buffer.
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
     // "max_scroll_history_lines": 10000,
   },
   "code_actions_on_format": {},
+  /// Settings related to running tasks.
+  "tasks": {
+    "variables": {}
+  },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
   // use those languages.
@@ -637,7 +689,10 @@
   //   "TOML": ["Embargo.lock"]
   // }
   //
-  "file_types": {},
+  "file_types": {
+    "JSON": ["flake.lock"],
+    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json"]
+  },
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings
@@ -697,12 +752,17 @@
       }
     },
     "JavaScript": {
-      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
     },
     "JSON": {
+      "prettier": {
+        "allowed": true
+      }
+    },
+    "JSONC": {
       "prettier": {
         "allowed": true
       }
@@ -716,7 +776,8 @@
     "PHP": {
       "prettier": {
         "allowed": true,
-        "plugins": ["@prettier/plugin-php"]
+        "plugins": ["@prettier/plugin-php"],
+        "parser": "php"
       }
     },
     "Ruby": {
@@ -740,7 +801,7 @@
       }
     },
     "TSX": {
-      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }
@@ -751,7 +812,7 @@
       }
     },
     "TypeScript": {
-      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
       }

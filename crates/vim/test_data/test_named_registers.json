@@ -1,0 +1,28 @@
+{"Put":{"state":"The quick brown\nfox jˇumps over\nthe lazy dog"}}
+{"Key":"\""}
+{"Key":"a"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"The quick brown\nfox ˇover\nthe lazy dog","mode":"Normal"}}
+{"ReadRegister":{"name":"a","value":"jumps "}}
+{"Key":"\""}
+{"Key":"shift-a"}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"w"}
+{"Get":{"state":"The quick brown\nfoxˇ \nthe lazy dog","mode":"Normal"}}
+{"ReadRegister":{"name":"a","value":"jumps over"}}
+{"Get":{"state":"The quick brown\nfoxˇ \nthe lazy dog","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"jumps over"}}
+{"Key":"\""}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"The quick brown\nfox jumps oveˇr\nthe lazy dog","mode":"Normal"}}
+{"Key":"\""}
+{"Key":"a"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"The quick brown\nfox jumpˇs\nthe lazy dog","mode":"Normal"}}
+{"ReadRegister":{"name":"a","value":" over"}}

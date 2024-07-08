@@ -16,7 +16,8 @@ use language::{
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
-    CompletionListItemDefaultsEditRange, DocumentHighlightKind, LanguageServer, LanguageServerId,
+    CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
+    DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
     OneOf, ServerCapabilities,
 };
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
@@ -127,6 +128,7 @@ pub(crate) struct GetHover {
 
 pub(crate) struct GetCompletions {
     pub position: PointUtf16,
+    pub context: CompletionContext,
 }
 
 #[derive(Clone)]
@@ -156,6 +158,10 @@ impl From<lsp::FormattingOptions> for FormattingOptions {
             tab_size: value.tab_size,
         }
     }
+}
+
+pub(crate) struct LinkedEditingRange {
+    pub position: Anchor,
 }
 
 #[async_trait(?Send)]
@@ -1460,7 +1466,7 @@ impl LspCommand for GetCompletions {
                 lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path).unwrap()),
                 point_to_lsp(self.position),
             ),
-            context: Default::default(),
+            context: Some(self.context.clone()),
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         }
@@ -1645,7 +1651,13 @@ impl LspCommand for GetCompletions {
                 })
             })
             .ok_or_else(|| anyhow!("invalid position"))??;
-        Ok(Self { position })
+        Ok(Self {
+            position,
+            context: CompletionContext {
+                trigger_kind: CompletionTriggerKind::INVOKED,
+                trigger_character: None,
+            },
+        })
     }
 
     fn response_to_proto(
@@ -2556,6 +2568,153 @@ impl LspCommand for InlayHints {
     }
 
     fn buffer_id_from_proto(message: &proto::InlayHints) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for LinkedEditingRange {
+    type Response = Vec<Range<Anchor>>;
+    type LspRequest = lsp::request::LinkedEditingRange;
+    type ProtoRequest = proto::LinkedEditingRange;
+
+    fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
+        let Some(linked_editing_options) = &server_capabilities.linked_editing_range_provider
+        else {
+            return false;
+        };
+        if let LinkedEditingRangeServerCapabilities::Simple(false) = linked_editing_options {
+            return false;
+        }
+        return true;
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        buffer: &Buffer,
+        _server: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::LinkedEditingRangeParams {
+        let position = self.position.to_point_utf16(&buffer.snapshot());
+        lsp::LinkedEditingRangeParams {
+            text_document_position_params: lsp::TextDocumentPositionParams::new(
+                lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path).unwrap()),
+                point_to_lsp(position),
+            ),
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<lsp::LinkedEditingRanges>,
+        _project: Model<Project>,
+        buffer: Model<Buffer>,
+        _server_id: LanguageServerId,
+        cx: AsyncAppContext,
+    ) -> Result<Vec<Range<Anchor>>> {
+        if let Some(lsp::LinkedEditingRanges { mut ranges, .. }) = message {
+            ranges.sort_by_key(|range| range.start);
+            let ranges = buffer.read_with(&cx, |buffer, _| {
+                ranges
+                    .into_iter()
+                    .map(|range| {
+                        let start =
+                            buffer.clip_point_utf16(point_from_lsp(range.start), Bias::Left);
+                        let end = buffer.clip_point_utf16(point_from_lsp(range.end), Bias::Left);
+                        buffer.anchor_before(start)..buffer.anchor_after(end)
+                    })
+                    .collect()
+            });
+
+            ranges
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LinkedEditingRange {
+        proto::LinkedEditingRange {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+            position: Some(serialize_anchor(&self.position)),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::LinkedEditingRange,
+        _project: Model<Project>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        let position = message
+            .position
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        let position = deserialize_anchor(position).ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| buffer.wait_for_anchors([position]))?
+            .await?;
+        Ok(Self { position })
+    }
+
+    fn response_to_proto(
+        response: Vec<Range<Anchor>>,
+        _: &mut Project,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut AppContext,
+    ) -> proto::LinkedEditingRangeResponse {
+        proto::LinkedEditingRangeResponse {
+            items: response
+                .into_iter()
+                .map(|range| proto::AnchorRange {
+                    start: Some(serialize_anchor(&range.start)),
+                    end: Some(serialize_anchor(&range.end)),
+                })
+                .collect(),
+            version: serialize_version(buffer_version),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::LinkedEditingRangeResponse,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Vec<Range<Anchor>>> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        let items: Vec<Range<Anchor>> = message
+            .items
+            .into_iter()
+            .filter_map(|range| {
+                let start = deserialize_anchor(range.start?)?;
+                let end = deserialize_anchor(range.end?)?;
+                Some(start..end)
+            })
+            .collect();
+        for range in &items {
+            buffer
+                .update(&mut cx, |buffer, _| {
+                    buffer.wait_for_anchors([range.start, range.end])
+                })?
+                .await?;
+        }
+        Ok(items)
+    }
+
+    fn buffer_id_from_proto(message: &proto::LinkedEditingRange) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

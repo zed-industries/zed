@@ -268,9 +268,11 @@ mod tests {
     #[test]
     fn test_format_distance() {
         let date = DateTimeType::Naive(
+            #[allow(deprecated)]
             NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date"),
         );
         let base_date = DateTimeType::Naive(
+            #[allow(deprecated)]
             NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date"),
         );
 
@@ -283,9 +285,11 @@ mod tests {
     #[test]
     fn test_format_distance_with_suffix() {
         let date = DateTimeType::Naive(
+            #[allow(deprecated)]
             NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date"),
         );
         let base_date = DateTimeType::Naive(
+            #[allow(deprecated)]
             NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date"),
         );
 

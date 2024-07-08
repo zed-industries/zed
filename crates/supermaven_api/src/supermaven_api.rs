@@ -2,12 +2,12 @@ use anyhow::{anyhow, Context, Result};
 use futures::io::BufReader;
 use futures::{AsyncReadExt, Future};
 use http::{AsyncBody, HttpClient, Request as HttpRequest};
+use paths::supermaven_dir;
 use serde::{Deserialize, Serialize};
 use smol::fs::{self, File};
 use smol::stream::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use util::paths::SUPERMAVEN_DIR;
 
 #[derive(Serialize)]
 pub struct GetExternalUserRequest {
@@ -212,7 +212,7 @@ pub async fn latest_release(
 }
 
 pub fn version_path(version: u64) -> PathBuf {
-    SUPERMAVEN_DIR.join(format!("sm-agent-{}", version))
+    supermaven_dir().join(format!("sm-agent-{}", version))
 }
 
 pub async fn has_version(version_path: &Path) -> bool {
@@ -225,12 +225,12 @@ pub fn get_supermaven_agent_path(
     client: Arc<dyn HttpClient>,
 ) -> impl Future<Output = Result<PathBuf>> {
     async move {
-        fs::create_dir_all(&*SUPERMAVEN_DIR)
+        fs::create_dir_all(supermaven_dir())
             .await
             .with_context(|| {
                 format!(
                     "Could not create Supermaven Agent Directory at {:?}",
-                    &*SUPERMAVEN_DIR
+                    supermaven_dir()
                 )
             })?;
 
@@ -278,7 +278,7 @@ pub fn get_supermaven_agent_path(
             .await?;
         }
 
-        let mut old_binary_paths = fs::read_dir(&*SUPERMAVEN_DIR).await?;
+        let mut old_binary_paths = fs::read_dir(supermaven_dir()).await?;
         while let Some(old_binary_path) = old_binary_paths.next().await {
             let old_binary_path = old_binary_path?;
             if old_binary_path.path() != binary_path {

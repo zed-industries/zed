@@ -1,97 +1,16 @@
+use std::sync::OnceLock;
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
 };
 
-use globset::{Glob, GlobMatcher};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 
-lazy_static::lazy_static! {
-    pub static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");
-    pub static ref CONFIG_DIR: PathBuf = if cfg!(target_os = "windows") {
-        dirs::config_dir()
-            .expect("failed to determine RoamingAppData directory")
-            .join("Zed")
-    } else if cfg!(target_os = "linux") {
-        if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
-           flatpak_xdg_config.into()
-        } else {
-            dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
-        }.join("zed")
-    } else {
-        HOME.join(".config").join("zed")
-    };
-    pub static ref CONTEXTS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        CONFIG_DIR.join("conversations")
-    } else {
-        SUPPORT_DIR.join("conversations")
-    };
-    pub static ref PROMPTS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        CONFIG_DIR.join("prompts")
-    } else {
-        SUPPORT_DIR.join("prompts")
-    };
-    pub static ref EMBEDDINGS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        CONFIG_DIR.join("embeddings")
-    } else {
-        SUPPORT_DIR.join("embeddings")
-    };
-    pub static ref THEMES_DIR: PathBuf = CONFIG_DIR.join("themes");
-
-    pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os = "macos") {
-        HOME.join("Library/Application Support/Zed")
-    } else if cfg!(target_os = "linux") {
-        if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
-            flatpak_xdg_data.into()
-        } else {
-            dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
-        }.join("zed")
-    } else if cfg!(target_os = "windows") {
-        dirs::data_local_dir()
-            .expect("failed to determine LocalAppData directory")
-            .join("Zed")
-    } else {
-        CONFIG_DIR.clone()
-    };
-    pub static ref LOGS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        HOME.join("Library/Logs/Zed")
-    } else {
-        SUPPORT_DIR.join("logs")
-    };
-    pub static ref EXTENSIONS_DIR: PathBuf = SUPPORT_DIR.join("extensions");
-    pub static ref LANGUAGES_DIR: PathBuf = SUPPORT_DIR.join("languages");
-    pub static ref COPILOT_DIR: PathBuf = SUPPORT_DIR.join("copilot");
-    pub static ref SUPERMAVEN_DIR: PathBuf = SUPPORT_DIR.join("supermaven");
-    pub static ref DEFAULT_PRETTIER_DIR: PathBuf = SUPPORT_DIR.join("prettier");
-    pub static ref DB_DIR: PathBuf = SUPPORT_DIR.join("db");
-    pub static ref CRASHES_DIR: Option<PathBuf> = cfg!(target_os = "macos")
-        .then_some(HOME.join("Library/Logs/DiagnosticReports"));
-    pub static ref CRASHES_RETIRED_DIR: Option<PathBuf> = CRASHES_DIR
-        .as_ref()
-        .map(|dir| dir.join("Retired"));
-
-    pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
-    pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
-    pub static ref TASKS: PathBuf = CONFIG_DIR.join("tasks.json");
-    pub static ref LAST_USERNAME: PathBuf = CONFIG_DIR.join("last-username.txt");
-    pub static ref LOG: PathBuf = LOGS_DIR.join("Zed.log");
-    pub static ref OLD_LOG: PathBuf = LOGS_DIR.join("Zed.log.old");
-    pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
-    pub static ref LOCAL_TASKS_RELATIVE_PATH: &'static Path = Path::new(".zed/tasks.json");
-    pub static ref LOCAL_VSCODE_TASKS_RELATIVE_PATH: &'static Path = Path::new(".vscode/tasks.json");
-    pub static ref TEMP_DIR: PathBuf = if cfg!(target_os = "windows") {
-        dirs::cache_dir()
-            .expect("failed to determine LocalAppData directory")
-            .join("Zed")
-    } else if cfg!(target_os = "linux") {
-        if let Ok(flatpak_xdg_cache) = std::env::var("FLATPAK_XDG_CACHE_HOME") {
-            flatpak_xdg_cache.into()
-        } else {
-            dirs::cache_dir().expect("failed to determine XDG_CACHE_HOME directory")
-        }.join("zed")
-    } else {
-        HOME.join(".cache").join("zed")
-    };
+/// Returns the path to the user's home directory.
+pub fn home_dir() -> &'static PathBuf {
+    static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
+    HOME_DIR.get_or_init(|| dirs::home_dir().expect("failed to determine home directory"))
 }
 
 pub trait PathExt {
@@ -134,7 +53,7 @@ impl<T: AsRef<Path>> PathExt for T {
     ///   Linux or macOS, the original path is returned unchanged.
     fn compact(&self) -> PathBuf {
         if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            match self.as_ref().strip_prefix(HOME.as_path()) {
+            match self.as_ref().strip_prefix(home_dir().as_path()) {
                 Ok(relative_path) => {
                     let mut shortened_path = PathBuf::new();
                     shortened_path.push("~");
@@ -188,13 +107,17 @@ impl<P> PathLikeWithPosition<P> {
     /// Parses a string that possibly has `:row:column` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If any of the row/column component parsing fails, the whole string is then parsed as a path like.
+    /// If on Windows, `s` will replace `/` with `\` for compatibility.
     pub fn parse_str<E>(
         s: &str,
-        parse_path_like_str: impl Fn(&str) -> Result<P, E>,
+        parse_path_like_str: impl Fn(&str, &str) -> Result<P, E>,
     ) -> Result<Self, E> {
+        #[cfg(target_os = "windows")]
+        let s = &s.replace('/', "\\");
+
         let fallback = |fallback_str| {
             Ok(Self {
-                path_like: parse_path_like_str(fallback_str)?,
+                path_like: parse_path_like_str(s, fallback_str)?,
                 row: None,
                 column: None,
             })
@@ -206,7 +129,7 @@ impl<P> PathLikeWithPosition<P> {
         {
             let is_absolute = trimmed.starts_with(r"\\?\");
             if is_absolute {
-                return Self::parse_absolute_path(trimmed, parse_path_like_str);
+                return Self::parse_absolute_path(trimmed, |p| parse_path_like_str(s, p));
             }
         }
 
@@ -231,7 +154,7 @@ impl<P> PathLikeWithPosition<P> {
                         Ok(row) => {
                             if maybe_col_str.is_empty() {
                                 Ok(Self {
-                                    path_like: parse_path_like_str(path_like_str)?,
+                                    path_like: parse_path_like_str(s, path_like_str)?,
                                     row: Some(row),
                                     column: None,
                                 })
@@ -240,12 +163,12 @@ impl<P> PathLikeWithPosition<P> {
                                     maybe_col_str.split_once(':').unwrap_or((maybe_col_str, ""));
                                 match maybe_col_str.parse::<u32>() {
                                     Ok(col) => Ok(Self {
-                                        path_like: parse_path_like_str(path_like_str)?,
+                                        path_like: parse_path_like_str(s, path_like_str)?,
                                         row: Some(row),
                                         column: Some(col),
                                     }),
                                     Err(_) => Ok(Self {
-                                        path_like: parse_path_like_str(path_like_str)?,
+                                        path_like: parse_path_like_str(s, path_like_str)?,
                                         row: Some(row),
                                         column: None,
                                     }),
@@ -253,7 +176,7 @@ impl<P> PathLikeWithPosition<P> {
                             }
                         }
                         Err(_) => Ok(Self {
-                            path_like: parse_path_like_str(path_like_str)?,
+                            path_like: parse_path_like_str(s, path_like_str)?,
                             row: None,
                             column: None,
                         }),
@@ -341,43 +264,51 @@ impl<P> PathLikeWithPosition<P> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PathMatcher {
-    source: String,
-    glob: GlobMatcher,
+    sources: Vec<String>,
+    glob: GlobSet,
 }
 
-impl std::fmt::Display for PathMatcher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.source.fmt(f)
-    }
-}
+// impl std::fmt::Display for PathMatcher {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         self.sources.fmt(f)
+//     }
+// }
 
 impl PartialEq for PathMatcher {
     fn eq(&self, other: &Self) -> bool {
-        self.source.eq(&other.source)
+        self.sources.eq(&other.sources)
     }
 }
 
 impl Eq for PathMatcher {}
 
 impl PathMatcher {
-    pub fn new(source: &str) -> Result<Self, globset::Error> {
-        Ok(PathMatcher {
-            glob: Glob::new(source)?.compile_matcher(),
-            source: String::from(source),
-        })
+    pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
+        let globs = globs
+            .into_iter()
+            .map(|glob| Glob::new(&glob))
+            .collect::<Result<Vec<_>, _>>()?;
+        let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
+        let mut glob_builder = GlobSetBuilder::new();
+        for single_glob in globs {
+            glob_builder.add(single_glob);
+        }
+        let glob = glob_builder.build()?;
+        Ok(PathMatcher { glob, sources })
     }
 
-    pub fn source(&self) -> &str {
-        &self.source
+    pub fn sources(&self) -> &[String] {
+        &self.sources
     }
 
     pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
         let other_path = other.as_ref();
-        other_path.starts_with(Path::new(&self.source))
-            || other_path.ends_with(Path::new(&self.source))
-            || self.glob.is_match(other_path)
+        self.sources.iter().any(|source| {
+            let as_bytes = other_path.as_os_str().as_encoded_bytes();
+            as_bytes.starts_with(source.as_bytes()) || as_bytes.ends_with(source.as_bytes())
+        }) || self.glob.is_match(other_path)
             || self.check_with_end_separator(other_path)
     }
 
@@ -396,11 +327,13 @@ impl PathMatcher {
 mod tests {
     use super::*;
 
-    type TestPath = PathLikeWithPosition<String>;
+    type TestPath = PathLikeWithPosition<(String, String)>;
 
     fn parse_str(s: &str) -> TestPath {
-        TestPath::parse_str(s, |s| Ok::<_, std::convert::Infallible>(s.to_string()))
-            .expect("infallible")
+        TestPath::parse_str(s, |normalized, s| {
+            Ok::<_, std::convert::Infallible>((normalized.to_string(), s.to_string()))
+        })
+        .expect("infallible")
     }
 
     #[test]
@@ -409,7 +342,7 @@ mod tests {
             (
                 "test_file.rs",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs".to_string(), "test_file.rs".to_string()),
                     row: None,
                     column: None,
                 },
@@ -417,7 +350,7 @@ mod tests {
             (
                 "test_file.rs:1",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:1".to_string(), "test_file.rs".to_string()),
                     row: Some(1),
                     column: None,
                 },
@@ -425,7 +358,7 @@ mod tests {
             (
                 "test_file.rs:1:2",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:1:2".to_string(), "test_file.rs".to_string()),
                     row: Some(1),
                     column: Some(2),
                 },
@@ -457,7 +390,7 @@ mod tests {
             assert_eq!(
                 actual,
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: (input.to_string(), "test_file.rs".to_string()),
                     row,
                     column,
                 },
@@ -474,7 +407,7 @@ mod tests {
             (
                 "test_file.rs:",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:".to_string(), "test_file.rs".to_string()),
                     row: None,
                     column: None,
                 },
@@ -482,7 +415,7 @@ mod tests {
             (
                 "test_file.rs:1:",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:1:".to_string(), "test_file.rs".to_string()),
                     row: Some(1),
                     column: None,
                 },
@@ -490,7 +423,10 @@ mod tests {
             (
                 "crates/file_finder/src/file_finder.rs:1902:13:",
                 PathLikeWithPosition {
-                    path_like: "crates/file_finder/src/file_finder.rs".to_string(),
+                    path_like: (
+                        "crates/file_finder/src/file_finder.rs:1902:13:".to_string(),
+                        "crates/file_finder/src/file_finder.rs".to_string(),
+                    ),
                     row: Some(1902),
                     column: Some(13),
                 },
@@ -502,7 +438,7 @@ mod tests {
             (
                 "test_file.rs:",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:".to_string(), "test_file.rs".to_string()),
                     row: None,
                     column: None,
                 },
@@ -510,7 +446,7 @@ mod tests {
             (
                 "test_file.rs:1:",
                 PathLikeWithPosition {
-                    path_like: "test_file.rs".to_string(),
+                    path_like: ("test_file.rs:1:".to_string(), "test_file.rs".to_string()),
                     row: Some(1),
                     column: None,
                 },
@@ -518,7 +454,10 @@ mod tests {
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:",
                 PathLikeWithPosition {
-                    path_like: "C:\\Users\\someone\\test_file.rs".to_string(),
+                    path_like: (
+                        "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:".to_string(),
+                        "C:\\Users\\someone\\test_file.rs".to_string(),
+                    ),
                     row: Some(1902),
                     column: Some(13),
                 },
@@ -526,7 +465,10 @@ mod tests {
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:",
                 PathLikeWithPosition {
-                    path_like: "C:\\Users\\someone\\test_file.rs".to_string(),
+                    path_like: (
+                        "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:".to_string(),
+                        "C:\\Users\\someone\\test_file.rs".to_string(),
+                    ),
                     row: Some(1902),
                     column: Some(13),
                 },
@@ -534,8 +476,33 @@ mod tests {
             (
                 "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:",
                 PathLikeWithPosition {
-                    path_like: "C:\\Users\\someone\\test_file.rs".to_string(),
+                    path_like: (
+                        "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:".to_string(),
+                        "C:\\Users\\someone\\test_file.rs".to_string(),
+                    ),
                     row: Some(1902),
+                    column: None,
+                },
+            ),
+            (
+                "crates/utils/paths.rs",
+                PathLikeWithPosition {
+                    path_like: (
+                        "crates\\utils\\paths.rs".to_string(),
+                        "crates\\utils\\paths.rs".to_string(),
+                    ),
+                    row: None,
+                    column: None,
+                },
+            ),
+            (
+                "crates/utils/paths.rs:101",
+                PathLikeWithPosition {
+                    path_like: (
+                        "crates\\utils\\paths.rs:101".to_string(),
+                        "crates\\utils\\paths.rs".to_string(),
+                    ),
+                    row: Some(101),
                     column: None,
                 },
             ),
@@ -553,7 +520,7 @@ mod tests {
     #[test]
     fn test_path_compact() {
         let path: PathBuf = [
-            HOME.to_string_lossy().to_string(),
+            home_dir().to_string_lossy().to_string(),
             "some_file.txt".to_string(),
         ]
         .iter()
@@ -618,20 +585,20 @@ mod tests {
     #[test]
     fn edge_of_glob() {
         let path = Path::new("/work/node_modules");
-        let path_matcher = PathMatcher::new("**/node_modules/**").unwrap();
+        let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
         assert!(
             path_matcher.is_match(path),
-            "Path matcher {path_matcher} should match {path:?}"
+            "Path matcher should match {path:?}"
         );
     }
 
     #[test]
     fn project_search() {
         let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
-        let path_matcher = PathMatcher::new("**/node_modules/**").unwrap();
+        let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
         assert!(
             path_matcher.is_match(path),
-            "Path matcher {path_matcher} should match {path:?}"
+            "Path matcher should match {path:?}"
         );
     }
 }

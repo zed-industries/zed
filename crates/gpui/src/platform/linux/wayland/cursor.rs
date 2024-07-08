@@ -1,14 +1,18 @@
 use crate::Globals;
 use util::ResultExt;
 
-use wayland_client::protocol::wl_pointer::WlPointer;
 use wayland_client::protocol::wl_surface::WlSurface;
+use wayland_client::protocol::{wl_pointer::WlPointer, wl_shm::WlShm};
 use wayland_client::Connection;
 use wayland_cursor::{CursorImageBuffer, CursorTheme};
 
 pub(crate) struct Cursor {
     theme: Option<CursorTheme>,
+    theme_name: Option<String>,
     surface: WlSurface,
+    size: u32,
+    shm: WlShm,
+    connection: Connection,
 }
 
 impl Drop for Cursor {
@@ -22,8 +26,47 @@ impl Cursor {
     pub fn new(connection: &Connection, globals: &Globals, size: u32) -> Self {
         Self {
             theme: CursorTheme::load(&connection, globals.shm.clone(), size).log_err(),
+            theme_name: None,
             surface: globals.compositor.create_surface(&globals.qh, ()),
+            shm: globals.shm.clone(),
+            connection: connection.clone(),
+            size,
         }
+    }
+
+    pub fn set_theme(&mut self, theme_name: &str, size: Option<u32>) {
+        if let Some(size) = size {
+            self.size = size;
+        }
+        if let Some(theme) =
+            CursorTheme::load_from_name(&self.connection, self.shm.clone(), theme_name, self.size)
+                .log_err()
+        {
+            self.theme = Some(theme);
+            self.theme_name = Some(theme_name.to_string());
+        } else if let Some(theme) =
+            CursorTheme::load(&self.connection, self.shm.clone(), self.size).log_err()
+        {
+            self.theme = Some(theme);
+            self.theme_name = None;
+        }
+    }
+
+    pub fn set_size(&mut self, size: u32) {
+        self.size = size;
+        self.theme = self
+            .theme_name
+            .as_ref()
+            .and_then(|name| {
+                CursorTheme::load_from_name(
+                    &self.connection,
+                    self.shm.clone(),
+                    name.as_str(),
+                    self.size,
+                )
+                .log_err()
+            })
+            .or_else(|| CursorTheme::load(&self.connection, self.shm.clone(), self.size).log_err());
     }
 
     pub fn set_icon(&mut self, wl_pointer: &WlPointer, serial_id: u32, mut cursor_icon_name: &str) {

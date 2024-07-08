@@ -11,6 +11,7 @@ workspace = true
 [lib]
 path = "src/gpui_macros.rs"
 proc-macro = true
+doctest = false
 
 [dependencies]
 proc-macro2 = "1.0.66"

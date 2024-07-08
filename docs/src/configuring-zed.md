@@ -2,11 +2,11 @@
 
 ## Folder-specific settings
 
-Folder-specific settings are used to override Zed's global settings for files within a specific directory in the project panel. To get started, create a `.zed` subdirectory and add a `settings.json` within it. It should be noted that folder-specific settings don't need to live only a project's root, but can be defined at multiple levels in the project hierarchy. In setups like this, Zed will find the configuration nearest to the file you are working in and apply those settings to it. In most cases, this level of flexibility won't be needed and a single configuration for all files in a project is all that is required; the `Zed > Settings > Open Local Settings` menu action is built for this case. Running this action will look for a `.zed/settings.json` file at the root of the first top-level directory in your project panel. If it does not exist, it will create it.
+Folder-specific settings are used to override Zed's global settings for files within a specific directory in the project panel. To get started, create a `.zed` subdirectory and add a `settings.json` within it. It should be noted that folder-specific settings don't need to live only at a project's root, but can be defined at multiple levels in the project hierarchy. In setups like this, Zed will find the configuration nearest to the file you are working in and apply those settings to it. In most cases, this level of flexibility won't be needed and a single configuration for all files in a project is all that is required; the `Zed > Settings > Open Local Settings` menu action is built for this case. Running this action will look for a `.zed/settings.json` file at the root of the first top-level directory in your project panel. If it does not exist, it will create it.
 
 The following global settings can be overridden with a folder-specific configuration:
 
-- `copilot`
+- `inline_completions`
 - `enable_language_server`
 - `ensure_final_newline_on_save`
 - `format_on_save`
@@ -17,7 +17,7 @@ The following global settings can be overridden with a folder-specific configura
 - `remove_trailing_whitespace_on_save`
 - `soft_wrap`
 - `tab_size`
-- `show_copilot_suggestions`
+- `show_inline_completions`
 - `show_whitespaces`
 
 _See the Global settings section for details about these settings_
@@ -46,7 +46,7 @@ Here are all the currently available settings.
 
 **Options**
 
-1. To disable autosave, set it to `off`
+1. To disable autosave, set it to `off`:
 
 ```json
 {
@@ -96,7 +96,7 @@ Here are all the currently available settings.
 
 - Description: The name of a font to use for rendering text in the editor.
 - Setting: `buffer_font_family`
-- Default: `Zed Mono`
+- Default: `Zed Plex Mono`
 
 **Options**
 
@@ -110,14 +110,23 @@ The name of any font family installed on the user's system
 
 **Options**
 
-Zed supports all OpenType features that can be enabled, disabled or set a value to a font feature for a given buffer or terminal font.
+Zed supports all OpenType features that can be enabled or disabled for a given buffer or terminal font, as well as setting values for font features.
 
-For example, to disable ligatures and set `7` to `cv01` for a given font you can add the following to your settings:
+For example, to disable font ligatures, add the following to your settings:
 
 ```json
 {
   "buffer_font_features": {
-    "calt": false,
+    "calt": false
+  }
+}
+```
+
+You can also set other OpenType features, like setting `cv01` to `7`:
+
+```json
+{
+  "buffer_font_features": {
     "cv01": 7
   }
 }
@@ -132,6 +141,16 @@ For example, to disable ligatures and set `7` to `cv01` for a given font you can
 **Options**
 
 `integer` values
+
+## Buffer Font Weight
+
+- Description: The default font weight for text in the editor.
+- Setting: `buffer_font_weight`
+- Default: `400`
+
+**Options**
+
+`integer` values between `100` and `900`
 
 ## Confirm Quit
 
@@ -161,14 +180,14 @@ For example, to disable ligatures and set `7` to `cv01` for a given font you can
 The `left_padding` and `right_padding` options define the relative width of the
 left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
 
-## Copilot
+## Inline Completions
 
-- Description: Copilot-specific settings.
-- Setting: `copilot`
+- Description: Settings for inline completions.
+- Setting: `inline_completions`
 - Default:
 
 ```json
-"copilot": {
+"inline_completions": {
   "disabled_globs": [
     ".env"
   ]
@@ -179,7 +198,7 @@ left and right padding of the central pane from the workspace when the centered 
 
 ### Disabled Globs
 
-- Description: The set of glob patterns for which Copilot should be disabled in any matching file.
+- Description: A list of globs representing files that inline completions should be disabled for.
 - Setting: `disabled_globs`
 - Default: [".env"]
 
@@ -201,19 +220,19 @@ List of `string` values
 "current_line_highlight": "none"
 ```
 
-2. Highlight the gutter area.
+2. Highlight the gutter area:
 
 ```json
 "current_line_highlight": "gutter"
 ```
 
-3. Highlight the editor area.
+3. Highlight the editor area:
 
 ```json
 "current_line_highlight": "line"
 ```
 
-4. Highlight the full line.
+4. Highlight the full line:
 
 ```json
 "current_line_highlight": "all"
@@ -725,6 +744,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
   "indent_guides": {
     "enabled": true,
     "line_width": 1,
+    "active_line_width": 1,
     "coloring": "fixed",
     "background_coloring": "disabled"
   }
@@ -758,7 +778,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 ```
 
 3. Enable indent aware coloring ("rainbow indentation").
-The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+   The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
 
 ```json
 {
@@ -770,7 +790,7 @@ The colors that are used for different indentation levels are defined in the the
 ```
 
 4. Enable indent aware background coloring ("rainbow indentation").
-The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
+   The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
 
 ```json
 {
@@ -959,7 +979,7 @@ The following settings can be overridden for each specific language:
 - `hard_tabs`
 - `preferred_line_length`
 - `remove_trailing_whitespace_on_save`
-- `show_copilot_suggestions`
+- `show_inline_completions`
 - `show_whitespaces`
 - `soft_wrap`
 - `tab_size`
@@ -1082,10 +1102,10 @@ These values take in the same options as the root-level settings with the same n
 
 `integer` values
 
-## Show Copilot Suggestions
+## Show Inline Completions
 
-- Description: Whether or not to show Copilot suggestions as you type or wait for a `copilot::Toggle`.
-- Setting: `show_copilot_suggestions`
+- Description: Whether to show inline completions as you type or manually by triggering `editor::ShowInlineCompletion`.
+- Setting: `show_inline_completions`
 - Default: `true`
 
 **Options**
@@ -1103,18 +1123,30 @@ These values take in the same options as the root-level settings with the same n
 1. `all`
 2. `selection`
 3. `none`
+4. `boundary`
 
 ## Soft Wrap
 
 - Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
 - Setting: `soft_wrap`
-- Default: `none`
+- Default: `prefer_line`
 
 **Options**
 
-1. `editor_width`
-2. `preferred_line_length`
-3. `none`
+1. `none` to stop the soft-wrapping
+2. `prefer_line` to avoid wrapping generally, unless the line is too long
+3. `editor_width` to wrap lines that overflow the editor width
+4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
+
+## Wrap Guides (Vertical Rulers)
+
+- Description: Where to display vertical rulers as wrap-guides. Disable by setting `show_wrap_guides` to `false`.
+- Setting: `wrap_guides`
+- Default: []
+
+**Options**
+
+List of `integer` column numbers
 
 ## Tab Size
 
@@ -1583,7 +1615,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "soft_wrap": "none",
 
   "buffer_font_size": 18,
-  "buffer_font_family": "Zed Mono",
+  "buffer_font_family": "Zed Plex Mono",
 
   "autosave": "on_focus_change",
   "format_on_save": "off",

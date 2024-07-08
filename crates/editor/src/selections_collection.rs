@@ -256,7 +256,10 @@ impl SelectionsCollection {
     }
 
     pub fn first_anchor(&self) -> Selection<Anchor> {
-        self.disjoint[0].clone()
+        self.pending
+            .as_ref()
+            .map(|pending| pending.selection.clone())
+            .unwrap_or_else(|| self.disjoint.first().cloned().unwrap())
     }
 
     pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(

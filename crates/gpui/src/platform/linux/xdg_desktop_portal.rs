@@ -1,18 +1,22 @@
 //! Provides a [calloop] event source from [XDG Desktop Portal] events
 //!
-//! This module uses the [ashpd] crate and handles many async loop
-use std::future::Future;
+//! This module uses the [ashpd] crate
 
+use std::sync::Arc;
+
+use anyhow::anyhow;
 use ashpd::desktop::settings::{ColorScheme, Settings};
 use calloop::channel::{Channel, Sender};
 use calloop::{EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
+use mio::Waker;
 use smol::stream::StreamExt;
-use util::ResultExt;
 
 use crate::{BackgroundExecutor, WindowAppearance};
 
 pub enum Event {
     WindowAppearance(WindowAppearance),
+    CursorTheme(String),
+    CursorSize(u32),
 }
 
 pub struct XDPEventSource {
@@ -20,37 +24,107 @@ pub struct XDPEventSource {
 }
 
 impl XDPEventSource {
-    pub fn new(executor: &BackgroundExecutor) -> Self {
+    pub fn new(executor: &BackgroundExecutor, waker: Option<Arc<Waker>>) -> Self {
         let (sender, channel) = calloop::channel::channel();
 
-        Self::spawn_observer(executor, Self::appearance_observer(sender.clone()));
+        let background = executor.clone();
+
+        executor
+            .spawn(async move {
+                fn send_event<T>(
+                    sender: &Sender<T>,
+                    waker: &Option<Arc<Waker>>,
+                    event: T,
+                ) -> Result<(), std::sync::mpsc::SendError<T>> {
+                    sender.send(event)?;
+                    if let Some(waker) = waker {
+                        waker.wake().ok();
+                    };
+                    Ok(())
+                }
+
+                let settings = Settings::new().await?;
+
+                if let Ok(initial_appearance) = settings.color_scheme().await {
+                    send_event(
+                        &sender,
+                        &waker,
+                        Event::WindowAppearance(WindowAppearance::from_native(initial_appearance)),
+                    )?;
+                }
+                if let Ok(initial_theme) = settings
+                    .read::<String>("org.gnome.desktop.interface", "cursor-theme")
+                    .await
+                {
+                    send_event(&sender, &waker, Event::CursorTheme(initial_theme))?;
+                }
+                if let Ok(initial_size) = settings
+                    .read::<u32>("org.gnome.desktop.interface", "cursor-size")
+                    .await
+                {
+                    send_event(&sender, &waker, Event::CursorSize(initial_size))?;
+                }
+
+                if let Ok(mut cursor_theme_changed) = settings
+                    .receive_setting_changed_with_args(
+                        "org.gnome.desktop.interface",
+                        "cursor-theme",
+                    )
+                    .await
+                {
+                    let sender = sender.clone();
+                    let waker = waker.clone();
+                    background
+                        .spawn(async move {
+                            while let Some(theme) = cursor_theme_changed.next().await {
+                                let theme = theme?;
+                                send_event(&sender, &waker, Event::CursorTheme(theme))?;
+                            }
+                            anyhow::Ok(())
+                        })
+                        .detach();
+                }
+
+                if let Ok(mut cursor_size_changed) = settings
+                    .receive_setting_changed_with_args::<u32>(
+                        "org.gnome.desktop.interface",
+                        "cursor-size",
+                    )
+                    .await
+                {
+                    let sender = sender.clone();
+                    let waker = waker.clone();
+                    background
+                        .spawn(async move {
+                            while let Some(size) = cursor_size_changed.next().await {
+                                let size = size?;
+                                send_event(&sender, &waker, Event::CursorSize(size))?;
+                            }
+                            anyhow::Ok(())
+                        })
+                        .detach();
+                }
+
+                let mut appearance_changed = settings.receive_color_scheme_changed().await?;
+                while let Some(scheme) = appearance_changed.next().await {
+                    send_event(
+                        &sender,
+                        &waker,
+                        Event::WindowAppearance(WindowAppearance::from_native(scheme)),
+                    )?;
+                }
+
+                anyhow::Ok(())
+            })
+            .detach();
 
         Self { channel }
     }
 
-    fn spawn_observer(
-        executor: &BackgroundExecutor,
-        to_spawn: impl Future<Output = Result<(), anyhow::Error>> + Send + 'static,
-    ) {
-        executor
-            .spawn(async move {
-                to_spawn.await.log_err();
-            })
-            .detach()
-    }
-
-    async fn appearance_observer(sender: Sender<Event>) -> Result<(), anyhow::Error> {
-        let settings = Settings::new().await?;
-
-        // We observe the color change during the execution of the application
-        let mut stream = settings.receive_color_scheme_changed().await?;
-        while let Some(scheme) = stream.next().await {
-            sender.send(Event::WindowAppearance(WindowAppearance::from_native(
-                scheme,
-            )))?;
-        }
-
-        Ok(())
+    pub fn try_recv(&self) -> anyhow::Result<Event> {
+        self.channel
+            .try_recv()
+            .map_err(|error| anyhow!("{}", error))
     }
 }
 
@@ -118,27 +192,4 @@ impl WindowAppearance {
     fn set_native(&mut self, cs: ColorScheme) {
         *self = Self::from_native(cs);
     }
-}
-
-pub fn window_appearance(executor: &BackgroundExecutor) -> Result<WindowAppearance, anyhow::Error> {
-    executor.block(async {
-        let settings = Settings::new().await?;
-
-        let scheme = settings.color_scheme().await?;
-
-        let appearance = WindowAppearance::from_native(scheme);
-
-        Ok(appearance)
-    })
-}
-
-pub fn should_auto_hide_scrollbars(executor: &BackgroundExecutor) -> Result<bool, anyhow::Error> {
-    executor.block(async {
-        let settings = Settings::new().await?;
-        let auto_hide = settings
-            .read::<bool>("org.gnome.desktop.interface", "overlay-scrolling")
-            .await?;
-
-        Ok(auto_hide)
-    })
 }

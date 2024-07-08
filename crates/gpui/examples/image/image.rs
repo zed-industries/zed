@@ -80,8 +80,8 @@ fn main() {
             }),
 
             window_bounds: Some(WindowBounds::Windowed(Bounds {
-                size: size(px(1100.), px(600.)).into(),
-                origin: Point::new(DevicePixels::from(200), DevicePixels::from(200)),
+                size: size(px(1100.), px(600.)),
+                origin: Point::new(px(200.), px(200.)),
             })),
 
             ..Default::default()
@@ -93,6 +93,7 @@ fn main() {
                 local_resource: Arc::new(PathBuf::from_str("examples/image/app-icon.png").unwrap()),
                 remote_resource: "https://picsum.photos/512/512".into(),
             })
-        });
+        })
+        .unwrap();
     });
 }

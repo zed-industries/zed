@@ -3,7 +3,7 @@ use crate::channel_chat::ChannelChatEvent;
 use super::*;
 use client::{test::FakeServer, Client, UserStore};
 use clock::FakeSystemClock;
-use gpui::{AppContext, Context, Model, TestAppContext};
+use gpui::{AppContext, Context, Model, SemanticVersion, TestAppContext};
 use http::FakeHttpClient;
 use rpc::proto::{self};
 use settings::SettingsStore;
@@ -340,7 +340,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
 fn init_test(cx: &mut AppContext) -> Model<ChannelStore> {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
-    release_channel::init("0.0.0", cx);
+    release_channel::init(SemanticVersion::default(), cx);
     client::init_settings(cx);
 
     let clock = Arc::new(FakeSystemClock::default());

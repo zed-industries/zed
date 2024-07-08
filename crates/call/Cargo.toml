@@ -13,6 +13,7 @@ path = "src/call.rs"
 doctest = false
 
 [features]
+no-webrtc = ["live_kit_client/no-webrtc"]
 test-support = [
     "client/test-support",
     "collections/test-support",

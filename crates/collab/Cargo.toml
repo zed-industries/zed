@@ -96,6 +96,7 @@ node_runtime.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+recent_projects = { workspace = true }
 release_channel.workspace = true
 dev_server_projects.workspace = true
 rpc = { workspace = true, features = ["test-support"] }

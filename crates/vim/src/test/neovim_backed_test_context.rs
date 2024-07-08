@@ -10,7 +10,7 @@ use language::language_settings::{AllLanguageSettings, SoftWrap};
 use util::test::marked_text_offsets;
 
 use super::{neovim_connection::NeovimConnection, VimTestContext};
-use crate::state::Mode;
+use crate::{state::Mode, Vim};
 
 pub struct NeovimBackedTestContext {
     cx: VimTestContext,
@@ -94,6 +94,7 @@ impl SharedState {
 }
 
 pub struct SharedClipboard {
+    register: char,
     neovim: String,
     editor: String,
     state: SharedState,
@@ -120,15 +121,17 @@ impl SharedClipboard {
                 {}
                 # currently expected:
                 {}
-                # neovim clipboard:
+                # neovim register \"{}:
                 {}
-                # zed clipboard:
+                # zed register \"{}:
                 {}"},
             message,
             self.state.initial,
             self.state.recent_keystrokes,
             expected,
+            self.register,
             self.neovim,
+            self.register,
             self.editor
         )
     }
@@ -241,9 +244,29 @@ impl NeovimBackedTestContext {
     #[must_use]
     pub async fn shared_clipboard(&mut self) -> SharedClipboard {
         SharedClipboard {
+            register: '"',
             state: self.shared_state().await,
             neovim: self.neovim.read_register('"').await,
             editor: self.read_from_clipboard().unwrap().text().clone(),
+        }
+    }
+
+    #[must_use]
+    pub async fn shared_register(&mut self, register: char) -> SharedClipboard {
+        SharedClipboard {
+            register,
+            state: self.shared_state().await,
+            neovim: self.neovim.read_register(register).await,
+            editor: self.update(|cx| {
+                Vim::read(cx)
+                    .workspace_state
+                    .registers
+                    .get(&register)
+                    .cloned()
+                    .unwrap_or_default()
+                    .text
+                    .into()
+            }),
         }
     }
 

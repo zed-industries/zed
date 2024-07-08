@@ -138,9 +138,16 @@ impl LspAdapter for VtslsLspAdapter {
             _ => None,
         }?;
 
-        let text = match &item.detail {
-            Some(detail) => format!("{} {}", item.label, detail),
-            None => item.label.clone(),
+        let text = if let Some(description) = item
+            .label_details
+            .as_ref()
+            .and_then(|label_details| label_details.description.as_ref())
+        {
+            format!("{} {}", item.label, description)
+        } else if let Some(detail) = &item.detail {
+            format!("{} {}", item.label, detail)
+        } else {
+            item.label.clone()
         };
 
         Some(language::CodeLabel {
@@ -155,37 +162,41 @@ impl LspAdapter for VtslsLspAdapter {
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
-            "typescript":
-            {
+            "typescript": {
                 "tsdk": "node_modules/typescript/lib",
                 "format": {
                     "enable": true
                 },
-                "inlayHints":{
-                    "parameterNames":
-                    {
+                "inlayHints": {
+                    "parameterNames": {
                         "enabled": "all",
                         "suppressWhenArgumentMatchesName": false,
-
-                    }
                     },
-                    "parameterTypes":
-                    {
+                    "parameterTypes": {
                         "enabled": true
                     },
                     "variableTypes": {
                         "enabled": true,
                         "suppressWhenTypeMatchesName": false,
                     },
-                    "propertyDeclarationTypes":{
+                    "propertyDeclarationTypes": {
                         "enabled": true,
                     },
                     "functionLikeReturnTypes": {
                         "enabled": true,
                     },
-                    "enumMemberValues":{
+                    "enumMemberValues": {
                         "enabled": true,
                     }
+                }
+            },
+            "vtsls": {
+                "experimental": {
+                    "completion": {
+                        "enableServerSideFuzzyMatch": true,
+                        "entriesLimit": 5000,
+                    }
+                }
             }
         })))
     }
@@ -199,6 +210,40 @@ impl LspAdapter for VtslsLspAdapter {
             "typescript": {
                 "suggest": {
                     "completeFunctionCalls": true
+                },
+                "tsdk": "node_modules/typescript/lib",
+                "format": {
+                    "enable": true
+                },
+                "inlayHints": {
+                    "parameterNames": {
+                        "enabled": "all",
+                        "suppressWhenArgumentMatchesName": false,
+                    },
+                    "parameterTypes": {
+                        "enabled": true
+                    },
+                    "variableTypes": {
+                        "enabled": true,
+                        "suppressWhenTypeMatchesName": false,
+                    },
+                    "propertyDeclarationTypes": {
+                        "enabled": true,
+                    },
+                    "functionLikeReturnTypes": {
+                        "enabled": true,
+                    },
+                    "enumMemberValues": {
+                        "enabled": true,
+                    }
+                }
+            },
+            "vtsls": {
+                "experimental": {
+                    "completion": {
+                        "enableServerSideFuzzyMatch": true,
+                        "entriesLimit": 5000,
+                    }
                 }
             }
         }))

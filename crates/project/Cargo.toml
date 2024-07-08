@@ -45,6 +45,7 @@ lsp.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
 pathdiff.workspace = true
+paths.workspace = true
 postage.workspace = true
 prettier.workspace = true
 worktree.workspace = true
@@ -65,6 +66,7 @@ snippet.workspace = true
 terminal.workspace = true
 text.workspace = true
 util.workspace = true
+unicase.workspace = true
 which.workspace = true
 
 [dev-dependencies]

@@ -197,8 +197,16 @@ impl super::LspAdapter for CLspAdapter {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let filter_start = detail.len() + 1;
+                let filter_end =
+                    if let Some(end) = text.rfind('(').filter(|end| *end > filter_start) {
+                        end
+                    } else {
+                        text.len()
+                    };
+
                 return Some(CodeLabel {
-                    filter_range: detail.len() + 1..text.rfind('(').unwrap_or(text.len()),
+                    filter_range: filter_start..filter_end,
                     text,
                     runs,
                 });

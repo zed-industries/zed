@@ -1,8 +1,8 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
-    DispatchEventResult, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowParams,
+    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    Size, TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -13,7 +13,7 @@ use std::{
 };
 
 pub(crate) struct TestWindowState {
-    pub(crate) bounds: Bounds<DevicePixels>,
+    pub(crate) bounds: Bounds<Pixels>,
     pub(crate) handle: AnyWindowHandle,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) title: Option<String>,
@@ -79,7 +79,7 @@ impl TestWindow {
         let Some(mut callback) = lock.resize_callback.take() else {
             return;
         };
-        lock.bounds.size = size.map(|pixels| (pixels.0 as i32).into());
+        lock.bounds.size = size;
         drop(lock);
         callback(size, scale_factor);
         self.0.lock().resize_callback = Some(callback);
@@ -108,7 +108,7 @@ impl TestWindow {
 }
 
 impl PlatformWindow for TestWindow {
-    fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<Pixels> {
         self.0.lock().bounds
     }
 
@@ -121,7 +121,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.bounds().size.into()
+        self.bounds().size
     }
 
     fn scale_factor(&self) -> f32 {
@@ -188,9 +188,7 @@ impl PlatformWindow for TestWindow {
 
     fn set_app_id(&mut self, _app_id: &str) {}
 
-    fn set_background_appearance(&mut self, _background: WindowBackgroundAppearance) {
-        unimplemented!()
-    }
+    fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {}
 
     fn set_edited(&mut self, edited: bool) {
         self.0.lock().edited = edited;
@@ -262,12 +260,8 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn start_system_move(&self) {
+    fn start_window_move(&self) {
         unimplemented!()
-    }
-
-    fn should_render_window_controls(&self) -> bool {
-        false
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}

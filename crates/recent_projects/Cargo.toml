@@ -23,6 +23,7 @@ markdown.workspace = true
 menu.workspace = true
 ordered-float.workspace = true
 picker.workspace = true
+project.workspace = true
 dev_server_projects.workspace = true
 rpc.workspace = true
 serde.workspace = true

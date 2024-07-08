@@ -61,6 +61,7 @@ use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
+use util::serde::default_true;
 
 pub use buffer::Operation;
 pub use buffer::*;
@@ -70,7 +71,7 @@ pub use language_registry::{
     PendingLanguageServer, QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::LanguageServerId;
-pub use outline::{Outline, OutlineItem};
+pub use outline::{render_item, Outline, OutlineItem};
 pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
@@ -803,6 +804,9 @@ pub struct BracketPair {
     pub end: String,
     /// True if `end` should be automatically inserted right after `start` characters.
     pub close: bool,
+    /// True if selected text should be surrounded by `start` and `end` characters.
+    #[serde(default = "default_true")]
+    pub surround: bool,
     /// True if an extra newline should be inserted while the cursor is in the middle
     /// of that bracket pair.
     pub newline: bool,

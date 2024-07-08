@@ -30,9 +30,7 @@ ADDITIONAL_LABELS: set[str] = {
     "vim",
     "windows",
 }
-IGNORED_LABELS: set[str] = {
-    "ignore top-ranking issues",
-}
+IGNORED_LABEL_TEXT: str = "ignore top-ranking issues"
 ISSUES_PER_LABEL: int = 20
 
 
@@ -147,16 +145,13 @@ def get_label_to_issues(
     label_to_issues: defaultdict[str, list[Issue]] = defaultdict(list)
 
     labels: set[str] = CORE_LABELS | ADDITIONAL_LABELS
-    ignored_labels_text: str = " ".join(
-        [f'-label:"{label}"' for label in IGNORED_LABELS]
-    )
 
     date_query: str = (
         f"created:>={start_date.strftime('%Y-%m-%d')}" if start_date else ""
     )
 
     for label in labels:
-        query: str = f'repo:{repository.full_name} is:open is:issue {date_query} label:"{label}" {ignored_labels_text} sort:reactions-+1-desc'
+        query: str = f'repo:{repository.full_name} is:open is:issue {date_query} label:"{label}" -label:"{IGNORED_LABEL_TEXT}" sort:reactions-+1-desc'
 
         issues = github.search_issues(query)
 
@@ -193,8 +188,8 @@ def get_error_message_to_erroneous_issues(
 ) -> defaultdict[str, list[Issue]]:
     error_message_to_erroneous_issues: defaultdict[str, list[Issue]] = defaultdict(list)
 
-    # Query for all open issues that don't have either a core or ignored label and mark those as erroneous
-    filter_labels: set[str] = CORE_LABELS | IGNORED_LABELS
+    # Query for all open issues that don't have either a core or the ignored label and mark those as erroneous
+    filter_labels: set[str] = CORE_LABELS | {IGNORED_LABEL_TEXT}
     filter_labels_text: str = " ".join([f'-label:"{label}"' for label in filter_labels])
     query: str = f"repo:{repository.full_name} is:open is:issue {filter_labels_text}"
 
@@ -243,15 +238,12 @@ def get_issue_text(
         core_labels_text: str = ", ".join(
             f'"{core_label}"' for core_label in CORE_LABELS
         )
-        ignored_labels_text: str = ", ".join(
-            f'"{ignored_label}"' for ignored_label in IGNORED_LABELS
-        )
 
         issue_text_lines.extend(
             [
                 "## errors with issues (this section only shows when there are errors with issues)\n",
                 f"This script expects every issue to have at least one of the following core labels: {core_labels_text}",
-                f"This script currently ignores issues that have one of the following labels: {ignored_labels_text}\n",
+                f"This script currently ignores issues that have the following label: {IGNORED_LABEL_TEXT}\n",
                 "### what to do?\n",
                 "- Adjust the core labels on an issue to put it into a correct state or add a currently-ignored label to the issue",
                 "- Adjust the core and ignored labels registered in this script",

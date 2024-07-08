@@ -548,6 +548,9 @@ impl Server {
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::RestartLanguageServers>,
             ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::LinkedEditingRange>,
+            ))
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
@@ -2580,14 +2583,13 @@ async fn rejoin_dev_server_projects(
         )
         .await?
     };
-    notify_rejoined_projects(&mut rejoined_projects, &session)?;
-
     response.send(proto::RejoinRemoteProjectsResponse {
         rejoined_projects: rejoined_projects
-            .into_iter()
+            .iter()
             .map(|project| project.to_proto())
             .collect(),
-    })
+    })?;
+    notify_rejoined_projects(&mut rejoined_projects, &session)
 }
 
 async fn reconnect_dev_server(
@@ -4460,6 +4462,7 @@ async fn complete_with_open_ai(
                         tool_calls: choice
                             .delta
                             .tool_calls
+                            .unwrap_or_default()
                             .into_iter()
                             .map(|delta| proto::ToolCallDelta {
                                 index: delta.index as u32,
@@ -4500,6 +4503,7 @@ async fn complete_with_google_ai(
         session.http_client.clone(),
         google_ai::API_URL,
         api_key.as_ref(),
+        &request.model.clone(),
         crate::ai::language_model_request_to_google_ai(request)?,
     )
     .await

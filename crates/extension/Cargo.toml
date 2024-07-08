@@ -12,6 +12,9 @@ workspace = true
 path = "src/extension_store.rs"
 doctest = false
 
+[features]
+no-webrtc = ["workspace/no-webrtc"]
+
 [dependencies]
 anyhow.workspace = true
 assistant_slash_command.workspace = true
@@ -25,11 +28,13 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http.workspace = true
+indexed_docs.workspace = true
 isahc.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
+paths.workspace = true
 project.workspace = true
 release_channel.workspace = true
 schemars.workspace = true

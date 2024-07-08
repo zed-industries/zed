@@ -1,5 +1,6 @@
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
+use anyhow::Context;
 use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -8,25 +9,19 @@ use util::paths::PathMatcher;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct WorktreeSettings {
-    pub file_scan_exclusions: Arc<[PathMatcher]>,
-    pub private_files: Arc<[PathMatcher]>,
+    pub file_scan_exclusions: PathMatcher,
+    pub private_files: PathMatcher,
 }
 
 impl WorktreeSettings {
     pub fn is_path_private(&self, path: &Path) -> bool {
-        path.ancestors().any(|ancestor| {
-            self.private_files
-                .iter()
-                .any(|matcher| matcher.is_match(&ancestor))
-        })
+        path.ancestors()
+            .any(|ancestor| self.private_files.is_match(&ancestor))
     }
 
     pub fn is_path_excluded(&self, path: &Path) -> bool {
-        path.ancestors().any(|ancestor| {
-            self.file_scan_exclusions
-                .iter()
-                .any(|matcher| matcher.is_match(&ancestor))
-        })
+        path.ancestors()
+            .any(|ancestor| self.file_scan_exclusions.is_match(&ancestor))
     }
 }
 
@@ -67,25 +62,12 @@ impl Settings for WorktreeSettings {
         file_scan_exclusions.sort();
         private_files.sort();
         Ok(Self {
-            file_scan_exclusions: path_matchers(&file_scan_exclusions, "file_scan_exclusions"),
-            private_files: path_matchers(&private_files, "private_files"),
+            file_scan_exclusions: path_matchers(&file_scan_exclusions, "file_scan_exclusions")?,
+            private_files: path_matchers(&private_files, "private_files")?,
         })
     }
 }
 
-fn path_matchers(values: &[String], context: &'static str) -> Arc<[PathMatcher]> {
-    values
-        .iter()
-        .filter_map(|pattern| {
-            PathMatcher::new(pattern)
-                .map(Some)
-                .unwrap_or_else(|e| {
-                    log::error!(
-                        "Skipping pattern {pattern} in `{}` project settings due to parsing error: {e:#}", context
-                    );
-                    None
-                })
-        })
-        .collect::<Vec<_>>()
-        .into()
+fn path_matchers(values: &[String], context: &'static str) -> anyhow::Result<PathMatcher> {
+    PathMatcher::new(values).with_context(|| format!("Failed to parse globs from {}", context))
 }

@@ -77,6 +77,19 @@ pub struct PopoverMenu<M: ManagedView> {
 }
 
 impl<M: ManagedView> PopoverMenu<M> {
+    /// Returns a new [`PopoverMenu`].
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            id: id.into(),
+            child_builder: None,
+            menu_builder: None,
+            anchor: AnchorCorner::TopLeft,
+            attach: None,
+            offset: None,
+            trigger_handle: None,
+        }
+    }
+
     pub fn menu(mut self, f: impl Fn(&mut WindowContext) -> Option<View<M>> + 'static) -> Self {
         self.menu_builder = Some(Rc::new(f));
         self
@@ -163,19 +176,6 @@ fn show_menu<M: ManagedView>(
     cx.focus_view(&new_menu);
     *menu.borrow_mut() = Some(new_menu);
     cx.refresh();
-}
-
-/// Creates a [`PopoverMenu`]
-pub fn popover_menu<M: ManagedView>(id: impl Into<ElementId>) -> PopoverMenu<M> {
-    PopoverMenu {
-        id: id.into(),
-        child_builder: None,
-        menu_builder: None,
-        anchor: AnchorCorner::TopLeft,
-        attach: None,
-        offset: None,
-        trigger_handle: None,
-    }
 }
 
 pub struct PopoverMenuElementState<M> {

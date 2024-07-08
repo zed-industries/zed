@@ -16,13 +16,14 @@ use gpui::{
     InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
+use num_format::{Locale, ToFormattedString};
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use std::ops::DerefMut;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
-use ui::{popover_menu, prelude::*, ContextMenu, ToggleButton, Tooltip};
+use ui::{prelude::*, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
 use util::ResultExt as _;
 use workspace::item::TabContentParams;
 use workspace::{
@@ -487,8 +488,11 @@ impl ExtensionsPage {
                         .size(LabelSize::Small),
                     )
                     .child(
-                        Label::new(format!("Downloads: {}", extension.download_count))
-                            .size(LabelSize::Small),
+                        Label::new(format!(
+                            "Downloads: {}",
+                            extension.download_count.to_formatted_string(&Locale::en)
+                        ))
+                        .size(LabelSize::Small),
                     ),
             )
             .child(
@@ -522,23 +526,26 @@ impl ExtensionsPage {
                                 .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx)),
                             )
                             .child(
-                                popover_menu(SharedString::from(format!("more-{}", extension.id)))
-                                    .trigger(
-                                        IconButton::new(
-                                            SharedString::from(format!("more-{}", extension.id)),
-                                            IconName::Ellipsis,
-                                        )
-                                        .icon_color(Color::Accent)
-                                        .icon_size(IconSize::Small)
-                                        .style(ButtonStyle::Filled),
+                                PopoverMenu::new(SharedString::from(format!(
+                                    "more-{}",
+                                    extension.id
+                                )))
+                                .trigger(
+                                    IconButton::new(
+                                        SharedString::from(format!("more-{}", extension.id)),
+                                        IconName::Ellipsis,
                                     )
-                                    .menu(move |cx| {
-                                        Some(Self::render_remote_extension_context_menu(
-                                            &this,
-                                            extension_id.clone(),
-                                            cx,
-                                        ))
-                                    }),
+                                    .icon_color(Color::Accent)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Filled),
+                                )
+                                .menu(move |cx| {
+                                    Some(Self::render_remote_extension_context_menu(
+                                        &this,
+                                        extension_id.clone(),
+                                        cx,
+                                    ))
+                                }),
                             ),
                     ),
             )
@@ -769,7 +776,7 @@ impl ExtensionsPage {
         event: &editor::EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let editor::EditorEvent::Edited = event {
+        if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
             self.fetch_extensions_debounced(cx);
         }

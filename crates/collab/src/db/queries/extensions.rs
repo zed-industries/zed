@@ -379,6 +379,7 @@ fn metadata_from_extension_and_version(
 
 pub fn convert_time_to_chrono(time: time::PrimitiveDateTime) -> chrono::DateTime<Utc> {
     chrono::DateTime::from_naive_utc_and_offset(
+        #[allow(deprecated)]
         chrono::NaiveDateTime::from_timestamp_opt(time.assume_utc().unix_timestamp(), 0).unwrap(),
         Utc,
     )

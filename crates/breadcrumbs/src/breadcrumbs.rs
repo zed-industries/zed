@@ -86,10 +86,16 @@ impl Render for Breadcrumbs {
                     .style(ButtonStyle::Subtle)
                     .on_click(move |_, cx| {
                         if let Some(editor) = editor.upgrade() {
-                            outline::toggle(editor, &outline::Toggle, cx)
+                            outline::toggle(editor, &editor::actions::ToggleOutline, cx)
                         }
                     })
-                    .tooltip(|cx| Tooltip::for_action("Show symbol outline", &outline::Toggle, cx)),
+                    .tooltip(|cx| {
+                        Tooltip::for_action(
+                            "Show symbol outline",
+                            &editor::actions::ToggleOutline,
+                            cx,
+                        )
+                    }),
             ),
             None => element
                 // Match the height of the `ButtonLike` in the other arm.

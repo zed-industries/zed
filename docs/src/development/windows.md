@@ -69,6 +69,7 @@ cargo test --workspace
 [MSYS2](https://msys2.org/) distribution provides Zed as a package. To download the prebuilt binary, run
 
 ```
+pacman -Syu
 pacman -S mingw-w64-ucrt-x86_64-zed
 ```
 
@@ -86,3 +87,11 @@ Before reporting the issue, make sure that you have the latest rustc version wit
 ### Cargo errors claiming that a dependency is using unstable features
 
 Try `cargo clean` and `cargo build`.
+
+### `STATUS_ACCESS_VIOLATION`
+
+This error can happen if you are using the "rust-lld.exe" linker. Consider trying a different linker.
+
+If you are using a global config, consider moving the Zed repository to a nested directory and add a `.cargo/config.toml` with a custom linker config in the parent directory.
+
+See this issue for more information [#12041](https://github.com/zed-industries/zed/issues/12041)

@@ -234,7 +234,7 @@ impl FollowableItem for Editor {
 
     fn to_follow_event(event: &EditorEvent) -> Option<workspace::item::FollowEvent> {
         match event {
-            EditorEvent::Edited => Some(FollowEvent::Unfollow),
+            EditorEvent::Edited { .. } => Some(FollowEvent::Unfollow),
             EditorEvent::SelectionsChanged { local }
             | EditorEvent::ScrollPositionChanged { local, .. } => {
                 if *local {
@@ -816,22 +816,24 @@ impl Item for Editor {
         let buffer = multibuffer.buffer(buffer_id)?;
 
         let buffer = buffer.read(cx);
-        let filename = buffer
-            .snapshot()
-            .resolve_file_path(
-                cx,
-                self.project
-                    .as_ref()
-                    .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                    .unwrap_or_default(),
-            )
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_else(|| "untitled".to_string());
+        let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
+            buffer
+                .snapshot()
+                .resolve_file_path(
+                    cx,
+                    self.project
+                        .as_ref()
+                        .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                        .unwrap_or_default(),
+                )
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_else(|| "untitled".to_string())
+        });
 
         let settings = ThemeSettings::get_global(cx);
 
         let mut breadcrumbs = vec![BreadcrumbText {
-            text: filename,
+            text,
             highlights: None,
             font: Some(settings.buffer_font.clone()),
         }];
@@ -903,7 +905,7 @@ impl Item for Editor {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::Reparsed => {
+            EditorEvent::Reparsed(_) => {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
@@ -1100,6 +1102,35 @@ impl SearchableItem for Editor {
             });
         }
     }
+    fn replace_all(
+        &mut self,
+        matches: &mut dyn Iterator<Item = &Self::Match>,
+        query: &SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let text = self.buffer.read(cx);
+        let text = text.snapshot(cx);
+        let mut edits = vec![];
+        for m in matches {
+            let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
+            let text: Cow<_> = if text.len() == 1 {
+                text.first().cloned().unwrap().into()
+            } else {
+                let joined_chunks = text.join("");
+                joined_chunks.into()
+            };
+
+            if let Some(replacement) = query.replacement_for(&text) {
+                edits.push((m.clone(), Arc::from(&*replacement)));
+            }
+        }
+
+        if !edits.is_empty() {
+            self.transact(cx, |this, cx| {
+                this.edit(edits, cx);
+            });
+        }
+    }
     fn match_index_for_direction(
         &mut self,
         matches: &[Range<Anchor>],
@@ -1199,20 +1230,22 @@ impl SearchableItem for Editor {
                 for (excerpt_id, search_buffer, search_range) in
                     buffer.excerpts_in_ranges(search_within_ranges)
                 {
-                    ranges.extend(
-                        query
-                            .search(&search_buffer, Some(search_range.clone()))
-                            .await
-                            .into_iter()
-                            .map(|match_range| {
-                                let start = search_buffer
-                                    .anchor_after(search_range.start + match_range.start);
-                                let end = search_buffer
-                                    .anchor_before(search_range.start + match_range.end);
-                                buffer.anchor_in_excerpt(excerpt_id, start).unwrap()
-                                    ..buffer.anchor_in_excerpt(excerpt_id, end).unwrap()
-                            }),
-                    );
+                    if !search_range.is_empty() {
+                        ranges.extend(
+                            query
+                                .search(&search_buffer, Some(search_range.clone()))
+                                .await
+                                .into_iter()
+                                .map(|match_range| {
+                                    let start = search_buffer
+                                        .anchor_after(search_range.start + match_range.start);
+                                    let end = search_buffer
+                                        .anchor_before(search_range.start + match_range.end);
+                                    buffer.anchor_in_excerpt(excerpt_id, start).unwrap()
+                                        ..buffer.anchor_in_excerpt(excerpt_id, end).unwrap()
+                                }),
+                        );
+                    }
                 }
             };
 

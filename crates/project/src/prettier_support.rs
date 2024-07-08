@@ -18,8 +18,9 @@ use language::{
 };
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
+use paths::default_prettier_dir;
 use prettier::Prettier;
-use util::{paths::DEFAULT_PRETTIER_DIR, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt};
 
 use crate::{
     Event, File, FormatOperation, PathChange, Project, ProjectEntryId, Worktree, WorktreeId,
@@ -251,7 +252,7 @@ fn start_default_prettier(
                 }
                 let new_default_prettier = project.update(&mut cx, |project, cx| {
                     let new_default_prettier =
-                        start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), worktree_id, cx);
+                        start_prettier(node, default_prettier_dir().clone(), worktree_id, cx);
                     project.default_prettier.prettier =
                         PrettierInstallation::Installed(PrettierInstance {
                             attempt: 0,
@@ -266,7 +267,7 @@ fn start_default_prettier(
                 None => {
                     let new_default_prettier = project.update(&mut cx, |project, cx| {
                         let new_default_prettier =
-                            start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), worktree_id, cx);
+                            start_prettier(node, default_prettier_dir().clone(), worktree_id, cx);
                         project.default_prettier.prettier =
                             PrettierInstallation::Installed(PrettierInstance {
                                 attempt: instance.attempt + 1,
@@ -379,7 +380,7 @@ async fn install_prettier_packages(
     .await
     .context("fetching latest npm versions")?;
 
-    let default_prettier_dir = DEFAULT_PRETTIER_DIR.as_path();
+    let default_prettier_dir = default_prettier_dir().as_path();
     match fs.metadata(default_prettier_dir).await.with_context(|| {
         format!("fetching FS metadata for default prettier dir {default_prettier_dir:?}")
     })? {
@@ -405,7 +406,7 @@ async fn install_prettier_packages(
 }
 
 async fn save_prettier_server_file(fs: &dyn Fs) -> anyhow::Result<()> {
-    let prettier_wrapper_path = DEFAULT_PRETTIER_DIR.join(prettier::PRETTIER_SERVER_FILE);
+    let prettier_wrapper_path = default_prettier_dir().join(prettier::PRETTIER_SERVER_FILE);
     fs.save(
         &prettier_wrapper_path,
         &text::Rope::from(prettier::PRETTIER_SERVER_JS),
@@ -422,7 +423,7 @@ async fn save_prettier_server_file(fs: &dyn Fs) -> anyhow::Result<()> {
 }
 
 async fn should_write_prettier_server_file(fs: &dyn Fs) -> bool {
-    let prettier_wrapper_path = DEFAULT_PRETTIER_DIR.join(prettier::PRETTIER_SERVER_FILE);
+    let prettier_wrapper_path = default_prettier_dir().join(prettier::PRETTIER_SERVER_FILE);
     if !fs.is_file(&prettier_wrapper_path).await {
         return true;
     }

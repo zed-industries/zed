@@ -45,6 +45,7 @@ pub fn init(
         ("gowork", tree_sitter_gowork::language()),
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
+        ("jsonc", tree_sitter_json::language()),
         ("markdown", tree_sitter_markdown::language()),
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
@@ -117,6 +118,17 @@ pub fn init(
 
     language!(
         "json",
+        vec![
+            Arc::new(json::JsonLspAdapter::new(
+                node_runtime.clone(),
+                languages.clone(),
+            )),
+            Arc::new(json::NodeVersionAdapter)
+        ],
+        json_task_context()
+    );
+    language!(
+        "jsonc",
         vec![Arc::new(json::JsonLspAdapter::new(
             node_runtime.clone(),
             languages.clone(),
@@ -141,7 +153,8 @@ pub fn init(
         vec![
             Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
             Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
-        ]
+        ],
+        typescript_task_context()
     );
     language!(
         "typescript",

@@ -17,6 +17,7 @@ doctest = false
 name = "test_app"
 
 [features]
+no-webrtc = []
 test-support = [
     "async-trait",
     "collections/test-support",

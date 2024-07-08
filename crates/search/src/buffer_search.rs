@@ -14,9 +14,9 @@ use editor::{
 use futures::channel::oneshot;
 use gpui::{
     actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView,
-    FontStyle, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyContext,
-    ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task, TextStyle, View,
-    ViewContext, VisualContext as _, WhiteSpace, WindowContext,
+    FontStyle, Hsla, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render,
+    ScrollHandle, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext as _,
+    WhiteSpace, WindowContext,
 };
 use project::{
     search::SearchQuery,
@@ -116,7 +116,7 @@ impl BufferSearchBar {
             font_family: settings.buffer_font.family.clone(),
             font_features: settings.buffer_font.features.clone(),
             font_size: rems(0.875).into(),
-            font_weight: FontWeight::NORMAL,
+            font_weight: settings.buffer_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,
@@ -775,6 +775,7 @@ impl BufferSearchBar {
                 if let Some(matches) = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
+                    .filter(|matches| !matches.is_empty())
                 {
                     let new_match_index = searchable_item
                         .match_index_for_direction(matches, index, direction, count, cx);
@@ -811,7 +812,7 @@ impl BufferSearchBar {
         match event {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
-            editor::EditorEvent::Edited => {
+            editor::EditorEvent::Edited { .. } => {
                 self.clear_matches(cx);
                 let search = self.update_matches(cx);
 
@@ -927,8 +928,8 @@ impl BufferSearchBar {
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         false,
-                        Vec::new(),
-                        Vec::new(),
+                        Default::default(),
+                        Default::default(),
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
@@ -944,8 +945,8 @@ impl BufferSearchBar {
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         false,
-                        Vec::new(),
-                        Vec::new(),
+                        Default::default(),
+                        Default::default(),
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
@@ -1127,9 +1128,7 @@ impl BufferSearchBar {
                             .as_ref()
                             .clone()
                             .with_replacement(self.replacement(cx));
-                        for m in matches {
-                            searchable_item.replace(m, &query, cx);
-                        }
+                        searchable_item.replace_all(&mut matches.iter(), &query, cx);
                     }
                 }
             }

@@ -124,7 +124,6 @@ impl Store {
     async fn handle_dev_server_projects_update(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::DevServerProjectsUpdate>,
-        _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {

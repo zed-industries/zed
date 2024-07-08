@@ -4772,7 +4772,7 @@ async fn test_references(
     // User is informed that a request is pending.
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().cloned().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert_eq!(status.name, "my-fake-lsp-adapter");
         assert_eq!(
             status.pending_work.values().next().unwrap().message,
@@ -4802,7 +4802,7 @@ async fn test_references(
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, cx| {
         // User is informed that a request is no longer pending.
-        let status = project.language_server_statuses().next().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert!(status.pending_work.is_empty());
 
         assert_eq!(references.len(), 3);
@@ -4830,7 +4830,7 @@ async fn test_references(
     // User is informed that a request is pending.
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().cloned().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert_eq!(status.name, "my-fake-lsp-adapter");
         assert_eq!(
             status.pending_work.values().next().unwrap().message,
@@ -4847,7 +4847,7 @@ async fn test_references(
     // User is informed that the request is no longer pending.
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap();
+        let status = project.language_server_statuses().next().unwrap().1;
         assert!(status.pending_work.is_empty());
     });
 }
@@ -4904,7 +4904,15 @@ async fn test_project_search(
     let mut results = HashMap::default();
     let mut search_rx = project_b.update(cx_b, |project, cx| {
         project.search(
-            SearchQuery::text("world", false, false, false, Vec::new(), Vec::new()).unwrap(),
+            SearchQuery::text(
+                "world",
+                false,
+                false,
+                false,
+                Default::default(),
+                Default::default(),
+            )
+            .unwrap(),
             cx,
         )
     });

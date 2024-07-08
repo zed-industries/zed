@@ -22,7 +22,7 @@ impl HeadlessClient {
     pub(crate) fn new() -> Self {
         let event_loop = EventLoop::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver) = LinuxCommon::new(Box::new(event_loop.get_signal()), None);
 
         let handle = event_loop.handle();
 
@@ -59,10 +59,6 @@ impl LinuxClient for HeadlessClient {
         None
     }
 
-    fn can_open_windows(&self) -> anyhow::Result<()> {
-        return Err(anyhow::anyhow!("neither DISPLAY, nor WAYLAND_DISPLAY found. You can still run zed for remote development with --dev-server-token."));
-    }
-
     fn active_window(&self) -> Option<AnyWindowHandle> {
         None
     }
@@ -71,8 +67,14 @@ impl LinuxClient for HeadlessClient {
         &self,
         _handle: AnyWindowHandle,
         _params: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
-        unimplemented!()
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
+        Err(anyhow::anyhow!(
+            "neither DISPLAY nor WAYLAND_DISPLAY is set. You can run in headless mode"
+        ))
+    }
+
+    fn compositor_name(&self) -> &'static str {
+        "headless"
     }
 
     fn set_cursor_style(&self, _style: CursorStyle) {}

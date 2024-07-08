@@ -229,7 +229,14 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
-        self.0.write().layout_line(text, font_size, runs)
+        self.0
+            .write()
+            .layout_line(text, font_size, runs)
+            .log_err()
+            .unwrap_or(LineLayout {
+                font_size,
+                ..Default::default()
+            })
     }
 }
 
@@ -296,20 +303,15 @@ impl DirectWriteState {
         } else {
             &self.custom_font_collection
         };
-        let Some(fontset) = collection.GetFontSet().log_err() else {
-            return None;
-        };
-        let Some(font) = fontset
+        let fontset = collection.GetFontSet().log_err()?;
+        let font = fontset
             .GetMatchingFonts(
                 &HSTRING::from(family_name),
                 font_weight.into(),
                 DWRITE_FONT_STRETCH_NORMAL,
                 font_style.into(),
             )
-            .log_err()
-        else {
-            return None;
-        };
+            .log_err()?;
         let total_number = font.GetFontCount();
         for index in 0..total_number {
             let Some(font_face_ref) = font.GetFontFaceReference(index).log_err() else {
@@ -343,11 +345,15 @@ impl DirectWriteState {
 
     unsafe fn update_system_font_collection(&mut self) {
         let mut collection = std::mem::zeroed();
-        self.components
+        if self
+            .components
             .factory
             .GetSystemFontCollection(false, &mut collection, true)
-            .unwrap();
-        self.system_font_collection = collection.unwrap();
+            .log_err()
+            .is_some()
+        {
+            self.system_font_collection = collection.unwrap();
+        }
     }
 
     fn select_font(&mut self, target_font: &Font) -> FontId {
@@ -402,12 +408,17 @@ impl DirectWriteState {
             })
     }
 
-    fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
+    fn layout_line(
+        &mut self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+    ) -> Result<LineLayout> {
         if font_runs.is_empty() {
-            return LineLayout {
+            return Ok(LineLayout {
                 font_size,
                 ..Default::default()
-            };
+            });
         }
         unsafe {
             let text_renderer = self.components.text_renderer.clone();
@@ -423,25 +434,22 @@ impl DirectWriteState {
                 } else {
                     &self.custom_font_collection
                 };
-                let format = self
-                    .components
-                    .factory
-                    .CreateTextFormat(
-                        &HSTRING::from(&font_info.font_family),
-                        collection,
-                        font_info.font_face.GetWeight(),
-                        font_info.font_face.GetStyle(),
-                        DWRITE_FONT_STRETCH_NORMAL,
-                        font_size.0,
-                        &HSTRING::from(&self.components.locale),
-                    )
-                    .unwrap();
+                let format = self.components.factory.CreateTextFormat(
+                    &HSTRING::from(&font_info.font_family),
+                    collection,
+                    font_info.font_face.GetWeight(),
+                    font_info.font_face.GetStyle(),
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    font_size.0,
+                    &HSTRING::from(&self.components.locale),
+                )?;
 
-                let layout = self
-                    .components
-                    .factory
-                    .CreateTextLayout(&text_wide, &format, f32::INFINITY, f32::INFINITY)
-                    .unwrap();
+                let layout = self.components.factory.CreateTextLayout(
+                    &text_wide,
+                    &format,
+                    f32::INFINITY,
+                    f32::INFINITY,
+                )?;
                 let current_text = &text[utf8_offset..(utf8_offset + first_run.len)];
                 utf8_offset += first_run.len;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
@@ -449,9 +457,7 @@ impl DirectWriteState {
                     startPosition: utf16_offset,
                     length: current_text_utf16_length,
                 };
-                layout
-                    .SetTypography(&font_info.features, text_range)
-                    .unwrap();
+                layout.SetTypography(&font_info.features, text_range)?;
                 utf16_offset += current_text_utf16_length;
 
                 layout
@@ -465,9 +471,7 @@ impl DirectWriteState {
                     first_run = false;
                     let mut metrics = vec![DWRITE_LINE_METRICS::default(); 4];
                     let mut line_count = 0u32;
-                    text_layout
-                        .GetLineMetrics(Some(&mut metrics), &mut line_count as _)
-                        .unwrap();
+                    text_layout.GetLineMetrics(Some(&mut metrics), &mut line_count as _)?;
                     ascent = px(metrics[0].baseline);
                     descent = px(metrics[0].height - metrics[0].baseline);
                     continue;
@@ -487,22 +491,13 @@ impl DirectWriteState {
                     length: current_text_utf16_length,
                 };
                 utf16_offset += current_text_utf16_length;
+                text_layout.SetFontCollection(collection, text_range)?;
                 text_layout
-                    .SetFontCollection(collection, text_range)
-                    .unwrap();
-                text_layout
-                    .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)
-                    .unwrap();
-                text_layout.SetFontSize(font_size.0, text_range).unwrap();
-                text_layout
-                    .SetFontStyle(font_info.font_face.GetStyle(), text_range)
-                    .unwrap();
-                text_layout
-                    .SetFontWeight(font_info.font_face.GetWeight(), text_range)
-                    .unwrap();
-                text_layout
-                    .SetTypography(&font_info.features, text_range)
-                    .unwrap();
+                    .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)?;
+                text_layout.SetFontSize(font_size.0, text_range)?;
+                text_layout.SetFontStyle(font_info.font_face.GetStyle(), text_range)?;
+                text_layout.SetFontWeight(font_info.font_face.GetWeight(), text_range)?;
+                text_layout.SetTypography(&font_info.features, text_range)?;
             }
 
             let mut runs = Vec::new();
@@ -513,24 +508,22 @@ impl DirectWriteState {
                 utf16_index: 0,
                 width: 0.0,
             };
-            text_layout
-                .Draw(
-                    Some(&renderer_context as *const _ as _),
-                    &text_renderer.0,
-                    0.0,
-                    0.0,
-                )
-                .unwrap();
+            text_layout.Draw(
+                Some(&renderer_context as *const _ as _),
+                &text_renderer.0,
+                0.0,
+                0.0,
+            )?;
             let width = px(renderer_context.width);
 
-            LineLayout {
+            Ok(LineLayout {
                 font_size,
                 width,
                 ascent,
                 descent,
                 runs,
                 len: text.len(),
-            }
+            })
         }
     }
 
@@ -979,7 +972,6 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
             let Some((font_identifier, font_struct, is_emoji)) =
                 get_font_identifier_and_font_struct(font_face, &self.locale)
             else {
-                log::error!("none postscript name found");
                 return Ok(());
             };
 
@@ -1142,7 +1134,7 @@ fn get_font_names_from_collection(
             let Some(localized_family_name) = font_family.GetFamilyNames().log_err() else {
                 continue;
             };
-            let Some(family_name) = get_name(localized_family_name, locale) else {
+            let Some(family_name) = get_name(localized_family_name, locale).log_err() else {
                 continue;
             };
             result.push(family_name);
@@ -1156,15 +1148,9 @@ fn get_font_identifier_and_font_struct(
     font_face: &IDWriteFontFace3,
     locale: &str,
 ) -> Option<(FontIdentifier, Font, bool)> {
-    let Some(postscript_name) = get_postscript_name(font_face, locale) else {
-        return None;
-    };
-    let Some(localized_family_name) = (unsafe { font_face.GetFamilyNames().log_err() }) else {
-        return None;
-    };
-    let Some(family_name) = get_name(localized_family_name, locale) else {
-        return None;
-    };
+    let postscript_name = get_postscript_name(font_face, locale).log_err()?;
+    let localized_family_name = unsafe { font_face.GetFamilyNames().log_err() }?;
+    let family_name = get_name(localized_family_name, locale).log_err()?;
     let weight = unsafe { font_face.GetWeight() };
     let style = unsafe { font_face.GetStyle() };
     let identifier = FontIdentifier {
@@ -1186,28 +1172,28 @@ fn get_font_identifier_and_font_struct(
 fn get_font_identifier(font_face: &IDWriteFontFace3, locale: &str) -> Option<FontIdentifier> {
     let weight = unsafe { font_face.GetWeight().0 };
     let style = unsafe { font_face.GetStyle().0 };
-    get_postscript_name(font_face, locale).map(|postscript_name| FontIdentifier {
-        postscript_name,
-        weight,
-        style,
-    })
+    get_postscript_name(font_face, locale)
+        .log_err()
+        .map(|postscript_name| FontIdentifier {
+            postscript_name,
+            weight,
+            style,
+        })
 }
 
 #[inline]
-fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Option<String> {
+fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Result<String> {
     let mut info = None;
     let mut exists = BOOL(0);
     unsafe {
-        font_face
-            .GetInformationalStrings(
-                DWRITE_INFORMATIONAL_STRING_POSTSCRIPT_NAME,
-                &mut info,
-                &mut exists,
-            )
-            .log_err();
-    }
+        font_face.GetInformationalStrings(
+            DWRITE_INFORMATIONAL_STRING_POSTSCRIPT_NAME,
+            &mut info,
+            &mut exists,
+        )?
+    };
     if !exists.as_bool() || info.is_none() {
-        return None;
+        return Err(anyhow!("No postscript name found for font face"));
     }
 
     get_name(info.unwrap(), locale)
@@ -1281,40 +1267,36 @@ fn make_direct_write_tag(tag_name: &str) -> DWRITE_FONT_FEATURE_TAG {
 }
 
 #[inline]
-fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Option<String> {
+fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Result<String> {
     let mut locale_name_index = 0u32;
     let mut exists = BOOL(0);
     unsafe {
-        string
-            .FindLocaleName(
-                &HSTRING::from(locale),
-                &mut locale_name_index,
-                &mut exists as _,
-            )
-            .log_err();
-    }
+        string.FindLocaleName(
+            &HSTRING::from(locale),
+            &mut locale_name_index,
+            &mut exists as _,
+        )?
+    };
     if !exists.as_bool() {
         unsafe {
-            string
-                .FindLocaleName(
-                    DEFAULT_LOCALE_NAME,
-                    &mut locale_name_index as _,
-                    &mut exists as _,
-                )
-                .log_err();
-        }
+            string.FindLocaleName(
+                DEFAULT_LOCALE_NAME,
+                &mut locale_name_index as _,
+                &mut exists as _,
+            )?
+        };
         if !exists.as_bool() {
-            return None;
+            return Err(anyhow!("No localised string for {}", locale));
         }
     }
 
-    let name_length = unsafe { string.GetStringLength(locale_name_index).unwrap() } as usize;
+    let name_length = unsafe { string.GetStringLength(locale_name_index) }? as usize;
     let mut name_vec = vec![0u16; name_length + 1];
     unsafe {
-        string.GetString(locale_name_index, &mut name_vec).unwrap();
+        string.GetString(locale_name_index, &mut name_vec)?;
     }
 
-    Some(String::from_utf16_lossy(&name_vec[..name_length]))
+    Ok(String::from_utf16_lossy(&name_vec[..name_length]))
 }
 
 #[inline]

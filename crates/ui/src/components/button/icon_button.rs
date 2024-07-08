@@ -86,6 +86,11 @@ impl Clickable for IconButton {
         self.base = self.base.on_click(handler);
         self
     }
+
+    fn cursor_style(mut self, cursor_style: gpui::CursorStyle) -> Self {
+        self.base = self.base.cursor_style(cursor_style);
+        self
+    }
 }
 
 impl FixedWidth for IconButton {
@@ -145,7 +150,7 @@ impl RenderOnce for IconButton {
                     let icon_size = self.icon_size.rems() * cx.rem_size();
                     let padding = match self.icon_size {
                         IconSize::Indicator => Spacing::None.px(cx),
-                        IconSize::XSmall => Spacing::None.px(cx),
+                        IconSize::XSmall => Spacing::XSmall.px(cx),
                         IconSize::Small => Spacing::XSmall.px(cx),
                         IconSize::Medium => Spacing::XSmall.px(cx),
                     };

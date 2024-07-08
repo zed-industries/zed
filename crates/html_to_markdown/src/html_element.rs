@@ -23,11 +23,19 @@ fn inline_elements() -> &'static HashSet<&'static str> {
 
 #[derive(Debug, Clone)]
 pub struct HtmlElement {
-    pub(crate) tag: String,
+    tag: String,
     pub(crate) attrs: RefCell<Vec<Attribute>>,
 }
 
 impl HtmlElement {
+    pub fn new(tag: String, attrs: RefCell<Vec<Attribute>>) -> Self {
+        Self { tag, attrs }
+    }
+
+    pub fn tag(&self) -> &str {
+        &self.tag
+    }
+
     /// Returns whether this [`HtmlElement`] is an inline element.
     pub fn is_inline(&self) -> bool {
         inline_elements().contains(self.tag.as_str())

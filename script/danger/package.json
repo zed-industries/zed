@@ -7,6 +7,7 @@
     "danger": "danger"
   },
   "devDependencies": {
-    "danger": "11.3.1"
+    "danger": "11.3.1",
+    "danger-plugin-pr-hygiene": "0.5.0"
   }
 }

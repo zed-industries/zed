@@ -5,7 +5,7 @@ use crate::{
     Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
     WindowAppearance, WindowParams,
 };
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -367,6 +367,18 @@ impl MacPlatform {
             }
         }
     }
+
+    fn os_version(&self) -> Result<SemanticVersion> {
+        unsafe {
+            let process_info = NSProcessInfo::processInfo(nil);
+            let version = process_info.operatingSystemVersion();
+            Ok(SemanticVersion::new(
+                version.majorVersion as usize,
+                version.minorVersion as usize,
+                version.patchVersion as usize,
+            ))
+        }
+    }
 }
 
 impl Platform for MacPlatform {
@@ -504,16 +516,16 @@ impl Platform for MacPlatform {
         &self,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Box<dyn PlatformWindow> {
+    ) -> Result<Box<dyn PlatformWindow>> {
         // Clippy thinks that this evaluates to `()`, for some reason.
         #[allow(clippy::unit_arg, clippy::clone_on_copy)]
         let renderer_context = self.0.lock().renderer_context.clone();
-        Box::new(MacWindow::open(
+        Ok(Box::new(MacWindow::open(
             handle,
             options,
             self.foreground_executor(),
             renderer_context,
-        ))
+        )))
     }
 
     fn window_appearance(&self) -> WindowAppearance {
@@ -705,40 +717,6 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
-    fn os_name(&self) -> &'static str {
-        "macOS"
-    }
-
-    fn os_version(&self) -> Result<SemanticVersion> {
-        unsafe {
-            let process_info = NSProcessInfo::processInfo(nil);
-            let version = process_info.operatingSystemVersion();
-            Ok(SemanticVersion::new(
-                version.majorVersion as usize,
-                version.minorVersion as usize,
-                version.patchVersion as usize,
-            ))
-        }
-    }
-
-    fn app_version(&self) -> Result<SemanticVersion> {
-        unsafe {
-            let bundle: id = NSBundle::mainBundle();
-            if bundle.is_null() {
-                Err(anyhow!("app is not running inside a bundle"))
-            } else {
-                let version: id = msg_send![bundle, objectForInfoDictionaryKey: ns_string("CFBundleShortVersionString")];
-                if version.is_null() {
-                    bail!("bundle does not have version");
-                }
-                let len = msg_send![version, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
-                let bytes = version.UTF8String() as *const u8;
-                let version = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
-                version.parse()
-            }
-        }
-    }
-
     fn app_path(&self) -> Result<PathBuf> {
         unsafe {
             let bundle: id = NSBundle::mainBundle();
@@ -818,14 +796,24 @@ impl Platform for MacPlatform {
                 CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
                 CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
                 CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), verticalResizeCursor],
                 CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
                 CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
-                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
                 CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
+                CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
                 CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
                 CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
-                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
+
+                // Undocumented, private class methods:
+                // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
+                CursorStyle::ResizeUpLeftDownRight => {
+                    msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
+                }
+                CursorStyle::ResizeUpRightDownLeft => {
+                    msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
+                }
+
                 CursorStyle::IBeamCursorForVerticalLayout => {
                     msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
                 }

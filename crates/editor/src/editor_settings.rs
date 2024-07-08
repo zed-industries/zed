@@ -15,6 +15,7 @@ pub struct EditorSettings {
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
+    pub scroll_beyond_last_line: ScrollBeyondLastLine,
     pub vertical_scroll_margin: f32,
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
@@ -24,6 +25,8 @@ pub struct EditorSettings {
     pub expand_excerpt_lines: u32,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
+    #[serde(default)]
+    pub jupyter: Jupyter,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -63,10 +66,20 @@ pub enum DoubleClickInMultibuffer {
     Open,
 }
 
+#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct Jupyter {
+    /// Whether the Jupyter feature is enabled.
+    ///
+    /// Default: `false`
+    pub enabled: bool,
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Toolbar {
     pub breadcrumbs: bool,
     pub quick_actions: bool,
+    pub selections_menu: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -83,6 +96,7 @@ pub struct Scrollbar {
 pub struct Gutter {
     pub line_numbers: bool,
     pub code_actions: bool,
+    pub runnables: bool,
     pub folds: bool,
 }
 
@@ -114,6 +128,22 @@ pub enum MultiCursorModifier {
     CmdOrCtrl,
 }
 
+/// Whether the editor will scroll beyond the last line.
+///
+/// Default: one_page
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollBeyondLastLine {
+    /// The editor will not scroll beyond the last line.
+    Off,
+
+    /// The editor will scroll beyond the last line by one page.
+    OnePage,
+
+    /// The editor will scroll beyond the last line by the same number of lines as vertical_scroll_margin.
+    VerticalScrollMargin,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
@@ -129,6 +159,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub hover_popover_enabled: Option<bool>,
+
     /// Whether to pop the completions menu while typing in an editor without
     /// explicitly requesting it.
     ///
@@ -155,6 +186,10 @@ pub struct EditorSettingsContent {
     pub scrollbar: Option<ScrollbarContent>,
     /// Gutter related settings
     pub gutter: Option<GutterContent>,
+    /// Whether the editor will scroll beyond the last line.
+    ///
+    /// Default: one_page
+    pub scroll_beyond_last_line: Option<ScrollBeyondLastLine>,
     /// The number of lines to keep above/below the cursor when auto-scrolling.
     ///
     /// Default: 3.
@@ -193,6 +228,9 @@ pub struct EditorSettingsContent {
     ///
     /// Default: select
     pub double_click_in_multibuffer: Option<DoubleClickInMultibuffer>,
+
+    /// Jupyter REPL settings.
+    pub jupyter: Option<Jupyter>,
 }
 
 // Toolbar related settings
@@ -202,10 +240,15 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub breadcrumbs: Option<bool>,
-    /// Whether to display quik action buttons in the editor toolbar.
+    /// Whether to display quick action buttons in the editor toolbar.
     ///
     /// Default: true
     pub quick_actions: Option<bool>,
+
+    /// Whether to show the selections menu in the editor toolbar
+    ///
+    /// Default: true
+    pub selections_menu: Option<bool>,
 }
 
 /// Scrollbar related settings
@@ -248,6 +291,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub code_actions: Option<bool>,
+    /// Whether to show runnable buttons in the gutter.
+    ///
+    /// Default: true
+    pub runnables: Option<bool>,
     /// Whether to show fold buttons in the gutter.
     ///
     /// Default: true

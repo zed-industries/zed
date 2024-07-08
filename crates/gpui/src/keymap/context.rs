@@ -356,7 +356,7 @@ fn is_identifier_char(c: char) -> bool {
 }
 
 fn is_vim_operator_char(c: char) -> bool {
-    c == '>' || c == '<' || c == '~'
+    c == '>' || c == '<' || c == '~' || c == '"'
 }
 
 fn skip_whitespace(source: &str) -> &str {
