@@ -10,27 +10,24 @@ use std::{future, sync::Arc};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
+use super::LanguageModelSettings;
+
 pub struct CloudCompletionProvider {
     client: Arc<Client>,
-    model: CloudModel,
-    settings_version: usize,
     status: client::Status,
+    model: CloudModel,
     _maintain_client_status: Task<()>,
 }
 
 impl CloudCompletionProvider {
-    pub fn new(
-        model: CloudModel,
-        client: Arc<Client>,
-        settings_version: usize,
-        cx: &mut AppContext,
-    ) -> Self {
+    pub fn new(client: Arc<Client>, cx: &mut AppContext) -> Self {
+        //TODO(completion_provider) is this status really needed?
         let mut status_rx = client.status();
         let status = *status_rx.borrow();
         let maintain_client_status = cx.spawn(|mut cx| async move {
             while let Some(status) = status_rx.next().await {
                 let _ = cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    provider.update_current_as::<_, Self>(|provider| {
+                    provider.update_provider_of_type::<_, Self>(|provider| {
                         provider.status = status;
                     });
                 });
@@ -38,20 +35,37 @@ impl CloudCompletionProvider {
         });
         Self {
             client,
-            model,
-            settings_version,
+            model: CloudModel::default(),
             status,
             _maintain_client_status: maintain_client_status,
         }
     }
+}
 
-    pub fn update(&mut self, model: CloudModel, settings_version: usize) {
-        self.model = model;
-        self.settings_version = settings_version;
+impl LanguageModelSettings for () {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn boxed(&self) -> Box<dyn LanguageModelSettings> {
+        Box::new(self.clone())
     }
 }
 
 impl LanguageModelCompletionProvider for CloudCompletionProvider {
+    type Settings = ();
+
+    fn update(&mut self, _settings: &Self::Settings, _cx: &AppContext) {}
+
+    fn set_model(&mut self, model: LanguageModel, _cx: &mut AppContext) {
+        match model {
+            LanguageModel::Cloud(model) => {
+                self.model = model;
+            }
+            _ => {}
+        }
+    }
+
     fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
         let mut custom_model = if let CloudModel::Custom(custom_model) = self.model.clone() {
             Some(custom_model)
@@ -70,10 +84,6 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
             .collect()
     }
 
-    fn settings_version(&self) -> usize {
-        self.settings_version
-    }
-
     fn is_authenticated(&self) -> bool {
         self.status.is_connected()
     }
@@ -89,10 +99,6 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
 
     fn reset_credentials(&self, _cx: &AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
-    }
-
-    fn model(&self) -> LanguageModel {
-        LanguageModel::Cloud(self.model.clone())
     }
 
     fn count_tokens(
@@ -167,10 +173,6 @@ impl LanguageModelCompletionProvider for CloudCompletionProvider {
                     .boxed()
             })
             .boxed()
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
     }
 }
 

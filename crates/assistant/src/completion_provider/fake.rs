@@ -16,9 +16,12 @@ impl FakeCompletionProvider {
     #[cfg(test)]
     pub fn setup_test(cx: &mut AppContext) -> Self {
         use crate::CompletionProvider;
+        use parking_lot::RwLock;
+        use std::any::TypeId;
 
         let this = Self::default();
-        let provider = CompletionProvider::new(vec![Arc::new(this.clone())], None);
+        let mut provider = CompletionProvider::new(None);
+        provider.register_provider(TypeId::of::<Self>(), Arc::new(RwLock::new(this.clone())));
         cx.set_global(provider);
         this
     }
@@ -53,12 +56,14 @@ impl FakeCompletionProvider {
 }
 
 impl LanguageModelCompletionProvider for FakeCompletionProvider {
+    type Settings = ();
+
+    fn update(&mut self, _settings: &Self::Settings, _cx: &AppContext) {}
+
+    fn set_model(&mut self, _model: LanguageModel, _cx: &mut AppContext) {}
+
     fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
         vec![LanguageModel::default()]
-    }
-
-    fn settings_version(&self) -> usize {
-        0
     }
 
     fn is_authenticated(&self) -> bool {
@@ -75,10 +80,6 @@ impl LanguageModelCompletionProvider for FakeCompletionProvider {
 
     fn reset_credentials(&self, _cx: &AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
-    }
-
-    fn model(&self) -> LanguageModel {
-        LanguageModel::default()
     }
 
     fn count_tokens(
@@ -98,9 +99,5 @@ impl LanguageModelCompletionProvider for FakeCompletionProvider {
             .lock()
             .insert(serde_json::to_string(&_request).unwrap(), tx);
         async move { Ok(rx.map(Ok).boxed()) }.boxed()
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
     }
 }

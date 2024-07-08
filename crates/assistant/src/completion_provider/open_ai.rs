@@ -1,5 +1,4 @@
 use crate::assistant_settings::CloudModel;
-use crate::assistant_settings::{AssistantProvider, AssistantSettings};
 use crate::LanguageModelCompletionProvider;
 use crate::{
     assistant_settings::OpenAiModel, CompletionProvider, LanguageModel, LanguageModelRequest, Role,
@@ -18,44 +17,40 @@ use theme::ThemeSettings;
 use ui::prelude::*;
 use util::ResultExt;
 
+use super::LanguageModelSettings;
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct OpenAiSettings {
+    pub api_url: String,
+    pub low_speed_timeout: Option<Duration>,
+    pub available_models: Vec<OpenAiModel>,
+}
+
+impl LanguageModelSettings for OpenAiSettings {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn boxed(&self) -> Box<dyn LanguageModelSettings> {
+        Box::new(self.clone())
+    }
+}
+
 pub struct OpenAiCompletionProvider {
     api_key: Option<String>,
-    api_url: String,
-    model: OpenAiModel,
     http_client: Arc<dyn HttpClient>,
-    low_speed_timeout: Option<Duration>,
-    settings_version: usize,
+    model: OpenAiModel,
+    settings: OpenAiSettings,
 }
 
 impl OpenAiCompletionProvider {
-    pub fn new(
-        model: OpenAiModel,
-        api_url: String,
-        http_client: Arc<dyn HttpClient>,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-    ) -> Self {
+    pub fn new(http_client: Arc<dyn HttpClient>, settings: OpenAiSettings) -> Self {
         Self {
             api_key: None,
-            api_url,
-            model,
             http_client,
-            low_speed_timeout,
-            settings_version,
+            model: OpenAiModel::default(),
+            settings,
         }
-    }
-
-    pub fn update(
-        &mut self,
-        model: OpenAiModel,
-        api_url: String,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-    ) {
-        self.model = model;
-        self.api_url = api_url;
-        self.low_speed_timeout = low_speed_timeout;
-        self.settings_version = settings_version;
     }
 
     fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
@@ -92,19 +87,32 @@ impl OpenAiCompletionProvider {
 }
 
 impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
-    fn available_models(&self, cx: &AppContext) -> Vec<LanguageModel> {
-        if let AssistantProvider::OpenAi {
-            available_models, ..
-        } = &AssistantSettings::get_global(cx).provider
-        {
-            if !available_models.is_empty() {
-                return available_models
-                    .iter()
-                    .cloned()
-                    .map(LanguageModel::OpenAi)
-                    .collect();
+    type Settings = OpenAiSettings;
+
+    fn update(&mut self, settings: &Self::Settings, _cx: &AppContext) {
+        self.settings = settings.clone();
+    }
+
+    fn set_model(&mut self, model: LanguageModel, _cx: &mut AppContext) {
+        match model {
+            LanguageModel::OpenAi(model) => {
+                self.model = model;
             }
+            _ => {}
         }
+    }
+
+    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
+        if self.settings.available_models.is_empty() {
+            return self
+                .settings
+                .available_models
+                .iter()
+                .cloned()
+                .map(LanguageModel::OpenAi)
+                .collect();
+        }
+
         let available_models = if matches!(self.model, OpenAiModel::Custom { .. }) {
             vec![self.model.clone()]
         } else {
@@ -118,10 +126,6 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
             .collect()
     }
 
-    fn settings_version(&self) -> usize {
-        self.settings_version
-    }
-
     fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
     }
@@ -130,7 +134,7 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
         if self.is_authenticated() {
             Task::ready(Ok(()))
         } else {
-            let api_url = self.api_url.clone();
+            let api_url = self.settings.api_url.clone();
             cx.spawn(|mut cx| async move {
                 let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
                     api_key
@@ -142,7 +146,7 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
                     String::from_utf8(api_key)?
                 };
                 cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    provider.update_current_as::<_, Self>(|provider| {
+                    provider.update_provider_of_type::<_, Self>(|provider| {
                         provider.api_key = Some(api_key);
                     });
                 })
@@ -151,11 +155,11 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
     }
 
     fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
-        let delete_credentials = cx.delete_credentials(&self.api_url);
+        let delete_credentials = cx.delete_credentials(&self.settings.api_url);
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                provider.update_current_as::<_, Self>(|provider| {
+                provider.update_provider_of_type::<_, Self>(|provider| {
                     provider.api_key = None;
                 });
             })
@@ -163,12 +167,8 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
     }
 
     fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| AuthenticationPrompt::new(self.api_url.clone(), cx))
+        cx.new_view(|cx| AuthenticationPrompt::new(self.settings.api_url.clone(), cx))
             .into()
-    }
-
-    fn model(&self) -> LanguageModel {
-        LanguageModel::OpenAi(self.model.clone())
     }
 
     fn count_tokens(
@@ -187,8 +187,8 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
 
         let http_client = self.http_client.clone();
         let api_key = self.api_key.clone();
-        let api_url = self.api_url.clone();
-        let low_speed_timeout = self.low_speed_timeout;
+        let api_url = self.settings.api_url.clone();
+        let low_speed_timeout = self.settings.low_speed_timeout;
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
             let request = stream_completion(
@@ -210,10 +210,6 @@ impl LanguageModelCompletionProvider for OpenAiCompletionProvider {
             Ok(stream)
         }
         .boxed()
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
     }
 }
 
@@ -295,7 +291,7 @@ impl AuthenticationPrompt {
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                provider.update_current_as::<_, OpenAiCompletionProvider>(|provider| {
+                provider.update_provider_of_type::<_, OpenAiCompletionProvider>(|provider| {
                     provider.api_key = Some(api_key);
                 });
             })

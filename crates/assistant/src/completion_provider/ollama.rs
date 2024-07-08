@@ -8,35 +8,61 @@ use futures::{future::BoxFuture, stream::BoxStream, FutureExt};
 use gpui::{AnyView, AppContext, Task};
 use http::HttpClient;
 use ollama::{
-    get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
-    Role as OllamaRole,
+    get_models, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest, Role as OllamaRole,
 };
 use std::sync::Arc;
 use std::time::Duration;
 use ui::{prelude::*, ButtonLike, ElevationIndex};
 
+use super::LanguageModelSettings;
+
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
 
+#[derive(Default, Debug, Clone, PartialEq)]
+pub struct OllamaSettings {
+    pub api_url: String,
+    pub low_speed_timeout: Option<Duration>,
+}
+
+impl LanguageModelSettings for OllamaSettings {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn boxed(&self) -> Box<dyn LanguageModelSettings> {
+        Box::new(self.clone())
+    }
+}
+
 pub struct OllamaCompletionProvider {
-    api_url: String,
+    settings: OllamaSettings,
     model: OllamaModel,
     http_client: Arc<dyn HttpClient>,
-    low_speed_timeout: Option<Duration>,
-    settings_version: usize,
     available_models: Vec<OllamaModel>,
 }
 
 impl LanguageModelCompletionProvider for OllamaCompletionProvider {
+    type Settings = OllamaSettings;
+
+    fn update(&mut self, settings: &Self::Settings, _cx: &AppContext) {
+        self.settings = settings.clone();
+    }
+
+    fn set_model(&mut self, model: LanguageModel, _cx: &mut AppContext) {
+        match model {
+            LanguageModel::Ollama(model) => {
+                self.model = model;
+            }
+            _ => {}
+        }
+    }
+
     fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
         self.available_models
             .iter()
             .map(|m| LanguageModel::Ollama(m.clone()))
             .collect()
-    }
-
-    fn settings_version(&self) -> usize {
-        self.settings_version
     }
 
     fn is_authenticated(&self) -> bool {
@@ -55,7 +81,7 @@ impl LanguageModelCompletionProvider for OllamaCompletionProvider {
         let fetch_models = Box::new(move |cx: &mut WindowContext| {
             cx.update_global::<CompletionProvider, _>(|provider, cx| {
                 provider
-                    .update_current_as::<_, OllamaCompletionProvider>(|provider| {
+                    .update_provider_of_type::<_, OllamaCompletionProvider>(|provider| {
                         provider.fetch_models(cx)
                     })
                     .unwrap_or_else(|| Task::ready(Ok(())))
@@ -68,10 +94,6 @@ impl LanguageModelCompletionProvider for OllamaCompletionProvider {
 
     fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
         self.fetch_models(cx)
-    }
-
-    fn model(&self) -> LanguageModel {
-        LanguageModel::Ollama(self.model.clone())
     }
 
     fn count_tokens(
@@ -98,8 +120,8 @@ impl LanguageModelCompletionProvider for OllamaCompletionProvider {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
-        let api_url = self.api_url.clone();
-        let low_speed_timeout = self.low_speed_timeout;
+        let api_url = self.settings.api_url.clone();
+        let low_speed_timeout = self.settings.low_speed_timeout;
         async move {
             let request =
                 stream_chat_completion(http_client.as_ref(), &api_url, request, low_speed_timeout);
@@ -123,74 +145,19 @@ impl LanguageModelCompletionProvider for OllamaCompletionProvider {
         }
         .boxed()
     }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
 }
 
 impl OllamaCompletionProvider {
-    pub fn new(
-        model: OllamaModel,
-        api_url: String,
-        http_client: Arc<dyn HttpClient>,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-        cx: &AppContext,
-    ) -> Self {
-        cx.spawn({
-            let api_url = api_url.clone();
-            let client = http_client.clone();
-            let model = model.name.clone();
-
-            |_| async move {
-                if model.is_empty() {
-                    return Ok(());
-                }
-                preload_model(client.as_ref(), &api_url, &model).await
-            }
-        })
-        .detach_and_log_err(cx);
-
+    pub fn new(http_client: Arc<dyn HttpClient>, settings: OllamaSettings) -> Self {
         Self {
-            api_url,
-            model,
+            settings,
             http_client,
-            low_speed_timeout,
-            settings_version,
+            model: OllamaModel::default(),
             available_models: Default::default(),
         }
     }
 
-    pub fn update(
-        &mut self,
-        model: OllamaModel,
-        api_url: String,
-        low_speed_timeout: Option<Duration>,
-        settings_version: usize,
-        cx: &AppContext,
-    ) {
-        cx.spawn({
-            let api_url = api_url.clone();
-            let client = self.http_client.clone();
-            let model = model.name.clone();
-
-            |_| async move { preload_model(client.as_ref(), &api_url, &model).await }
-        })
-        .detach_and_log_err(cx);
-
-        if model.name.is_empty() {
-            self.select_first_available_model()
-        } else {
-            self.model = model;
-        }
-
-        self.api_url = api_url;
-        self.low_speed_timeout = low_speed_timeout;
-        self.settings_version = settings_version;
-    }
-
-    pub fn select_first_available_model(&mut self) {
+    fn select_first_available_model(&mut self) {
         if let Some(model) = self.available_models.first() {
             self.model = model.clone();
         }
@@ -198,7 +165,7 @@ impl OllamaCompletionProvider {
 
     pub fn fetch_models(&self, cx: &AppContext) -> Task<Result<()>> {
         let http_client = self.http_client.clone();
-        let api_url = self.api_url.clone();
+        let api_url = self.settings.api_url.clone();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(|mut cx| async move {
@@ -216,7 +183,7 @@ impl OllamaCompletionProvider {
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                provider.update_current_as::<_, OllamaCompletionProvider>(|provider| {
+                provider.update_provider_of_type::<_, OllamaCompletionProvider>(|provider| {
                     provider.available_models = models;
 
                     if !provider.available_models.is_empty() && provider.model.name.is_empty() {
