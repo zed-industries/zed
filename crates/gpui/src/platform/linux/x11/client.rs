@@ -618,8 +618,8 @@ impl X11Client {
                     event.base_mods.into(),
                     event.latched_mods.into(),
                     event.locked_mods.into(),
-                    0,
-                    0,
+                    event.base_group as u32,
+                    event.latched_group as u32,
                     event.locked_group.into(),
                 );
 
