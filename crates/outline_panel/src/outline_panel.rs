@@ -2863,9 +2863,8 @@ impl Render for OutlinePanel {
         if self.cached_entries_with_depth.is_empty() {
             let header = if self.updating_fs_entries {
                 Cow::Borrowed("Loading outlines")
-            } else if let Some(query) = query.as_deref() {
-                // TODO kb can be too long, wrap or shorten?
-                Cow::Owned(format!("No matches for query '{query}'"))
+            } else if query.is_some() {
+                Cow::Owned(format!("No matches for query"))
             } else {
                 Cow::Borrowed("No outlines available")
             };
@@ -2875,6 +2874,9 @@ impl Render for OutlinePanel {
                     .justify_center()
                     .size_full()
                     .child(h_flex().justify_center().child(Label::new(header)))
+                    .when_some(query.clone(), |panel, query| {
+                        panel.child(h_flex().justify_center().child(Label::new(query)))
+                    })
                     .child(
                         h_flex()
                             .pt(Spacing::Small.rems(cx))
