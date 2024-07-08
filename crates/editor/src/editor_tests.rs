@@ -6857,7 +6857,6 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     // A test that directly calls `show_signature_help`
     cx.update_editor(|editor, cx| {
         editor.show_signature_help(&ShowSignatureHelp, cx);
-        assert!(editor.signature_help_task.is_some())
     });
 
     let mocked_response = lsp::SignatureHelp {
@@ -6881,11 +6880,11 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     };
     handle_signature_help_request(&mut cx, mocked_response).await;
 
-    cx.condition(|editor, _| editor.signature_help_state.is_some())
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
         .await;
 
     cx.editor(|editor, _| {
-        let signature_help_state = editor.signature_help_state.clone();
+        let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
         let ParsedMarkdown {
             text, highlights, ..
@@ -6914,11 +6913,11 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     };
     handle_signature_help_request(&mut cx, mocked_response).await;
 
-    cx.condition(|editor, _| editor.signature_help_state.is_none())
+    cx.condition(|editor, _| !editor.signature_help_state.is_shown())
         .await;
 
     cx.editor(|editor, _| {
-        assert!(editor.signature_help_state.as_ref().is_none());
+        assert!(!editor.signature_help_state.is_shown());
     });
 
     // When entering inside the brackets from outside, `show_signature_help` is automatically called.
@@ -6950,10 +6949,10 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
         active_parameter: Some(0),
     };
     handle_signature_help_request(&mut cx, mocked_response.clone()).await;
-    cx.condition(|editor, _| editor.signature_help_state.is_some())
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
         .await;
     cx.editor(|editor, _| {
-        assert!(editor.signature_help_state.as_ref().is_some());
+        assert!(editor.signature_help_state.is_shown());
     });
 
     // Restore the popover with more parameter input
@@ -6985,7 +6984,7 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
         active_parameter: Some(1),
     };
     handle_signature_help_request(&mut cx, mocked_response.clone()).await;
-    cx.condition(|editor, _| editor.signature_help_state.is_some())
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
         .await;
 
     // When selecting a range, the popover is gone.
@@ -7003,8 +7002,9 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
         fn sample(param1: u8, param2: u8) {}
     "});
     cx.editor(|editor, _| {
-        assert!(editor.signature_help_state.as_ref().is_none());
+        assert!(!editor.signature_help_state.is_shown());
     });
+
     // When unselecting again, the popover is back if within the brackets.
     cx.update_editor(|editor, cx| {
         editor.change_selections(None, cx, |s| {
@@ -7019,11 +7019,80 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
         fn sample(param1: u8, param2: u8) {}
     "});
     handle_signature_help_request(&mut cx, mocked_response).await;
-    cx.condition(|editor, _| editor.signature_help_state.is_some())
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
         .await;
     cx.editor(|editor, _| {
-        assert!(editor.signature_help_state.as_ref().is_some());
+        assert!(editor.signature_help_state.is_shown());
     });
+
+    // Test to confirm that SignatureHelp does not appear after deselecting multiple ranges when it was hidden by pressing Escape.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(0, 0)..Point::new(0, 0)));
+            s.select_ranges(Some(Point::new(1, 19)..Point::new(1, 19)));
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            sample(param1, ˇparam2);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8, param2: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                    documentation: None,
+                },
+                lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("param2: u8".to_string()),
+                    documentation: None,
+                },
+            ]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(1),
+    };
+    handle_signature_help_request(&mut cx, mocked_response.clone()).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+    cx.update_editor(|editor, cx| {
+        editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
+    });
+    cx.condition(|editor, _| !editor.signature_help_state.is_shown())
+        .await;
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(1, 25)..Point::new(1, 19)));
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            sample(param1, «ˇparam2»);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges(Some(Point::new(1, 19)..Point::new(1, 19)));
+        })
+    });
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            sample(param1, ˇparam2);
+        }
+
+        fn sample(param1: u8, param2: u8) {}
+    "});
+    cx.condition(|editor, _| !editor.signature_help_state.is_shown()) // because hidden by escape
+        .await;
 }
 
 #[gpui::test]
