@@ -4041,18 +4041,28 @@ impl Editor {
         }
 
         let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let bracket_range = |position: usize| match (position, position + 1) {
+            (0, b) if b <= buffer_snapshot.len() => 0..b,
+            (0, b) => 0..b - 1,
+            (a, b) if b <= buffer_snapshot.len() => a - 1..b,
+            (a, b) => a - 1..b - 1,
+        };
+
         let previous_position = old_cursor_position.to_offset(&buffer_snapshot);
+        let previous_brackets_range = bracket_range(previous_position);
         let previous_brackets_surround = buffer_snapshot
-            .innermost_enclosing_bracket_ranges(previous_position..previous_position, None)
+            .innermost_enclosing_bracket_ranges(previous_brackets_range, None)
             .filter(|(start_bracket_range, end_bracket_range)| {
                 start_bracket_range.start != previous_position
                     && end_bracket_range.end != previous_position
             });
+        let current_brackets_range = bracket_range(head);
         let current_brackets_surround = buffer_snapshot
-            .innermost_enclosing_bracket_ranges(head..head, None)
+            .innermost_enclosing_bracket_ranges(current_brackets_range, None)
             .filter(|(start_bracket_range, end_bracket_range)| {
                 start_bracket_range.start != head && end_bracket_range.end != head
             });
+
         match (previous_brackets_surround, current_brackets_surround) {
             (None, None) => {
                 self.signature_help_state = None;
