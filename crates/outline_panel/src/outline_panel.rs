@@ -970,22 +970,26 @@ impl OutlinePanel {
                     match fs_entry {
                         FsEntry::ExternalFile(buffer_id, _) => {
                             entries.insert(CollapsedEntry::ExternalFile(*buffer_id));
-                            entries.extend(self.excerpts.get(buffer_id).map(|excerpts| {
-                                excerpts.iter().map(|excerpt_id| {
-                                    CollapsedEntry::Excerpt(*buffer_id, *excerpt_id)
-                                })
-                            }));
+                            entries.extend(self.excerpts.get(buffer_id).into_iter().flat_map(
+                                |excerpts| {
+                                    excerpts.iter().map(|(excerpt_id, _)| {
+                                        CollapsedEntry::Excerpt(*buffer_id, *excerpt_id)
+                                    })
+                                },
+                            ));
                         }
                         FsEntry::Directory(worktree_id, entry) => {
                             entries.insert(CollapsedEntry::Dir(*worktree_id, entry.id));
                         }
                         FsEntry::File(worktree_id, _, buffer_id, _) => {
                             entries.insert(CollapsedEntry::File(*worktree_id, *buffer_id));
-                            entries.extend(self.excerpts.get(buffer_id).map(|excerpts| {
-                                excerpts.iter().map(|excerpt_id| {
-                                    CollapsedEntry::Excerpt(*buffer_id, *excerpt_id)
-                                })
-                            }));
+                            entries.extend(self.excerpts.get(buffer_id).into_iter().flat_map(
+                                |excerpts| {
+                                    excerpts.iter().map(|(excerpt_id, _)| {
+                                        CollapsedEntry::Excerpt(*buffer_id, *excerpt_id)
+                                    })
+                                },
+                            ));
                         }
                     }
                     entries
