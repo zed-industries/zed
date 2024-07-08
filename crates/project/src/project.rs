@@ -11696,22 +11696,16 @@ fn include_text(server: &lsp::LanguageServer) -> bool {
 }
 
 async fn load_direnv_environment(dir: &Path) -> Result<Option<HashMap<String, String>>> {
-    let direnv_res = smol::process::Command::new("direnv")
+    let Ok(direnv_path) = which::which("direnv") else {
+        return Ok(None);
+    };
+
+    let direnv_output = smol::process::Command::new(direnv_path)
         .args(["export", "json"])
         .current_dir(dir)
         .output()
-        .await;
-
-    let direnv_output = match direnv_res {
-        Ok(output) => output,
-        Err(e) => {
-            return if e.kind() == std::io::ErrorKind::NotFound {
-                Ok(None)
-            } else {
-                Err(e).context("failed to spawn direnv to get local environment variables")
-            }
-        }
-    };
+        .await
+        .context("failed to spawn direnv to get local environment variables")?;
 
     anyhow::ensure!(
         direnv_output.status.success(),
