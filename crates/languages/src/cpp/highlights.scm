@@ -131,7 +131,8 @@
 ] @string
 
 [
-  "."
+  ":"
+  "::"
   ";"
 ] @punctuation.delimiter
 
@@ -145,22 +146,47 @@
 ] @punctuation.bracket
 
 [
-  "--"
+  "."
+  ".*"
+  "->*"
+  "~"
   "-"
+  "--"
   "-="
   "->"
   "="
+  "!"
   "!="
-  "*"
+  "|"
+  "|="
+  "||"
+  "^"
+  "^="
   "&"
+  "&="
   "&&"
   "+"
   "++"
   "+="
+  "*"
+  "*="
+  "/"
+  "/="
+  "%"
+  "%="
+  "<<"
+  "<<="
+  ">>"
+  ">>="
   "<"
   "=="
   ">"
+  "<="
+  ">="
+  "<=>"
   "||"
+  "?"
 ] @operator
 
+(conditional_expression ":" @operator)
 (user_defined_literal (literal_suffix) @operator)
