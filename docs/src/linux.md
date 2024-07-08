@@ -84,7 +84,7 @@ A broken Vulkan results in error messages like: "Zed failed to open a window: No
 
 To begin troubleshooting vulkan, install the `vulkan-tools` package, and run:
 ```sh
-$ vkcube
+vkcube
 ```
 
 This should output a line describing your current graphics setup. If it contains `llvmpipe` then Vulkan is not using a GPU, which will make Zed run very slowly.
