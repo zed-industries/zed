@@ -851,19 +851,26 @@ impl OutlinePanel {
         if self
             .unfolded_dirs
             .get(&directory_worktree)
-            .map_or(false, |unfolded_dirs| {
-                unfolded_dirs.contains(&directory_entry.id)
+            .map_or(true, |unfolded_dirs| {
+                !unfolded_dirs.contains(&directory_entry.id)
             })
         {
-            return true;
+            return false;
         }
 
+        let mut parent_entries = Vec::new();
         let child_entries = self
             .fs_entries
             .iter()
             .skip_while(|entry| {
                 if let FsEntry::Directory(worktree_id, entry) = entry {
-                    worktree_id != &directory_worktree || entry.id != directory_entry.id
+                    if worktree_id != &directory_worktree {
+                        return false;
+                    }
+                    if directory_entry.path.starts_with(&entry.path) {
+                        parent_entries.push(entry);
+                    }
+                    entry.id != directory_entry.id
                 } else {
                     true
                 }
@@ -878,7 +885,13 @@ impl OutlinePanel {
             })
             .collect::<Vec<_>>();
 
-        child_entries.len() == 1 && matches!(child_entries.first(), Some(FsEntry::Directory(..)))
+        child_entries.len() == 1
+            && (matches!(child_entries.first(), Some(FsEntry::Directory(..)))
+                || parent_entries.last().map_or(false, |parent| {
+                    self.unfolded_dirs
+                        .get(&directory_worktree)
+                        .map_or(false, |unfolded_dirs| unfolded_dirs.contains(&parent.id))
+                }))
     }
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
