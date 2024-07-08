@@ -58,9 +58,10 @@ If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it m
 
 Zed requires a GPU to run effectively. Under the hood we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed failx to load, it is possible that Vulkan is the culprit.
 
-A broken Vulkan results in error messages like: "Zed failed to open a window: NoSupportedDeviceFound" or "called `Result::unwrap()` on an `Err` value: ERROR_INITIALIZATION_FAILED".
+If you're using an AMD GPU, you might get a 'Broken Pipe' error. try using the RADV or Mesa drivers. See: [#13880](https://github.com/zed-industries/zed/issues/13880)
 
-To begin troubleshooting vulkan, install the `vulkan-tools` package, and run:
+Otherwise if you see error messages like: "Zed failed to open a window: NoSupportedDeviceFound" or "called `Result::unwrap()` on an `Err` value: ERROR_INITIALIZATION_FAILED", you can begin troubleshooting vulkan, by installing the `vulkan-tools` package, and running:
+
 ```sh
 vkcube
 ```
@@ -70,6 +71,7 @@ This should output a line describing your current graphics setup. If it contains
 In most cases this can be fixed by configuring Vulkan and installing compatible GPU drivers, however in some cases (for example running linux on an Arm-based MacBook) there is no Vulkan support yet.
 
 For more information the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps.
+
 
 ## Zed is very slow
 

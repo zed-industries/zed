@@ -23,7 +23,7 @@ The install script does not work on systems that:
 * have a glibc older than version 2.29 (for example Amazon Linux 2 or Ubuntu 18 and earlier)
 * use an architecture other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
 
-If this script is insufficient for your use case, please see our documentation on [alternative ways to acquire a Zed binary](./linux.md)
+If this script is insufficient for your use case or you run into problems running Zed, please see our [linux-specific documentation](./linux.md)
 
 ## Configure Zed
 
