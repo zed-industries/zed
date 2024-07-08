@@ -2,11 +2,11 @@ use crate::{
     slash_command::SlashCommandLine, CompletionProvider, LanguageModelRequest,
     LanguageModelRequestMessage, MessageId, MessageStatus, Role,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandOutput, SlashCommandOutputSection, SlashCommandRegistry,
 };
-use client::telemetry::Telemetry;
+use client::{proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::Fs;
@@ -52,6 +52,155 @@ pub enum ContextOperation {
 }
 
 impl ContextOperation {
+    pub fn from_proto(op: proto::ContextOperation) -> Result<Self> {
+        match op.variant.context("invalid variant")? {
+            proto::context_operation::Variant::InsertMessage(insert) => {
+                let message = insert.message.context("invalid message")?;
+                let id = MessageId(language::proto::deserialize_timestamp(
+                    message.id.context("invalid id")?,
+                ));
+                Ok(Self::InsertMessage {
+                    anchor: MessageAnchor {
+                        id,
+                        start: language::proto::deserialize_anchor(
+                            message.start.context("invalid anchor")?,
+                        )
+                        .context("invalid anchor")?,
+                    },
+                    metadata: MessageMetadata {
+                        role: Role::from_proto(message.role),
+                        status: MessageStatus::from_proto(
+                            message.status.context("invalid status")?,
+                        ),
+                        timestamp: id.0,
+                    },
+                })
+            }
+            proto::context_operation::Variant::UpdateMessage(update) => Ok(Self::UpdateMessage {
+                message_id: MessageId(language::proto::deserialize_timestamp(
+                    update.message_id.context("invalid message id")?,
+                )),
+                metadata: MessageMetadata {
+                    role: Role::from_proto(update.role),
+                    status: MessageStatus::from_proto(update.status.context("invalid status")?),
+                    timestamp: language::proto::deserialize_timestamp(
+                        update.timestamp.context("invalid timestamp")?,
+                    ),
+                },
+            }),
+            proto::context_operation::Variant::UpdateSummary(update) => {
+                Ok(Self::UpdateSummary(ContextSummary {
+                    text: update.summary,
+                    done: update.done,
+                    timestamp: language::proto::deserialize_timestamp(
+                        update.timestamp.context("invalid timestamp")?,
+                    ),
+                }))
+            }
+            proto::context_operation::Variant::SlashCommandFinished(finished) => {
+                Ok(Self::SlashCommandFinished {
+                    id: SlashCommandId(language::proto::deserialize_timestamp(
+                        finished.id.context("invalid id")?,
+                    )),
+                    output_range: language::proto::deserialize_anchor_range(
+                        finished.output_range.context("invalid range")?,
+                    )?,
+                    sections: finished
+                        .sections
+                        .into_iter()
+                        .map(|section| {
+                            Ok(SlashCommandOutputSection {
+                                range: language::proto::deserialize_anchor_range(
+                                    section.range.context("invalid range")?,
+                                )?,
+                                icon: section.icon_name.parse()?,
+                                label: section.label.into(),
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                })
+            }
+            proto::context_operation::Variant::BufferOperation(op) => Ok(Self::BufferOperation(
+                language::proto::deserialize_operation(
+                    op.operation.context("invalid buffer operation")?,
+                )?,
+            )),
+        }
+    }
+
+    fn to_proto(&self) -> proto::ContextOperation {
+        match self {
+            Self::InsertMessage { anchor, metadata } => proto::ContextOperation {
+                variant: Some(proto::context_operation::Variant::InsertMessage(
+                    proto::context_operation::InsertMessage {
+                        message: Some(proto::ContextMessage {
+                            id: Some(language::proto::serialize_timestamp(anchor.id.0)),
+                            start: Some(language::proto::serialize_anchor(&anchor.start)),
+                            role: metadata.role.to_proto() as i32,
+                            status: Some(metadata.status.to_proto()),
+                        }),
+                    },
+                )),
+            },
+            Self::UpdateMessage {
+                message_id,
+                metadata,
+            } => proto::ContextOperation {
+                variant: Some(proto::context_operation::Variant::UpdateMessage(
+                    proto::context_operation::UpdateMessage {
+                        message_id: Some(language::proto::serialize_timestamp(message_id.0)),
+                        role: metadata.role.to_proto() as i32,
+                        status: Some(metadata.status.to_proto()),
+                        timestamp: Some(language::proto::serialize_timestamp(metadata.timestamp)),
+                    },
+                )),
+            },
+            Self::UpdateSummary(summary) => proto::ContextOperation {
+                variant: Some(proto::context_operation::Variant::UpdateSummary(
+                    proto::context_operation::UpdateSummary {
+                        summary: summary.text.clone(),
+                        done: summary.done,
+                        timestamp: Some(language::proto::serialize_timestamp(summary.timestamp)),
+                    },
+                )),
+            },
+            Self::SlashCommandFinished {
+                id,
+                output_range,
+                sections,
+            } => proto::ContextOperation {
+                variant: Some(proto::context_operation::Variant::SlashCommandFinished(
+                    proto::context_operation::SlashCommandFinished {
+                        id: Some(language::proto::serialize_timestamp(id.0)),
+                        output_range: Some(language::proto::serialize_anchor_range(
+                            output_range.clone(),
+                        )),
+                        sections: sections
+                            .iter()
+                            .map(|section| {
+                                let icon_name: &'static str = section.icon.into();
+                                proto::SlashCommandOutputSection {
+                                    range: Some(language::proto::serialize_anchor_range(
+                                        section.range.clone(),
+                                    )),
+                                    icon_name: icon_name.to_string(),
+                                    label: section.label.to_string(),
+                                }
+                            })
+                            .collect(),
+                    },
+                )),
+            },
+            Self::BufferOperation(operation) => proto::ContextOperation {
+                variant: Some(proto::context_operation::Variant::BufferOperation(
+                    proto::context_operation::BufferOperation {
+                        operation: Some(language::proto::serialize_operation(operation)),
+                    },
+                )),
+            },
+        }
+    }
+
     fn timestamp(&self) -> clock::Lamport {
         match self {
             Self::InsertMessage { anchor, .. } => anchor.id.0,
@@ -2335,7 +2484,9 @@ mod tests {
                     let network = network.clone();
                     move |_, event, _| {
                         if let ContextEvent::Operation(op) = event {
-                            network.lock().broadcast(i as ReplicaId, vec![op.clone()]);
+                            network
+                                .lock()
+                                .broadcast(i as ReplicaId, vec![op.to_proto()]);
                         }
                     }
                 })
@@ -2409,6 +2560,7 @@ mod tests {
 
                         let output_len = rng.gen_range(1..=10);
                         let output_text = RandomCharIter::new(&mut rng)
+                            .filter(|c| *c != '\r')
                             .take(output_len)
                             .collect::<String>();
 
@@ -2473,6 +2625,11 @@ mod tests {
                     let replica_id = context_index as ReplicaId;
                     if network.lock().has_unreceived(replica_id) {
                         let ops = network.lock().receive(replica_id);
+                        let ops = ops
+                            .into_iter()
+                            .map(ContextOperation::from_proto)
+                            .collect::<Result<Vec<_>>>()
+                            .unwrap();
                         log::info!("Context {}: applying operations", context_index);
                         context
                             .update(cx, |context, cx| context.apply_ops(ops, cx))

@@ -2234,43 +2234,69 @@ message ContextId {
     uint64 low_bits = 2;
 }
 
+message ContextMessageStatus {
+    oneof variant {
+        Done done = 1;
+        Pending pending = 2;
+        Error error = 3;
+    }
+
+    message Done {}
+
+    message Pending {}
+
+    message Error {
+        string message = 1;
+    }
+}
+
+message ContextMessage {
+    LamportTimestamp id = 1;
+    Anchor start = 2;
+    LanguageModelRole role = 3;
+    ContextMessageStatus status = 4;
+}
+
 message SlashCommandOutputSection {
     AnchorRange range = 1;
     string icon_name = 2;
     string label = 3;
 }
 
-message ContextMessage {
-    LamportTimestamp id = 1;
-    LamportTimestamp left_sibling = 2;
-    LanguageModelRole role = 3;
-}
-
 message ContextOperation {
-    oneof kind {
+    oneof variant {
         InsertMessage insert_message = 1;
-        ChangeMessageRole change_message_role = 2;
-        BufferOperation buffer_operation = 3;
-        UpdateSummary summary = 4;
+        UpdateMessage update_message = 2;
+        UpdateSummary update_summary = 3;
+        SlashCommandFinished slash_command_finished = 4;
+        BufferOperation buffer_operation = 5;
     }
 
     message InsertMessage {
         ContextMessage message = 1;
     }
 
-    message ChangeMessageRole {
+    message UpdateMessage {
         LamportTimestamp message_id = 1;
         LanguageModelRole role = 2;
-        LamportTimestamp timestamp = 3;
-    }
-
-    message BufferOperation {
-        Operation operation = 1;
+        ContextMessageStatus status = 3;
+        LamportTimestamp timestamp = 4;
     }
 
     message UpdateSummary {
         string summary = 1;
-        LamportTimestamp timestamp = 2;
+        bool done = 2;
+        LamportTimestamp timestamp = 3;
+    }
+
+    message SlashCommandFinished {
+        LamportTimestamp id = 1;
+        AnchorRange output_range = 2;
+        repeated SlashCommandOutputSection sections = 3;
+    }
+
+    message BufferOperation {
+        Operation operation = 1;
     }
 }
 

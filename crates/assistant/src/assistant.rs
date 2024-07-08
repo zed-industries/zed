@@ -77,6 +77,24 @@ pub enum Role {
 }
 
 impl Role {
+    pub fn from_proto(role: i32) -> Role {
+        match proto::LanguageModelRole::from_i32(role) {
+            Some(proto::LanguageModelRole::LanguageModelUser) => Role::User,
+            Some(proto::LanguageModelRole::LanguageModelAssistant) => Role::Assistant,
+            Some(proto::LanguageModelRole::LanguageModelSystem) => Role::System,
+            Some(proto::LanguageModelRole::LanguageModelTool) => Role::System,
+            None => Role::User,
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::LanguageModelRole {
+        match self {
+            Role::User => proto::LanguageModelRole::LanguageModelUser,
+            Role::Assistant => proto::LanguageModelRole::LanguageModelAssistant,
+            Role::System => proto::LanguageModelRole::LanguageModelSystem,
+        }
+    }
+
     pub fn cycle(self) -> Role {
         match self {
             Role::User => Role::Assistant,
@@ -157,11 +175,7 @@ pub struct LanguageModelRequestMessage {
 impl LanguageModelRequestMessage {
     pub fn to_proto(&self) -> proto::LanguageModelRequestMessage {
         proto::LanguageModelRequestMessage {
-            role: match self.role {
-                Role::User => proto::LanguageModelRole::LanguageModelUser,
-                Role::Assistant => proto::LanguageModelRole::LanguageModelAssistant,
-                Role::System => proto::LanguageModelRole::LanguageModelSystem,
-            } as i32,
+            role: self.role.to_proto() as i32,
             content: self.content.clone(),
             tool_calls: Vec::new(),
             tool_call_id: None,
@@ -233,6 +247,41 @@ pub enum MessageStatus {
     Pending,
     Done,
     Error(SharedString),
+}
+
+impl MessageStatus {
+    pub fn from_proto(status: proto::ContextMessageStatus) -> MessageStatus {
+        match status.variant {
+            Some(proto::context_message_status::Variant::Pending(_)) => MessageStatus::Pending,
+            Some(proto::context_message_status::Variant::Done(_)) => MessageStatus::Done,
+            Some(proto::context_message_status::Variant::Error(error)) => {
+                MessageStatus::Error(error.message.into())
+            }
+            None => MessageStatus::Pending,
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::ContextMessageStatus {
+        match self {
+            MessageStatus::Pending => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Pending(
+                    proto::context_message_status::Pending {},
+                )),
+            },
+            MessageStatus::Done => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Done(
+                    proto::context_message_status::Done {},
+                )),
+            },
+            MessageStatus::Error(message) => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Error(
+                    proto::context_message_status::Error {
+                        message: message.to_string(),
+                    },
+                )),
+            },
+        }
+    }
 }
 
 /// The state pertaining to the Assistant.

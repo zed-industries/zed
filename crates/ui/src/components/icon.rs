@@ -1,6 +1,6 @@
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 use serde::{Deserialize, Serialize};
-use strum::EnumIter;
+use strum::{EnumIter, EnumString, IntoStaticStr};
 
 use crate::{prelude::*, Indicator};
 
@@ -77,7 +77,9 @@ impl IconSize {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone, EnumIter, Serialize, Deserialize)]
+#[derive(
+    Debug, Eq, PartialEq, Copy, Clone, EnumIter, EnumString, IntoStaticStr, Serialize, Deserialize,
+)]
 pub enum IconName {
     Ai,
     ArrowCircle,
