@@ -561,14 +561,27 @@ impl X11Client {
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_focused(true);
+
                 let mut state = self.0.borrow_mut();
                 state.focused_window = Some(event.event);
+
+                let cursor_style = state.cursor_styles.get(&window.x_window).cloned();
                 drop(state);
+
+                // Restore previously set cursor style for the window once it gains focus.
+                if let Some(cursor_style) = cursor_style {
+                    self.set_cursor_style(cursor_style.clone());
+                }
+
                 self.enable_ime();
             }
             Event::FocusOut(event) => {
+                // When we lose focus, we reset the cursor style of the currently focused window.
+                self.set_cursor_style(CursorStyle::Arrow);
+
                 let window = self.get_window(event.event)?;
                 window.set_focused(false);
+
                 let mut state = self.0.borrow_mut();
                 state.focused_window = None;
                 if let Some(compose_state) = state.compose_state.as_mut() {
