@@ -1774,7 +1774,7 @@ impl OutlinePanel {
                             }
                         }
 
-                        #[derive(Clone, Copy, Default)]
+                        #[derive(Debug, Clone, Copy, Default)]
                         struct Children {
                             files: usize,
                             dirs: usize,
@@ -1849,7 +1849,6 @@ impl OutlinePanel {
                                             dir_entry,
                                         );
 
-                                        visited_dirs.push((dir_entry.id, dir_entry.path.clone()));
                                         let depth = if root_entries.contains(&dir_entry.id) {
                                             0
                                         } else if auto_fold_dirs {
@@ -1884,7 +1883,12 @@ impl OutlinePanel {
                                                     && visited_dirs
                                                         .last()
                                                         .map(|(parent_dir_id, _)| {
-                                                            root_entries.contains(parent_dir_id)
+                                                            new_unfolded_dirs
+                                                                .get(&worktree_id)
+                                                                .map_or(true, |unfolded_dirs| {
+                                                                    unfolded_dirs
+                                                                        .contains(&parent_dir_id)
+                                                                })
                                                         })
                                                         .unwrap_or(true))
                                             {
@@ -1915,6 +1919,7 @@ impl OutlinePanel {
                                                 .unwrap_or(0)
                                                 + 1
                                         };
+                                        visited_dirs.push((dir_entry.id, dir_entry.path.clone()));
                                         new_depth_map.insert((*worktree_id, dir_entry.id), depth);
                                     }
                                     FsEntry::File(worktree_id, file_entry, ..) => {
@@ -2372,17 +2377,18 @@ impl OutlinePanel {
         cx.spawn(|outline_panel, mut cx| async move {
             let mut entries = Vec::new();
             let mut match_candidates = Vec::new();
+            let mut should_add = true;
             let mut is_expanded = true;
 
             let Ok(()) = outline_panel.update(&mut cx, |outline_panel, cx| {
                 let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
                 let mut folded_dirs_entry = None::<(usize, WorktreeId, Vec<Entry>)>;
                 let track_matches = query.is_some();
+                let mut collapsed_parent = None::<&Entry>;
 
                 for entry in &outline_panel.fs_entries {
-                    // TODO kb consider file hierarchies here and below
-                    is_expanded = !outline_panel.is_collapsed(entry);
-                    let depth = match entry {
+                    is_expanded = outline_panel.is_expanded(entry);
+                    let (depth, is_dir, current_entry) = match entry {
                         FsEntry::Directory(worktree_id, dir_entry) => {
                             let depth = outline_panel
                                 .fs_entries_depth
@@ -2440,16 +2446,47 @@ impl OutlinePanel {
                                     continue;
                                 }
                             }
-                            depth
+                            (
+                                depth,
+                                true,
+                                Some(dir_entry).filter(|_| folded_dirs_entry.is_none()),
+                            )
                         }
-                        FsEntry::ExternalFile(..) => 0,
-                        FsEntry::File(worktree_id, file_entry, ..) => outline_panel
-                            .fs_entries_depth
-                            .get(&(*worktree_id, file_entry.id))
-                            .copied()
-                            .unwrap_or(0),
+                        FsEntry::ExternalFile(..) => (0, false, None),
+                        FsEntry::File(worktree_id, file_entry, ..) => {
+                            let depth = outline_panel
+                                .fs_entries_depth
+                                .get(&(*worktree_id, file_entry.id))
+                                .copied()
+                                .unwrap_or(0);
+                            (depth, false, Some(file_entry))
+                        }
                     };
-                    if is_expanded || query.is_some() {
+
+                    should_add = !is_singleton
+                        && (query.is_some()
+                            || match (collapsed_parent, current_entry) {
+                                (None, None) => true,
+                                (None, Some(_)) => true,
+                                (Some(_), None) => true,
+                                (Some(collapsed_parent_entry), Some(current_entry)) => {
+                                    if current_entry.path.starts_with(&collapsed_parent_entry.path)
+                                    {
+                                        false
+                                    } else {
+                                        collapsed_parent = None;
+                                        true
+                                    }
+                                }
+                            });
+                    if is_dir
+                        && !is_expanded
+                        && (collapsed_parent.is_none() || current_entry.is_some())
+                    {
+                        collapsed_parent = current_entry;
+                    }
+
+                    if should_add {
                         if let Some((folded_depth, worktree_id, folded_dirs)) =
                             folded_dirs_entry.take()
                         {
@@ -2462,9 +2499,7 @@ impl OutlinePanel {
                                 cx,
                             );
                         }
-                    }
 
-                    if is_expanded || query.is_some() {
                         outline_panel.push_entry(
                             &mut entries,
                             &mut match_candidates,
@@ -2475,22 +2510,18 @@ impl OutlinePanel {
                         );
                     }
 
-                    let excerpts_to_consider = match entry {
-                        FsEntry::File(_, _, buffer_id, entry_excerpts) => {
-                            if is_singleton || is_expanded || query.is_some() {
+                    let excerpts_to_consider = if is_singleton || is_expanded || query.is_some() {
+                        match entry {
+                            FsEntry::File(_, _, buffer_id, entry_excerpts) => {
                                 Some((*buffer_id, entry_excerpts))
-                            } else {
-                                None
                             }
-                        }
-                        FsEntry::ExternalFile(buffer_id, entry_excerpts) => {
-                            if is_singleton || is_expanded || query.is_some() {
+                            FsEntry::ExternalFile(buffer_id, entry_excerpts) => {
                                 Some((*buffer_id, entry_excerpts))
-                            } else {
-                                None
                             }
+                            _ => None,
                         }
-                        _ => None,
+                    } else {
+                        None
                     };
                     if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
                         if let Some(excerpts) = outline_panel.excerpts.get(&buffer_id) {
@@ -2552,7 +2583,7 @@ impl OutlinePanel {
                         }
                     }
                 }
-                if is_expanded || query.is_some() {
+                if should_add {
                     if let Some((folded_depth, worktree_id, folded_dirs)) = folded_dirs_entry.take()
                     {
                         outline_panel.push_entry(
@@ -2672,7 +2703,7 @@ impl OutlinePanel {
         }
     }
 
-    fn is_collapsed(&self, entry: &FsEntry) -> bool {
+    fn is_expanded(&self, entry: &FsEntry) -> bool {
         let entry_to_check = match entry {
             FsEntry::ExternalFile(buffer_id, _) => CollapsedEntry::ExternalFile(*buffer_id),
             FsEntry::File(worktree_id, _, buffer_id, _) => {
@@ -2680,7 +2711,7 @@ impl OutlinePanel {
             }
             FsEntry::Directory(worktree_id, entry) => CollapsedEntry::Dir(*worktree_id, entry.id),
         };
-        self.collapsed_entries.contains(&entry_to_check)
+        !self.collapsed_entries.contains(&entry_to_check)
     }
 }
 
