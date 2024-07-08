@@ -4,7 +4,26 @@ Welcome to Zed! We are excited to have you. Here is a jumping-off point to getti
 
 ## Download Zed
 
+### MacOS
+
 You can obtain the release build via the [download page](https://zed.dev/download). After the first manual installation, Zed will periodically check for and install updates automatically for you.
+
+### Linux
+
+For most people, the easiest way to install Zed is through our installation script:
+
+```sh
+curl https://zed.dev/install.sh | sh
+```
+
+This script supports `x86_64` and `AArch64`, as well as common linux distributions: Ubuntu, Arch, Debian, RedHat, CentOS, and Fedora.
+
+The install script does not work on systems that:
+* have no system-wide glibc (for example on NixOS or Alpine)
+* have a glibc older than version 2.29 (for example Amazon Linux 2 or Ubuntu 18 and earlier)
+* use an architecture other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
+
+If this script is insufficient for your use case, please see our documentation on [alternative ways to acquire a Zed binary](./linux.md)
 
 ## Configure Zed
 
