@@ -1,6 +1,6 @@
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
+use ui::{prelude::*, ContextMenu, NumericStepper, NumericStepperHandlers, PopoverMenu, Tooltip};
 
 #[derive(IntoElement)]
 pub struct ApplicationMenu;
@@ -39,51 +39,71 @@ impl RenderOnce for ApplicationMenu {
                                 .justify_between()
                                 .cursor(gpui::CursorStyle::Arrow)
                                 .child(Label::new("Buffer Font Size"))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_row()
-                                        .child(div().w(px(16.0)))
-                                        .child(
-                                            IconButton::new(
-                                                "reset-buffer-zoom",
-                                                IconName::RotateCcw,
-                                            )
-                                            .on_click(
-                                                |_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        zed_actions::ResetBufferFontSize,
-                                                    ))
-                                                },
-                                            ),
-                                        )
-                                        .child(
-                                            IconButton::new("--buffer-zoom", IconName::Dash)
-                                                .on_click(|_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        zed_actions::DecreaseBufferFontSize,
-                                                    ))
-                                                }),
-                                        )
-                                        .child(
-                                            div()
-                                                .w(width)
-                                                .flex()
-                                                .flex_row()
-                                                .justify_around()
-                                                .child(Label::new(
-                                                    theme::get_buffer_font_size(cx).to_string(),
-                                                )),
-                                        )
-                                        .child(
-                                            IconButton::new("+-buffer-zoom", IconName::Plus)
-                                                .on_click(|_, cx| {
-                                                    cx.dispatch_action(Box::new(
-                                                        zed_actions::IncreaseBufferFontSize,
-                                                    ))
-                                                }),
-                                        ),
-                                )
+                                .child(NumericStepper::new(
+                                    theme::get_buffer_font_size(cx).to_string(),
+                                    NumericStepperHandlers {
+                                        on_decrement: Box::new(|_, cx| {
+                                            cx.dispatch_action(Box::new(
+                                                zed_actions::DecreaseBufferFontSize,
+                                            ))
+                                        }),
+                                        on_increment: Box::new(|_, cx| {
+                                            cx.dispatch_action(Box::new(
+                                                zed_actions::IncreaseBufferFontSize,
+                                            ))
+                                        }),
+                                        on_reset: Box::new(|_, cx| {
+                                            cx.dispatch_action(Box::new(
+                                                zed_actions::ResetBufferFontSize,
+                                            ))
+                                        }),
+                                    },
+                                ))
+                                // .child(
+                                //     div()
+                                //         .flex()
+                                //         .flex_row()
+                                //         .child(div().w(px(16.0)))
+                                //         .child(
+                                //             IconButton::new(
+                                //                 "reset-buffer-zoom",
+                                //                 IconName::RotateCcw,
+                                //             )
+                                //             .on_click(
+                                //                 |_, cx| {
+                                //                     cx.dispatch_action(Box::new(
+                                //                         zed_actions::ResetBufferFontSize,
+                                //                     ))
+                                //                 },
+                                //             ),
+                                //         )
+                                //         .child(
+                                //             IconButton::new("--buffer-zoom", IconName::Dash)
+                                //                 .on_click(|_, cx| {
+                                //                     cx.dispatch_action(Box::new(
+                                //                         zed_actions::DecreaseBufferFontSize,
+                                //                     ))
+                                //                 }),
+                                //         )
+                                //         .child(
+                                //             div()
+                                //                 .w(width)
+                                //                 .flex()
+                                //                 .flex_row()
+                                //                 .justify_around()
+                                //                 .child(Label::new(
+                                //                     theme::get_buffer_font_size(cx).to_string(),
+                                //                 )),
+                                //         )
+                                //         .child(
+                                //             IconButton::new("+-buffer-zoom", IconName::Plus)
+                                //                 .on_click(|_, cx| {
+                                //                     cx.dispatch_action(Box::new(
+                                //                         zed_actions::IncreaseBufferFontSize,
+                                //                     ))
+                                //                 }),
+                                //         ),
+                                // )
                                 .into_any_element()
                         })
                         .custom_row(move |cx| {
