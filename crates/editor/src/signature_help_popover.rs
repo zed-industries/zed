@@ -1,7 +1,7 @@
 use crate::{Editor, EditorStyle};
 use gpui::{
     div, AnyElement, FontWeight, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Pixels, Size, StatefulInteractiveElement, Styled, ViewContext, WeakView,
+    Pixels, Size, StatefulInteractiveElement, Styled, Task, ViewContext, WeakView,
 };
 use language::markdown::{MarkdownHighlight, MarkdownHighlightStyle};
 use language::{Language, ParsedMarkdown};
@@ -27,9 +27,71 @@ pub const SIGNATURE_HELP_HIGHLIGHT_OVERLOAD: MarkdownHighlight =
         weight: FontWeight::NORMAL,
     });
 
+#[derive(Debug)]
+pub struct SignatureHelpState {
+    task: Option<Task<()>>,
+    popover: Option<SignatureHelpPopover>,
+    hidden_by: Option<SignatureHelpHiddenBy>,
+}
+
+impl SignatureHelpState {
+    pub fn new() -> Self {
+        Self {
+            task: None,
+            popover: None,
+            hidden_by: None,
+        }
+    }
+
+    pub fn set_task(&mut self, task: Task<()>) {
+        self.task = Some(task);
+        self.hidden_by = None;
+    }
+    
+    pub fn kill_task(&mut self) {
+        self.task = None;
+    }
+
+    #[cfg(test)]
+    pub fn popover(&self) -> Option<&SignatureHelpPopover> {
+        self.popover.as_ref()
+    }
+
+    pub fn popover_mut(&mut self) -> Option<&mut SignatureHelpPopover> {
+        self.popover.as_mut()
+    }
+
+    pub fn set_popover(&mut self, popover: SignatureHelpPopover) {
+        self.popover = Some(popover);
+        self.hidden_by = None;
+    }
+
+    pub fn hide(&mut self, hidden_by: SignatureHelpHiddenBy) {
+        if self.hidden_by.is_none() {
+            self.popover = None;
+            self.hidden_by = Some(hidden_by);
+        }
+    }
+
+    pub fn hidden_by_selection(&self) -> bool {
+        self.hidden_by == Some(SignatureHelpHiddenBy::Selection)
+    }
+
+    pub fn is_shown(&self) -> bool {
+        self.popover.is_some()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SignatureHelpPopover {
     pub parsed_content: ParsedMarkdown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SignatureHelpHiddenBy {
+    AutoClose,
+    Escape,
+    Selection,
 }
 
 /// create_signature_help_markdown_string generates the markdown text that is displayed in the `SignatureHelp` window.

@@ -154,7 +154,10 @@ use workspace::{
 use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
-use crate::signature_help_popover::{create_signature_help_markdown_string, SignatureHelpPopover};
+use crate::signature_help_popover::{
+    create_signature_help_markdown_string, SignatureHelpHiddenBy, SignatureHelpPopover,
+    SignatureHelpState,
+};
 
 pub const FILE_HEADER_HEIGHT: u8 = 1;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u8 = 1;
@@ -502,9 +505,7 @@ pub struct Editor {
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
-    signature_help_task: Option<Task<()>>,
-    signature_help_state: Option<SignatureHelpPopover>,
-    signature_help_hidden_by_selection: bool,
+    signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
@@ -1825,9 +1826,7 @@ impl Editor {
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
             completion_tasks: Default::default(),
-            signature_help_task: None,
-            signature_help_state: None,
-            signature_help_hidden_by_selection: false,
+            signature_help_state: SignatureHelpState::new(),
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
@@ -2880,7 +2879,7 @@ impl Editor {
             return true;
         }
 
-        if self.hide_signature_help(cx) {
+        if self.hide_signature_help(cx, SignatureHelpHiddenBy::Escape) {
             return true;
         }
 
@@ -4015,10 +4014,14 @@ impl Editor {
         }))
     }
 
-    fn hide_signature_help(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if self.signature_help_state.is_some() {
-            self.signature_help_state = None;
-            self.signature_help_task = None;
+    fn hide_signature_help(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        signature_help_hidden_by: SignatureHelpHiddenBy,
+    ) -> bool {
+        if self.signature_help_state.is_shown() {
+            self.signature_help_state.kill_task();
+            self.signature_help_state.hide(signature_help_hidden_by);
             cx.notify();
             true
         } else {
@@ -4045,8 +4048,8 @@ impl Editor {
         let newest_selection = self.selections.newest::<usize>(cx);
         let head = newest_selection.head();
         if !newest_selection.is_empty() || head != newest_selection.tail() {
-            self.signature_help_state = None;
-            self.signature_help_hidden_by_selection = head != newest_selection.tail();
+            self.signature_help_state
+                .hide(SignatureHelpHiddenBy::Selection);
             return false;
         }
 
@@ -4075,25 +4078,25 @@ impl Editor {
 
         match (previous_brackets_surround, current_brackets_surround) {
             (None, None) => {
-                self.signature_help_state = None;
+                self.signature_help_state
+                    .hide(SignatureHelpHiddenBy::AutoClose);
                 false
             }
             (Some(_), None) => {
-                self.signature_help_state = None;
+                self.signature_help_state
+                    .hide(SignatureHelpHiddenBy::AutoClose);
                 false
             }
-            (None, Some(_)) => {
-                self.signature_help_hidden_by_selection = false; // Reset the flag
-                true
-            }
+            (None, Some(_)) => true,
             (Some(previous), Some(current)) => {
-                if self.signature_help_hidden_by_selection {
-                    self.signature_help_hidden_by_selection = false;
-                    true
-                } else {
-                    previous != current
-                        || (previous == current && self.signature_help_state.is_some())
+                let condition = self.signature_help_state.hidden_by_selection()
+                    || previous != current
+                    || (previous == current && self.signature_help_state.is_shown());
+                if !condition {
+                    self.signature_help_state
+                        .hide(SignatureHelpHiddenBy::AutoClose);
                 }
+                condition
             }
         }
     }
@@ -4110,29 +4113,34 @@ impl Editor {
             return;
         };
 
-        self.signature_help_task = Some(cx.spawn(move |editor, mut cx| async move {
-            let markdown_task = editor
-                .update(&mut cx, |editor, cx| {
-                    let language = editor.language_at(position, cx);
-                    let project = editor.project.clone()?;
-                    let (markdown, language_registry) = {
-                        let language = language.clone();
-                        project.update(cx, |project, mut cx| {
-                            let language_registry = project.languages().clone();
-                            let markdown = project
-                                .signature_help(&buffer, buffer_position, &mut cx)
-                                .map(|signature_help| {
-                                    create_signature_help_markdown_string(signature_help?, language)
-                                });
-                            (markdown, language_registry)
-                        })
-                    };
-                    Some((markdown, language_registry, language))
-                })
-                .ok()
-                .flatten();
-            let signature_help_popover =
-                if let Some((markdown, language_registry, language)) = markdown_task {
+        self.signature_help_state
+            .set_task(cx.spawn(move |editor, mut cx| async move {
+                let markdown_task = editor
+                    .update(&mut cx, |editor, cx| {
+                        let language = editor.language_at(position, cx);
+                        let project = editor.project.clone()?;
+                        let (markdown, language_registry) = {
+                            let language = language.clone();
+                            project.update(cx, |project, mut cx| {
+                                let language_registry = project.languages().clone();
+                                let markdown = project
+                                    .signature_help(&buffer, buffer_position, &mut cx)
+                                    .map(|signature_help| {
+                                        create_signature_help_markdown_string(
+                                            signature_help?,
+                                            language,
+                                        )
+                                    });
+                                (markdown, language_registry)
+                            })
+                        };
+                        Some((markdown, language_registry, language))
+                    })
+                    .ok()
+                    .flatten();
+                let signature_help_popover = if let Some((markdown, language_registry, language)) =
+                    markdown_task
+                {
                     let markdown = markdown.await;
                     if let Some((markdown, mut markdown_highlights)) = markdown {
                         let mut parsed_content =
@@ -4145,13 +4153,21 @@ impl Editor {
                 } else {
                     None
                 };
-            editor
-                .update(&mut cx, |editor, cx| {
-                    editor.signature_help_state = signature_help_popover;
-                    cx.notify();
-                })
-                .ok();
-        }));
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        if let Some(signature_help_popover) = signature_help_popover {
+                            editor
+                                .signature_help_state
+                                .set_popover(signature_help_popover);
+                        } else {
+                            editor
+                                .signature_help_state
+                                .hide(SignatureHelpHiddenBy::AutoClose);
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+            }));
     }
 
     pub fn show_completions(&mut self, options: &ShowCompletions, cx: &mut ViewContext<Self>) {
@@ -10576,7 +10592,7 @@ impl Editor {
                 self.show_signature_help(&ShowSignatureHelp, cx);
             }
             Some(_) => {
-                self.hide_signature_help(cx);
+                self.hide_signature_help(cx, SignatureHelpHiddenBy::AutoClose);
             }
             None => {}
         }
