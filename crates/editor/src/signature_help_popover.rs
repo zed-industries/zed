@@ -95,27 +95,27 @@ pub fn create_signature_help_markdown_string(
             result
         })
         .unzip();
-    let markdown = markdown.join(str_for_join);
-
-    let language_name = language
-        .map(|n| n.name().to_lowercase())
-        .unwrap_or_default();
-
-    let markdown = if function_options_count >= 2 {
-        let suffix = format!("(+{} overload)", function_options_count - 1);
-        let highlight_start = markdown.len() + 1;
-        highlights.push(Some((
-            highlight_start..(highlight_start + suffix.len()),
-            SIGNATURE_HELP_HIGHLIGHT_OVERLOAD,
-        )));
-        format!("```{language_name}\n{markdown} {suffix}")
-    } else {
-        format!("```{language_name}\n{markdown}")
-    };
 
     if markdown.is_empty() {
         None
     } else {
+        let markdown = markdown.join(str_for_join);
+        let language_name = language
+            .map(|n| n.name().to_lowercase())
+            .unwrap_or_default();
+
+        let markdown = if function_options_count >= 2 {
+            let suffix = format!("(+{} overload)", function_options_count - 1);
+            let highlight_start = markdown.len() + 1;
+            highlights.push(Some((
+                highlight_start..(highlight_start + suffix.len()),
+                SIGNATURE_HELP_HIGHLIGHT_OVERLOAD,
+            )));
+            format!("```{language_name}\n{markdown} {suffix}")
+        } else {
+            format!("```{language_name}\n{markdown}")
+        };
+
         let highlights = highlights.into_iter().flatten().collect::<Vec<_>>();
         Some((markdown, highlights))
     }
