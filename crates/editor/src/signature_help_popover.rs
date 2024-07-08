@@ -47,7 +47,7 @@ impl SignatureHelpState {
         self.task = Some(task);
         self.hidden_by = None;
     }
-    
+
     pub fn kill_task(&mut self) {
         self.task = None;
     }
