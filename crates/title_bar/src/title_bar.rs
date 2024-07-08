@@ -1,5 +1,4 @@
 mod application_menu;
-mod call_controls;
 mod collab;
 mod platforms;
 mod window_controls;

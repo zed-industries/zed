@@ -1,13 +1,70 @@
 use std::sync::Arc;
 
-use call::{ActiveCall, ParticipantLocation, Room};
+use call::{report_call_event_for_room, ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, User};
+use gpui::{actions, AppContext, Task, WindowContext};
 use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
 use rpc::proto::{self};
 use theme::ActiveTheme;
 use ui::{prelude::*, Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip};
+use workspace::notifications::DetachAndPromptErr;
 
-use crate::{call_controls, TitleBar};
+use crate::TitleBar;
+
+actions!(
+    collab,
+    [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
+);
+
+ fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut WindowContext) {
+    let call = ActiveCall::global(cx).read(cx);
+    if let Some(room) = call.room().cloned() {
+        let client = call.client();
+        let toggle_screen_sharing = room.update(cx, |room, cx| {
+            if room.is_screen_sharing() {
+                report_call_event_for_room(
+                    "disable screen share",
+                    room.id(),
+                    room.channel_id(),
+                    &client,
+                );
+                Task::ready(room.unshare_screen(cx))
+            } else {
+                report_call_event_for_room(
+                    "enable screen share",
+                    room.id(),
+                    room.channel_id(),
+                    &client,
+                );
+                room.share_screen(cx)
+            }
+        });
+        toggle_screen_sharing.detach_and_prompt_err("Sharing Screen Failed", cx, |e, _| Some(format!("{:?}\n\nPlease check that you have given Zed permissions to record your screen in Settings.", e)));
+    }
+}
+
+ fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
+    let call = ActiveCall::global(cx).read(cx);
+    if let Some(room) = call.room().cloned() {
+        let client = call.client();
+        room.update(cx, |room, cx| {
+            let operation = if room.is_muted() {
+                "enable microphone"
+            } else {
+                "disable microphone"
+            };
+            report_call_event_for_room(operation, room.id(), room.channel_id(), &client);
+
+            room.toggle_mute(cx)
+        });
+    }
+}
+
+fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
+    if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+        room.update(cx, |room, cx| room.toggle_deafen(cx));
+    }
+}
 
 fn render_color_ribbon(color: Hsla) -> impl Element {
     canvas(
@@ -315,7 +372,7 @@ impl TitleBar {
                 .disabled(!platform_supported)
                 .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                 .on_click(move |_, cx| {
-                    call_controls::toggle_mute(&Default::default(), cx);
+                    toggle_mute(&Default::default(), cx);
                 })
                 .into_any_element(),
             );
@@ -344,7 +401,7 @@ impl TitleBar {
                     Tooltip::text("Deafen Audio", cx)
                 }
             })
-            .on_click(move |_, cx| call_controls::toggle_deafen(&Default::default(), cx))
+            .on_click(move |_, cx| toggle_deafen(&Default::default(), cx))
             .into_any_element(),
         );
 
@@ -368,9 +425,7 @@ impl TitleBar {
                             cx,
                         )
                     })
-                    .on_click(move |_, cx| {
-                        call_controls::toggle_screen_sharing(&Default::default(), cx)
-                    })
+                    .on_click(move |_, cx| toggle_screen_sharing(&Default::default(), cx))
                     .into_any_element(),
             );
         }
