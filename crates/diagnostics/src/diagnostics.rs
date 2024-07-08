@@ -692,11 +692,7 @@ struct PathUpdate {
         MultiBufferRow,
         (
             editor::Anchor,
-            BTreeMap<
-                // TODO kb wrong, now it deduplicates by label
-                (Option<String>, usize, DiagnosticSeverity, String),
-                Vec<(usize, Option<BlockId>)>,
-            >,
+            BTreeMap<(Option<String>, String), Vec<(usize, Option<BlockId>)>>,
         ),
     >,
     blocks_to_remove: HashSet<BlockId>,
@@ -1138,8 +1134,6 @@ impl PathUpdate {
                 let grouped_diagnostics = diagnostics_by_labels
                     .entry((
                         new_diagnostic.diagnostic.source.clone(),
-                        new_diagnostic.diagnostic.group_id,
-                        new_diagnostic.diagnostic.severity,
                         new_diagnostic.diagnostic.message.clone(),
                     ))
                     .or_default();
@@ -1168,11 +1162,19 @@ impl PathUpdate {
         );
 
         self.diagnostics_by_row_label
-            .values()
+            .values_mut()
             .flat_map(|(earliest_in_row_position, diagnostics_by_label)| {
                 diagnostics_by_label
-                    .values()
+                    .values_mut()
                     .filter_map(|diagnostics_with_same_label| {
+                        diagnostics_with_same_label.sort_by(|&(index_a, _), &(index_b, _)| {
+                            let a = &self.new_diagnostics[index_a].0.entry.diagnostic;
+                            let b = &self.new_diagnostics[index_b].0.entry.diagnostic;
+                            a.is_primary
+                                .cmp(&b.is_primary)
+                                .then_with(|| a.group_id.cmp(&b.group_id))
+                                .then_with(|| a.severity.cmp(&b.severity))
+                        });
                         let (index, _) = diagnostics_with_same_label.first()?;
                         if self.unchanged_blocks.contains_key(index) {
                             None
