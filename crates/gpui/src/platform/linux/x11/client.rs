@@ -462,7 +462,14 @@ impl X11Client {
     }
 
     fn process_x11_events(&self, events: Vec<Event>) {
+        log::trace!(
+            "main thread: processing X11 events. events: {}",
+            events.len()
+        );
+
         for event in events.into_iter() {
+            log::trace!("main thread: processing X11 event: {:?}", event);
+
             let mut state = self.0.borrow_mut();
             if state.ximc.is_none() || state.xim_handler.is_none() {
                 drop(state);
@@ -1221,6 +1228,10 @@ impl LinuxClient for X11Client {
                 let (x_windows, events) = self.read_x11_events();
                 for x_window in x_windows {
                     if let Some(window) = self.get_window(x_window) {
+                        log::trace!(
+                            "main thread: refreshing window {} due expose event",
+                            window.x_window
+                        );
                         window.refresh();
                     }
                 }
@@ -1242,7 +1253,13 @@ impl LinuxClient for X11Client {
             // Runnables
             while let Ok(runnable) = state.runnables.try_recv() {
                 drop(state);
+
+                let start = Instant::now();
+
                 runnable.run();
+
+                log::trace!("main thread: ran runnable. took: {:?}", start.elapsed());
+
                 state = self.0.borrow_mut();
 
                 if Instant::now() + Duration::from_millis(1) >= next_refresh_needed {
@@ -1252,6 +1269,7 @@ impl LinuxClient for X11Client {
 
             // XDG events
             if let Ok(event) = state.xdp_event_source.try_recv() {
+                log::trace!("main thread: XDG event");
                 match event {
                     XDPEvent::WindowAppearance(appearance) => {
                         let mut windows = state
