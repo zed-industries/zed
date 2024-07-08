@@ -450,6 +450,7 @@ impl X11WindowState {
                         xinput::XIEventMask::MOTION
                             | xinput::XIEventMask::BUTTON_PRESS
                             | xinput::XIEventMask::BUTTON_RELEASE
+                            | xinput::XIEventMask::ENTER
                             | xinput::XIEventMask::LEAVE,
                     ],
                 }],
