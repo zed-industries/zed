@@ -542,7 +542,7 @@
   // Configuration for how direnv configuration should be loaded. May take 2 values:
   // 1. Load direnv configuration through the shell hook
   //      "direnv": "shell_hook"
-  // 2. Load direnv configuraton using `direnv export json` directly
+  // 2. Load direnv configuration using `direnv export json` directly
   //      "direnv": "direct"
   "direnv": "shell_hook",
   "inline_completions": {
