@@ -169,7 +169,7 @@ impl SnippetProvider {
             Ok(())
         })
     }
-    pub fn snippets_for<'a>(&'a self, language: SnippetKind) -> Option<Vec<Arc<Snippet>>> {
+    pub fn snippets_for(&self, language: SnippetKind) -> Option<Vec<Arc<Snippet>>> {
         Some(
             self.snippets
                 .get(&language)?
