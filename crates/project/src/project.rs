@@ -722,6 +722,8 @@ impl Project {
                 .detach();
             let tasks = Inventory::new(cx);
             let global_snippets_dir = paths::config_dir().join("snippets");
+            let snippets =
+                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
             Self {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
@@ -747,11 +749,7 @@ impl Project {
                 _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 active_entry: None,
-                snippets: SnippetProvider::new(
-                    fs.clone(),
-                    BTreeSet::from_iter([global_snippets_dir]),
-                    cx,
-                ),
+                snippets,
                 languages,
                 client,
                 user_store,
@@ -848,6 +846,9 @@ impl Project {
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
+            let global_snippets_dir = paths::config_dir().join("snippets");
+            let snippets =
+                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
             // BIG CAUTION NOTE: The order in which we initialize fields here matters and it should match what's done in Self::local.
             // Otherwise, you might run into issues where worktree id on remote is different than what's on local host.
             // That's because Worktree's identifier is entity id, which should probably be changed.
@@ -866,7 +867,7 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
-            let global_snippets_dir = paths::config_dir().join("snippets");
+
             let mut this = Self {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
@@ -885,11 +886,7 @@ impl Project {
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 languages,
                 user_store: user_store.clone(),
-                snippets: SnippetProvider::new(
-                    fs.clone(),
-                    BTreeSet::from_iter([global_snippets_dir]),
-                    cx,
-                ),
+                snippets,
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
