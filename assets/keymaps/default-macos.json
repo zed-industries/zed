@@ -362,7 +362,7 @@
       "ctrl-9": ["pane::ActivateItem", 8],
       "ctrl-0": "pane::ActivateLastItem",
       "ctrl--": "pane::GoBack",
-      "ctrl-_": "pane::GoForward",
+      "ctrl-shift--": "pane::GoForward",
       "cmd-shift-t": "pane::ReopenClosedItem",
       "cmd-shift-f": "project_search::ToggleFocus"
     }
