@@ -539,6 +539,12 @@
       // "delay_ms": 600
     }
   },
+  // Configuration for how direnv configuration should be loaded. May take 2 values:
+  // 1. Load direnv configuration through the shell hook
+  //      "direnv": "shell_hook"
+  // 2. Load direnv configuraton using `direnv export json` directly
+  //      "direnv": "direct"
+  "direnv": "shell_hook",
   "inline_completions": {
     // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]

@@ -72,7 +72,7 @@ use paths::{
 };
 use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
-use project_settings::{LspSettings, ProjectSettings};
+use project_settings::{DirenvSettings, LspSettings, ProjectSettings};
 use rand::prelude::*;
 use rpc::{ErrorCode, ErrorExt as _};
 use search::SearchQuery;
@@ -11458,6 +11458,7 @@ pub struct ProjectLspAdapterDelegate {
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
     shell_env: Mutex<Option<HashMap<String, String>>>,
+    load_direnv: DirenvSettings,
 }
 
 impl ProjectLspAdapterDelegate {
@@ -11466,6 +11467,7 @@ impl ProjectLspAdapterDelegate {
         worktree: &Model<Worktree>,
         cx: &ModelContext<Project>,
     ) -> Arc<Self> {
+        let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
         Arc::new(Self {
             project: cx.weak_model(),
             worktree: worktree.read(cx).snapshot(),
@@ -11473,12 +11475,13 @@ impl ProjectLspAdapterDelegate {
             http_client: project.client.http_client(),
             language_registry: project.languages.clone(),
             shell_env: Default::default(),
+            load_direnv,
         })
     }
 
-    async fn load_shell_env(&self) {
+    async fn load_shell_env(&self, load_direnv: &DirenvSettings) {
         let worktree_abs_path = self.worktree.abs_path();
-        let shell_env = load_shell_environment(&worktree_abs_path)
+        let shell_env = load_shell_environment(&worktree_abs_path, &load_direnv)
             .await
             .with_context(|| {
                 format!("failed to determine load login shell environment in {worktree_abs_path:?}")
@@ -11510,14 +11513,14 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {
-        self.load_shell_env().await;
+        self.load_shell_env(&self.load_direnv).await;
         self.shell_env.lock().as_ref().cloned().unwrap_or_default()
     }
 
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
-        self.load_shell_env().await;
+        self.load_shell_env(&self.load_direnv).await;
         let shell_path = self
             .shell_env
             .lock()
@@ -11726,11 +11729,16 @@ async fn load_direnv_environment(dir: &Path) -> Result<Option<HashMap<String, St
     ))
 }
 
-async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
+async fn load_shell_environment(
+    dir: &Path,
+    load_direnv: &DirenvSettings,
+) -> Result<HashMap<String, String>> {
     // Start by loading the direnv environment
-    let direnv_environment = load_direnv_environment(dir)
-        .await?
-        .unwrap_or(HashMap::default());
+    let direnv_environment = match load_direnv {
+        DirenvSettings::ShellHook => None,
+        DirenvSettings::Direct => load_direnv_environment(dir).await?,
+    }
+    .unwrap_or(HashMap::default());
 
     let marker = "ZED_SHELL_START";
     let shell = env::var("SHELL").context(
