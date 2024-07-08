@@ -1,13 +1,13 @@
 use crate::TitleBar;
-use call::Room;
+use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, User};
-use gpui::{canvas, point, Hsla, IntoElement, Path, Styled};
+use gpui::{canvas, point, Hsla, IntoElement, MouseButton, Path, Styled};
 use rpc::proto::{self};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{prelude::*, Avatar, AvatarAudioStatusIndicator, Facepile, Tooltip};
 
-pub(crate) fn render_color_ribbon(color: Hsla) -> impl Element {
+fn render_color_ribbon(color: Hsla) -> impl Element {
     canvas(
         move |_, _| {},
         move |bounds, _, cx| {
@@ -33,8 +33,99 @@ pub(crate) fn render_color_ribbon(color: Hsla) -> impl Element {
 }
 
 impl TitleBar {
+    pub(crate) fn render_collaborator_list(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let room = ActiveCall::global(cx).read(cx).room().cloned();
+        let current_user = self.user_store.read(cx).current_user();
+        let client = self.client.clone();
+        let project_id = self.project.read(cx).remote_id();
+        let workspace = self.workspace.upgrade();
+
+        h_flex()
+            .id("collaborator-list")
+            .w_full()
+            .gap_1()
+            .overflow_x_scroll()
+            .when_some(
+                current_user.clone().zip(client.peer_id()).zip(room.clone()),
+                |this, ((current_user, peer_id), room)| {
+                    let player_colors = cx.theme().players();
+                    let room = room.read(cx);
+                    let mut remote_participants =
+                        room.remote_participants().values().collect::<Vec<_>>();
+                    remote_participants.sort_by_key(|p| p.participant_index.0);
+
+                    let current_user_face_pile = self.render_collaborator(
+                        &current_user,
+                        peer_id,
+                        true,
+                        room.is_speaking(),
+                        room.is_muted(),
+                        None,
+                        &room,
+                        project_id,
+                        &current_user,
+                        cx,
+                    );
+
+                    this.children(current_user_face_pile.map(|face_pile| {
+                        v_flex()
+                            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                            .child(face_pile)
+                            .child(render_color_ribbon(player_colors.local().cursor))
+                    }))
+                    .children(remote_participants.iter().filter_map(|collaborator| {
+                        let player_color =
+                            player_colors.color_for_participant(collaborator.participant_index.0);
+                        let is_following = workspace
+                            .as_ref()?
+                            .read(cx)
+                            .is_being_followed(collaborator.peer_id);
+                        let is_present = project_id.map_or(false, |project_id| {
+                            collaborator.location
+                                == ParticipantLocation::SharedProject { project_id }
+                        });
+
+                        let facepile = self.render_collaborator(
+                            &collaborator.user,
+                            collaborator.peer_id,
+                            is_present,
+                            collaborator.speaking,
+                            collaborator.muted,
+                            is_following.then_some(player_color.selection),
+                            &room,
+                            project_id,
+                            &current_user,
+                            cx,
+                        )?;
+
+                        Some(
+                            v_flex()
+                                .id(("collaborator", collaborator.user.id))
+                                .child(facepile)
+                                .child(render_color_ribbon(player_color.cursor))
+                                .cursor_pointer()
+                                .on_click({
+                                    let peer_id = collaborator.peer_id;
+                                    cx.listener(move |this, _, cx| {
+                                        this.workspace
+                                            .update(cx, |workspace, cx| {
+                                                workspace.follow(peer_id, cx);
+                                            })
+                                            .ok();
+                                    })
+                                })
+                                .tooltip({
+                                    let login = collaborator.user.github_login.clone();
+                                    move |cx| Tooltip::text(format!("Follow {login}"), cx)
+                                }),
+                        )
+                    }))
+                },
+            )
+    }
+
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn render_collaborator(
+    fn render_collaborator(
         &self,
         user: &Arc<User>,
         peer_id: PeerId,

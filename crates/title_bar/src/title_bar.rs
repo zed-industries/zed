@@ -10,9 +10,8 @@ mod stories;
 use crate::application_menu::ApplicationMenu;
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
-use call::{ActiveCall, ParticipantLocation};
+use call::ActiveCall;
 use client::{Client, UserStore};
-use collab::render_color_ribbon;
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
@@ -72,10 +71,6 @@ pub struct TitleBar {
 impl Render for TitleBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let room = ActiveCall::global(cx).read(cx).room().cloned();
-        let current_user = self.user_store.read(cx).current_user();
-        let client = self.client.clone();
-        let project_id = self.project.read(cx).remote_id();
-        let workspace = self.workspace.upgrade();
         let close_action = Box::new(workspace::CloseWindow);
 
         let platform_supported = cfg!(target_os = "macos");
@@ -117,15 +112,15 @@ impl Render for TitleBar {
                     .flex_row()
                     .justify_between()
                     .w_full()
-                    // note: on windows titlebar behaviour is handled by the platform implementation
-                    .when(cfg!(not(windows)), |this| {
+                    // Note: On Windows the title bar behavior is handled by the platform implementation.
+                    .when(self.platform_style != PlatformStyle::Windows, |this| {
                         this.on_click(|event, cx| {
                             if event.up.click_count == 2 {
                                 cx.zoom_window();
                             }
                         })
                     })
-                        // left side
+                        // Left side.
                         .child(
                             h_flex()
                                 .gap_1()
@@ -139,94 +134,9 @@ impl Render for TitleBar {
                                 .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                         )
                         .child(
-                            h_flex()
-                                .id("collaborator-list")
-                                .w_full()
-                                .gap_1()
-                                .overflow_x_scroll()
-                                .when_some(
-                                    current_user.clone().zip(client.peer_id()).zip(room.clone()),
-                                    |this, ((current_user, peer_id), room)| {
-                                        let player_colors = cx.theme().players();
-                                        let room = room.read(cx);
-                                        let mut remote_participants =
-                                            room.remote_participants().values().collect::<Vec<_>>();
-                                        remote_participants.sort_by_key(|p| p.participant_index.0);
-
-                                        let current_user_face_pile = self.render_collaborator(
-                                            &current_user,
-                                            peer_id,
-                                            true,
-                                            room.is_speaking(),
-                                            room.is_muted(),
-                                            None,
-                                            &room,
-                                            project_id,
-                                            &current_user,
-                                            cx,
-                                        );
-
-                                        this.children(current_user_face_pile.map(|face_pile| {
-                                            v_flex()
-                                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                                                .child(face_pile)
-                                                .child(render_color_ribbon(player_colors.local().cursor))
-                                        }))
-                                        .children(
-                                            remote_participants.iter().filter_map(|collaborator| {
-                                                let player_color = player_colors
-                                                    .color_for_participant(collaborator.participant_index.0);
-                                                let is_following = workspace
-                                                    .as_ref()?
-                                                    .read(cx)
-                                                    .is_being_followed(collaborator.peer_id);
-                                                let is_present = project_id.map_or(false, |project_id| {
-                                                    collaborator.location
-                                                        == ParticipantLocation::SharedProject { project_id }
-                                                });
-
-                                                let facepile = self.render_collaborator(
-                                                    &collaborator.user,
-                                                    collaborator.peer_id,
-                                                    is_present,
-                                                    collaborator.speaking,
-                                                    collaborator.muted,
-                                                    is_following.then_some(player_color.selection),
-                                                    &room,
-                                                    project_id,
-                                                    &current_user,
-                                                    cx,
-                                                )?;
-
-                                                Some(
-                                                    v_flex()
-                                                        .id(("collaborator", collaborator.user.id))
-                                                        .child(facepile)
-                                                        .child(render_color_ribbon(player_color.cursor))
-                                                        .cursor_pointer()
-                                                        .on_click({
-                                                            let peer_id = collaborator.peer_id;
-                                                            cx.listener(move |this, _, cx| {
-                                                                this.workspace
-                                                                    .update(cx, |workspace, cx| {
-                                                                        workspace.follow(peer_id, cx);
-                                                                    })
-                                                                    .ok();
-                                                            })
-                                                        })
-                                                        .tooltip({
-                                                            let login = collaborator.user.github_login.clone();
-                                                            move |cx| {
-                                                                Tooltip::text(format!("Follow {login}"), cx)
-                                                            }
-                                                        }),
-                                                )
-                                            }),
-                                        )
-                                    },
-                                ),
+                            self.render_collaborator_list(cx)
                         )
-                        // right side
+                        // Right side.
                         .child(
                             h_flex()
                                 .gap_1()
