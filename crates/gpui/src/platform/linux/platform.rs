@@ -67,7 +67,7 @@ pub trait LinuxClient {
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
 
-    fn set_tray_item(&self, item: Arc<StatusNotifierItem>);
+    fn set_tray_item(&self, options: StatusNotifierItemOptions, menu: DBusMenu);
 
     fn open_window(
         &self,
@@ -104,6 +104,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
+    pub(crate) tray_id: i32,
     pub(crate) tray_item: Option<Arc<StatusNotifierItem>>,
     pub(crate) tray_actions: HashMap<String, Box<dyn Action>>,
     pub(crate) menus: Vec<OwnedMenu>,
@@ -127,6 +128,7 @@ impl LinuxCommon {
             auto_hide_scrollbars: false,
             callbacks,
             signal,
+            tray_id: 1,
             tray_item: None,
             tray_actions: HashMap::default(),
             menus: Vec::new(),
@@ -135,8 +137,8 @@ impl LinuxCommon {
         (common, main_receiver)
     }
 
-    fn to_dbusmenu(&mut self, value: TrayMenuItem) -> DBusMenuItem {
-        match value {
+    fn create_submenu(&mut self, menu_item: TrayMenuItem) -> DBusMenuItem {
+        match menu_item {
             TrayMenuItem::Separator { id, label } => {
                 let mut this = DBusMenuItem::new(id);
                 this.set_type(dbus::dbusmenu::MenuType::Separator);
@@ -175,7 +177,7 @@ impl LinuxCommon {
                 }
                 let mut submenus = Vec::default();
                 for child in children {
-                    submenus.push(self.to_dbusmenu(child));
+                    submenus.push(self.create_submenu(child));
                 }
                 this.set_children(submenus);
                 this
@@ -440,35 +442,30 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn set_tray_item(&self, item: TrayItem) {
-        let mut tray_item: Option<Arc<StatusNotifierItem>> = None;
+        let mut options: Option<StatusNotifierItemOptions> = None;
+        let mut menu: Option<DBusMenu> = None;
         self.with_common(|common| {
             let icon = match item.icon {
                 TrayIcon::Name(name) => dbus::dbusmenu::Icon::Name(name.to_owned()),
             };
-            let options = StatusNotifierItemOptions::new()
-                .title(item.title)
-                .icon(icon)
-                .tooltip(
-                    ToolTip::new()
-                        .title(item.title)
-                        .description(item.description),
-                );
+            options = Some(
+                StatusNotifierItemOptions::new()
+                    .title(item.title)
+                    .icon(icon)
+                    .tooltip(
+                        ToolTip::new()
+                            .title(item.title)
+                            .description(item.description),
+                    ),
+            );
 
-            let mut menu = DBusMenu::new();
+            let mut dbus_menu = DBusMenu::new();
             for submenu in item.submenus {
-                menu = menu.submenu(common.to_dbusmenu(submenu));
+                dbus_menu = dbus_menu.submenu(common.create_submenu(submenu));
             }
-            common.background_executor.block(async {
-                if let Ok(item) = StatusNotifierItem::new(1, options, Some(menu)).await {
-                    let item = Arc::new(item);
-                    common.tray_item = Some(item.clone());
-                    tray_item = Some(item);
-                }
-            });
+            menu = Some(dbus_menu);
         });
-        if let Some(item) = tray_item {
-            self.set_tray_item(item);
-        }
+        self.set_tray_item(options.unwrap(), menu.unwrap());
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {

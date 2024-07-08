@@ -490,8 +490,14 @@ impl DBusMenu {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum DBusMenuEvents {
+    MenuClick(String),
+}
+
 pub(crate) struct DBusMenuInterface {
     pub(crate) menu: DBusMenu,
+    pub(crate) sender: calloop::channel::Sender<DBusMenuEvents>,
     pub(crate) revision: u32,
 }
 
@@ -523,6 +529,14 @@ impl DBusMenuInterface {
             });
         }
         properties
+    }
+
+    async fn event(&self, id: i32, event_id: String, _event_data: Value<'_>, _timestamp: u32) {
+        if event_id.eq("clicked") {
+            let menu = self.menu.items.get(&id).unwrap();
+            self.sender
+                .send(DBusMenuEvents::MenuClick(menu.user_id.clone()));
+        }
     }
 
     async fn about_to_show(&self, _id: i32) -> bool {

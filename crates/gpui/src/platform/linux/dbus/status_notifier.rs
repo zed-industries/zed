@@ -1,6 +1,6 @@
 use std::{
     fmt::{Debug, Display},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 
 use calloop::{channel::Channel, EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
@@ -10,13 +10,13 @@ use zbus::{
     interface,
     object_server::{InterfaceRef, SignalContext},
     zvariant::{OwnedObjectPath, OwnedValue, Structure, StructureBuilder, Type},
-    MessageStream,
+    AsyncDrop, MessageStream,
 };
 
 use crate::BackgroundExecutor;
 
 use super::dbusmenu::{
-    DBusMenu, DBusMenuInterface, DBusMenuItem, DBusMenuRemovedProperties,
+    DBusMenu, DBusMenuEvents, DBusMenuInterface, DBusMenuItem, DBusMenuRemovedProperties,
     DBusMenuUpdatedProperties, Icon, MenuProperty, Pixmap, DBUS_MENU_PATH,
 };
 
@@ -322,7 +322,8 @@ impl StatusNotifierItemOptions {
     }
 }
 
-pub enum StatusNotifierEvents {
+#[derive(Debug)]
+pub enum StatusNotifierItemEvents {
     ///
     Activate(i32, i32),
     ///
@@ -332,11 +333,12 @@ pub enum StatusNotifierEvents {
     ///
     XdgActivationToken(String),
     ///
-    MenuItemClick(String),
+    MenuEvent(DBusMenuEvents),
 }
 
 struct StatusNotifierItemInterface {
     id: String,
+    sender: calloop::channel::Sender<StatusNotifierItemEvents>,
     options: StatusNotifierItemOptions,
 }
 
@@ -430,6 +432,28 @@ impl StatusNotifierItemInterface {
         OwnedObjectPath::try_from(DBUS_MENU_PATH).unwrap()
     }
 
+    async fn provide_xdg_activation_token(&self, token: String) {
+        let _ = self
+            .sender
+            .send(StatusNotifierItemEvents::XdgActivationToken(token));
+    }
+
+    async fn activate(&self, x: i32, y: i32) {
+        let _ = self.sender.send(StatusNotifierItemEvents::Activate(x, y));
+    }
+
+    async fn secondary_activate(&self, x: i32, y: i32) {
+        let _ = self
+            .sender
+            .send(StatusNotifierItemEvents::SecondaryActivate(x, y));
+    }
+
+    async fn scroll(&self, delta: i32, orientation: String) {
+        let _ = self
+            .sender
+            .send(StatusNotifierItemEvents::Scroll(delta, orientation));
+    }
+
     #[zbus(signal, name = "NewTitle")]
     async fn new_title(&self, cx: &SignalContext<'_>) -> zbus::Result<()>;
 
@@ -455,7 +479,9 @@ impl StatusNotifierItemInterface {
 pub struct StatusNotifierItem {
     connection: zbus::Connection,
     item_ref: InterfaceRef<StatusNotifierItemInterface>,
+    item_channel: calloop::channel::Channel<StatusNotifierItemEvents>,
     menu_ref: InterfaceRef<DBusMenuInterface>,
+    menu_channel: calloop::channel::Channel<DBusMenuEvents>,
 }
 
 impl StatusNotifierItem {
@@ -464,13 +490,17 @@ impl StatusNotifierItem {
         options: StatusNotifierItemOptions,
         menu: Option<DBusMenu>,
     ) -> zbus::Result<Self> {
+        let (sender, channel) = calloop::channel::channel();
+        let (menu_sender, menu_channel) = calloop::channel::channel();
         let watcher = StatusNotifierWatcher::new().await?;
         let item_iface = StatusNotifierItemInterface {
             id: id.to_string(),
+            sender,
             options,
         };
         let menu_iface = DBusMenuInterface {
             menu: menu.unwrap_or(DBusMenu::new()),
+            sender: menu_sender,
             revision: 1,
         };
         let name = format!(
@@ -498,7 +528,9 @@ impl StatusNotifierItem {
         Ok(Self {
             connection,
             item_ref,
+            item_channel: channel,
             menu_ref,
+            menu_channel,
         })
     }
 
@@ -645,70 +677,8 @@ impl StatusNotifierItem {
     }
 }
 
-pub struct StatusNotifierEventSource {
-    channel: Channel<StatusNotifierEvents>,
-    item: Arc<StatusNotifierItem>,
-}
-
-impl StatusNotifierEventSource {
-    pub fn new(executor: &BackgroundExecutor, item: Arc<StatusNotifierItem>) -> Self {
-        let (sender, channel) = calloop::channel::channel();
-        let executor = executor.clone();
-        executor
-            .spawn({
-                let item = item.clone();
-                async move {
-                    let mut stream = MessageStream::from(&item.connection);
-                    while let Some(Ok(msg)) = stream.next().await {
-                        if !matches!(msg.message_type(), zbus::message::Type::MethodCall) {
-                            continue;
-                        }
-                        if let Some(member) = msg.header().member() {
-                            match member.as_str() {
-                                "Activate" => {
-                                    let (x, y) = msg.body().deserialize::<(i32, i32)>()?;
-                                    sender.send(StatusNotifierEvents::Activate(x, y))?;
-                                }
-                                "SecondaryActivate" => {
-                                    let (x, y) = msg.body().deserialize::<(i32, i32)>()?;
-                                    sender.send(StatusNotifierEvents::SecondaryActivate(x, y))?;
-                                }
-                                "Scroll" => {
-                                    let (delta, orientation) =
-                                        msg.body().deserialize::<(i32, String)>()?;
-                                    sender
-                                        .send(StatusNotifierEvents::Scroll(delta, orientation))?;
-                                }
-                                "ProvideXdgActivationToken" => {
-                                    let token = msg.body().deserialize::<String>()?;
-                                    sender.send(StatusNotifierEvents::XdgActivationToken(token))?;
-                                }
-                                "Event" => {
-                                    let (id, event_id, _event_data, _timestamp) = msg
-                                        .body()
-                                        .deserialize::<(i32, String, OwnedValue, u32)>()?;
-                                    let iface = item.menu_ref.get().await;
-                                    if let Some(submenu) = iface.menu.items.get(&id) {
-                                        let id = submenu.user_id.clone();
-                                        if event_id.eq("clicked") {
-                                            sender.send(StatusNotifierEvents::MenuItemClick(id))?;
-                                        }
-                                    };
-                                }
-                                _ => {}
-                            };
-                        }
-                    }
-                    anyhow::Ok(())
-                }
-            })
-            .detach();
-        Self { channel, item }
-    }
-}
-
-impl EventSource for StatusNotifierEventSource {
-    type Event = StatusNotifierEvents;
+impl EventSource for StatusNotifierItem {
+    type Event = StatusNotifierItemEvents;
     type Metadata = ();
     type Ret = ();
     type Error = anyhow::Error;
@@ -722,12 +692,18 @@ impl EventSource for StatusNotifierEventSource {
     where
         F: FnMut(Self::Event, &mut Self::Metadata) -> Self::Ret,
     {
-        self.channel.process_events(readiness, token, |evt, _| {
-            if let calloop::channel::Event::Msg(msg) = evt {
-                (callback)(msg, &mut ())
-            }
-        })?;
-
+        self.item_channel
+            .process_events(readiness, token, |evt, _| {
+                if let calloop::channel::Event::Msg(msg) = evt {
+                    (callback)(msg, &mut ())
+                }
+            })?;
+        self.menu_channel
+            .process_events(readiness, token, |evt, _| {
+                if let calloop::channel::Event::Msg(msg) = evt {
+                    (callback)(StatusNotifierItemEvents::MenuEvent(msg), &mut ())
+                }
+            })?;
         Ok(PostAction::Continue)
     }
 
@@ -736,8 +712,8 @@ impl EventSource for StatusNotifierEventSource {
         poll: &mut Poll,
         token_factory: &mut TokenFactory,
     ) -> calloop::Result<()> {
-        self.channel.register(poll, token_factory)?;
-
+        self.item_channel.register(poll, token_factory)?;
+        self.menu_channel.register(poll, token_factory)?;
         Ok(())
     }
 
@@ -746,14 +722,14 @@ impl EventSource for StatusNotifierEventSource {
         poll: &mut Poll,
         token_factory: &mut TokenFactory,
     ) -> calloop::Result<()> {
-        self.channel.reregister(poll, token_factory)?;
-
+        self.item_channel.reregister(poll, token_factory)?;
+        self.menu_channel.reregister(poll, token_factory)?;
         Ok(())
     }
 
     fn unregister(&mut self, poll: &mut Poll) -> calloop::Result<()> {
-        self.channel.unregister(poll)?;
-
+        self.item_channel.unregister(poll)?;
+        self.menu_channel.unregister(poll)?;
         Ok(())
     }
 }

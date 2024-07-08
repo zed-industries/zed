@@ -1029,9 +1029,11 @@ impl LinuxClient for X11Client {
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
     }
+
     fn set_tray_item(
         &self,
-        item: std::sync::Arc<crate::platform::linux::dbus::status_notifier::StatusNotifierItem>,
+        options: crate::platform::linux::dbus::status_notifier::StatusNotifierItemOptions,
+        menu: crate::platform::linux::dbus::dbusmenu::DBusMenu,
     ) {
     }
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

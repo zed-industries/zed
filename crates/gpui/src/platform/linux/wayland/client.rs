@@ -3,7 +3,6 @@ use std::hash::Hash;
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use calloop::timer::{TimeoutAction, Timer};
@@ -64,8 +63,9 @@ use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
+use crate::platform::linux::dbus::dbusmenu::DBusMenu;
 use crate::platform::linux::dbus::status_notifier::{
-    StatusNotifierEventSource, StatusNotifierItem,
+    StatusNotifierItem, StatusNotifierItemEvents, StatusNotifierItemOptions,
 };
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::clipboard::{
@@ -601,35 +601,36 @@ impl LinuxClient for WaylandClient {
         None
     }
 
-    fn set_tray_item(&self, item: Arc<StatusNotifierItem>) {
-        let mut state = self.0.borrow_mut();
-        if let Some(token) = state.tray_item_token.take() {
-            state.loop_handle.remove(token);
-        }
-        state.tray_item_token = state
-            .loop_handle
-            .insert_source(
-                StatusNotifierEventSource::new(&state.common.background_executor, item),
-                move |event, _, client| {
-                    let client = client.get_client();
-                    let mut state = client.borrow_mut();
-                    if let Some(mut fun) = state.common.callbacks.tray_menu_action.take() {
-                        match event {
-                            crate::platform::linux::dbus::status_notifier::StatusNotifierEvents::MenuItemClick(id) => {
-                                if let Some(action) = state.common.tray_actions.remove(&id) {
-                                    drop(state);
-                                    fun(action.as_ref());
-                                    state = client.borrow_mut();
-                                    state.common.tray_actions.insert(id, action);
-                                }
-                            }
-                            _ => {}
-                        };
-                        state.common.callbacks.tray_menu_action = Some(fun);
+    fn set_tray_item(&self, options: StatusNotifierItemOptions, menu: DBusMenu) {
+        self.0
+            .borrow()
+            .common
+            .foreground_executor
+            .spawn({
+                let state = self.0.clone();
+                async move {
+                    let item = StatusNotifierItem::new(1, options, Some(menu))
+                        .await
+                        .log_err();
+                    if let Some(item) = item {
+                        let mut state = state.borrow_mut();
+                        if let Some(token) = state.tray_item_token {
+                            state.loop_handle.remove(token);
+                        }
+                        state.tray_item_token = state
+                            .loop_handle
+                            .insert_source(item, |event, _, client| match event {
+                                StatusNotifierItemEvents::Activate(x, y) => {}
+                                StatusNotifierItemEvents::SecondaryActivate(x, y) => {}
+                                StatusNotifierItemEvents::XdgActivationToken(token) => {}
+                                StatusNotifierItemEvents::Scroll(delta, orientation) => {}
+                                StatusNotifierItemEvents::MenuEvent(event) => {}
+                            })
+                            .log_err();
                     }
-                },
-            )
-            .ok();
+                }
+            })
+            .detach();
     }
 
     fn open_window(
