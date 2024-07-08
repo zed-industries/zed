@@ -875,7 +875,9 @@ impl ContextEditor {
         self.split(&Split, cx);
         let command = self.context.update(cx, |context, cx| {
             let first_message_id = context.messages(cx).next().unwrap().id;
-            context.set_message_role(first_message_id, Role::System, cx);
+            context.update_metadata(first_message_id, cx, |metadata| {
+                metadata.role = Role::System;
+            });
             context.reparse_slash_commands(cx);
             context.pending_slash_commands()[0].clone()
         });

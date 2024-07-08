@@ -98,7 +98,7 @@ pub struct MessageAnchor {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MessageMetadata {
-    role: Role,
+    pub role: Role,
     status: MessageStatus,
     timestamp: clock::Lamport,
 }
@@ -963,36 +963,28 @@ impl Context {
                     let result = stream_completion.await;
 
                     this.update(&mut cx, |this, cx| {
-                        if let Some(metadata) =
-                            this.messages_metadata.get_mut(&assistant_message.id)
-                        {
-                            let error_message = result
-                                .err()
-                                .map(|error| error.to_string().trim().to_string());
+                        let error_message = result
+                            .err()
+                            .map(|error| error.to_string().trim().to_string());
+
+                        this.update_metadata(assistant_message_id, cx, |metadata| {
                             if let Some(error_message) = error_message.as_ref() {
                                 metadata.status =
                                     MessageStatus::Error(SharedString::from(error_message.clone()));
                             } else {
                                 metadata.status = MessageStatus::Done;
                             }
-                            metadata.timestamp = this.timestamp.tick();
+                        });
 
-                            if let Some(telemetry) = this.telemetry.as_ref() {
-                                let model = CompletionProvider::global(cx).model();
-                                telemetry.report_assistant_event(
-                                    this.id.clone(),
-                                    AssistantKind::Panel,
-                                    model.telemetry_id(),
-                                    response_latency,
-                                    error_message,
-                                );
-                            }
-
-                            cx.emit(ContextEvent::Operation(ContextOperation::UpdateMessage {
-                                message_id: assistant_message.id,
-                                metadata: metadata.clone(),
-                            }));
-                            cx.emit(ContextEvent::MessagesEdited);
+                        if let Some(telemetry) = this.telemetry.as_ref() {
+                            let model = CompletionProvider::global(cx).model();
+                            telemetry.report_assistant_event(
+                                this.id.clone(),
+                                AssistantKind::Panel,
+                                model.telemetry_id(),
+                                response_latency,
+                                error_message,
+                            );
                         }
                     })
                     .ok();
@@ -1030,21 +1022,27 @@ impl Context {
         for id in ids {
             if let Some(metadata) = self.messages_metadata.get(&id) {
                 let role = metadata.role.cycle();
-                self.set_message_role(id, role, cx);
+                self.update_metadata(id, cx, |metadata| metadata.role = role);
             }
         }
     }
 
-    pub fn set_message_role(&mut self, id: MessageId, role: Role, cx: &mut ModelContext<Self>) {
-        let metadata = self.messages_metadata.get_mut(&id).unwrap();
-        metadata.role = role;
-        metadata.timestamp = self.timestamp.tick();
-        cx.emit(ContextEvent::Operation(ContextOperation::UpdateMessage {
-            message_id: id,
-            metadata: metadata.clone(),
-        }));
-        cx.emit(ContextEvent::MessagesEdited);
-        cx.notify();
+    pub fn update_metadata(
+        &mut self,
+        id: MessageId,
+        cx: &mut ModelContext<Self>,
+        f: impl FnOnce(&mut MessageMetadata),
+    ) {
+        if let Some(metadata) = self.messages_metadata.get_mut(&id) {
+            f(metadata);
+            metadata.timestamp = self.timestamp.tick();
+            cx.emit(ContextEvent::Operation(ContextOperation::UpdateMessage {
+                message_id: id,
+                metadata: metadata.clone(),
+            }));
+            cx.emit(ContextEvent::MessagesEdited);
+            cx.notify();
+        }
     }
 
     fn insert_message_after(
@@ -2354,10 +2352,8 @@ mod tests {
             let context_index = rng.gen_range(0..contexts.len());
             let context = &contexts[context_index];
 
-            // todo!("add a mutation for ::assist")
-            // todo!("add a mutation for changing roles")
             match rng.gen_range(0..100) {
-                0..=39 if mutation_count > 0 => {
+                0..=34 if mutation_count > 0 => {
                     log::info!("Context {}: edit buffer", context_index);
                     context.update(cx, |context, cx| {
                         context
@@ -2366,7 +2362,7 @@ mod tests {
                     });
                     mutation_count -= 1;
                 }
-                40..=59 if mutation_count > 0 => {
+                35..=49 if mutation_count > 0 => {
                     context.update(cx, |context, cx| {
                         let range = context.buffer.read(cx).random_byte_range(0, &mut rng);
                         log::info!("Context {}: split message at {:?}", context_index, range);
@@ -2374,7 +2370,7 @@ mod tests {
                     });
                     mutation_count -= 1;
                 }
-                60..=79 if mutation_count > 0 => {
+                50..=64 if mutation_count > 0 => {
                     context.update(cx, |context, cx| {
                         if let Some(message) = context.messages(cx).choose(&mut rng) {
                             let role = *[Role::User, Role::Assistant, Role::System]
@@ -2391,7 +2387,7 @@ mod tests {
                     });
                     mutation_count -= 1;
                 }
-                80..=99 if mutation_count > 0 => {
+                65..=79 if mutation_count > 0 => {
                     context.update(cx, |context, cx| {
                         let command_text = "/".to_string()
                             + slash_commands
@@ -2450,6 +2446,27 @@ mod tests {
                         );
                     });
                     cx.run_until_parked();
+                    mutation_count -= 1;
+                }
+                80..=89 if mutation_count > 0 => {
+                    context.update(cx, |context, cx| {
+                        if let Some(message) = context.messages(cx).choose(&mut rng) {
+                            let new_status = match rng.gen_range(0..3) {
+                                0 => MessageStatus::Done,
+                                1 => MessageStatus::Pending,
+                                _ => MessageStatus::Error(SharedString::from("Random error")),
+                            };
+                            log::info!(
+                                "Context {}: update message {:?} status to {:?}",
+                                context_index,
+                                message.id,
+                                new_status
+                            );
+                            context.update_metadata(message.id, cx, |metadata| {
+                                metadata.status = new_status;
+                            });
+                        }
+                    });
                     mutation_count -= 1;
                 }
                 _ => {
