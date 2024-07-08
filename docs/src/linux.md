@@ -6,7 +6,7 @@ Zed is open source, and [you can install from source](./development/linux.md).
 
 ## Installing via a package manager
 
-Several people have created third-party Zed packages for various linux package managers. You may be able to install Zed using these packages.
+Several people have created third-party Zed packages for various Linux package managers. You may be able to install Zed using these packages.
 
 * [Alpine](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zed)
 * [Nix](https://search.nixos.org/packages?show=zed-editor)
@@ -48,7 +48,7 @@ sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/libexec/zed-editor|g" ~/.local/shar
 
 # Troubleshooting
 
-Linux works on a very large variety of systems configured in a multitude of different ways. We primarily test Zed on a vanilla Ubuntu setup, as it is the most common distribution our users use, that said we do expect it to work on a wide variety of machines.
+Linux works on a large variety of systems configured in many different ways. We primarily test Zed on a vanilla Ubuntu setup, as it is the most common distribution our users use, that said we do expect it to work on a wide variety of machines.
 
 ## Zed fails to start
 
@@ -56,11 +56,11 @@ If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it m
 
 ## Zed fails to open windows
 
-Zed requires a GPU to run effectively. Under the hood we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed failx to load, it is possible that Vulkan is the culprit.
+Zed requires a GPU to run effectively. Under the hood, we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed fails to load, it is possible that Vulkan is the culprit.
 
 If you're using an AMD GPU, you might get a 'Broken Pipe' error. try using the RADV or Mesa drivers. See: [#13880](https://github.com/zed-industries/zed/issues/13880)
 
-Otherwise if you see error messages like: "Zed failed to open a window: NoSupportedDeviceFound" or "called `Result::unwrap()` on an `Err` value: ERROR_INITIALIZATION_FAILED", you can begin troubleshooting vulkan, by installing the `vulkan-tools` package, and running:
+Otherwise, if you see error messages like: "Zed failed to open a window: NoSupportedDeviceFound" or "called `Result::unwrap()` on an `Err` value: ERROR_INITIALIZATION_FAILED", you can begin troubleshooting Vulkan, by installing the `vulkan-tools` package, and running:
 
 ```sh
 vkcube
@@ -68,9 +68,9 @@ vkcube
 
 This should output a line describing your current graphics setup. If it contains `llvmpipe` then Vulkan is not using a GPU, which will make Zed run very slowly.
 
-In most cases this can be fixed by configuring Vulkan and installing compatible GPU drivers, however in some cases (for example running linux on an Arm-based MacBook) there is no Vulkan support yet.
+In most cases this can be fixed by configuring Vulkan and installing compatible GPU drivers, however in some cases (for example running Linux on an Arm-based MacBook) there is no Vulkan support yet.
 
-For more information the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps.
+For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps.
 
 
 ## Zed is very slow
@@ -79,7 +79,7 @@ If you're on relatively modern hardware Zed should feel fast to use. That said, 
 
 If you install the `vulkan-tools` package and run `vkcube` and you see `llvmpipe` in the output, you need to make sure your GPU is configured correctly.
 
-For more information the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good troubleshooting steps.
+For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good troubleshooting steps.
 
 If Vulkan is configured correctly, and Zed is still slow for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
 
@@ -87,4 +87,4 @@ If Vulkan is configured correctly, and Zed is still slow for you, please [file a
 
 If opening new files or projects is not working, the likely problem is that your XDG desktop does not provide a file picker.
 
-If you are using a distribution that lets you configure your xdg provider, or a window manager that does not provide one, you must make sure you have a backup provider configured. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point.
+If you are using a distribution that lets you configure your XDG provider or a window manager that does not provide one, you must make sure you have a backup provider configured. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point.

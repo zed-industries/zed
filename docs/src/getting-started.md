@@ -6,7 +6,7 @@ Welcome to Zed! We are excited to have you. Here is a jumping-off point to getti
 
 ### MacOS
 
-You can obtain the stable builds via the [download page](https://zed.dev/download). If you want to download our preview build, you can find it on it's [releases page](https://zed.dev/releases/preview) After the first manual installation, Zed will periodically check for and install updates automatically for you.
+You can obtain the stable builds via the [download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview) After the first manual installation, Zed will periodically check for and install updates automatically for you.
 
 ### Linux
 
@@ -22,7 +22,7 @@ If you'd like to help us test our new features, you can also install our preview
 curl https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 ```
 
-This script supports `x86_64` and `AArch64`, as well as common linux distributions: Ubuntu, Arch, Debian, RedHat, CentOS, and Fedora.
+This script supports `x86_64` and `AArch64`, as well as common Linux distributions: Ubuntu, Arch, Debian, RedHat, CentOS, and Fedora.
 
 The install script does not work on systems that:
 * have no system-wide glibc (for example on NixOS or Alpine)
@@ -33,8 +33,8 @@ If this script is insufficient for your use case or you run into problems runnin
 
 ## Configure Zed
 
-Use `⌘` + `,` to open your custom settings to set things like fonts, formatting settings, per-language settings and more. You can access the default configuration using the `Zed > Settings > Open Default Settings` menu item. See [Configuring Zed](./configuring-zed.md) for all available settings.
+Use `⌘` + `,` to open your custom settings to set things like fonts, formatting settings, per-language settings, and more. You can access the default configuration using the `Zed > Settings > Open Default Settings` menu item. See [Configuring Zed](./configuring-zed.md) for all available settings.
 
 ## Set up your key bindings
 
-You can access the default key binding set using the `Zed > Settings > Open Default Key Bindings` menu item. Use `⌘` + `K`, `⌘` + `S` to open your custom keymap to add your own key bindings. See Key Bindings for more info.
+You can access the default key binding set using the `Zed > Settings > Open Default Key Bindings` menu item. Use `⌘` + `K`, `⌘` + `S` to open your custom keymap to add your key bindings. See Key Bindings for more info.
