@@ -6,7 +6,7 @@ Welcome to Zed! We are excited to have you. Here is a jumping-off point to getti
 
 ### MacOS
 
-You can obtain the release build via the [download page](https://zed.dev/download). After the first manual installation, Zed will periodically check for and install updates automatically for you.
+You can obtain the stable builds via the [download page](https://zed.dev/download). If you want to download our preview build, you can find it on it's [releases page](https://zed.dev/releases/preview) After the first manual installation, Zed will periodically check for and install updates automatically for you.
 
 ### Linux
 
@@ -14,6 +14,12 @@ For most people, the easiest way to install Zed is through our installation scri
 
 ```sh
 curl https://zed.dev/install.sh | sh
+```
+
+If you'd like to help us test our new features, you can also install our preview build:
+
+```sh
+curl https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 ```
 
 This script supports `x86_64` and `AArch64`, as well as common linux distributions: Ubuntu, Arch, Debian, RedHat, CentOS, and Fedora.
