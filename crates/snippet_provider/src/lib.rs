@@ -1,5 +1,4 @@
 mod format;
-mod settings;
 
 use std::{
     path::{Path, PathBuf},

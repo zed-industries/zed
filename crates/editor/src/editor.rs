@@ -11771,11 +11771,10 @@ fn snippet_completions(
         .map(|language| language.name().to_lowercase());
     let snippet_store = project.snippets().read(cx);
     let has_language = language_name.is_some();
-    let mut snippets = if let Some(snippets) = snippet_store.snippets_for(language_name) {
-        snippets
-    } else {
-        vec![]
-    };
+    let mut snippets = snippet_store
+        .snippets_for(language_name)
+        .unwrap_or_default();
+
     if has_language {
         // Append global snippets in case we don't have any.
         if let Some(global_snippets) = snippet_store.snippets_for(None) {
