@@ -16,7 +16,7 @@ actions!(
     [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
 );
 
- fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut WindowContext) {
+fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut WindowContext) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         let client = call.client();
@@ -43,7 +43,7 @@ actions!(
     }
 }
 
- fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
+fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         let client = call.client();
