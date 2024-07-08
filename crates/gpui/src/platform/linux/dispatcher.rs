@@ -8,7 +8,6 @@ use calloop::{
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use std::{
-    sync::Arc,
     thread,
     time::{Duration, Instant},
 };

@@ -15,7 +15,6 @@ use util::{maybe, ResultExt};
 use x11rb::{
     connection::Connection,
     protocol::{
-        randr::{self, ConnectionExt as _},
         sync,
         xinput::{self, ConnectionExt as _},
         xproto::{self, ClientMessageEvent, ConnectionExt, EventMask, TranslateCoordinatesReply},
@@ -26,7 +25,7 @@ use x11rb::{
 
 use std::{
     cell::RefCell, ffi::c_void, mem::size_of, num::NonZeroU32, ops::Div, ptr::NonNull, rc::Rc,
-    sync::Arc, time::Duration,
+    sync::Arc,
 };
 
 use super::{X11Display, XINPUT_MASTER_DEVICE};
