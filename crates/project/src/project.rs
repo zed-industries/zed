@@ -21,7 +21,7 @@ use client::{
 use clock::ReplicaId;
 use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use dap::{
-    client::{DebugAdapterClient, DebugAdapterClientId, TransportType},
+    client::{DebugAdapterClient, DebugAdapterClientId},
     transport::Events,
     SourceBreakpoint,
 };
@@ -111,7 +111,7 @@ use std::{
 };
 use task::{
     static_source::{StaticSource, TrackedFile},
-    RevealStrategy, TaskContext, TaskTemplate, TaskVariables, VariableName,
+    DebugRequestType, RevealStrategy, TaskContext, TaskTemplate, TaskVariables, VariableName,
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
@@ -1052,13 +1052,10 @@ impl Project {
             })
     }
 
-    pub fn debug_adapter_by_id(
-        &self,
-        id: DebugAdapterClientId,
-    ) -> Option<&Arc<DebugAdapterClient>> {
+    pub fn debug_adapter_by_id(&self, id: DebugAdapterClientId) -> Option<Arc<DebugAdapterClient>> {
         self.debug_adapters.get(&id).and_then(|state| match state {
             DebugAdapterClientState::Starting(_) => None,
-            DebugAdapterClientState::Running(client) => Some(client),
+            DebugAdapterClientState::Running(client) => Some(client.clone()),
         })
     }
 
@@ -1069,48 +1066,38 @@ impl Project {
     ) {
         let id = DebugAdapterClientId(1);
         let debug_template = debug_task.original_task();
-        let command = debug_template.command.clone();
         let cwd = debug_template
             .cwd
             .clone()
             .expect("Debug tasks need to know what directory to open");
-        let mut args = debug_template.args.clone();
+        let adapter_config = debug_task
+            .debug_adapter_config()
+            .expect("Debug tasks need to specify adapter configuration");
 
-        args.push("--server=8131".to_string().clone());
+        let command = debug_template.command.clone();
+        let args = debug_template.args.clone();
+        let request_args = adapter_config.clone().request_args.map(|a| a.args);
 
         let task = cx.spawn(|this, mut cx| async move {
-            let this2 = this.clone();
             let mut client = DebugAdapterClient::new(
-                TransportType::TCP,
+                id,
+                adapter_config.clone(),
                 &command,
                 args.iter().map(|ele| &ele[..]).collect(),
-                8131,
                 cwd.into(),
                 &mut cx,
-                move |event, cx| {
-                    this2
-                        .update(cx, |_, cx| {
-                            cx.emit(Event::DebugClientEvent {
-                                client_id: id,
-                                event,
-                            })
-                        })
-                        .log_err();
-                },
             )
             .await
             .log_err()?;
 
-            // initialize
+            // initialize request
             client.initialize().await.log_err()?;
 
-            // TODO: fetch all old breakpoints and send them to the debug adapter
-
-            // configuration done
-            client.configuration_done().await.log_err()?;
-
-            // launch/attach request
-            client.launch().await.log_err()?;
+            // send correct request based on adapter config
+            match adapter_config.request {
+                DebugRequestType::Launch => client.launch(request_args).await.log_err()?,
+                DebugRequestType::Attach => client.attach(request_args).await.log_err()?,
+            };
 
             let client = Arc::new(client);
 
@@ -1122,6 +1109,28 @@ impl Project {
                 *handle = DebugAdapterClientState::Running(client.clone());
 
                 cx.emit(Event::DebugClientStarted(id));
+
+                // call handle events
+                cx.spawn({
+                    let client = client.clone();
+                    move |project, cx| {
+                        DebugAdapterClient::handle_events(
+                            client,
+                            move |event, cx| {
+                                project
+                                    .update(cx, |_, cx| {
+                                        cx.emit(Event::DebugClientEvent {
+                                            client_id: id,
+                                            event,
+                                        })
+                                    })
+                                    .log_err();
+                            },
+                            cx,
+                        )
+                    }
+                })
+                .detach_and_log_err(cx);
 
                 anyhow::Ok(())
             })
@@ -1179,7 +1188,7 @@ impl Project {
                         .set_breakpoints(
                             abs_path.clone(),
                             Some(vec![SourceBreakpoint {
-                                line: row as u64,
+                                line: (row + 1) as u64,
                                 condition: None,
                                 hit_condition: None,
                                 log_message: None,
@@ -11056,12 +11065,19 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
         if self.is_local() {
-            let language = location
-                .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
+            let (file, language) = location
+                .map(|location| {
+                    let buffer = location.buffer.read(cx);
+                    (
+                        buffer.file().cloned(),
+                        buffer.language_at(location.range.start),
+                    )
+                })
+                .unwrap_or_default();
             Task::ready(Ok(self
                 .task_inventory()
                 .read(cx)
-                .list_tasks(language, worktree)))
+                .list_tasks(file, language, worktree, cx)))
         } else if let Some(project_id) = self
             .remote_id()
             .filter(|_| self.ssh_connection_string(cx).is_some())

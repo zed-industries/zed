@@ -4462,6 +4462,7 @@ async fn complete_with_open_ai(
                         tool_calls: choice
                             .delta
                             .tool_calls
+                            .unwrap_or_default()
                             .into_iter()
                             .map(|delta| proto::ToolCallDelta {
                                 index: delta.index as u32,

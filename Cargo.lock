@@ -374,6 +374,7 @@ dependencies = [
  "anyhow",
  "assistant_slash_command",
  "async-watch",
+ "breadcrumbs",
  "cargo_toml",
  "chrono",
  "client",
@@ -382,14 +383,15 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
- "file_icons",
+ "feature_flags",
  "fs",
  "futures 0.3.28",
  "fuzzy",
  "gpui",
  "heed",
- "html_to_markdown",
+ "html_to_markdown 0.1.0",
  "http 0.1.0",
+ "indexed_docs",
  "indoc",
  "language",
  "log",
@@ -405,7 +407,6 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rope",
- "rustdoc",
  "schemars",
  "search",
  "semantic_index",
@@ -417,6 +418,7 @@ dependencies = [
  "strsim 0.11.1",
  "strum",
  "telemetry_events",
+ "terminal",
  "terminal_view",
  "theme",
  "tiktoken-rs",
@@ -2551,18 +2553,13 @@ name = "collab_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "auto_update",
  "call",
  "channel",
  "client",
  "collections",
- "command_palette",
  "db",
- "dev_server_projects",
  "editor",
  "emojis",
- "extensions_ui",
- "feedback",
  "futures 0.3.28",
  "fuzzy",
  "gpui",
@@ -2575,7 +2572,6 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
- "recent_projects",
  "release_channel",
  "rich_text",
  "rpc",
@@ -2587,15 +2583,14 @@ dependencies = [
  "smallvec",
  "story",
  "theme",
- "theme_selector",
  "time",
  "time_format",
+ "title_bar",
  "tree-sitter-markdown",
  "ui",
  "util",
  "vcs_menu",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -3275,6 +3270,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "smol",
+ "task",
  "util",
 ]
 
@@ -3973,6 +3969,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "http 0.1.0",
+ "indexed_docs",
  "isahc",
  "language",
  "log",
@@ -4944,6 +4941,7 @@ dependencies = [
  "log",
  "media",
  "metal",
+ "mio 1.0.0",
  "num_cpus",
  "objc",
  "oo7",
@@ -5198,9 +5196,9 @@ dependencies = [
 
 [[package]]
 name = "hermit-abi"
-version = "0.3.3"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d77f7ec81a6d05a3abb01ab6eb7590f6083d08449fe5a1c8b1e620283546ccb7"
+checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
 
 [[package]]
 name = "hex"
@@ -5291,6 +5289,18 @@ dependencies = [
  "indoc",
  "markup5ever_rcdom",
  "pretty_assertions",
+ "regex",
+]
+
+[[package]]
+name = "html_to_markdown"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e608e8dd0939bfb6b516d96a5919751b835297a02230aecb88d2fc84ebebaa8a"
+dependencies = [
+ "anyhow",
+ "html5ever",
+ "markup5ever_rcdom",
  "regex",
 ]
 
@@ -5538,6 +5548,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44feda355f4159a7c757171a77de25daf6411e217b4cabd03bd6650690468126"
 
 [[package]]
+name = "indexed_docs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "derive_more",
+ "fs",
+ "futures 0.3.28",
+ "fuzzy",
+ "gpui",
+ "heed",
+ "html_to_markdown 0.1.0",
+ "http 0.1.0",
+ "indexmap 1.9.3",
+ "indoc",
+ "parking_lot",
+ "paths",
+ "pretty_assertions",
+ "serde",
+ "strum",
+ "util",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5677,7 +5712,7 @@ version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eae7b9aee968036d54dce06cebaefd919e4472e753296daccd6d344e3e2df0c2"
 dependencies = [
- "hermit-abi 0.3.3",
+ "hermit-abi 0.3.9",
  "libc",
  "windows-sys 0.48.0",
 ]
@@ -5708,7 +5743,7 @@ dependencies = [
  "fnv",
  "lazy_static",
  "libc",
- "mio",
+ "mio 0.8.11",
  "rand 0.8.5",
  "serde",
  "tempfile",
@@ -6658,6 +6693,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mio"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4929e1f84c5e54c3ec6141cd5d8b5a5c055f031f80cf78f2072920173cb4d880"
+dependencies = [
+ "hermit-abi 0.3.9",
+ "libc",
+ "log",
+ "wasi 0.11.0+wasi-snapshot-preview1",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "miow"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6895,7 +6943,7 @@ dependencies = [
  "kqueue",
  "libc",
  "log",
- "mio",
+ "mio 0.8.11",
  "walkdir",
  "windows-sys 0.48.0",
 ]
@@ -7075,7 +7123,7 @@ version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4161fcb6d602d4d2081af7c3a45852d875a03dd337a6bfdd6e06407b61342a43"
 dependencies = [
- "hermit-abi 0.3.3",
+ "hermit-abi 0.3.9",
  "libc",
 ]
 
@@ -9065,31 +9113,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustdoc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "collections",
- "derive_more",
- "fs",
- "futures 0.3.28",
- "fuzzy",
- "gpui",
- "heed",
- "html_to_markdown",
- "http 0.1.0",
- "indexmap 1.9.3",
- "indoc",
- "parking_lot",
- "paths",
- "pretty_assertions",
- "serde",
- "strum",
- "util",
-]
-
-[[package]]
 name = "rustix"
 version = "0.37.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10703,6 +10726,7 @@ dependencies = [
  "parking_lot",
  "schemars",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "sha2 0.10.7",
  "shellexpand 2.1.2",
@@ -11099,6 +11123,41 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
+name = "title_bar"
+version = "0.1.0"
+dependencies = [
+ "auto_update",
+ "call",
+ "client",
+ "collections",
+ "command_palette",
+ "dev_server_projects",
+ "editor",
+ "extensions_ui",
+ "feedback",
+ "gpui",
+ "http 0.1.0",
+ "notifications",
+ "pretty_assertions",
+ "project",
+ "recent_projects",
+ "rpc",
+ "serde",
+ "settings",
+ "smallvec",
+ "story",
+ "theme",
+ "theme_selector",
+ "tree-sitter-markdown",
+ "ui",
+ "util",
+ "vcs_menu",
+ "windows 0.57.0",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "tokio"
 version = "1.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11107,7 +11166,7 @@ dependencies = [
  "backtrace",
  "bytes 1.5.0",
  "libc",
- "mio",
+ "mio 0.8.11",
  "num_cpus",
  "parking_lot",
  "pin-project-lite",
@@ -13602,7 +13661,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.143.0"
+version = "0.144.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13803,6 +13862,7 @@ dependencies = [
 name = "zed_gleam"
 version = "0.1.3"
 dependencies = [
+ "html_to_markdown 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "zed_extension_api 0.0.7",
 ]
 
@@ -13836,7 +13896,7 @@ dependencies = [
 
 [[package]]
 name = "zed_ocaml"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13850,7 +13910,7 @@ dependencies = [
 
 [[package]]
 name = "zed_prisma"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "zed_extension_api 0.0.4",
 ]
@@ -13892,6 +13952,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_test_extension"
+version = "0.1.0"
+dependencies = [
+ "zed_extension_api 0.0.6",
+]
+
+[[package]]
 name = "zed_toml"
 version = "0.1.1"
 dependencies = [
@@ -13914,7 +13981,7 @@ dependencies = [
 
 [[package]]
 name = "zed_zig"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "zed_extension_api 0.0.7",
 ]

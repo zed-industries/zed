@@ -1,4 +1,3 @@
 # Racket
 
-- Tree Sitter: [tree-sitter-racket](https://github.com/zed-industries/tree-sitter-racket)
-- Language Server: N/A
+Racket support is available through the [Racket extension](https://github.com/zed-industries/zed/tree/main/extensions/racket).

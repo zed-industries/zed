@@ -3,84 +3,101 @@ use anyhow::{anyhow, Context, Result};
 
 use dap_types::{
     requests::{
-        ConfigurationDone, Continue, Initialize, Launch, Next, SetBreakpoints, StepBack, StepIn,
-        StepOut,
+        Attach, ConfigurationDone, Continue, Initialize, Launch, Next, Pause, SetBreakpoints,
+        StepBack, StepIn, StepOut,
     },
-    ConfigurationDoneArguments, ContinueArguments, InitializeRequestArgumentsPathFormat,
-    LaunchRequestArguments, NextArguments, SetBreakpointsArguments, SetBreakpointsResponse, Source,
-    SourceBreakpoint, StepBackArguments, StepInArguments, StepOutArguments, SteppingGranularity,
+    AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments,
+    InitializeRequestArgumentsPathFormat, LaunchRequestArguments, NextArguments, PauseArguments,
+    Scope, SetBreakpointsArguments, SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame,
+    StepBackArguments, StepInArguments, StepOutArguments, SteppingGranularity, Variable,
 };
 use futures::{
     channel::mpsc::{channel, unbounded, UnboundedReceiver, UnboundedSender},
     AsyncBufRead, AsyncReadExt, AsyncWrite, SinkExt as _, StreamExt,
 };
 use gpui::{AppContext, AsyncAppContext};
-use serde_json::json;
+use parking_lot::{Mutex, MutexGuard};
+use serde_json::Value;
 use smol::{
     io::BufReader,
     net::TcpStream,
     process::{self, Child},
 };
 use std::{
+    collections::HashMap,
     net::{Ipv4Addr, SocketAddrV4},
     path::PathBuf,
     process::Stdio,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Duration,
 };
+use task::{DebugAdapterConfig, DebugConnectionType, DebugRequestType};
 use util::ResultExt;
 
-pub enum TransportType {
-    TCP,
-    STDIO,
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ThreadStatus {
+    #[default]
+    Running,
+    Stopped,
+    Ended,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct DebugAdapterClientId(pub usize);
 
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
+pub struct ThreadState {
+    pub status: ThreadStatus,
+    pub stack_frames: Vec<StackFrame>,
+    pub scopes: HashMap<u64, Vec<Scope>>, // stack_frame_id -> scopes
+    pub variables: HashMap<u64, Vec<Variable>>, // scope.variable_reference -> variables
+    pub current_stack_frame_id: Option<u64>,
+}
+
 pub struct DebugAdapterClient {
+    id: DebugAdapterClientId,
     _process: Option<Child>,
     server_tx: UnboundedSender<Payload>,
     request_count: AtomicU64,
     capabilities: Option<dap_types::Capabilities>,
+    config: DebugAdapterConfig,
+    client_rx: Arc<smol::lock::Mutex<UnboundedReceiver<Payload>>>,
+    thread_state: Arc<Mutex<HashMap<u64, ThreadState>>>, // thread_id -> thread_state
+    current_thread_id: Arc<Mutex<Option<u64>>>,
+    request_type: DebugRequestType,
 }
 
 impl DebugAdapterClient {
-    pub async fn new<F>(
-        transport_type: TransportType,
+    pub async fn new(
+        id: DebugAdapterClientId,
+        config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
-        port: u16,
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
-        event_handler: F,
-    ) -> Result<Self>
-    where
-        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
-    {
-        match transport_type {
-            TransportType::TCP => {
-                Self::create_tcp_client(command, args, port, project_path, cx, event_handler).await
+    ) -> Result<Self> {
+        match config.connection {
+            DebugConnectionType::TCP => {
+                Self::create_tcp_client(id, config, command, args, project_path, cx).await
             }
-            TransportType::STDIO => {
-                Self::create_stdio_client(command, args, port, project_path, cx).await
+            DebugConnectionType::STDIO => {
+                Self::create_stdio_client(id, config, command, args, project_path, cx).await
             }
         }
     }
 
-    async fn create_tcp_client<F>(
+    async fn create_tcp_client(
+        id: DebugAdapterClientId,
+        config: DebugAdapterConfig,
         command: &str,
         args: Vec<&str>,
-        port: u16,
         project_path: PathBuf,
         cx: &mut AsyncAppContext,
-        event_handler: F,
-    ) -> Result<Self>
-    where
-        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
-    {
+    ) -> Result<Self> {
         let mut command = process::Command::new(command);
         command
             .current_dir(project_path)
@@ -99,53 +116,59 @@ impl DebugAdapterClient {
             .timer(Duration::from_millis(1000))
             .await;
 
-        let address = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port);
+        let address = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), config.port);
 
         let (rx, tx) = TcpStream::connect(address).await?.split();
 
         Self::handle_transport(
+            id,
+            config,
             Box::new(BufReader::new(rx)),
             Box::new(tx),
             None,
             Some(process),
             cx,
-            event_handler,
         )
     }
 
     async fn create_stdio_client(
-        command: &str,
-        args: Vec<&str>,
-        port: u16,
-        project_path: PathBuf,
-        cx: &mut AsyncAppContext,
+        _id: DebugAdapterClientId,
+        _config: DebugAdapterConfig,
+        _command: &str,
+        _args: Vec<&str>,
+        _project_path: PathBuf,
+        _cx: &mut AsyncAppContext,
     ) -> Result<Self> {
         todo!("not implemented")
     }
 
-    pub fn handle_transport<F>(
+    pub fn handle_transport(
+        id: DebugAdapterClientId,
+        config: DebugAdapterConfig,
         rx: Box<dyn AsyncBufRead + Unpin + Send>,
         tx: Box<dyn AsyncWrite + Unpin + Send>,
         err: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
         process: Option<Child>,
         cx: &mut AsyncAppContext,
-        event_handler: F,
-    ) -> Result<Self>
-    where
-        F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
-    {
+    ) -> Result<Self> {
         let (server_rx, server_tx) = Transport::start(rx, tx, err, cx);
         let (client_tx, client_rx) = unbounded::<Payload>();
 
-        let client = Self {
-            server_tx: server_tx.clone(),
-            _process: process,
-            request_count: AtomicU64::new(0),
-            capabilities: None,
-        };
+        let client_rx = Arc::new(smol::lock::Mutex::new(client_rx));
 
-        cx.spawn(move |cx| Self::handle_events(client_rx, event_handler, cx))
-            .detach();
+        let request_type = config.clone().request;
+        let client = Self {
+            id,
+            config,
+            client_rx,
+            request_type,
+            _process: process,
+            capabilities: None,
+            server_tx: server_tx.clone(),
+            request_count: AtomicU64::new(0),
+            current_thread_id: Arc::new(Mutex::new(None)),
+            thread_state: Arc::new(Mutex::new(HashMap::new())),
+        };
 
         cx.spawn(move |_| Self::handle_recv(server_rx, server_tx, client_tx))
             .detach();
@@ -153,15 +176,15 @@ impl DebugAdapterClient {
         Ok(client)
     }
 
-    async fn handle_events<F>(
-        mut client_rx: UnboundedReceiver<Payload>,
+    pub async fn handle_events<F>(
+        client: Arc<Self>,
         mut event_handler: F,
         cx: AsyncAppContext,
     ) -> Result<()>
     where
         F: FnMut(Events, &mut AppContext) + 'static + Send + Sync + Clone,
     {
-        while let Some(payload) = client_rx.next().await {
+        while let Some(payload) = client.client_rx.lock().await.next().await {
             cx.update(|cx| match payload {
                 Payload::Event(event) => event_handler(*event, cx),
                 _ => unreachable!(),
@@ -213,8 +236,58 @@ impl DebugAdapterClient {
         }
     }
 
+    pub fn id(&self) -> DebugAdapterClientId {
+        self.id
+    }
+
+    pub fn request_type(&self) -> DebugRequestType {
+        self.request_type.clone()
+    }
+
     pub fn next_request_id(&self) -> u64 {
         self.request_count.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub fn current_thread_id(&self) -> Option<u64> {
+        *self.current_thread_id.lock()
+    }
+
+    pub fn update_current_thread_id(&self, thread_id: u64) {
+        *self.current_thread_id.lock() = Some(thread_id);
+    }
+
+    pub fn update_thread_state_status(&self, thread_id: u64, status: ThreadStatus) {
+        if let Some(thread_state) = self.thread_state().get_mut(&thread_id) {
+            thread_state.status = status;
+        };
+    }
+
+    pub fn thread_state(&self) -> MutexGuard<HashMap<u64, ThreadState>> {
+        self.thread_state.lock()
+    }
+
+    pub fn current_thread_state(&self) -> Option<ThreadState> {
+        if let Some(id) = self.current_thread_id() {
+            self.thread_state().clone().get(&id).cloned()
+        } else {
+            None
+        }
+    }
+
+    pub fn update_current_stack_frame_id(&self, stack_frame_id: u64) {
+        if let Some(id) = self.current_thread_id() {
+            if let Some(thread_state) = self.thread_state().get_mut(&id) {
+                thread_state.current_stack_frame_id = Some(stack_frame_id);
+            };
+        }
+    }
+
+    pub fn current_stack_frame_id(&self) -> Option<u64> {
+        if let Some(thread_state) = self.current_thread_state() {
+            thread_state.current_stack_frame_id
+        } else {
+            None
+        }
     }
 
     pub async fn initialize(&mut self) -> Result<dap_types::Capabilities> {
@@ -227,14 +300,14 @@ impl DebugAdapterClient {
             supports_variable_type: Some(true),
             supports_variable_paging: Some(false),
             supports_run_in_terminal_request: Some(false), // TODO: we should support this
-            supports_memory_references: Some(false),
-            supports_progress_reporting: Some(false),
+            supports_memory_references: Some(true),
+            supports_progress_reporting: Some(true),
             supports_invalidated_event: Some(false),
             lines_start_at1: Some(true),
             columns_start_at1: Some(true),
-            supports_memory_event: None,
+            supports_memory_event: Some(true),
             supports_args_can_be_interpreted_by_shell: None,
-            supports_start_debugging_request: None,
+            supports_start_debugging_request: Some(true),
         };
 
         let capabilities = self.request::<Initialize>(args).await?;
@@ -244,76 +317,84 @@ impl DebugAdapterClient {
         Ok(capabilities)
     }
 
-    pub async fn launch(&self) -> Result<()> {
+    pub async fn launch(&self, args: Option<Value>) -> Result<()> {
         self.request::<Launch>(LaunchRequestArguments {
-            raw: json!({"noDebug": false}),
+            raw: args.unwrap_or(Value::Null),
+        })
+        .await
+    }
+
+    pub async fn attach(&self, args: Option<Value>) -> Result<()> {
+        self.request::<Attach>(AttachRequestArguments {
+            raw: args.unwrap_or(Value::Null),
         })
         .await
     }
 
     pub async fn resume(&self, thread_id: u64) {
-        let _ = self
-            .request::<Continue>(ContinueArguments {
-                thread_id,
-                single_thread: self
-                    .capabilities
-                    .clone()
-                    .and_then(|c| c.supports_single_thread_execution_requests),
-            })
-            .await;
+        self.request::<Continue>(ContinueArguments {
+            thread_id,
+            single_thread: Some(true),
+        })
+        .await
+        .log_err();
     }
 
     pub async fn step_over(&self, thread_id: u64) {
-        let _ = self
-            .request::<Next>(NextArguments {
-                thread_id,
-                granularity: Some(SteppingGranularity::Statement),
-                single_thread: self
-                    .capabilities
-                    .clone()
-                    .and_then(|c| c.supports_single_thread_execution_requests),
-            })
-            .await;
+        self.request::<Next>(NextArguments {
+            thread_id,
+            granularity: Some(SteppingGranularity::Statement),
+            single_thread: Some(true),
+        })
+        .await
+        .log_err();
     }
 
     pub async fn step_in(&self, thread_id: u64) {
-        let _ = self
-            .request::<StepIn>(StepInArguments {
-                thread_id,
-                target_id: None,
-                granularity: Some(SteppingGranularity::Statement),
-                single_thread: self
-                    .capabilities
-                    .clone()
-                    .and_then(|c| c.supports_single_thread_execution_requests),
-            })
-            .await;
+        self.request::<StepIn>(StepInArguments {
+            thread_id,
+            target_id: None,
+            granularity: Some(SteppingGranularity::Statement),
+            single_thread: Some(true),
+        })
+        .await
+        .log_err();
     }
 
     pub async fn step_out(&self, thread_id: u64) {
-        let _ = self
-            .request::<StepOut>(StepOutArguments {
-                thread_id,
-                granularity: Some(SteppingGranularity::Statement),
-                single_thread: self
-                    .capabilities
-                    .clone()
-                    .and_then(|c| c.supports_single_thread_execution_requests),
-            })
-            .await;
+        self.request::<StepOut>(StepOutArguments {
+            thread_id,
+            granularity: Some(SteppingGranularity::Statement),
+            single_thread: Some(true),
+        })
+        .await
+        .log_err();
     }
 
     pub async fn step_back(&self, thread_id: u64) {
-        let _ = self
-            .request::<StepBack>(StepBackArguments {
-                thread_id,
-                single_thread: self
-                    .capabilities
-                    .clone()
-                    .and_then(|c| c.supports_single_thread_execution_requests),
-                granularity: Some(SteppingGranularity::Statement),
-            })
-            .await;
+        self.request::<StepBack>(StepBackArguments {
+            thread_id,
+            single_thread: Some(true),
+            granularity: Some(SteppingGranularity::Statement),
+        })
+        .await
+        .log_err();
+    }
+
+    pub async fn restart(&self, thread_id: u64) {
+        self.request::<StepBack>(StepBackArguments {
+            thread_id,
+            single_thread: Some(true),
+            granularity: Some(SteppingGranularity::Statement),
+        })
+        .await
+        .log_err();
+    }
+
+    pub async fn pause(&self, thread_id: u64) {
+        self.request::<Pause>(PauseArguments { thread_id })
+            .await
+            .log_err();
     }
 
     pub async fn set_breakpoints(
@@ -321,6 +402,8 @@ impl DebugAdapterClient {
         path: PathBuf,
         breakpoints: Option<Vec<SourceBreakpoint>>,
     ) -> Result<SetBreakpointsResponse> {
+        let adapter_data = self.config.request_args.clone().map(|c| c.args);
+
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
                 path: Some(String::from(path.to_string_lossy())),
@@ -329,7 +412,7 @@ impl DebugAdapterClient {
                 presentation_hint: None,
                 origin: None,
                 sources: None,
-                adapter_data: None,
+                adapter_data,
                 checksums: None,
             },
             breakpoints,

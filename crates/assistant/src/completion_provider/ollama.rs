@@ -1,3 +1,4 @@
+use crate::LanguageModelCompletionProvider;
 use crate::{
     assistant_settings::OllamaModel, CompletionProvider, LanguageModel, LanguageModelRequest, Role,
 };
@@ -24,6 +25,108 @@ pub struct OllamaCompletionProvider {
     low_speed_timeout: Option<Duration>,
     settings_version: usize,
     available_models: Vec<OllamaModel>,
+}
+
+impl LanguageModelCompletionProvider for OllamaCompletionProvider {
+    fn available_models(&self, _cx: &AppContext) -> Vec<LanguageModel> {
+        self.available_models
+            .iter()
+            .map(|m| LanguageModel::Ollama(m.clone()))
+            .collect()
+    }
+
+    fn settings_version(&self) -> usize {
+        self.settings_version
+    }
+
+    fn is_authenticated(&self) -> bool {
+        !self.available_models.is_empty()
+    }
+
+    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
+        if self.is_authenticated() {
+            Task::ready(Ok(()))
+        } else {
+            self.fetch_models(cx)
+        }
+    }
+
+    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
+        let fetch_models = Box::new(move |cx: &mut WindowContext| {
+            cx.update_global::<CompletionProvider, _>(|provider, cx| {
+                provider
+                    .update_current_as::<_, OllamaCompletionProvider>(|provider| {
+                        provider.fetch_models(cx)
+                    })
+                    .unwrap_or_else(|| Task::ready(Ok(())))
+            })
+        });
+
+        cx.new_view(|cx| DownloadOllamaMessage::new(fetch_models, cx))
+            .into()
+    }
+
+    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
+        self.fetch_models(cx)
+    }
+
+    fn model(&self) -> LanguageModel {
+        LanguageModel::Ollama(self.model.clone())
+    }
+
+    fn count_tokens(
+        &self,
+        request: LanguageModelRequest,
+        _cx: &AppContext,
+    ) -> BoxFuture<'static, Result<usize>> {
+        // There is no endpoint for this _yet_ in Ollama
+        // see: https://github.com/ollama/ollama/issues/1716 and https://github.com/ollama/ollama/issues/3582
+        let token_count = request
+            .messages
+            .iter()
+            .map(|msg| msg.content.chars().count())
+            .sum::<usize>()
+            / 4;
+
+        async move { Ok(token_count) }.boxed()
+    }
+
+    fn complete(
+        &self,
+        request: LanguageModelRequest,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        let request = self.to_ollama_request(request);
+
+        let http_client = self.http_client.clone();
+        let api_url = self.api_url.clone();
+        let low_speed_timeout = self.low_speed_timeout;
+        async move {
+            let request =
+                stream_chat_completion(http_client.as_ref(), &api_url, request, low_speed_timeout);
+            let response = request.await?;
+            let stream = response
+                .filter_map(|response| async move {
+                    match response {
+                        Ok(delta) => {
+                            let content = match delta.message {
+                                ChatMessage::User { content } => content,
+                                ChatMessage::Assistant { content } => content,
+                                ChatMessage::System { content } => content,
+                            };
+                            Some(Ok(content))
+                        }
+                        Err(error) => Some(Err(error)),
+                    }
+                })
+                .boxed();
+            Ok(stream)
+        }
+        .boxed()
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 impl OllamaCompletionProvider {
@@ -87,34 +190,10 @@ impl OllamaCompletionProvider {
         self.settings_version = settings_version;
     }
 
-    pub fn available_models(&self) -> impl Iterator<Item = &OllamaModel> {
-        self.available_models.iter()
-    }
-
     pub fn select_first_available_model(&mut self) {
         if let Some(model) = self.available_models.first() {
             self.model = model.clone();
         }
-    }
-
-    pub fn settings_version(&self) -> usize {
-        self.settings_version
-    }
-
-    pub fn is_authenticated(&self) -> bool {
-        !self.available_models.is_empty()
-    }
-
-    pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
-        if self.is_authenticated() {
-            Task::ready(Ok(()))
-        } else {
-            self.fetch_models(cx)
-        }
-    }
-
-    pub fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
-        self.fetch_models(cx)
     }
 
     pub fn fetch_models(&self, cx: &AppContext) -> Task<Result<()>> {
@@ -137,90 +216,21 @@ impl OllamaCompletionProvider {
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let CompletionProvider::Ollama(provider) = provider {
+                provider.update_current_as::<_, OllamaCompletionProvider>(|provider| {
                     provider.available_models = models;
 
                     if !provider.available_models.is_empty() && provider.model.name.is_empty() {
                         provider.select_first_available_model()
                     }
-                }
+                });
             })
         })
-    }
-
-    pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        let fetch_models = Box::new(move |cx: &mut WindowContext| {
-            cx.update_global::<CompletionProvider, _>(|provider, cx| {
-                if let CompletionProvider::Ollama(provider) = provider {
-                    provider.fetch_models(cx)
-                } else {
-                    Task::ready(Ok(()))
-                }
-            })
-        });
-
-        cx.new_view(|cx| DownloadOllamaMessage::new(fetch_models, cx))
-            .into()
-    }
-
-    pub fn model(&self) -> OllamaModel {
-        self.model.clone()
-    }
-
-    pub fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        _cx: &AppContext,
-    ) -> BoxFuture<'static, Result<usize>> {
-        // There is no endpoint for this _yet_ in Ollama
-        // see: https://github.com/ollama/ollama/issues/1716 and https://github.com/ollama/ollama/issues/3582
-        let token_count = request
-            .messages
-            .iter()
-            .map(|msg| msg.content.chars().count())
-            .sum::<usize>()
-            / 4;
-
-        async move { Ok(token_count) }.boxed()
-    }
-
-    pub fn complete(
-        &self,
-        request: LanguageModelRequest,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let request = self.to_ollama_request(request);
-
-        let http_client = self.http_client.clone();
-        let api_url = self.api_url.clone();
-        let low_speed_timeout = self.low_speed_timeout;
-        async move {
-            let request =
-                stream_chat_completion(http_client.as_ref(), &api_url, request, low_speed_timeout);
-            let response = request.await?;
-            let stream = response
-                .filter_map(|response| async move {
-                    match response {
-                        Ok(delta) => {
-                            let content = match delta.message {
-                                ChatMessage::User { content } => content,
-                                ChatMessage::Assistant { content } => content,
-                                ChatMessage::System { content } => content,
-                            };
-                            Some(Ok(content))
-                        }
-                        Err(error) => Some(Err(error)),
-                    }
-                })
-                .boxed();
-            Ok(stream)
-        }
-        .boxed()
     }
 
     fn to_ollama_request(&self, request: LanguageModelRequest) -> ChatRequest {
         let model = match request.model {
             LanguageModel::Ollama(model) => model,
-            _ => self.model(),
+            _ => self.model.clone(),
         };
 
         ChatRequest {

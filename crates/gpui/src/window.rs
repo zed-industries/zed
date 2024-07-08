@@ -1,19 +1,20 @@
 use crate::{
     hash, point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
     AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow,
-    Context, Corners, CursorStyle, DevicePixels, DispatchActionListener, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    FontId, Global, GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyBinding,
-    KeyContext, KeyDownEvent, KeyEvent, KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent,
-    LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions, WindowParams,
-    WindowTextSystem, SUBPIXEL_VARIANTS,
+    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
+    FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, Hsla, ImageData,
+    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyMatch, KeymatchResult,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString,
+    Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
+    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -549,9 +550,15 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
-    pending_modifiers: Option<Modifiers>,
+    pending_modifier: ModifierState,
     pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ModifierState {
+    modifiers: Modifiers,
+    saw_keystroke: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -604,7 +611,10 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
 
     cx.active_window()
         .and_then(|w| w.update(cx, |_, cx| cx.bounds()).ok())
-        .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
+        .map(|mut bounds| {
+            bounds.origin += DEFAULT_WINDOW_OFFSET;
+            bounds
+        })
         .unwrap_or_else(|| {
             let display = display_id
                 .map(|id| cx.find_display(id))
@@ -633,6 +643,7 @@ impl Window {
             window_background,
             app_id,
             window_min_size,
+            window_decorations,
         } = options;
 
         let bounds = window_bounds
@@ -648,7 +659,6 @@ impl Window {
                 focus,
                 show,
                 display_id,
-                window_background,
                 window_min_size,
             },
         )?;
@@ -665,6 +675,10 @@ impl Window {
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
+
+        platform_window
+            .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
+        platform_window.set_background_appearance(window_background);
 
         if let Some(ref window_open_state) = window_bounds {
             match window_open_state {
@@ -824,7 +838,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
-            pending_modifiers: None,
+            pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
         })
@@ -982,6 +996,16 @@ impl<'a> WindowContext<'a> {
     /// On some platforms (namely Windows) this is different than the bounds being the size of the display
     pub fn is_maximized(&self) -> bool {
         self.window.platform_window.is_maximized()
+    }
+
+    /// request a certain window decoration (Wayland)
+    pub fn request_decorations(&self, decorations: WindowDecorations) {
+        self.window.platform_window.request_decorations(decorations);
+    }
+
+    /// Start a window resize operation (Wayland)
+    pub fn start_window_resize(&self, edge: ResizeEdge) {
+        self.window.platform_window.start_window_resize(edge);
     }
 
     /// Return the `WindowBounds` to indicate that how a window should be opened
@@ -1211,13 +1235,23 @@ impl<'a> WindowContext<'a> {
     /// Tells the compositor to take control of window movement (Wayland and X11)
     ///
     /// Events may not be received during a move operation.
-    pub fn start_system_move(&self) {
-        self.window.platform_window.start_system_move()
+    pub fn start_window_move(&self) {
+        self.window.platform_window.start_window_move()
+    }
+
+    /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
+    pub fn set_client_inset(&self, inset: Pixels) {
+        self.window.platform_window.set_client_inset(inset);
     }
 
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
-    pub fn should_render_window_controls(&self) -> bool {
-        self.window.platform_window.should_render_window_controls()
+    pub fn window_decorations(&self) -> Decorations {
+        self.window.platform_window.window_decorations()
+    }
+
+    /// Returns which window controls are currently visible (Wayland)
+    pub fn window_controls(&self) -> WindowControls {
+        self.window.platform_window.window_controls()
     }
 
     /// Updates the window's title at the platform level.
@@ -1231,7 +1265,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Sets the window background appearance.
-    pub fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+    pub fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         self.window
             .platform_window
             .set_background_appearance(background_appearance);
@@ -3168,9 +3202,12 @@ impl<'a> WindowContext<'a> {
         let mut keystroke: Option<Keystroke> = None;
 
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
-            if let Some(previous) = self.window.pending_modifiers.take() {
+            if event.modifiers.number_of_modifiers() == 0
+                && self.window.pending_modifier.modifiers.number_of_modifiers() == 1
+                && !self.window.pending_modifier.saw_keystroke
+            {
                 if event.modifiers.number_of_modifiers() == 0 {
-                    let key = match previous {
+                    let key = match self.window.pending_modifier.modifiers {
                         modifiers if modifiers.shift => Some("shift"),
                         modifiers if modifiers.control => Some("control"),
                         modifiers if modifiers.alt => Some("alt"),
@@ -3198,17 +3235,15 @@ impl<'a> WindowContext<'a> {
                         pending = pending_bindings;
                     }
                 }
-            } else if event.modifiers.number_of_modifiers() == 1 {
-                self.window.pending_modifiers = Some(event.modifiers);
             }
-            if keystroke.is_none() {
-                self.finish_dispatch_key_event(event, dispatch_path);
-                return;
+            if self.window.pending_modifier.modifiers.number_of_modifiers() == 0
+                && event.modifiers.number_of_modifiers() == 1
+            {
+                self.window.pending_modifier.saw_keystroke = false
             }
-        }
-
-        if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-            self.window.pending_modifiers.take();
+            self.window.pending_modifier.modifiers = event.modifiers
+        } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+            self.window.pending_modifier.saw_keystroke = true;
             let KeymatchResult {
                 bindings: key_down_bindings,
                 pending: key_down_pending,
@@ -3222,6 +3257,11 @@ impl<'a> WindowContext<'a> {
 
             bindings = key_down_bindings;
             pending = key_down_pending;
+        }
+
+        if keystroke.is_none() {
+            self.finish_dispatch_key_event(event, dispatch_path);
+            return;
         }
 
         if pending {

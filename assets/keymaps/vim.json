@@ -47,19 +47,16 @@
       "{": "vim::StartOfParagraph",
       "}": "vim::EndOfParagraph",
       "|": "vim::GoToColumn",
-
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
       "b": "vim::PreviousWordStart",
       "g e": "vim::PreviousWordEnd",
-
       // Subword motions
       // "w": "vim::NextSubwordStart",
       // "b": "vim::PreviousSubwordStart",
       // "e": "vim::NextSubwordEnd",
       // "g e": "vim::PreviousSubwordEnd",
-
       "shift-w": [
         "vim::NextWordStart",
         {
@@ -78,8 +75,12 @@
           "ignorePunctuation": true
         }
       ],
-      "g shift-e": ["vim::PreviousWordEnd", { "ignorePunctuation": true }],
-
+      "g shift-e": [
+        "vim::PreviousWordEnd",
+        {
+          "ignorePunctuation": true
+        }
+      ],
       "/": "vim::Search",
       "g /": "pane::DeploySearch",
       "?": [
@@ -126,8 +127,22 @@
         }
       ],
       "m": ["vim::PushOperator", "Mark"],
-      "'": ["vim::PushOperator", { "Jump": { "line": true } }],
-      "`": ["vim::PushOperator", { "Jump": { "line": false } }],
+      "'": [
+        "vim::PushOperator",
+        {
+          "Jump": {
+            "line": true
+          }
+        }
+      ],
+      "`": [
+        "vim::PushOperator",
+        {
+          "Jump": {
+            "line": false
+          }
+        }
+      ],
       ";": "vim::RepeatFind",
       ",": "vim::RepeatFindReversed",
       "ctrl-o": "pane::GoBack",
@@ -331,7 +346,6 @@
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w n": ["workspace::NewFileInDirection", "Up"],
       "ctrl-w ctrl-n": ["workspace::NewFileInDirection", "Up"],
-
       "ctrl-w d": "editor::GoToDefinitionSplit",
       "ctrl-w g d": "editor::GoToDefinitionSplit",
       "ctrl-w shift-d": "editor::GoToTypeDefinitionSplit",
@@ -389,6 +403,9 @@
       "g shift-u": ["vim::PushOperator", "Uppercase"],
       "g ~": ["vim::PushOperator", "OppositeCase"],
       "\"": ["vim::PushOperator", "Register"],
+      "q": "vim::ToggleRecord",
+      "shift-q": "vim::ReplayLastRecording",
+      "@": ["vim::PushOperator", "ReplayRegister"],
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       // tree-sitter related commands
@@ -676,7 +693,8 @@
   {
     "context": "EmptyPane || SharedScreen",
     "bindings": {
-      ":": "command_palette::Toggle"
+      ":": "command_palette::Toggle",
+      "g /": "pane::DeploySearch"
     }
   },
   {
@@ -703,6 +721,15 @@
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
       "-": "project_panel::SelectParent"
+    }
+  },
+  {
+    "context": "OutlinePanel",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrev",
+      "shift-g": "menu::SelectLast",
+      "g g": "menu::SelectFirst"
     }
   }
 ]

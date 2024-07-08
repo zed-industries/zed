@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Context, Result};
 use dap_types::{
-    BreakpointEvent, CapabilitiesEvent, ContinuedEvent, ExitedEvent, InvalidatedEvent,
-    LoadedSourceEvent, MemoryEvent, ModuleEvent, OutputEvent, ProcessEvent, StoppedEvent,
-    TerminatedEvent, ThreadEvent,
+    BreakpointEvent, Capabilities, CapabilitiesEvent, ContinuedEvent, ExitedEvent,
+    InvalidatedEvent, LoadedSourceEvent, MemoryEvent, ModuleEvent, OutputEvent, ProcessEvent,
+    ProgressEndEvent, ProgressStartEvent, ProgressUpdateEvent, StoppedEvent, TerminatedEvent,
+    ThreadEvent,
 };
 use futures::{
     channel::mpsc::{unbounded, Sender, UnboundedReceiver, UnboundedSender},
@@ -14,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smol::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 use std::{collections::HashMap, sync::Arc};
-use util::ResultExt as _;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -28,11 +28,11 @@ pub enum Payload {
 #[serde(tag = "event", content = "body")]
 #[serde(rename_all = "camelCase")]
 pub enum Events {
-    Initialized,
+    Initialized(Option<Capabilities>),
     Stopped(StoppedEvent),
     Continued(ContinuedEvent),
     Exited(ExitedEvent),
-    Terminated(TerminatedEvent),
+    Terminated(Option<TerminatedEvent>),
     Thread(ThreadEvent),
     Output(OutputEvent),
     Breakpoint(BreakpointEvent),
@@ -40,9 +40,9 @@ pub enum Events {
     LoadedSource(LoadedSourceEvent),
     Process(ProcessEvent),
     Capabilities(CapabilitiesEvent),
-    ProgressStart,
-    ProgressUpdate,
-    ProgressEnd,
+    ProgressStart(ProgressStartEvent),
+    ProgressUpdate(ProgressUpdateEvent),
+    ProgressEnd(ProgressEndEvent),
     Invalidated(InvalidatedEvent),
     Memory(MemoryEvent),
 }
@@ -80,20 +80,18 @@ impl Transport {
         let (client_tx, server_rx) = unbounded::<Payload>();
         let (server_tx, client_rx) = unbounded::<Payload>();
 
-        let transport = Self {
+        let transport = Arc::new(Self {
             pending_requests: Mutex::new(HashMap::default()),
-        };
-
-        let transport = Arc::new(transport);
+        });
 
         let _ = cx.update(|cx| {
-            cx.spawn(|_| Self::recv(transport.clone(), server_stdout, client_tx))
+            cx.spawn(|_| Self::receive(transport.clone(), server_stdout, client_tx))
                 .detach_and_log_err(cx);
             cx.spawn(|_| Self::send(transport, server_stdin, client_rx))
                 .detach_and_log_err(cx);
 
             if let Some(stderr) = server_stderr {
-                cx.spawn(|_| Self::err(stderr)).detach();
+                cx.spawn(|_| Self::err(stderr)).detach_and_log_err(cx);
             }
         });
 
@@ -167,8 +165,6 @@ impl Transport {
         server_stdin: &mut Box<dyn AsyncWrite + Unpin + Send>,
         request: String,
     ) -> Result<()> {
-        dbg!("Request {}", &request);
-
         server_stdin
             .write_all(format!("Content-Length: {}\r\n\r\n", request.len()).as_bytes())
             .await?;
@@ -184,42 +180,39 @@ impl Transport {
         if response.success {
             Ok(response)
         } else {
-            Err(anyhow!("some error"))
+            Err(anyhow!("Received failed response"))
         }
     }
 
     async fn process_server_message(
         &self,
         mut client_tx: &UnboundedSender<Payload>,
-        msg: Payload,
+        payload: Payload,
     ) -> Result<()> {
-        match msg {
+        match payload {
             Payload::Response(res) => {
-                match self.pending_requests.lock().remove(&res.request_seq) {
-                    Some(mut tx) => match tx.send(Self::process_response(res)).await {
-                        Ok(_) => (),
-                        Err(_) => (),
-                    },
-                    None => {
-                        dbg!("Response to nonexistent request #{}", res.request_seq);
-                        client_tx.send(Payload::Response(res)).await.log_err();
-                    }
-                }
+                let pending_request = {
+                    let mut pending_requests = self.pending_requests.lock();
+                    pending_requests.remove(&res.request_seq)
+                };
 
-                Ok(())
+                if let Some(mut tx) = pending_request {
+                    tx.send(Self::process_response(res)).await?;
+                } else {
+                    client_tx.send(Payload::Response(res)).await?;
+                };
             }
             Payload::Request(_) => {
-                client_tx.send(msg).await.log_err();
-                Ok(())
+                client_tx.send(payload).await?;
             }
             Payload::Event(_) => {
-                client_tx.send(msg).await.log_err();
-                Ok(())
+                client_tx.send(payload).await?;
             }
         }
+        Ok(())
     }
 
-    async fn recv(
+    async fn receive(
         transport: Arc<Self>,
         mut server_stdout: Box<dyn AsyncBufRead + Unpin + Send>,
         client_tx: UnboundedSender<Payload>,
@@ -249,16 +242,10 @@ impl Transport {
         Ok(())
     }
 
-    async fn err(mut server_stderr: Box<dyn AsyncBufRead + Unpin + Send>) {
+    async fn err(mut server_stderr: Box<dyn AsyncBufRead + Unpin + Send>) -> Result<()> {
         let mut recv_buffer = String::new();
         loop {
-            match Self::recv_server_error(&mut server_stderr, &mut recv_buffer).await {
-                Ok(_) => {}
-                Err(err) => {
-                    dbg!("err: <- {:?}", err);
-                    break;
-                }
-            }
+            Self::recv_server_error(&mut server_stderr, &mut recv_buffer).await?;
         }
     }
 }
