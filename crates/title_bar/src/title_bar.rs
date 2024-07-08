@@ -150,39 +150,40 @@ impl Render for TitleBar {
                             }),
                     ),
             )
-            .when(
-                self.platform_style == PlatformStyle::Windows && !cx.is_fullscreen(),
-                |title_bar| title_bar.child(platform_windows::WindowsWindowControls::new(height)),
-            )
-            .when(
-                self.platform_style == PlatformStyle::Linux
-                    && !cx.is_fullscreen()
-                    && matches!(decorations, Decorations::Client { .. }),
-                |title_bar| {
-                    title_bar
-                        .child(platform_linux::LinuxWindowControls::new(close_action))
-                        .when(supported_controls.window_menu, |titlebar| {
-                            titlebar.on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
-                                cx.show_window_menu(ev.position)
+            .when(!cx.is_fullscreen(), |title_bar| match self.platform_style {
+                PlatformStyle::Mac => title_bar,
+                PlatformStyle::Linux => {
+                    if matches!(decorations, Decorations::Client { .. }) {
+                        title_bar
+                            .child(platform_linux::LinuxWindowControls::new(close_action))
+                            .when(supported_controls.window_menu, |titlebar| {
+                                titlebar.on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
+                                    cx.show_window_menu(ev.position)
+                                })
                             })
-                        })
-                        .on_mouse_move(cx.listener(move |this, _ev, cx| {
-                            if this.should_move {
+                            .on_mouse_move(cx.listener(move |this, _ev, cx| {
+                                if this.should_move {
+                                    this.should_move = false;
+                                    cx.start_window_move();
+                                }
+                            }))
+                            .on_mouse_down_out(cx.listener(move |this, _ev, _cx| {
                                 this.should_move = false;
-                                cx.start_window_move();
-                            }
-                        }))
-                        .on_mouse_down_out(cx.listener(move |this, _ev, _cx| {
-                            this.should_move = false;
-                        }))
-                        .on_mouse_down(
-                            gpui::MouseButton::Left,
-                            cx.listener(move |this, _ev, _cx| {
-                                this.should_move = true;
-                            }),
-                        )
-                },
-            )
+                            }))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _ev, _cx| {
+                                    this.should_move = true;
+                                }),
+                            )
+                    } else {
+                        title_bar
+                    }
+                }
+                PlatformStyle::Windows => {
+                    title_bar.child(platform_windows::WindowsWindowControls::new(height))
+                }
+            })
     }
 }
 
