@@ -8539,7 +8539,7 @@ dependencies = [
  "task",
  "terminal_view",
  "ui",
- "ui_text_field",
+ "ui_input",
  "util",
  "workspace",
 ]
@@ -11738,7 +11738,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ui_text_field"
+name = "ui_input"
 version = "0.1.0"
 dependencies = [
  "editor",

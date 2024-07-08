@@ -108,7 +108,7 @@ members = [
     "crates/time_format",
     "crates/title_bar",
     "crates/ui",
-    "crates/ui_text_field",
+    "crates/ui_input",
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
@@ -259,7 +259,7 @@ theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
 title_bar = { path = "crates/title_bar" }
 ui = { path = "crates/ui" }
-ui_text_field = { path = "crates/ui_text_field" }
+ui_input = { path = "crates/ui_input" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
