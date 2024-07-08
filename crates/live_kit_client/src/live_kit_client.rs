@@ -88,49 +88,60 @@ pub async fn capture_local_video_track(
 pub fn capture_local_audio_track(
     cx: &mut AppContext,
 ) -> Result<(track::LocalAudioTrack, AudioStream)> {
-    let host = cpal::default_host();
+    let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
 
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| anyhow!("no audio input device available"))?;
-    let config = device
-        .default_input_config()
-        .context("failed to get default input config")?;
-    let sample_rate = config.sample_rate();
-    let channels = config.channels() as u32;
+    let sample_rate;
+    let channels;
+    let stream;
+    if cfg!(any(test, feature = "test-support")) {
+        sample_rate = 1;
+        channels = 1;
+        stream = None;
+    } else {
+        let device = cpal::default_host()
+            .default_input_device()
+            .ok_or_else(|| anyhow!("no audio input device available"))?;
+        let config = device
+            .default_input_config()
+            .context("failed to get default input config")?;
+        sample_rate = config.sample_rate().0;
+        channels = config.channels() as u32;
+        stream = Some(
+            device
+                .build_input_stream_raw(
+                    &config.config(),
+                    cpal::SampleFormat::I16,
+                    move |data, _: &_| {
+                        frame_tx
+                            .unbounded_send(AudioFrame {
+                                data: Cow::Owned(data.as_slice::<i16>().unwrap().to_vec()),
+                                sample_rate,
+                                num_channels: channels,
+                                samples_per_channel: data.len() as u32 / channels,
+                            })
+                            .ok();
+                    },
+                    |err| log::error!("error capturing audio track: {:?}", err),
+                    None,
+                )
+                .context("failed to build input stream")?,
+        );
+    }
+
     let source = NativeAudioSource::new(
         AudioSourceOptions {
             echo_cancellation: true,
             noise_suppression: true,
             auto_gain_control: false,
         },
-        sample_rate.0,
+        sample_rate,
         channels,
     );
 
-    let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
-
-    let stream = device
-        .build_input_stream_raw(
-            &config.config(),
-            cpal::SampleFormat::I16,
-            move |data, _: &_| {
-                frame_tx
-                    .unbounded_send(AudioFrame {
-                        data: Cow::Owned(data.as_slice::<i16>().unwrap().to_vec()),
-                        sample_rate: sample_rate.0,
-                        num_channels: channels,
-                        samples_per_channel: data.len() as u32 / channels,
-                    })
-                    .ok();
-            },
-            |err| log::error!("error capturing audio track: {:?}", err),
-            None,
-        )
-        .context("failed to build input stream")?;
-
     let stream_task = cx.foreground_executor().spawn(async move {
-        stream.play().log_err();
+        if let Some(stream) = &stream {
+            stream.play().log_err();
+        }
         futures::future::pending().await
     });
 
