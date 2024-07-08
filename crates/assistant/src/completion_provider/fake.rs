@@ -16,10 +16,9 @@ impl FakeCompletionProvider {
     #[cfg(test)]
     pub fn setup_test(cx: &mut AppContext) -> Self {
         use crate::CompletionProvider;
-        use parking_lot::RwLock;
 
         let this = Self::default();
-        let provider = CompletionProvider::new(Arc::new(RwLock::new(this.clone())), None);
+        let provider = CompletionProvider::new(vec![Arc::new(this.clone())], None);
         cx.set_global(provider);
         this
     }

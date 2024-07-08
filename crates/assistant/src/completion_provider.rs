@@ -7,11 +7,11 @@ mod open_ai;
 
 pub use anthropic::*;
 pub use cloud::*;
+use collections::HashMap;
 #[cfg(test)]
 pub use fake::*;
 pub use ollama::*;
 pub use open_ai::*;
-use parking_lot::RwLock;
 use smol::lock::{Semaphore, SemaphoreGuardArc};
 
 use crate::{
@@ -23,8 +23,8 @@ use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, AppContext, BorrowAppContext, Task, WindowContext};
 use settings::{Settings, SettingsStore};
-use std::time::Duration;
 use std::{any::Any, sync::Arc};
+use std::{any::TypeId, time::Duration};
 
 /// Choose which model to use for openai provider.
 /// If the model is not available, try to use the first available model, or fallback to the original model.
@@ -42,7 +42,7 @@ fn choose_openai_model(
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let provider = create_provider_from_settings(client.clone(), 0, cx);
-    cx.set_global(CompletionProvider::new(provider, Some(client)));
+    cx.set_global(CompletionProvider::new(vec![provider], Some(client)));
 
     let mut settings_version = 0;
     cx.observe_global::<SettingsStore>(move |cx| {
@@ -59,73 +59,216 @@ pub struct CompletionResponse {
     _lock: SemaphoreGuardArc,
 }
 
+trait LanguageModelSettings: Send + Sync {
+    fn as_any(&self) -> &dyn Any;
+    fn boxed(&self) -> Box<dyn LanguageModelSettings>;
+}
+
 pub trait LanguageModelCompletionProvider: Send + Sync {
-    fn available_models(&self, cx: &AppContext) -> Vec<LanguageModel>;
-    fn settings_version(&self) -> usize;
+    type Settings: LanguageModelSettings + Default;
+
+    fn available_models(&self, settings: &Self::Settings, cx: &AppContext) -> Vec<LanguageModel>;
     fn is_authenticated(&self) -> bool;
-    fn authenticate(&self, cx: &AppContext) -> Task<Result<()>>;
-    fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView;
-    fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>>;
+    fn authenticate(&self, settings: &Self::Settings, cx: &AppContext) -> Task<Result<()>>;
+    fn authentication_prompt(&self, settings: &Self::Settings, cx: &mut WindowContext) -> AnyView;
+    fn reset_credentials(&self, settings: &Self::Settings, cx: &AppContext) -> Task<Result<()>>;
     fn model(&self) -> LanguageModel;
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
+        settings: &Self::Settings,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>>;
     fn complete(
         &self,
         request: LanguageModelRequest,
+        settings: &Self::Settings,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
+}
 
+trait AnyLanguageModelCompletionProvider: Send + Sync {
+    fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn type_id(&self) -> TypeId;
+    fn available_models(
+        &self,
+        settings: &dyn LanguageModelSettings,
+        cx: &AppContext,
+    ) -> Vec<LanguageModel>;
+    fn is_authenticated(&self) -> bool;
+    fn authenticate(
+        &self,
+        settings: &dyn LanguageModelSettings,
+        cx: &AppContext,
+    ) -> Task<Result<()>>;
+    fn authentication_prompt(
+        &self,
+        settings: &dyn LanguageModelSettings,
+        cx: &mut WindowContext,
+    ) -> AnyView;
+    fn reset_credentials(
+        &self,
+        settings: &dyn LanguageModelSettings,
+        cx: &AppContext,
+    ) -> Task<Result<()>>;
+    fn model(&self) -> LanguageModel;
+    fn count_tokens(
+        &self,
+        request: LanguageModelRequest,
+        settings: &dyn LanguageModelSettings,
+        cx: &AppContext,
+    ) -> BoxFuture<'static, Result<usize>>;
+    fn complete(
+        &self,
+        request: LanguageModelRequest,
+        settings: &dyn LanguageModelSettings,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
+}
+
+impl<T: LanguageModelCompletionProvider + 'static> AnyLanguageModelCompletionProvider for T {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<T>()
+    }
+
+    fn available_models(&self, settings: &dyn Any, cx: &AppContext) -> Vec<LanguageModel> {
+        self.available_models(settings.downcast_ref().unwrap(), cx)
+    }
+
+    fn is_authenticated(&self) -> bool {
+        self.is_authenticated()
+    }
+
+    fn authenticate(
+        &self,
+        settings: &dyn LanguageModelSettings,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        self.authenticate(settings.as_any().downcast_ref().unwrap(), cx)
+    }
+
+    fn authentication_prompt(
+        &self,
+        settings: &dyn LanguageModelSettings,
+        cx: &mut WindowContext,
+    ) -> AnyView {
+        self.authentication_prompt(settings.as_any().downcast_ref().unwrap(), cx)
+    }
+
+    fn reset_credentials(
+        &self,
+        settings: &dyn LanguageModelSettings,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        self.reset_credentials(settings.as_any().downcast_ref().unwrap(), cx)
+    }
+
+    fn model(&self) -> LanguageModel {
+        self.model()
+    }
+
+    fn count_tokens(
+        &self,
+        request: LanguageModelRequest,
+        settings: &dyn LanguageModelSettings,
+        cx: &AppContext,
+    ) -> BoxFuture<'static, Result<usize>> {
+        self.count_tokens(request, settings.as_any().downcast_ref().unwrap(), cx)
+    }
+
+    fn complete(
+        &self,
+        request: LanguageModelRequest,
+        settings: &dyn LanguageModelSettings,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        self.complete(request, settings.as_any().downcast_ref().unwrap())
+    }
 }
 
 const MAX_CONCURRENT_COMPLETION_REQUESTS: usize = 4;
 
+struct LanguageModelCompletionProviderData {
+    provider: Arc<dyn AnyLanguageModelCompletionProvider>,
+    settings: Box<dyn LanguageModelSettings>,
+}
+
 pub struct CompletionProvider {
-    provider: Arc<RwLock<dyn LanguageModelCompletionProvider>>,
+    providers: HashMap<TypeId, LanguageModelCompletionProviderData>,
+    active_provider: TypeId,
     client: Option<Arc<Client>>,
     request_limiter: Arc<Semaphore>,
 }
 
 impl CompletionProvider {
-    pub fn new(
-        provider: Arc<RwLock<dyn LanguageModelCompletionProvider>>,
-        client: Option<Arc<Client>>,
-    ) -> Self {
+    pub fn new(client: Option<Arc<Client>>) -> Self {
         Self {
-            provider,
+            active_provider: Some(()).type_id(),
+            providers: HashMap::default(),
             client,
             request_limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_COMPLETION_REQUESTS)),
         }
     }
 
+    pub fn register_provider<T: LanguageModelCompletionProvider + 'static>(&mut self, provider: T) {
+        self.providers.insert(
+            TypeId::of::<T>(),
+            LanguageModelCompletionProviderData {
+                provider: Arc::new(provider),
+                settings: Box::new(T::Settings::default()),
+            },
+        );
+        self.active_provider = TypeId::of::<T>();
+    }
+
+    fn active_provider(
+        &self,
+    ) -> (
+        Arc<dyn AnyLanguageModelCompletionProvider>,
+        &dyn LanguageModelSettings,
+    ) {
+        let provider = self.providers.get(&self.active_provider).unwrap();
+        (provider.provider.clone(), provider.settings.as_ref())
+    }
+
     pub fn available_models(&self, cx: &AppContext) -> Vec<LanguageModel> {
-        self.provider.read().available_models(cx)
+        let (provider, settings) = self.active_provider();
+        provider.available_models(settings, cx)
     }
 
     pub fn settings_version(&self) -> usize {
-        self.provider.read().settings_version()
+        0
     }
 
     pub fn is_authenticated(&self) -> bool {
-        self.provider.read().is_authenticated()
+        let (provider, _) = self.active_provider();
+        provider.is_authenticated()
     }
 
     pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
-        self.provider.read().authenticate(cx)
+        let (provider, settings) = self.active_provider();
+        provider.authenticate(settings, cx)
     }
 
     pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
-        self.provider.read().authentication_prompt(cx)
+        let (provider, settings) = self.active_provider();
+        provider.authentication_prompt(settings, cx)
     }
 
     pub fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
-        self.provider.read().reset_credentials(cx)
+        let (provider, settings) = self.active_provider();
+        provider.reset_credentials(settings, cx)
     }
 
     pub fn model(&self) -> LanguageModel {
-        self.provider.read().model()
+        let (provider, _) = self.active_provider();
+        provider.model()
     }
 
     pub fn count_tokens(
@@ -133,7 +276,8 @@ impl CompletionProvider {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        self.provider.read().count_tokens(request, cx)
+        let (provider, settings) = self.active_provider();
+        provider.count_tokens(request, settings, cx)
     }
 
     pub fn complete(
@@ -142,10 +286,11 @@ impl CompletionProvider {
         cx: &AppContext,
     ) -> Task<CompletionResponse> {
         let rate_limiter = self.request_limiter.clone();
-        let provider = self.provider.clone();
+        let (provider, settings) = self.active_provider();
+        let settings = settings.boxed();
         cx.background_executor().spawn(async move {
             let lock = rate_limiter.acquire_arc().await;
-            let response = provider.read().complete(request);
+            let response = provider.complete(request, settings.as_ref());
             CompletionResponse {
                 inner: response,
                 _lock: lock,
@@ -161,71 +306,19 @@ impl CompletionProvider {
         cx.global::<Self>()
     }
 
-    pub fn update_current_as<R, T: LanguageModelCompletionProvider + 'static>(
-        &mut self,
-        update: impl FnOnce(&mut T) -> R,
-    ) -> Option<R> {
-        let mut provider = self.provider.write();
-        if let Some(provider) = provider.as_any_mut().downcast_mut::<T>() {
-            Some(update(provider))
-        } else {
-            None
-        }
-    }
-
     pub fn update_settings(&mut self, version: usize, cx: &mut AppContext) {
-        let updated = match &AssistantSettings::get_global(cx).provider {
-            AssistantProvider::ZedDotDev { model } => self
-                .update_current_as::<_, CloudCompletionProvider>(|provider| {
-                    provider.update(model.clone(), version);
-                }),
-            AssistantProvider::OpenAi {
-                model,
-                api_url,
-                low_speed_timeout_in_seconds,
-                available_models,
-            } => self.update_current_as::<_, OpenAiCompletionProvider>(|provider| {
-                provider.update(
-                    choose_openai_model(&model, &available_models),
-                    api_url.clone(),
-                    low_speed_timeout_in_seconds.map(Duration::from_secs),
-                    version,
-                );
-            }),
-            AssistantProvider::Anthropic {
-                model,
-                api_url,
-                low_speed_timeout_in_seconds,
-            } => self.update_current_as::<_, AnthropicCompletionProvider>(|provider| {
-                provider.update(
-                    model.clone(),
-                    api_url.clone(),
-                    low_speed_timeout_in_seconds.map(Duration::from_secs),
-                    version,
-                );
-            }),
-            AssistantProvider::Ollama {
-                model,
-                api_url,
-                low_speed_timeout_in_seconds,
-            } => self.update_current_as::<_, OllamaCompletionProvider>(|provider| {
-                provider.update(
-                    model.clone(),
-                    api_url.clone(),
-                    low_speed_timeout_in_seconds.map(Duration::from_secs),
-                    version,
-                    cx,
-                );
-            }),
+        let type_id = match &AssistantSettings::get_global(cx).provider {
+            AssistantProvider::ZedDotDev { .. } => TypeId::of::<CloudCompletionProvider>(),
+            AssistantProvider::OpenAi { .. } => TypeId::of::<OpenAiCompletionProvider>(),
+            AssistantProvider::Anthropic { .. } => TypeId::of::<AnthropicCompletionProvider>(),
+            AssistantProvider::Ollama { .. } => TypeId::of::<OllamaCompletionProvider>(),
         };
 
-        // Previously configured provider was changed to another one
-        if updated.is_none() {
-            if let Some(client) = self.client.clone() {
-                self.provider = create_provider_from_settings(client, version, cx);
-            } else {
-                log::warn!("completion provider cannot be created because client is not set");
-            }
+        if let Some(provider) = self.providers.get_mut(&type_id) {
+            provider.settings = Box::new(todo!());
+        } else {
+            let provider = create_provider_from_settings(client, version, cx);
+            todo!()
         }
     }
 }
@@ -234,46 +327,49 @@ fn create_provider_from_settings(
     client: Arc<Client>,
     settings_version: usize,
     cx: &mut AppContext,
-) -> Arc<RwLock<dyn LanguageModelCompletionProvider>> {
+) -> Arc<dyn LanguageModelCompletionProvider> {
     match &AssistantSettings::get_global(cx).provider {
-        AssistantProvider::ZedDotDev { model } => Arc::new(RwLock::new(
-            CloudCompletionProvider::new(model.clone(), client.clone(), settings_version, cx),
+        AssistantProvider::ZedDotDev { model } => Arc::new(CloudCompletionProvider::new(
+            model.clone(),
+            client.clone(),
+            settings_version,
+            cx,
         )),
         AssistantProvider::OpenAi {
             model,
             api_url,
             low_speed_timeout_in_seconds,
             available_models,
-        } => Arc::new(RwLock::new(OpenAiCompletionProvider::new(
+        } => Arc::new(OpenAiCompletionProvider::new(
             choose_openai_model(&model, &available_models),
             api_url.clone(),
             client.http_client(),
             low_speed_timeout_in_seconds.map(Duration::from_secs),
             settings_version,
-        ))),
+        )),
         AssistantProvider::Anthropic {
             model,
             api_url,
             low_speed_timeout_in_seconds,
-        } => Arc::new(RwLock::new(AnthropicCompletionProvider::new(
+        } => Arc::new(AnthropicCompletionProvider::new(
             model.clone(),
             api_url.clone(),
             client.http_client(),
             low_speed_timeout_in_seconds.map(Duration::from_secs),
             settings_version,
-        ))),
+        )),
         AssistantProvider::Ollama {
             model,
             api_url,
             low_speed_timeout_in_seconds,
-        } => Arc::new(RwLock::new(OllamaCompletionProvider::new(
+        } => Arc::new(OllamaCompletionProvider::new(
             model.clone(),
             api_url.clone(),
             client.http_client(),
             low_speed_timeout_in_seconds.map(Duration::from_secs),
             settings_version,
             cx,
-        ))),
+        )),
     }
 }
 
@@ -282,7 +378,6 @@ mod tests {
     use std::sync::Arc;
 
     use gpui::AppContext;
-    use parking_lot::RwLock;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
 
@@ -296,7 +391,7 @@ mod tests {
         SettingsStore::test(cx);
         let fake_provider = FakeCompletionProvider::setup_test(cx);
 
-        let provider = CompletionProvider::new(Arc::new(RwLock::new(fake_provider.clone())), None);
+        let provider = CompletionProvider::new(vec![Arc::new(fake_provider.clone())], None);
 
         // Enqueue some requests
         for i in 0..MAX_CONCURRENT_COMPLETION_REQUESTS * 2 {
