@@ -293,6 +293,7 @@ gpui::actions!(
         SplitSelectionIntoLines,
         Tab,
         TabPrev,
+        ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,
         ToggleSelectionMenu,

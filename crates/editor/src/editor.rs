@@ -505,6 +505,7 @@ pub struct Editor {
     signature_help_task: Option<Task<()>>,
     signature_help_state: Option<SignatureHelpPopover>,
     signature_help_hidden_by_selection: bool,
+    auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
@@ -1827,6 +1828,7 @@ impl Editor {
             signature_help_task: None,
             signature_help_state: None,
             signature_help_hidden_by_selection: false,
+            auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
             completion_documentation_pre_resolve_debounce: DebouncedDelay::new(),
@@ -4024,12 +4026,20 @@ impl Editor {
         }
     }
 
+    pub fn auto_signature_help_enabled(&self, cx: &AppContext) -> bool {
+        if let Some(auto_signature_help) = self.auto_signature_help {
+            auto_signature_help
+        } else {
+            EditorSettings::get_global(cx).auto_signature_help
+        }
+    }
+
     fn should_open_signature_help_automatically(
         &mut self,
         old_cursor_position: &Anchor,
         cx: &mut ViewContext<Self>,
     ) -> bool {
-        if !EditorSettings::get_global(cx).auto_signature_help {
+        if !self.auto_signature_help_enabled(cx) {
             return false;
         }
         let newest_selection = self.selections.newest::<usize>(cx);
@@ -10550,6 +10560,27 @@ impl Editor {
     pub fn selection_menu_enabled(&self, cx: &AppContext) -> bool {
         self.show_selection_menu
             .unwrap_or_else(|| EditorSettings::get_global(cx).toolbar.selections_menu)
+    }
+
+    pub fn toggle_auto_signature_help_menu(
+        &mut self,
+        _: &ToggleAutoSignatureHelp,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.auto_signature_help = self
+            .auto_signature_help
+            .map(|auto_signature_help| !auto_signature_help)
+            .or_else(|| Some(!EditorSettings::get_global(cx).auto_signature_help));
+        match self.auto_signature_help {
+            Some(auto_signature_help) if auto_signature_help => {
+                self.show_signature_help(&ShowSignatureHelp, cx);
+            }
+            Some(_) => {
+                self.hide_signature_help(cx);
+            }
+            None => {}
+        }
+        cx.notify();
     }
 
     fn start_git_blame(&mut self, user_triggered: bool, cx: &mut ViewContext<Self>) {
