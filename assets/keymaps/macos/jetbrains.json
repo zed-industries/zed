@@ -54,7 +54,7 @@
       "cmd-shift-b": "editor::GoToTypeDefinition",
       "cmd-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
-      "cmd-f2": "editor::GoToPrevDiagnostic",
+      "shift-f2": "editor::GoToPrevDiagnostic",
       "ctrl-alt-shift-down": "editor::GoToHunk",
       "ctrl-alt-shift-up": "editor::GoToPrevHunk",
       "cmd-home": "editor::MoveToBeginning",

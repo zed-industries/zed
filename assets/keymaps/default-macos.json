@@ -285,6 +285,7 @@
     "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus",
+      "cmd-shift-j": "project_search::ToggleFilters",
       "cmd-shift-f": "search::FocusSearch",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
@@ -309,6 +310,7 @@
     "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus",
+      "cmd-shift-j": "project_search::ToggleFilters",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex"
@@ -400,11 +402,17 @@
       "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "ctrl-m": "editor::MoveToEnclosingBracket",
+      "cmd-shift-\\": "editor::MoveToEnclosingBracket",
       "alt-cmd-[": "editor::Fold",
       "alt-cmd-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "cmd-.": "editor::ToggleCodeActions",
       "alt-cmd-r": "editor::RevealInFinder",
+      "cmd-k r": "editor::RevealInFinder",
+      "cmd-k p": "editor::CopyPath",
+      "cmd-\\": "pane::SplitRight",
+      "cmd-k v": "markdown::OpenPreviewToTheSide",
+      "cmd-shift-v": "markdown::OpenPreview",
       "ctrl-cmd-c": "editor::DisplayCursorNames"
     }
   },
@@ -495,6 +503,7 @@
       "cmd-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
       "cmd-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
       "cmd-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
+      "cmd-shift-x": "zed::Extensions",
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn"
     }
@@ -619,6 +628,7 @@
       "cmd-alt-c": "project_panel::CopyPath",
       "alt-cmd-shift-c": "project_panel::CopyRelativePath",
       "enter": "project_panel::Rename",
+      "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
       "delete": ["project_panel::Trash", { "skip_prompt": false }],
       "cmd-backspace": ["project_panel::Trash", { "skip_prompt": true }],
@@ -707,10 +717,14 @@
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "cmd-up": "terminal::ScrollPageUp",
+      "cmd-down": "terminal::ScrollPageDown",
       "shift-pageup": "terminal::ScrollPageUp",
       "shift-pagedown": "terminal::ScrollPageDown",
       "shift-up": "terminal::ScrollLineUp",
       "shift-down": "terminal::ScrollLineDown",
+      "cmd-home": "terminal::ScrollToTop",
+      "cmd-end": "terminal::ScrollToBottom",
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom"
     }

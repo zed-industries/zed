@@ -1,0 +1,58 @@
+[
+  {
+    "bindings": {
+      "cmd-shift-[": "pane::ActivatePrevItem",
+      "cmd-shift-]": "pane::ActivateNextItem",
+      "ctrl-pagedown": "pane::ActivatePrevItem",
+      "ctrl-pageup": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivateNextItem",
+      "ctrl-tab": "pane::ActivatePrevItem"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-shift-up": "editor::AddSelectionAbove",
+      "ctrl-shift-down": "editor::AddSelectionBelow",
+      "cmd-shift-space": "editor::SelectAll",
+      "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
+      "cmd-shift-l": "editor::SplitSelectionIntoLines",
+      "cmd-shift-a": "editor::SelectLargerSyntaxNode",
+      "cmd-shift-d": "editor::DuplicateLineDown",
+      "shift-f12": "editor::FindAllReferences",
+      "alt-cmd-down": "editor::GoToDefinition",
+      "ctrl-alt-cmd-down": "editor::GoToDefinitionSplit",
+      "alt-shift-cmd-down": "editor::FindAllReferences",
+      "ctrl-.": "editor::GoToHunk",
+      "ctrl-,": "editor::GoToPrevHunk",
+      "cmd-k cmd-u": "editor::ConvertToUpperCase",
+      "cmd-k cmd-l": "editor::ConvertToLowerCase",
+      "shift-alt-m": "markdown::OpenPreviewToTheSide",
+      "ctrl-backspace": "editor::DeleteToPreviousWordStart",
+      "ctrl-delete": "editor::DeleteToNextWordEnd"
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "cmd-r": "outline::Toggle"
+    }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      "f4": "search::SelectNextMatch",
+      "shift-f4": "search::SelectPrevMatch"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-k cmd-b": "workspace::ToggleLeftDock",
+      "cmd-t": "file_finder::Toggle",
+      "shift-cmd-r": "project_symbols::Toggle",
+      // Currently busted: https://github.com/zed-industries/feedback/issues/898
+      "ctrl-0": "project_panel::ToggleFocus"
+    }
+  }
+]

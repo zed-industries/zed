@@ -1,6 +1,8 @@
+// Default Keymap (Atom) for Zed on MacOS
 [
   {
     "bindings": {
+      "ctrl-alt-cmd-l": "workspace::Reload",
       "cmd-k cmd-p": "workspace::ActivatePreviousPane",
       "cmd-k cmd-n": "workspace::ActivateNextPane"
     }
@@ -8,24 +10,23 @@
   {
     "context": "Editor",
     "bindings": {
+      "ctrl-shift-l": "language_selector::Toggle",
+      "cmd-|": "pane::RevealInProjectPanel",
       "cmd-b": "editor::GoToDefinition",
       "alt-cmd-b": "editor::GoToDefinitionSplit",
       "cmd-<": "editor::ScrollCursorCenter",
-      "cmd-g": [
-        "editor::SelectNext",
-        {
-          "replace_newest": true
-        }
-      ],
-      "ctrl-cmd-g": [
-        "editor::SelectPrevious",
-        {
-          "replace_newest": true
-        }
-      ],
+      "cmd-g": ["editor::SelectNext", { "replace_newest": true }],
+      "cmd-shift-g": ["editor::SelectPrevious", { "replace_newest": true }],
       "ctrl-shift-down": "editor::AddSelectionBelow",
       "ctrl-shift-up": "editor::AddSelectionAbove",
       "cmd-shift-backspace": "editor::DeleteToBeginningOfLine",
+      "cmd-k cmd-u": "editor::ConvertToUpperCase",
+      "cmd-k cmd-l": "editor::ConvertToLowerCase",
+      "alt-enter": "editor::Newline",
+      "cmd-j": "editor::JoinLines",
+      "cmd-shift-d": "editor::DuplicateLineDown",
+      "ctrl-cmd-up": "editor::MoveLineUp",
+      "ctrl-cmd-down": "editor::MoveLineDown",
       "ctrl-shift-m": "markdown::OpenPreviewToTheSide"
     }
   },
@@ -74,21 +75,22 @@
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
       "cmd-x": "project_panel::Cut",
       "cmd-c": "project_panel::Copy",
-      "cmd-v": "project_panel::Paste",
-      "ctrl-[": "project_panel::CollapseSelectedEntry",
-      "ctrl-b": "project_panel::CollapseSelectedEntry",
-      "alt-b": "project_panel::CollapseSelectedEntry",
-      "ctrl-]": "project_panel::ExpandSelectedEntry",
-      "ctrl-f": "project_panel::ExpandSelectedEntry",
-      "ctrl-shift-c": "project_panel::CopyPath"
+      "cmd-v": "project_panel::Paste"
     }
   },
   {
     "context": "ProjectPanel && not_editing",
     "bindings": {
+      "ctrl-shift-c": "project_panel::CopyPath",
+      "ctrl-[": "project_panel::CollapseSelectedEntry",
+      "ctrl-b": "project_panel::CollapseSelectedEntry",
+      "ctrl-]": "project_panel::ExpandSelectedEntry",
+      "ctrl-f": "project_panel::ExpandSelectedEntry",
       "a": "project_panel::NewFile",
-      "shift-a": "project_panel::NewDirectory",
-      "shift-d": "project_panel::Duplicate"
+      "d": "project_panel::Duplicate",
+      "home": "menu::SelectFirst",
+      "end": "menu::SelectLast",
+      "shift-a": "project_panel::NewDirectory"
     }
   }
 ]
