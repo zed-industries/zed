@@ -2,28 +2,34 @@ use gpui::ClickEvent;
 
 use crate::{prelude::*, IconButtonShape};
 
-pub struct NumericStepperHandlers {
-    pub on_decrement: Box<dyn Fn(&ClickEvent, &mut WindowContext)>,
-    pub on_increment: Box<dyn Fn(&ClickEvent, &mut WindowContext)>,
-    pub on_reset: Box<dyn Fn(&ClickEvent, &mut WindowContext)>,
-}
-
 #[derive(IntoElement)]
 pub struct NumericStepper {
     value: SharedString,
-    on_decrement: Box<dyn Fn(&ClickEvent, &mut WindowContext)>,
-    on_increment: Box<dyn Fn(&ClickEvent, &mut WindowContext)>,
-    on_reset: Box<dyn Fn(&ClickEvent, &mut WindowContext)>,
+    on_decrement: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
+    on_increment: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
+    on_reset: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
 impl NumericStepper {
-    pub fn new(value: impl Into<SharedString>, handlers: NumericStepperHandlers) -> Self {
+    pub fn new(
+        value: impl Into<SharedString>,
+        on_decrement: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        on_increment: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+    ) -> Self {
         Self {
             value: value.into(),
-            on_decrement: handlers.on_decrement,
-            on_increment: handlers.on_increment,
-            on_reset: handlers.on_reset,
+            on_decrement: Box::new(on_decrement),
+            on_increment: Box::new(on_increment),
+            on_reset: None,
         }
+    }
+
+    pub fn on_reset(
+        mut self,
+        on_reset: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.on_reset = Some(Box::new(on_reset));
+        self
     }
 }
 
@@ -33,13 +39,24 @@ impl RenderOnce for NumericStepper {
         let icon_size = IconSize::Small;
 
         h_flex()
-            .gap_2()
-            .child(
-                IconButton::new("reset", IconName::RotateCcw)
-                    .shape(shape)
-                    .icon_size(icon_size)
-                    .on_click(self.on_reset),
-            )
+            .gap_1()
+            .map(|element| {
+                if let Some(on_reset) = self.on_reset {
+                    element.child(
+                        IconButton::new("reset", IconName::RotateCcw)
+                            .shape(shape)
+                            .icon_size(icon_size)
+                            .on_click(on_reset),
+                    )
+                } else {
+                    element.child(
+                        h_flex()
+                            .size(icon_size.square(cx))
+                            .flex_none()
+                            .into_any_element(),
+                    )
+                }
+            })
             .child(
                 h_flex()
                     .gap_1()
