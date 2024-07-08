@@ -570,7 +570,7 @@ impl X11Client {
 
                 // Restore previously set cursor style for the window once it gains focus.
                 if let Some(cursor_style) = cursor_style {
-                    self.set_cursor_style(cursor_style.clone());
+                    self.set_cursor_style(cursor_style);
                 }
 
                 self.enable_ime();
