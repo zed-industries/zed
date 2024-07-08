@@ -104,6 +104,7 @@ pub struct X11ClientState {
     quit_signal_rx: oneshot::Receiver<()>,
     runnables: Channel<Runnable>,
     xdp_event_source: XDPEventSource,
+    last_emptied_runnables: Instant,
 
     pub(crate) last_click: Instant,
     pub(crate) last_location: Point<Pixels>,
@@ -311,6 +312,7 @@ impl X11Client {
 
             modifiers: Modifiers::default(),
             last_click: Instant::now(),
+            last_emptied_runnables: Instant::now(),
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
             scale_factor,
@@ -1251,7 +1253,11 @@ impl LinuxClient for X11Client {
             state = self.0.borrow_mut();
 
             // Runnables
-            while let Ok(runnable) = state.runnables.try_recv() {
+            loop {
+                let Ok(runnable) = state.runnables.try_recv() else {
+                    state.last_emptied_runnables = Instant::now();
+                    break;
+                };
                 drop(state);
 
                 let start = Instant::now();
@@ -1262,7 +1268,9 @@ impl LinuxClient for X11Client {
 
                 state = self.0.borrow_mut();
 
-                if Instant::now() + Duration::from_millis(1) >= next_refresh_needed {
+                if Instant::now() + Duration::from_millis(1) >= next_refresh_needed
+                    && state.last_emptied_runnables.elapsed() < Duration::from_millis(100)
+                {
                     continue 'run_loop;
                 }
             }
