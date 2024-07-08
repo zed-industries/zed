@@ -322,7 +322,7 @@
       "alt-9": ["pane::ActivateItem", 8],
       "alt-0": "pane::ActivateLastItem",
       "ctrl-alt--": "pane::GoBack",
-      "ctrl-alt-_": "pane::GoForward",
+      "ctrl-alt-shift--": "pane::GoForward",
       "ctrl-shift-t": "pane::ReopenClosedItem",
       "f3": "search::SelectNextMatch",
       "shift-f3": "search::SelectPrevMatch",
