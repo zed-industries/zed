@@ -1,13 +1,12 @@
 [
   {
     "bindings": {
-      "cmd-shift-[": "pane::ActivatePrevItem",
-      "cmd-shift-]": "pane::ActivateNextItem",
+      "ctrl-shift-[": "pane::ActivatePrevItem",
+      "ctrl-shift-]": "pane::ActivateNextItem",
       "ctrl-pagedown": "pane::ActivatePrevItem",
       "ctrl-pageup": "pane::ActivateNextItem",
       "ctrl-shift-tab": "pane::ActivateNextItem",
-      "ctrl-tab": "pane::ActivatePrevItem",
-      "cmd-+": "zed::IncreaseBufferFontSize"
+      "ctrl-tab": "pane::ActivatePrevItem"
     }
   },
   {
@@ -15,17 +14,17 @@
     "bindings": {
       "ctrl-shift-up": "editor::AddSelectionAbove",
       "ctrl-shift-down": "editor::AddSelectionBelow",
-      "cmd-shift-space": "editor::SelectAll",
       "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
-      "cmd-shift-l": "editor::SplitSelectionIntoLines",
-      "cmd-shift-a": "editor::SelectLargerSyntaxNode",
-      "cmd-shift-d": "editor::DuplicateLineDown",
+      "ctrl-shift-l": "editor::SplitSelectionIntoLines",
+      "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
+      "ctrl-shift-d": "editor::DuplicateLineDown",
+      "f12": "editor::GoToDefinition",
+      "ctrl-f12": "editor::GoToDefinitionSplit",
       "shift-f12": "editor::FindAllReferences",
-      "alt-cmd-down": "editor::GoToDefinition",
-      "ctrl-alt-cmd-down": "editor::GoToDefinitionSplit",
-      "alt-shift-cmd-down": "editor::FindAllReferences",
+      "ctrl-shift-f12": "editor::FindAllReferences",
       "ctrl-.": "editor::GoToHunk",
       "ctrl-,": "editor::GoToPrevHunk",
+      "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd"
     }
@@ -33,7 +32,7 @@
   {
     "context": "Editor && mode == full",
     "bindings": {
-      "cmd-r": "outline::Toggle"
+      "ctrl-r": "outline::Toggle"
     }
   },
   {
@@ -46,11 +45,9 @@
   {
     "context": "Workspace",
     "bindings": {
-      "cmd-k cmd-b": "workspace::ToggleLeftDock",
-      "cmd-t": "file_finder::Toggle",
-      "shift-cmd-r": "project_symbols::Toggle",
-      // Currently busted: https://github.com/zed-industries/feedback/issues/898
-      "ctrl-0": "project_panel::ToggleFocus"
+      "ctrl-k ctrl-b": "workspace::ToggleLeftDock",
+      // "ctrl-0": "project_panel::ToggleFocus", // normally resets zoom
+      "shift-ctrl-r": "project_symbols::Toggle"
     }
   }
 ]
