@@ -32,7 +32,7 @@ use ui::SharedString;
 use util::{post_inc, TryFutureExt};
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ContextOperation {
     InsertMessage {
         anchor: MessageAnchor,
@@ -232,7 +232,7 @@ pub enum ContextEvent {
     Operation(ContextOperation),
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct ContextSummary {
     pub text: String,
     done: bool,
@@ -276,18 +276,25 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct SlashCommandId(clock::Lamport);
+
+struct FinishedSlashCommand {
+    output_range: Range<language::Anchor>,
+    sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+}
 
 pub struct Context {
     id: Option<String>,
     timestamp: clock::Lamport,
+    version: clock::Global,
+    deferred_replicas: HashSet<ReplicaId>,
     pending_ops: Vec<ContextOperation>,
     buffer: Model<Buffer>,
     edit_suggestions: Vec<EditSuggestion>,
     pending_slash_commands: Vec<PendingSlashCommand>,
     edits_since_last_slash_command_parse: language::Subscription,
-    finished_slash_commands: HashSet<SlashCommandId>,
+    finished_slash_commands: HashMap<SlashCommandId, FinishedSlashCommand>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
@@ -330,12 +337,14 @@ impl Context {
         let mut this = Self {
             id: Some(Uuid::new_v4().to_string()),
             timestamp: clock::Lamport::new(replica_id),
+            version: clock::Global::new(),
+            deferred_replicas: HashSet::default(),
             pending_ops: Vec::new(),
             message_anchors: Default::default(),
             messages_metadata: Default::default(),
             edit_suggestions: Vec::new(),
             pending_slash_commands: Vec::new(),
-            finished_slash_commands: HashSet::default(),
+            finished_slash_commands: HashMap::default(),
             slash_command_output_sections: Vec::new(),
             edits_since_last_slash_command_parse,
             summary: None,
@@ -430,6 +439,7 @@ impl Context {
 
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
+        let mut version = clock::Global::new();
         let mut timestamp = clock::Lamport::new(ReplicaId::default());
         let buffer = cx.new_model(|cx| {
             let mut buffer = Buffer::local(saved_context.text, cx);
@@ -439,6 +449,7 @@ impl Context {
                     start: buffer.anchor_before(message.start),
                 });
                 timestamp.observe(message.id.0);
+                version.observe(message.id.0);
             }
             buffer.set_language_registry(language_registry.clone());
             cx.spawn(|buffer, mut cx| async move {
@@ -458,12 +469,14 @@ impl Context {
             let mut this = Self {
                 id,
                 timestamp,
+                version,
+                deferred_replicas: HashSet::default(),
                 pending_ops: Vec::new(),
                 message_anchors,
                 messages_metadata: saved_context.message_metadata,
                 edit_suggestions: Vec::new(),
                 pending_slash_commands: Vec::new(),
-                finished_slash_commands: HashSet::default(),
+                finished_slash_commands: HashMap::default(),
                 slash_command_output_sections: saved_context
                     .slash_command_output_sections
                     .into_iter()
@@ -503,6 +516,89 @@ impl Context {
         })
     }
 
+    pub fn version(&self, cx: &AppContext) -> ContextVersion {
+        ContextVersion {
+            context: self.version.clone(),
+            buffer: self.buffer.read(cx).version(),
+        }
+    }
+
+    fn next_timestamp(&mut self) -> clock::Lamport {
+        let timestamp = self.timestamp.tick();
+        self.version.observe(timestamp);
+        timestamp
+    }
+
+    fn observe_timestamp(&mut self, timestamp: clock::Lamport) {
+        self.version.observe(timestamp);
+        self.timestamp.observe(timestamp);
+    }
+
+    pub fn serialize_ops(
+        &self,
+        since: &ContextVersion,
+        cx: &AppContext,
+    ) -> Task<Vec<proto::ContextOperation>> {
+        let buffer_ops = self
+            .buffer
+            .read(cx)
+            .serialize_ops(Some(since.buffer.clone()), cx);
+
+        let mut context_ops = Vec::new();
+        for anchor in &self.message_anchors {
+            let metadata = &self.messages_metadata[&anchor.id];
+            if !since.context.observed(anchor.id.0) {
+                context_ops.push(ContextOperation::InsertMessage {
+                    anchor: anchor.clone(),
+                    metadata: MessageMetadata {
+                        role: metadata.role,
+                        status: metadata.status.clone(),
+                        timestamp: anchor.id.0,
+                    },
+                });
+                if metadata.timestamp > anchor.id.0 {
+                    context_ops.push(ContextOperation::UpdateMessage {
+                        message_id: anchor.id,
+                        metadata: metadata.clone(),
+                    });
+                }
+            } else if !since.context.observed(metadata.timestamp) {
+                context_ops.push(ContextOperation::UpdateMessage {
+                    message_id: anchor.id,
+                    metadata: metadata.clone(),
+                });
+            }
+        }
+
+        for (command_id, command) in &self.finished_slash_commands {
+            if !since.context.observed(command_id.0) {
+                context_ops.push(ContextOperation::SlashCommandFinished {
+                    id: *command_id,
+                    output_range: command.output_range.clone(),
+                    sections: command.sections.clone(),
+                });
+            }
+        }
+
+        context_ops.extend(self.pending_ops.iter().cloned());
+
+        cx.background_executor().spawn(async move {
+            let buffer_ops = buffer_ops.await;
+            context_ops.sort_unstable_by_key(|op| op.timestamp());
+            buffer_ops
+                .into_iter()
+                .map(|op| proto::ContextOperation {
+                    variant: Some(proto::context_operation::Variant::BufferOperation(
+                        proto::context_operation::BufferOperation {
+                            operation: Some(op),
+                        },
+                    )),
+                })
+                .chain(context_ops.into_iter().map(|op| op.to_proto()))
+                .collect()
+        })
+    }
+
     fn apply_ops(&mut self, ops: Vec<ContextOperation>, cx: &mut ModelContext<Self>) -> Result<()> {
         let mut buffer_ops = Vec::new();
         for op in ops {
@@ -522,9 +618,11 @@ impl Context {
         let mut messages_changed = false;
         let mut summary_changed = false;
 
+        self.deferred_replicas.clear();
         self.pending_ops.sort_unstable_by_key(|op| op.timestamp());
         for op in mem::take(&mut self.pending_ops) {
             if !self.can_apply_op(&op, cx) {
+                self.deferred_replicas.insert(op.timestamp().replica_id);
                 self.pending_ops.push(op);
                 continue;
             }
@@ -564,12 +662,19 @@ impl Context {
                     output_range,
                     sections,
                 } => {
-                    if self.finished_slash_commands.insert(id) {
+                    if !self.finished_slash_commands.contains_key(&id) {
                         let buffer = self.buffer.read(cx);
                         self.slash_command_output_sections
                             .extend(sections.iter().cloned());
                         self.slash_command_output_sections
                             .sort_by(|a, b| a.range.cmp(&b.range, buffer));
+                        self.finished_slash_commands.insert(
+                            id,
+                            FinishedSlashCommand {
+                                output_range: output_range.clone(),
+                                sections: sections.clone(),
+                            },
+                        );
                         cx.emit(ContextEvent::SlashCommandFinished {
                             output_range,
                             sections,
@@ -580,7 +685,7 @@ impl Context {
                 ContextOperation::BufferOperation(_) => unreachable!(),
             }
 
-            self.timestamp.observe(timestamp);
+            self.observe_timestamp(timestamp);
         }
 
         if messages_changed {
@@ -595,6 +700,10 @@ impl Context {
     }
 
     fn can_apply_op(&self, op: &ContextOperation, cx: &AppContext) -> bool {
+        if self.deferred_replicas.contains(&op.timestamp().replica_id) {
+            return false;
+        }
+
         match op {
             ContextOperation::InsertMessage { anchor, .. } => self
                 .buffer
@@ -916,6 +1025,7 @@ impl Context {
                             output.text.push('\n');
                         }
 
+                        let command_id = SlashCommandId(this.next_timestamp());
                         let events = this.buffer.update(cx, |buffer, cx| {
                             let start = command_range.start.to_offset(buffer);
                             let old_end = command_range.end.to_offset(buffer);
@@ -939,11 +1049,16 @@ impl Context {
                             this.slash_command_output_sections
                                 .sort_by(|a, b| a.range.cmp(&b.range, buffer));
 
-                            let command_id = SlashCommandId(this.timestamp.tick());
-                            this.finished_slash_commands.insert(command_id);
-
                             let output_range =
                                 buffer.anchor_after(start)..buffer.anchor_before(new_end);
+                            this.finished_slash_commands.insert(
+                                command_id,
+                                FinishedSlashCommand {
+                                    output_range: output_range.clone(),
+                                    sections: sections.clone(),
+                                },
+                            );
+
                             [
                                 ContextEvent::Operation(ContextOperation::SlashCommandFinished {
                                     id: command_id,
@@ -1182,9 +1297,10 @@ impl Context {
         cx: &mut ModelContext<Self>,
         f: impl FnOnce(&mut MessageMetadata),
     ) {
+        let timestamp = self.next_timestamp();
         if let Some(metadata) = self.messages_metadata.get_mut(&id) {
             f(metadata);
-            metadata.timestamp = self.timestamp.tick();
+            metadata.timestamp = timestamp;
             cx.emit(ContextEvent::Operation(ContextOperation::UpdateMessage {
                 message_id: id,
                 metadata: metadata.clone(),
@@ -1227,7 +1343,7 @@ impl Context {
             });
 
             let anchor = MessageAnchor {
-                id: MessageId(self.timestamp.tick()),
+                id: MessageId(self.next_timestamp()),
                 start,
             };
             let metadata = MessageMetadata {
@@ -1235,7 +1351,11 @@ impl Context {
                 status,
                 timestamp: anchor.id.0,
             };
-            self.insert_message(anchor.clone(), metadata, cx);
+            self.insert_message(anchor.clone(), metadata.clone(), cx);
+            cx.emit(ContextEvent::Operation(ContextOperation::InsertMessage {
+                anchor: anchor.clone(),
+                metadata,
+            }));
             Some(anchor)
         } else {
             None
@@ -1271,7 +1391,7 @@ impl Context {
 
             let suffix = if let Some(suffix_start) = suffix_start {
                 MessageAnchor {
-                    id: MessageId(self.timestamp.tick()),
+                    id: MessageId(self.next_timestamp()),
                     start: self.buffer.read(cx).anchor_before(suffix_start),
                 }
             } else {
@@ -1280,20 +1400,21 @@ impl Context {
                 });
                 edited_buffer = true;
                 MessageAnchor {
-                    id: MessageId(self.timestamp.tick()),
+                    id: MessageId(self.next_timestamp()),
                     start: self.buffer.read(cx).anchor_before(range.end + 1),
                 }
             };
 
-            self.insert_message(
-                suffix.clone(),
-                MessageMetadata {
-                    role,
-                    status: MessageStatus::Done,
-                    timestamp: suffix.id.0,
-                },
-                cx,
-            );
+            let suffix_metadata = MessageMetadata {
+                role,
+                status: MessageStatus::Done,
+                timestamp: suffix.id.0,
+            };
+            self.insert_message(suffix.clone(), suffix_metadata.clone(), cx);
+            cx.emit(ContextEvent::Operation(ContextOperation::InsertMessage {
+                anchor: suffix.clone(),
+                metadata: suffix_metadata,
+            }));
 
             let new_messages =
                 if range.start == range.end || range.start == message.offset_range.start {
@@ -1314,7 +1435,7 @@ impl Context {
 
                     let selection = if let Some(prefix_end) = prefix_end {
                         MessageAnchor {
-                            id: MessageId(self.timestamp.tick()),
+                            id: MessageId(self.next_timestamp()),
                             start: self.buffer.read(cx).anchor_before(prefix_end),
                         }
                     } else {
@@ -1323,20 +1444,22 @@ impl Context {
                         });
                         edited_buffer = true;
                         MessageAnchor {
-                            id: MessageId(self.timestamp.tick()),
+                            id: MessageId(self.next_timestamp()),
                             start: self.buffer.read(cx).anchor_before(range.end + 1),
                         }
                     };
 
-                    self.insert_message(
-                        selection.clone(),
-                        MessageMetadata {
-                            role,
-                            status: MessageStatus::Done,
-                            timestamp: selection.id.0,
-                        },
-                        cx,
-                    );
+                    let selection_metadata = MessageMetadata {
+                        role,
+                        status: MessageStatus::Done,
+                        timestamp: selection.id.0,
+                    };
+                    self.insert_message(selection.clone(), selection_metadata.clone(), cx);
+                    cx.emit(ContextEvent::Operation(ContextOperation::InsertMessage {
+                        anchor: selection.clone(),
+                        metadata: selection_metadata,
+                    }));
+
                     (Some(selection), Some(suffix))
                 };
 
@@ -1355,10 +1478,6 @@ impl Context {
         new_metadata: MessageMetadata,
         cx: &mut ModelContext<Self>,
     ) {
-        cx.emit(ContextEvent::Operation(ContextOperation::InsertMessage {
-            anchor: new_anchor.clone(),
-            metadata: new_metadata.clone(),
-        }));
         cx.emit(ContextEvent::MessagesEdited);
 
         self.messages_metadata.insert(new_anchor.id, new_metadata);
@@ -1404,9 +1523,10 @@ impl Context {
                         let text = message?;
                         let mut lines = text.lines();
                         this.update(&mut cx, |this, cx| {
+                            let timestamp = this.next_timestamp();
                             let summary = this.summary.get_or_insert(Default::default());
                             summary.text.extend(lines.next());
-                            summary.timestamp = this.timestamp.tick();
+                            summary.timestamp = timestamp;
                             cx.emit(ContextEvent::Operation(ContextOperation::UpdateSummary(
                                 summary.clone(),
                             )));
@@ -1420,9 +1540,10 @@ impl Context {
                     }
 
                     this.update(&mut cx, |this, cx| {
+                        let timestamp = this.next_timestamp();
                         if let Some(summary) = this.summary.as_mut() {
                             summary.done = true;
-                            summary.timestamp = this.timestamp.tick();
+                            summary.timestamp = timestamp;
                             cx.emit(ContextEvent::Operation(ContextOperation::UpdateSummary(
                                 summary.clone(),
                             )));
@@ -1567,6 +1688,12 @@ impl Context {
             Ok(())
         });
     }
+}
+
+#[derive(Debug)]
+pub struct ContextVersion {
+    context: clock::Global,
+    buffer: clock::Global,
 }
 
 #[derive(Debug)]
@@ -2473,6 +2600,7 @@ mod tests {
 
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
         let network = Arc::new(Mutex::new(Network::new(rng.clone())));
+        network.lock().set_out_of_order_delivery(false);
         let mut contexts = Vec::new();
 
         let num_peers = rng.gen_range(min_peers..=max_peers);
@@ -2482,7 +2610,7 @@ mod tests {
             cx.update(|cx| {
                 cx.subscribe(&context, {
                     let network = network.clone();
-                    move |_, event, _| {
+                    move |context, event, cx| {
                         if let ContextEvent::Operation(op) = event {
                             network
                                 .lock()
@@ -2499,12 +2627,15 @@ mod tests {
 
         let mut mutation_count = operations;
 
-        while mutation_count > 0 || !network.lock().is_idle() {
+        while mutation_count > 0
+            || !network.lock().is_idle()
+            || network.lock().contains_disconnected_peers()
+        {
             let context_index = rng.gen_range(0..contexts.len());
             let context = &contexts[context_index];
 
             match rng.gen_range(0..100) {
-                0..=34 if mutation_count > 0 => {
+                0..=29 if mutation_count > 0 => {
                     log::info!("Context {}: edit buffer", context_index);
                     context.update(cx, |context, cx| {
                         context
@@ -2513,7 +2644,7 @@ mod tests {
                     });
                     mutation_count -= 1;
                 }
-                35..=49 if mutation_count > 0 => {
+                30..=44 if mutation_count > 0 => {
                     context.update(cx, |context, cx| {
                         let range = context.buffer.read(cx).random_byte_range(0, &mut rng);
                         log::info!("Context {}: split message at {:?}", context_index, range);
@@ -2521,7 +2652,7 @@ mod tests {
                     });
                     mutation_count -= 1;
                 }
-                50..=64 if mutation_count > 0 => {
+                45..=59 if mutation_count > 0 => {
                     context.update(cx, |context, cx| {
                         if let Some(message) = context.messages(cx).choose(&mut rng) {
                             let role = *[Role::User, Role::Assistant, Role::System]
@@ -2538,7 +2669,7 @@ mod tests {
                     });
                     mutation_count -= 1;
                 }
-                65..=79 if mutation_count > 0 => {
+                60..=74 if mutation_count > 0 => {
                     context.update(cx, |context, cx| {
                         let command_text = "/".to_string()
                             + slash_commands
@@ -2600,7 +2731,7 @@ mod tests {
                     cx.run_until_parked();
                     mutation_count -= 1;
                 }
-                80..=89 if mutation_count > 0 => {
+                75..=84 if mutation_count > 0 => {
                     context.update(cx, |context, cx| {
                         if let Some(message) = context.messages(cx).choose(&mut rng) {
                             let new_status = match rng.gen_range(0..3) {
@@ -2623,14 +2754,46 @@ mod tests {
                 }
                 _ => {
                     let replica_id = context_index as ReplicaId;
-                    if network.lock().has_unreceived(replica_id) {
+                    if network.lock().is_disconnected(replica_id) {
+                        network.lock().reconnect_peer(replica_id, 0);
+
+                        let (ops_to_send, ops_to_receive) = cx.read(|cx| {
+                            let host_context = &contexts[0].read(cx);
+                            let guest_context = context.read(cx);
+                            (
+                                guest_context.serialize_ops(&host_context.version(cx), cx),
+                                host_context.serialize_ops(&guest_context.version(cx), cx),
+                            )
+                        });
+                        let ops_to_send = ops_to_send.await;
+                        let ops_to_receive = ops_to_receive
+                            .await
+                            .into_iter()
+                            .map(ContextOperation::from_proto)
+                            .collect::<Result<Vec<_>>>()
+                            .unwrap();
+                        log::info!(
+                            "Context {}: reconnecting. Sent {} operations, received {} operations",
+                            context_index,
+                            ops_to_send.len(),
+                            ops_to_receive.len()
+                        );
+
+                        network.lock().broadcast(replica_id, ops_to_send);
+                        context
+                            .update(cx, |context, cx| context.apply_ops(ops_to_receive, cx))
+                            .unwrap();
+                    } else if rng.gen_bool(0.1) && replica_id != 0 {
+                        log::info!("Context {}: disconnecting", context_index);
+                        network.lock().disconnect_peer(replica_id);
+                    } else if network.lock().has_unreceived(replica_id) {
+                        log::info!("Context {}: applying operations", context_index);
                         let ops = network.lock().receive(replica_id);
                         let ops = ops
                             .into_iter()
                             .map(ContextOperation::from_proto)
                             .collect::<Result<Vec<_>>>()
                             .unwrap();
-                        log::info!("Context {}: applying operations", context_index);
                         context
                             .update(cx, |context, cx| context.apply_ops(ops, cx))
                             .unwrap();
