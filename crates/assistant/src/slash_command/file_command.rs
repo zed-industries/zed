@@ -1,6 +1,6 @@
 use super::{diagnostics_command::write_single_file_diagnostics, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandOutputSection;
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{BufferSnapshot, LineEnding, LspAdapterDelegate};
@@ -105,7 +105,7 @@ impl SlashCommand for FileSlashCommand {
         cancellation_flag: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
@@ -116,11 +116,17 @@ impl SlashCommand for FileSlashCommand {
                 .await
                 .into_iter()
                 .map(|path_match| {
-                    format!(
+                    let text = format!(
                         "{}{}",
                         path_match.path_prefix,
                         path_match.path.to_string_lossy()
-                    )
+                    );
+
+                    ArgumentCompletion {
+                        label: text.clone(),
+                        new_text: text,
+                        run_command: true,
+                    }
                 })
                 .collect())
         })

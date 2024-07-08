@@ -1,5 +1,5 @@
 [package]
-name = "rustdoc"
+name = "indexed_docs"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/rustdoc.rs"
+path = "src/indexed_docs.rs"
 
 [dependencies]
 anyhow.workspace = true

@@ -6,7 +6,7 @@ Zed includes a vim emulation layer known as "vim mode". This document aims to de
 
 Vim mode in Zed is supposed to primarily "do what you expect": it mostly tries to copy vim exactly, but will use Zed-specific functionality when available to make things smoother.
 
-This means Zed will never be 100% Vim compatible, but should be 100% Vim familiar! We expect that our Vim mode already copes with 90% of your workflow, and we'd like to keep improving it. If you find things that you can’t yet do in Vim mode, but which you rely on in your current workflow, please leave feedback in the editor itself (`:feedback`), or [file an issue](https://github.com/zed-industries/zed/issues).
+This means Zed will never be 100% Vim compatible, but should be 100% Vim familiar! We expect that our Vim mode already copes with 90% of your workflow, and we'd like to keep improving it. If you find things that you can’t yet do in Vim mode, but which you rely on in your current workflow, please [file an issue](https://github.com/zed-industries/zed/issues).
 
 ## Zed-specific features
 
@@ -77,6 +77,8 @@ ctrl-x ctrl-z  Hides all suggestions
 Vim mode uses Zed to define concepts like "brackets" (for the `%` key) and "words" (for motions like `w` and `e`). This does lead to some differences, but they are mostly positive. For example `%` considers `|` to be a bracket in languages like Rust; and `w` considers `$` to be a word-character in languages like Javascript.
 
 Vim mode emulates visual block mode using Zed's multiple cursor support. This again leads to some differences, but is much more powerful.
+
+Vim's macro support (`q` and `@`) is implemented using Zed's actions. This lets us support recording and replaying of autocompleted code, etc. Unlike Vim, Zed does not re-use the yank registers for recording macros, they are two separate namespaces.
 
 Finally, Vim mode's search and replace functionality is backed by Zed's. This means that the pattern syntax is slightly different, see the section on [Regex differences](#regex-differences) for details.
 

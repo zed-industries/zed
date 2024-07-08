@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use crate::{Location, Runnable};
 
@@ -31,7 +31,11 @@ pub trait ContextProvider: Send + Sync {
     }
 
     /// Provides all tasks, associated with the current language.
-    fn associated_tasks(&self) -> Option<TaskTemplates> {
+    fn associated_tasks(
+        &self,
+        _: Option<Arc<dyn crate::File>>,
+        _cx: &AppContext,
+    ) -> Option<TaskTemplates> {
         None
     }
 }

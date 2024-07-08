@@ -1,19 +1,20 @@
 use crate::{
     hash, point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
     AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow,
-    Context, Corners, CursorStyle, DevicePixels, DispatchActionListener, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    FontId, Global, GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyBinding,
-    KeyContext, KeyDownEvent, KeyEvent, KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent,
-    LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions, WindowParams,
-    WindowTextSystem, SUBPIXEL_VARIANTS,
+    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
+    FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, Hsla, ImageData,
+    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyMatch, KeymatchResult,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString,
+    Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
+    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -610,7 +611,10 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
 
     cx.active_window()
         .and_then(|w| w.update(cx, |_, cx| cx.bounds()).ok())
-        .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
+        .map(|mut bounds| {
+            bounds.origin += DEFAULT_WINDOW_OFFSET;
+            bounds
+        })
         .unwrap_or_else(|| {
             let display = display_id
                 .map(|id| cx.find_display(id))
@@ -639,6 +643,7 @@ impl Window {
             window_background,
             app_id,
             window_min_size,
+            window_decorations,
         } = options;
 
         let bounds = window_bounds
@@ -654,7 +659,6 @@ impl Window {
                 focus,
                 show,
                 display_id,
-                window_background,
                 window_min_size,
             },
         )?;
@@ -671,6 +675,10 @@ impl Window {
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
+
+        platform_window
+            .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
+        platform_window.set_background_appearance(window_background);
 
         if let Some(ref window_open_state) = window_bounds {
             match window_open_state {
@@ -990,6 +998,16 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_maximized()
     }
 
+    /// request a certain window decoration (Wayland)
+    pub fn request_decorations(&self, decorations: WindowDecorations) {
+        self.window.platform_window.request_decorations(decorations);
+    }
+
+    /// Start a window resize operation (Wayland)
+    pub fn start_window_resize(&self, edge: ResizeEdge) {
+        self.window.platform_window.start_window_resize(edge);
+    }
+
     /// Return the `WindowBounds` to indicate that how a window should be opened
     /// after it has been closed
     pub fn window_bounds(&self) -> WindowBounds {
@@ -1217,13 +1235,23 @@ impl<'a> WindowContext<'a> {
     /// Tells the compositor to take control of window movement (Wayland and X11)
     ///
     /// Events may not be received during a move operation.
-    pub fn start_system_move(&self) {
-        self.window.platform_window.start_system_move()
+    pub fn start_window_move(&self) {
+        self.window.platform_window.start_window_move()
+    }
+
+    /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
+    pub fn set_client_inset(&self, inset: Pixels) {
+        self.window.platform_window.set_client_inset(inset);
     }
 
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
-    pub fn should_render_window_controls(&self) -> bool {
-        self.window.platform_window.should_render_window_controls()
+    pub fn window_decorations(&self) -> Decorations {
+        self.window.platform_window.window_decorations()
+    }
+
+    /// Returns which window controls are currently visible (Wayland)
+    pub fn window_controls(&self) -> WindowControls {
+        self.window.platform_window.window_controls()
     }
 
     /// Updates the window's title at the platform level.
@@ -1237,7 +1265,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Sets the window background appearance.
-    pub fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+    pub fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         self.window
             .platform_window
             .set_background_appearance(background_appearance);

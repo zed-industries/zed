@@ -22,34 +22,14 @@
       "alt-shift-delete": "editor::DeleteToNextWordEnd",
       "ctrl-backspace": "editor::DeleteToPreviousSubwordStart",
       "ctrl-delete": "editor::DeleteToNextSubwordEnd",
-      "alt-left": [
-        "editor::MoveToPreviousWordStart",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      "alt-right": [
-        "editor::MoveToNextWordEnd",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
+      "alt-left": ["editor::MoveToPreviousWordStart", { "stop_at_soft_wraps": true }],
+      "alt-right": ["editor::MoveToNextWordEnd", { "stop_at_soft_wraps": true }],
       "ctrl-left": "editor::MoveToPreviousSubwordStart",
       "ctrl-right": "editor::MoveToNextSubwordEnd",
       "cmd-shift-left": "editor::SelectToBeginningOfLine",
       "cmd-shift-right": "editor::SelectToEndOfLine",
-      "alt-shift-left": [
-        "editor::SelectToPreviousWordStart",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      "alt-shift-right": [
-        "editor::SelectToNextWordEnd",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
+      "alt-shift-left": ["editor::SelectToPreviousWordStart", { "stop_at_soft_wraps": true }],
+      "alt-shift-right": ["editor::SelectToNextWordEnd", { "stop_at_soft_wraps": true }],
       "ctrl-shift-left": "editor::SelectToPreviousSubwordStart",
       "ctrl-shift-right": "editor::SelectToNextSubwordEnd",
       "ctrl-w": "editor::SelectNext",

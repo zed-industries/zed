@@ -10861,12 +10861,19 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
         if self.is_local() {
-            let language = location
-                .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
+            let (file, language) = location
+                .map(|location| {
+                    let buffer = location.buffer.read(cx);
+                    (
+                        buffer.file().cloned(),
+                        buffer.language_at(location.range.start),
+                    )
+                })
+                .unwrap_or_default();
             Task::ready(Ok(self
                 .task_inventory()
                 .read(cx)
-                .list_tasks(language, worktree)))
+                .list_tasks(file, language, worktree, cx)))
         } else if let Some(project_id) = self
             .remote_id()
             .filter(|_| self.ssh_connection_string(cx).is_some())
