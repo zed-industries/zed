@@ -251,6 +251,8 @@ pub(crate) enum PendingActivation {
     Uri(String),
     /// Path to open in the file explorer.
     Path(PathBuf),
+    /// A window from ourselves to raise.
+    Window(ObjectId),
 }
 
 /// This struct is required to conform to Rust's orphan rules, so we can dispatch on the state but hand the
@@ -267,6 +269,11 @@ impl WaylandClientStatePtr {
 
     pub fn get_serial(&self, kind: SerialKind) -> u32 {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
+    }
+
+    pub fn set_pending_activation(&self, window: ObjectId) {
+        self.0.upgrade().unwrap().borrow_mut().pending_activation =
+            Some(PendingActivation::Window(window));
     }
 
     pub fn enable_ime(&self) {
@@ -989,6 +996,13 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
                 Some(PendingActivation::Uri(uri)) => open_uri_internal(executor, &uri, Some(token)),
                 Some(PendingActivation::Path(path)) => {
                     reveal_path_internal(executor, path, Some(token))
+                }
+                Some(PendingActivation::Window(window)) => {
+                    let Some(window) = get_window(&mut state, &window) else {
+                        return;
+                    };
+                    let activation = state.globals.activation.as_ref().unwrap();
+                    activation.activate(token, &window.surface());
                 }
                 None => log::error!("activation token received with no pending activation"),
             }

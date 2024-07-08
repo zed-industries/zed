@@ -76,6 +76,7 @@ pub struct WaylandWindowState {
     acknowledged_first_configure: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+    app_id: Option<String>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
@@ -158,6 +159,7 @@ impl WaylandWindowState {
             acknowledged_first_configure: false,
             surface,
             decoration,
+            app_id: None,
             blur: None,
             toplevel,
             viewport,
@@ -823,7 +825,20 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn activate(&self) {
-        log::info!("Wayland does not support this API");
+        // Try to request an activation token. Even though the activation is likely going to be rejected,
+        // KWin and Mutter can use the app_id to visually indicate we're requesting attention.
+        let state = self.borrow();
+        if let (Some(activation), Some(app_id)) = (&state.globals.activation, state.app_id.clone())
+        {
+            state.client.set_pending_activation(state.surface.id());
+            let token = activation.get_activation_token(&state.globals.qh, ());
+            // The serial isn't exactly important here, since the activation is probably going to be rejected anyway.
+            let serial = state.client.get_serial(SerialKind::MousePress);
+            token.set_app_id(app_id);
+            token.set_serial(serial, &state.globals.seat);
+            token.set_surface(&state.surface);
+            token.commit();
+        }
     }
 
     fn is_active(&self) -> bool {
@@ -835,7 +850,9 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_app_id(&mut self, app_id: &str) {
-        self.borrow().toplevel.set_app_id(app_id.to_owned());
+        let mut state = self.borrow_mut();
+        state.toplevel.set_app_id(app_id.to_owned());
+        state.app_id = Some(app_id.to_owned());
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
