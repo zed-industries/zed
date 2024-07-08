@@ -24,8 +24,8 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconButton,
-    IconName, Indicator, PopoverMenu, TintColor, Tooltip,
+    h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
+    Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
@@ -70,11 +70,7 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let room = ActiveCall::global(cx).read(cx).room().cloned();
         let close_action = Box::new(workspace::CloseWindow);
-
-        let platform_supported = cfg!(target_os = "macos");
-
         let height = Self::height(cx);
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
@@ -93,15 +89,15 @@ impl Render for TitleBar {
                     this.pl_2()
                 }
             })
-            .map(|el| {
-                match decorations {
-                    Decorations::Server => el,
-                    Decorations::Client { tiling, .. } => el
-                        .when(!(tiling.top || tiling.right), |el| {
-                            el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                        })
-                        .when(!(tiling.top || tiling.left), |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING))
-                }
+            .map(|el| match decorations {
+                Decorations::Server => el,
+                Decorations::Client { tiling, .. } => el
+                    .when(!(tiling.top || tiling.right), |el| {
+                        el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                    })
+                    .when(!(tiling.top || tiling.left), |el| {
+                        el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
+                    }),
             })
             .bg(cx.theme().colors().title_bar_background)
             .content_stretch()
@@ -120,224 +116,73 @@ impl Render for TitleBar {
                             }
                         })
                     })
-                        // Left side.
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .children(match self.platform_style {
-                                    PlatformStyle::Mac => None,
-                                    PlatformStyle::Linux | PlatformStyle::Windows => Some(ApplicationMenu::new())
-                                })
-                                .children(self.render_project_host(cx))
-                                .child(self.render_project_name(cx))
-                                .children(self.render_project_branch(cx))
-                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                        )
-                        .child(
-                            self.render_collaborator_list(cx)
-                        )
-                        // Right side.
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .pr_1()
-                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                                .when_some(room, |this, room| {
-                                    let room = room.read(cx);
-                                    let project = self.project.read(cx);
-                                    let is_local = project.is_local();
-                                    let is_dev_server_project = project.dev_server_project_id().is_some();
-                                    let is_shared = (is_local || is_dev_server_project) && project.is_shared();
-                                    let is_muted = room.is_muted();
-                                    let is_deafened = room.is_deafened().unwrap_or(false);
-                                    let is_screen_sharing = room.is_screen_sharing();
-                                    let can_use_microphone = room.can_use_microphone();
-                                    let can_share_projects = room.can_share_projects();
-
-                                    this.when(
-                                        (is_local || is_dev_server_project) && can_share_projects,
-                                        |this| {
-                                            this.child(
-                                                Button::new(
-                                                    "toggle_sharing",
-                                                    if is_shared { "Unshare" } else { "Share" },
-                                                )
-                                                .tooltip(move |cx| {
-                                                    Tooltip::text(
-                                                        if is_shared {
-                                                            "Stop sharing project with call participants"
-                                                        } else {
-                                                            "Share project with call participants"
-                                                        },
-                                                        cx,
-                                                    )
-                                                })
-                                                .style(ButtonStyle::Subtle)
-                                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                                .selected(is_shared)
-                                                .label_size(LabelSize::Small)
-                                                .on_click(cx.listener(
-                                                    move |this, _, cx| {
-                                                        if is_shared {
-                                                            this.unshare_project(&Default::default(), cx);
-                                                        } else {
-                                                            this.share_project(&Default::default(), cx);
-                                                        }
-                                                    },
-                                                )),
-                                            )
-                                        },
-                                    )
-                                    .child(
-                                        div()
-                                            .child(
-                                                IconButton::new("leave-call", ui::IconName::Exit)
-                                                    .style(ButtonStyle::Subtle)
-                                                    .tooltip(|cx| Tooltip::text("Leave call", cx))
-                                                    .icon_size(IconSize::Small)
-                                                    .on_click(move |_, cx| {
-                                                        ActiveCall::global(cx)
-                                                            .update(cx, |call, cx| call.hang_up(cx))
-                                                            .detach_and_log_err(cx);
-                                                    }),
-                                            )
-                                            .pr_2(),
-                                    )
-                                    .when(can_use_microphone, |this| {
-                                        this.child(
-                                            IconButton::new(
-                                                "mute-microphone",
-                                                if is_muted {
-                                                    ui::IconName::MicMute
-                                                } else {
-                                                    ui::IconName::Mic
-                                                },
-                                            )
-                                            .tooltip(move |cx| {
-                                                Tooltip::text(
-                                                    if !platform_supported {
-                                                        "Cannot share microphone"
-                                                    } else if is_muted {
-                                                        "Unmute microphone"
-                                                    } else {
-                                                        "Mute microphone"
-                                                    },
-                                                    cx,
-                                                )
-                                            })
-                                            .style(ButtonStyle::Subtle)
-                                            .icon_size(IconSize::Small)
-                                            .selected(platform_supported && is_muted)
-                                            .disabled(!platform_supported)
-                                            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-                                            .on_click(move |_, cx| {
-                                                call_controls::toggle_mute(&Default::default(), cx);
-                                            }),
-                                        )
-                                    })
-                                    .child(
-                                        IconButton::new(
-                                            "mute-sound",
-                                            if is_deafened {
-                                                ui::IconName::AudioOff
-                                            } else {
-                                                ui::IconName::AudioOn
-                                            },
-                                        )
-                                        .style(ButtonStyle::Subtle)
-                                        .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-                                        .icon_size(IconSize::Small)
-                                        .selected(is_deafened)
-                                        .disabled(!platform_supported)
-                                        .tooltip(move |cx| {
-                                            if !platform_supported {
-                                                Tooltip::text("Cannot share microphone", cx)
-                                            } else if can_use_microphone {
-                                                Tooltip::with_meta(
-                                                    "Deafen Audio",
-                                                    None,
-                                                    "Mic will be muted",
-                                                    cx,
-                                                )
-                                            } else {
-                                                Tooltip::text("Deafen Audio", cx)
-                                            }
-                                        })
-                                        .on_click(move |_, cx| {
-                                            call_controls::toggle_deafen(&Default::default(), cx)
-                                        }),
-                                    )
-                                    .when(can_share_projects, |this| {
-                                        this.child(
-                                            IconButton::new("screen-share", ui::IconName::Screen)
-                                                .style(ButtonStyle::Subtle)
-                                                .icon_size(IconSize::Small)
-                                                .selected(is_screen_sharing)
-                                                .disabled(!platform_supported)
-                                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                                .tooltip(move |cx| {
-                                                    Tooltip::text(
-                                                        if !platform_supported {
-                                                            "Cannot share screen"
-                                                        } else if is_screen_sharing {
-                                                            "Stop Sharing Screen"
-                                                        } else {
-                                                            "Share Screen"
-                                                        },
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_click(move |_, cx| {
-                                                    call_controls::toggle_screen_sharing(&Default::default(), cx)
-                                                }),
-                                        )
-                                    })
-                                    .child(div().pr_2())
-                                })
-                                .map(|el| {
-                                    let status = self.client.status();
-                                    let status = &*status.borrow();
-                                    if matches!(status, client::Status::Connected { .. }) {
-                                        el.child(self.render_user_menu_button(cx))
-                                    } else {
-                                        el.children(self.render_connection_status(status, cx))
-                                            .child(self.render_sign_in_button(cx))
-                                            .child(self.render_user_menu_button(cx))
-                                    }
-                                }),
-                        )
-
-            ).when(
-            self.platform_style == PlatformStyle::Windows && !cx.is_fullscreen(),
-            |title_bar| title_bar.child(platform_windows::WindowsWindowControls::new(height)),
-        ).when(
-            self.platform_style == PlatformStyle::Linux
-                && !cx.is_fullscreen()
-                && matches!(decorations, Decorations::Client { .. }),
-            |title_bar| {
-                title_bar
-                    .child(platform_linux::LinuxWindowControls::new(close_action))
-                    .when(supported_controls.window_menu, |titlebar| {
-                        titlebar.on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
-                            cx.show_window_menu(ev.position)
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .children(match self.platform_style {
+                                PlatformStyle::Mac => None,
+                                PlatformStyle::Linux | PlatformStyle::Windows => {
+                                    Some(ApplicationMenu::new())
+                                }
+                            })
+                            .children(self.render_project_host(cx))
+                            .child(self.render_project_name(cx))
+                            .children(self.render_project_branch(cx))
+                            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
+                    )
+                    .child(self.render_collaborator_list(cx))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .pr_1()
+                            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                            .children(self.render_call_controls(cx))
+                            .map(|el| {
+                                let status = self.client.status();
+                                let status = &*status.borrow();
+                                if matches!(status, client::Status::Connected { .. }) {
+                                    el.child(self.render_user_menu_button(cx))
+                                } else {
+                                    el.children(self.render_connection_status(status, cx))
+                                        .child(self.render_sign_in_button(cx))
+                                        .child(self.render_user_menu_button(cx))
+                                }
+                            }),
+                    ),
+            )
+            .when(
+                self.platform_style == PlatformStyle::Windows && !cx.is_fullscreen(),
+                |title_bar| title_bar.child(platform_windows::WindowsWindowControls::new(height)),
+            )
+            .when(
+                self.platform_style == PlatformStyle::Linux
+                    && !cx.is_fullscreen()
+                    && matches!(decorations, Decorations::Client { .. }),
+                |title_bar| {
+                    title_bar
+                        .child(platform_linux::LinuxWindowControls::new(close_action))
+                        .when(supported_controls.window_menu, |titlebar| {
+                            titlebar.on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
+                                cx.show_window_menu(ev.position)
+                            })
                         })
-                    })
-
-                                        .on_mouse_move(cx.listener(move |this, _ev, cx| {
-                                            if this.should_move {
-                                                this.should_move = false;
-                                                cx.start_window_move();
-                                            }
-                                        }))
-                                        .on_mouse_down_out(cx.listener(move |this, _ev, _cx| {
-                                            this.should_move = false;
-                                        }))
-                                        .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _ev, _cx| {
-                                            this.should_move = true;
-                                    }))
-
-            },
-        )
+                        .on_mouse_move(cx.listener(move |this, _ev, cx| {
+                            if this.should_move {
+                                this.should_move = false;
+                                cx.start_window_move();
+                            }
+                        }))
+                        .on_mouse_down_out(cx.listener(move |this, _ev, _cx| {
+                            this.should_move = false;
+                        }))
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, _ev, _cx| {
+                                this.should_move = true;
+                            }),
+                        )
+                },
+            )
     }
 }
 

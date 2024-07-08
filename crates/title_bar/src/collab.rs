@@ -1,11 +1,13 @@
-use crate::TitleBar;
+use std::sync::Arc;
+
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, User};
-use gpui::{canvas, point, Hsla, IntoElement, MouseButton, Path, Styled};
+use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
 use rpc::proto::{self};
-use std::sync::Arc;
 use theme::ActiveTheme;
-use ui::{prelude::*, Avatar, AvatarAudioStatusIndicator, Facepile, Tooltip};
+use ui::{prelude::*, Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip};
+
+use crate::{call_controls, TitleBar};
 
 fn render_color_ribbon(color: Hsla) -> impl Element {
     canvas(
@@ -213,5 +215,168 @@ impl TitleBar {
                         }),
                 ),
         )
+    }
+
+    pub(crate) fn render_call_controls(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
+        let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() else {
+            return Vec::new();
+        };
+
+        let room = room.read(cx);
+        let project = self.project.read(cx);
+        let is_local = project.is_local();
+        let is_dev_server_project = project.dev_server_project_id().is_some();
+        let is_shared = (is_local || is_dev_server_project) && project.is_shared();
+        let is_muted = room.is_muted();
+        let is_deafened = room.is_deafened().unwrap_or(false);
+        let is_screen_sharing = room.is_screen_sharing();
+        let can_use_microphone = room.can_use_microphone();
+        let can_share_projects = room.can_share_projects();
+        let platform_supported = match self.platform_style {
+            PlatformStyle::Mac => true,
+            PlatformStyle::Linux | PlatformStyle::Windows => false,
+        };
+
+        let mut children = Vec::new();
+
+        if (is_local || is_dev_server_project) && can_share_projects {
+            children.push(
+                Button::new(
+                    "toggle_sharing",
+                    if is_shared { "Unshare" } else { "Share" },
+                )
+                .tooltip(move |cx| {
+                    Tooltip::text(
+                        if is_shared {
+                            "Stop sharing project with call participants"
+                        } else {
+                            "Share project with call participants"
+                        },
+                        cx,
+                    )
+                })
+                .style(ButtonStyle::Subtle)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .selected(is_shared)
+                .label_size(LabelSize::Small)
+                .on_click(cx.listener(move |this, _, cx| {
+                    if is_shared {
+                        this.unshare_project(&Default::default(), cx);
+                    } else {
+                        this.share_project(&Default::default(), cx);
+                    }
+                }))
+                .into_any_element(),
+            );
+        }
+
+        children.push(
+            div()
+                .pr_2()
+                .child(
+                    IconButton::new("leave-call", ui::IconName::Exit)
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(|cx| Tooltip::text("Leave call", cx))
+                        .icon_size(IconSize::Small)
+                        .on_click(move |_, cx| {
+                            ActiveCall::global(cx)
+                                .update(cx, |call, cx| call.hang_up(cx))
+                                .detach_and_log_err(cx);
+                        }),
+                )
+                .into_any_element(),
+        );
+
+        if can_use_microphone {
+            children.push(
+                IconButton::new(
+                    "mute-microphone",
+                    if is_muted {
+                        ui::IconName::MicMute
+                    } else {
+                        ui::IconName::Mic
+                    },
+                )
+                .tooltip(move |cx| {
+                    Tooltip::text(
+                        if !platform_supported {
+                            "Cannot share microphone"
+                        } else if is_muted {
+                            "Unmute microphone"
+                        } else {
+                            "Mute microphone"
+                        },
+                        cx,
+                    )
+                })
+                .style(ButtonStyle::Subtle)
+                .icon_size(IconSize::Small)
+                .selected(platform_supported && is_muted)
+                .disabled(!platform_supported)
+                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                .on_click(move |_, cx| {
+                    call_controls::toggle_mute(&Default::default(), cx);
+                })
+                .into_any_element(),
+            );
+        }
+
+        children.push(
+            IconButton::new(
+                "mute-sound",
+                if is_deafened {
+                    ui::IconName::AudioOff
+                } else {
+                    ui::IconName::AudioOn
+                },
+            )
+            .style(ButtonStyle::Subtle)
+            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+            .icon_size(IconSize::Small)
+            .selected(is_deafened)
+            .disabled(!platform_supported)
+            .tooltip(move |cx| {
+                if !platform_supported {
+                    Tooltip::text("Cannot share microphone", cx)
+                } else if can_use_microphone {
+                    Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
+                } else {
+                    Tooltip::text("Deafen Audio", cx)
+                }
+            })
+            .on_click(move |_, cx| call_controls::toggle_deafen(&Default::default(), cx))
+            .into_any_element(),
+        );
+
+        if can_share_projects {
+            children.push(
+                IconButton::new("screen-share", ui::IconName::Screen)
+                    .style(ButtonStyle::Subtle)
+                    .icon_size(IconSize::Small)
+                    .selected(is_screen_sharing)
+                    .disabled(!platform_supported)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .tooltip(move |cx| {
+                        Tooltip::text(
+                            if !platform_supported {
+                                "Cannot share screen"
+                            } else if is_screen_sharing {
+                                "Stop Sharing Screen"
+                            } else {
+                                "Share Screen"
+                            },
+                            cx,
+                        )
+                    })
+                    .on_click(move |_, cx| {
+                        call_controls::toggle_screen_sharing(&Default::default(), cx)
+                    })
+                    .into_any_element(),
+            );
+        }
+
+        children.push(div().pr_2().into_any_element());
+
+        children
     }
 }
