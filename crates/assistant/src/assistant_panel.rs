@@ -92,6 +92,7 @@ pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     height: Option<Pixels>,
+    project: Model<Project>,
     context_store: Model<ContextStore>,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
@@ -108,6 +109,7 @@ enum ContextMetadata {
 
 struct SavedContextPickerDelegate {
     store: Model<ContextStore>,
+    project: Model<Project>,
     matches: Vec<ContextMetadata>,
     selected_index: usize,
 }
@@ -124,8 +126,9 @@ enum InlineAssistTarget {
 impl EventEmitter<SavedContextPickerEvent> for Picker<SavedContextPickerDelegate> {}
 
 impl SavedContextPickerDelegate {
-    fn new(store: Model<ContextStore>) -> Self {
+    fn new(project: Model<Project>, store: Model<ContextStore>) -> Self {
         Self {
+            project,
             store,
             matches: Vec::new(),
             selected_index: 0,
@@ -158,7 +161,6 @@ impl PickerDelegate for SavedContextPickerDelegate {
             let matches = search.await;
             this.update(&mut cx, |this, cx| {
                 let host_contexts = this.delegate.store.read(cx).host_contexts();
-                dbg!(host_contexts.len());
                 this.delegate.matches = host_contexts
                     .iter()
                     .cloned()
@@ -184,23 +186,37 @@ impl PickerDelegate for SavedContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let context = self.matches.get(ix)?;
         let item = match context {
-            ContextMetadata::Remote(context) => div()
-                .flex()
-                .w_full()
-                .gap_2()
-                .child(
-                    Label::new("Remote Context")
-                        .color(Color::Muted)
-                        .size(LabelSize::Small),
-                )
-                .child(
-                    Label::new(context.summary.clone().unwrap_or("New Context".into()))
-                        .size(LabelSize::Small),
-                ),
+            ContextMetadata::Remote(context) => {
+                let host_username = if let Some(host) =
+                    self.project.read(cx).host().and_then(|collaborator| {
+                        self.project
+                            .read(cx)
+                            .user_store()
+                            .read(cx)
+                            .get_cached_user(collaborator.user_id)
+                    }) {
+                    format!("@{}", host.github_login)
+                } else {
+                    "host".to_string()
+                };
+                div()
+                    .flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        Label::new(format!("Shared by {}", host_username))
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .child(
+                        Label::new(context.summary.clone().unwrap_or("New Context".into()))
+                            .size(LabelSize::Small),
+                    )
+            }
             ContextMetadata::Saved(context) => div()
                 .flex()
                 .w_full()
@@ -320,6 +336,7 @@ impl AssistantPanel {
             workspace: workspace.weak_handle(),
             width: None,
             height: None,
+            project: workspace.project().clone(),
             context_store,
             languages: workspace.app_state().languages.clone(),
             fs: workspace.app_state().fs.clone(),
@@ -593,7 +610,12 @@ impl AssistantPanel {
         } else {
             let assistant_panel = cx.view().downgrade();
             let history = cx.new_view(|cx| {
-                ContextHistory::new(self.context_store.clone(), assistant_panel, cx)
+                ContextHistory::new(
+                    self.project.clone(),
+                    self.context_store.clone(),
+                    assistant_panel,
+                    cx,
+                )
             });
             self.pane.update(cx, |pane, cx| {
                 pane.add_item(Box::new(history), true, true, None, cx);
@@ -2251,14 +2273,18 @@ pub struct ContextHistory {
 
 impl ContextHistory {
     fn new(
+        project: Model<Project>,
         context_store: Model<ContextStore>,
         assistant_panel: WeakView<AssistantPanel>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let picker = cx.new_view(|cx| {
-            Picker::uniform_list(SavedContextPickerDelegate::new(context_store.clone()), cx)
-                .modal(false)
-                .max_height(None)
+            Picker::uniform_list(
+                SavedContextPickerDelegate::new(project, context_store.clone()),
+                cx,
+            )
+            .modal(false)
+            .max_height(None)
         });
 
         let _subscriptions = vec![

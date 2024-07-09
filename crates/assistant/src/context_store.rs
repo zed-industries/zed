@@ -110,6 +110,7 @@ impl ContextStore {
                     project: project.clone(),
                 };
                 this.handle_project_changed(project, cx);
+                this.synchronize_contexts(cx);
                 this
             })?;
             this.update(&mut cx, |this, cx| this.reload(cx))?
@@ -220,6 +221,8 @@ impl ContextStore {
                 }
             }
 
+            this.advertise_contexts(cx);
+
             anyhow::Ok(proto::SynchronizeContextsResponse {
                 contexts: local_versions,
             })
@@ -261,9 +264,7 @@ impl ContextStore {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            project::Event::Reshared
-            | project::Event::CollaboratorJoined(_)
-            | project::Event::CollaboratorUpdated { .. } => {
+            project::Event::Reshared => {
                 self.advertise_contexts(cx);
             }
             project::Event::HostReshared | project::Event::Rejoined => {
@@ -470,6 +471,7 @@ impl ContextStore {
         let contexts = self
             .contexts
             .iter()
+            .rev()
             .filter_map(|context| {
                 let context = context.upgrade()?.read(cx);
                 if context.replica_id() == ReplicaId::default() {
