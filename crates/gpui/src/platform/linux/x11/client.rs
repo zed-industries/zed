@@ -880,7 +880,7 @@ impl X11Client {
             }
             Event::XinputEnter(event) if event.mode == xinput::NotifyMode::NORMAL => {
                 let window = self.get_window(event.event)?;
-                window.set_mouse_active(true);
+                window.set_hovered(true);
                 let mut state = self.0.borrow_mut();
                 state.mouse_focused_window = Some(event.event);
             }
@@ -905,7 +905,7 @@ impl X11Client {
                     position,
                     modifiers,
                 }));
-                window.set_mouse_active(false);
+                window.set_hovered(false);
             }
             _ => {}
         };

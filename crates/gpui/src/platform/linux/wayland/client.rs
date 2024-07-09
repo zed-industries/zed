@@ -1417,7 +1417,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         }
                     }
                     drop(state);
-                    window.set_mouse_focused(true);
+                    window.set_hovered(true);
                 }
             }
             wl_pointer::Event::Leave { .. } => {
@@ -1433,7 +1433,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
 
                     drop(state);
                     focused_window.handle_input(input);
-                    focused_window.set_mouse_focused(false);
+                    focused_window.set_hovered(false);
                 }
             }
             wl_pointer::Event::Motion {
