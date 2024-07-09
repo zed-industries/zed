@@ -1129,11 +1129,10 @@ impl CompletionsMenu {
                                     None
                                 } else {
                                     Some(
-                                        h_flex().ml_4().child(
-                                            Label::new(text.clone())
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        ),
+                                        Label::new(text.clone())
+                                            .ml_4()
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
                                     )
                                 }
                             } else {
@@ -1156,7 +1155,7 @@ impl CompletionsMenu {
                                     }
                                 }))
                                 .child(h_flex().overflow_hidden().child(completion_label))
-                                .end_slot::<Div>(documentation_label),
+                                .end_slot::<Label>(documentation_label),
                         )
                     })
                     .collect()
