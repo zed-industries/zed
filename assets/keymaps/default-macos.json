@@ -3,10 +3,14 @@
   {
     "bindings": {
       "up": "menu::SelectPrev",
+      "shift-tab": "menu::SelectPrev",
+      "home": "menu::SelectFirst",
       "pageup": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
       "ctrl-p": "menu::SelectPrev",
       "down": "menu::SelectNext",
+      "tab": "menu::SelectNext",
+      "end": "menu::SelectLast",
       "pagedown": "menu::SelectLast",
       "shift-pagedown": "menu::SelectFirst",
       "ctrl-n": "menu::SelectNext",
@@ -109,54 +113,14 @@
       "cmd-a": "editor::SelectAll",
       "cmd-l": "editor::SelectLine",
       "cmd-shift-i": "editor::Format",
-      "cmd-shift-left": [
-        "editor::SelectToBeginningOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      "shift-home": [
-        "editor::SelectToBeginningOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      "ctrl-shift-a": [
-        "editor::SelectToBeginningOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      "cmd-shift-right": [
-        "editor::SelectToEndOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      "shift-end": [
-        "editor::SelectToEndOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      "ctrl-shift-e": [
-        "editor::SelectToEndOfLine",
-        {
-          "stop_at_soft_wraps": true
-        }
-      ],
-      "ctrl-v": [
-        "editor::MovePageDown",
-        {
-          "center_cursor": true
-        }
-      ],
-      "alt-v": [
-        "editor::MovePageUp",
-        {
-          "center_cursor": true
-        }
-      ],
+      "cmd-shift-left": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
+      "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
+      "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
+      "cmd-shift-right": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      "ctrl-shift-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      "ctrl-v": ["editor::MovePageDown", { "center_cursor": true }],
+      "alt-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
       "cmd-alt-z": "editor::RevertSelectedHunks",
@@ -171,30 +135,20 @@
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
       "cmd-shift-enter": "editor::NewlineAbove",
-      "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
-      "cmd-alt-f": [
-        "buffer_search::Deploy",
-        {
-          "replace_enabled": true
-        }
-      ],
-      "cmd-alt-l": [
-        "buffer_search::Deploy",
-        {
-          "selection_search_enabled": true
-        }
-      ],
-      "cmd-e": [
-        "buffer_search::Deploy",
-        {
-          "focus": false
-        }
-      ],
+      "cmd-alt-f": ["buffer_search::Deploy", { "replace_enabled": true }],
+      "cmd-alt-l": ["buffer_search::Deploy", { "selection_search_enabled": true }],
+      "cmd-e": ["buffer_search::Deploy", { "focus": false }],
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol"
+    }
+  },
+  {
+    "context": "Editor && mode == full && !jupyter",
+    "bindings": {
+      "cmd-enter": "editor::NewlineBelow"
     }
   },
   {
@@ -285,6 +239,7 @@
     "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus",
+      "cmd-shift-j": "project_search::ToggleFilters",
       "cmd-shift-f": "search::FocusSearch",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
@@ -309,6 +264,7 @@
     "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus",
+      "cmd-shift-j": "project_search::ToggleFilters",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex"
@@ -356,38 +312,13 @@
       "alt-shift-down": "editor::DuplicateLineDown",
       "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
-      "cmd-d": [
-        "editor::SelectNext",
-        {
-          "replace_newest": false
-        }
-      ],
+      "cmd-d": ["editor::SelectNext", { "replace_newest": false }],
       "cmd-shift-l": "editor::SelectAllMatches",
-      "ctrl-cmd-d": [
-        "editor::SelectPrevious",
-        {
-          "replace_newest": false
-        }
-      ],
-      "cmd-k cmd-d": [
-        "editor::SelectNext",
-        {
-          "replace_newest": true
-        }
-      ],
-      "cmd-k ctrl-cmd-d": [
-        "editor::SelectPrevious",
-        {
-          "replace_newest": true
-        }
-      ],
+      "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }],
+      "cmd-k cmd-d": ["editor::SelectNext", { "replace_newest": true }],
+      "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }],
       "cmd-k cmd-i": "editor::Hover",
-      "cmd-/": [
-        "editor::ToggleComments",
-        {
-          "advance_downwards": false
-        }
-      ],
+      "cmd-/": ["editor::ToggleComments", { "advance_downwards": false }],
       "cmd-u": "editor::UndoSelection",
       "cmd-shift-u": "editor::RedoSelection",
       "f8": "editor::GoToDiagnostic",
@@ -400,11 +331,17 @@
       "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "ctrl-m": "editor::MoveToEnclosingBracket",
+      "cmd-shift-\\": "editor::MoveToEnclosingBracket",
       "alt-cmd-[": "editor::Fold",
       "alt-cmd-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "cmd-.": "editor::ToggleCodeActions",
       "alt-cmd-r": "editor::RevealInFinder",
+      "cmd-k r": "editor::RevealInFinder",
+      "cmd-k p": "editor::CopyPath",
+      "cmd-\\": "pane::SplitRight",
+      "cmd-k v": "markdown::OpenPreviewToTheSide",
+      "cmd-shift-v": "markdown::OpenPreview",
       "ctrl-cmd-c": "editor::DisplayCursorNames"
     }
   },
@@ -429,7 +366,7 @@
       "ctrl-9": ["pane::ActivateItem", 8],
       "ctrl-0": "pane::ActivateLastItem",
       "ctrl--": "pane::GoBack",
-      "ctrl-_": "pane::GoForward",
+      "ctrl-shift--": "pane::GoForward",
       "cmd-shift-t": "pane::ReopenClosedItem",
       "cmd-shift-f": "project_search::ToggleFocus"
     }
@@ -438,12 +375,7 @@
     "context": "Workspace",
     "bindings": {
       // Change the default action on `menu::Confirm` by setting the parameter
-      // "alt-cmd-o": [
-      //     "projects::OpenRecent",
-      //     {
-      //         "create_new_window": true
-      //     }
-      // ]
+      // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
       "alt-cmd-o": "projects::OpenRecent",
       "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
@@ -467,12 +399,7 @@
       "cmd-j": "workspace::ToggleBottomDock",
       "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "pane::DeploySearch",
-      "cmd-shift-h": [
-        "pane::DeploySearch",
-        {
-          "replace_enabled": true
-        }
-      ],
+      "cmd-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
@@ -495,6 +422,7 @@
       "cmd-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
       "cmd-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
       "cmd-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
+      "cmd-shift-x": "zed::Extensions",
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn"
     }
@@ -595,6 +523,7 @@
   {
     "context": "OutlinePanel",
     "bindings": {
+      "escape": "menu::Cancel",
       "left": "outline_panel::CollapseSelectedEntry",
       "right": "outline_panel::ExpandSelectedEntry",
       "cmd-alt-c": "outline_panel::CopyPath",
@@ -619,6 +548,7 @@
       "cmd-alt-c": "project_panel::CopyPath",
       "alt-cmd-shift-c": "project_panel::CopyRelativePath",
       "enter": "project_panel::Rename",
+      "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
       "delete": ["project_panel::Trash", { "skip_prompt": false }],
       "cmd-backspace": ["project_panel::Trash", { "skip_prompt": true }],
@@ -635,6 +565,12 @@
     "context": "ProjectPanel && not_editing",
     "bindings": {
       "space": "project_panel::Open"
+    }
+  },
+  {
+    "context": "Editor && jupyter",
+    "bindings": {
+      "cmd-enter": "repl::Run"
     }
   },
   {
@@ -707,10 +643,14 @@
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "cmd-up": "terminal::ScrollPageUp",
+      "cmd-down": "terminal::ScrollPageDown",
       "shift-pageup": "terminal::ScrollPageUp",
       "shift-pagedown": "terminal::ScrollPageDown",
       "shift-up": "terminal::ScrollLineUp",
       "shift-down": "terminal::ScrollLineDown",
+      "cmd-home": "terminal::ScrollToTop",
+      "cmd-end": "terminal::ScrollToBottom",
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom"
     }

@@ -370,7 +370,7 @@ impl TerminalElement {
         let weight = if flags.intersects(Flags::BOLD) {
             FontWeight::BOLD
         } else {
-            FontWeight::NORMAL
+            text_style.font_weight
         };
 
         let style = if flags.intersects(Flags::ITALIC) {
@@ -637,7 +637,7 @@ impl Element for TerminalElement {
 
                 let link_style = HighlightStyle {
                     color: Some(theme.colors().link_text_hover),
-                    font_weight: None,
+                    font_weight: Some(font_weight),
                     font_style: None,
                     background_color: None,
                     underline: Some(UnderlineStyle {

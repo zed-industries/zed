@@ -1409,7 +1409,7 @@ impl Context {
             }
 
             let request = self.to_completion_request(cx);
-            let stream = CompletionProvider::global(cx).complete(request);
+            let response = CompletionProvider::global(cx).complete(request, cx);
             let assistant_message = self
                 .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
                 .unwrap();
@@ -1422,11 +1422,12 @@ impl Context {
 
             let task = cx.spawn({
                 |this, mut cx| async move {
+                    let response = response.await;
                     let assistant_message_id = assistant_message.id;
                     let mut response_latency = None;
                     let stream_completion = async {
                         let request_start = Instant::now();
-                        let mut messages = stream.await?;
+                        let mut messages = response.inner.await?;
 
                         while let Some(message) = messages.next().await {
                             if response_latency.is_none() {
@@ -1718,10 +1719,11 @@ impl Context {
                 temperature: 1.0,
             };
 
-            let stream = CompletionProvider::global(cx).complete(request);
+            let response = CompletionProvider::global(cx).complete(request, cx);
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
-                    let mut messages = stream.await?;
+                    let response = response.await;
+                    let mut messages = response.inner.await?;
 
                     while let Some(message) = messages.next().await {
                         let text = message?;
@@ -3642,7 +3644,7 @@ mod tests {
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        FakeCompletionProvider::setup_test(cx);
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
@@ -3774,7 +3776,7 @@ mod tests {
     fn test_message_splitting(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        FakeCompletionProvider::setup_test(cx);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
@@ -3867,7 +3869,7 @@ mod tests {
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        FakeCompletionProvider::setup_test(cx);
         cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
@@ -3952,7 +3954,8 @@ mod tests {
     async fn test_slash_commands(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        cx.update(|cx| FakeCompletionProvider::setup_test(cx));
+
         cx.update(Project::init_settings);
         cx.update(init);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -4147,7 +4150,7 @@ mod tests {
     async fn test_serialization(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        cx.update(FakeCompletionProvider::setup_test);
         cx.update(init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let context =

@@ -33,6 +33,7 @@ simplelog = "0.9"
 story.workspace = true
 strum = { version = "0.25.0", features = ["derive"] }
 theme.workspace = true
+title_bar = { workspace = true, features = ["stories"] }
 ui = { workspace = true, features = ["stories"] }
 
 [dev-dependencies]

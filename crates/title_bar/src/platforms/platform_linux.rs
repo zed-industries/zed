@@ -1,4 +1,4 @@
-use gpui::{prelude::*, Action};
+use gpui::{prelude::*, Action, MouseButton};
 
 use ui::prelude::*;
 
@@ -23,6 +23,7 @@ impl RenderOnce for LinuxWindowControls {
             .id("generic-window-controls")
             .px_3()
             .gap_3()
+            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             .child(WindowControl::new(
                 "minimize",
                 WindowControlType::Minimize,

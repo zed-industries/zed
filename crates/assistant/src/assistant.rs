@@ -163,7 +163,7 @@ impl LanguageModelRequestMessage {
     }
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct LanguageModelRequest {
     pub model: LanguageModel,
     pub messages: Vec<LanguageModelRequestMessage>,

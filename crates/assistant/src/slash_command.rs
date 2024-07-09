@@ -170,7 +170,7 @@ impl SlashCommandCompletionProvider {
                     .await?
                     .into_iter()
                     .map(|command_argument| {
-                        let confirm =
+                        let confirm = if command_argument.run_command {
                             editor
                                 .clone()
                                 .zip(workspace.clone())
@@ -178,7 +178,7 @@ impl SlashCommandCompletionProvider {
                                     Arc::new({
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
-                                        let command_argument = command_argument.clone();
+                                        let command_argument = command_argument.new_text.clone();
                                         move |cx: &mut WindowContext| {
                                             editor
                                                 .update(cx, |editor, cx| {
@@ -194,15 +194,24 @@ impl SlashCommandCompletionProvider {
                                                 .ok();
                                         }
                                     }) as Arc<_>
-                                });
+                                })
+                        } else {
+                            None
+                        };
+
+                        let mut new_text = command_argument.new_text.clone();
+                        if !command_argument.run_command {
+                            new_text.push(' ');
+                        }
+
                         project::Completion {
                             old_range: argument_range.clone(),
-                            label: CodeLabel::plain(command_argument.clone(), None),
-                            new_text: command_argument.clone(),
+                            label: CodeLabel::plain(command_argument.label, None),
+                            new_text,
                             documentation: None,
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
-                            show_new_completions_on_confirm: false,
+                            show_new_completions_on_confirm: !command_argument.run_command,
                             confirm,
                         }
                     })
