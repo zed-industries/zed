@@ -11,6 +11,7 @@ pub struct WorkspaceSettings {
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
+    pub autosave_before_task: bool,
     pub restore_on_startup: RestoreOnStartupBehaviour,
     pub drop_target_size: f32,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
@@ -70,6 +71,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: off
     pub autosave: Option<AutosaveSetting>,
+    /// Whether to save all files automatically before running any task.
+    ///
+    /// Default: false
+    pub autosave_before_task: Option<bool>,
     /// Controls previous session restoration in freshly launched Zed instance.
     /// Values: none, last_workspace
     /// Default: last_workspace

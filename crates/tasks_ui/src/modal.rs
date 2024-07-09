@@ -333,8 +333,8 @@ impl PickerDelegate for TasksModalDelegate {
         };
 
         self.workspace
-            .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+            .update(cx, |_, cx| {
+                schedule_resolved_task(task_source_kind, task, omit_history_entry, cx);
             })
             .ok();
         cx.emit(DismissEvent);
@@ -474,8 +474,8 @@ impl PickerDelegate for TasksModalDelegate {
             return;
         };
         self.workspace
-            .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+            .update(cx, |_, cx| {
+                schedule_resolved_task(task_source_kind, task, omit_history_entry, cx);
             })
             .ok();
         cx.emit(DismissEvent);

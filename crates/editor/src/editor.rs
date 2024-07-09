@@ -4498,9 +4498,8 @@ impl Editor {
 
         match action {
             CodeActionsItem::Task(task_source_kind, resolved_task) => {
-                workspace.update(cx, |workspace, cx| {
+                workspace.update(cx, |_, cx| {
                     workspace::tasks::schedule_resolved_task(
-                        workspace,
                         task_source_kind,
                         resolved_task,
                         false,

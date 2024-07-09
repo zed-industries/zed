@@ -5210,6 +5210,7 @@ mod tests {
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
+    use tasks::schedule_task;
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {
@@ -5726,6 +5727,76 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
         item.update(cx, |item, _| assert_eq!(item.save_count, 5));
+    }
+
+    #[gpui::test]
+    async fn test_autosave_before_task(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+        let item = cx.new_view(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, cx);
+        });
+
+        // The setting is disabled
+        item.update(cx, |item, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                    settings.autosave_before_task = Some(false);
+                })
+            });
+            item.is_dirty = true;
+        });
+
+        // Schedule a task
+        let task_template = task::TaskTemplate {
+            label: String::from("sample-label"),
+            command: String::from("echo sample-command"),
+            ..task::TaskTemplate::default()
+        };
+        workspace.update(cx, |_, cx| {
+            schedule_task(
+                project::TaskSourceKind::UserInput,
+                &task_template,
+                &task::TaskContext::default(),
+                true,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        // No autosave should happen because the setting is disabled
+        item.update(cx, |item, _| assert_eq!(item.save_count, 0));
+
+        // Enable the setting
+        item.update(cx, |_item, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                    settings.autosave_before_task = Some(true);
+                })
+            });
+        });
+
+        // Schedule another task
+        workspace.update(cx, |_, cx| {
+            schedule_task(
+                project::TaskSourceKind::UserInput,
+                &task_template,
+                &task::TaskContext::default(),
+                true,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        // Now, with the setting enabled autosave should happen
+        item.update(cx, |item, _| assert_eq!(item.save_count, 1));
     }
 
     #[gpui::test]

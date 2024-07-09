@@ -38,9 +38,8 @@ pub fn init(cx: &mut AppContext) {
                             cx.spawn(|workspace, mut cx| async move {
                                 let task_context = context_task.await;
                                 workspace
-                                    .update(&mut cx, |workspace, cx| {
+                                    .update(&mut cx, |_workspace, cx| {
                                         schedule_task(
-                                            workspace,
                                             task_source_kind,
                                             &original_task,
                                             &task_context,
@@ -62,7 +61,6 @@ pub fn init(cx: &mut AppContext) {
                             }
 
                             schedule_resolved_task(
-                                workspace,
                                 task_source_kind,
                                 last_scheduled_task,
                                 false,
@@ -123,17 +121,10 @@ fn spawn_task_with_name(
             .await?;
 
         let did_spawn = workspace
-            .update(&mut cx, |workspace, cx| {
+            .update(&mut cx, |_, cx| {
                 let (task_source_kind, target_task) =
                     tasks.into_iter().find(|(_, task)| task.label == name)?;
-                schedule_task(
-                    workspace,
-                    task_source_kind,
-                    &target_task,
-                    &task_context,
-                    false,
-                    cx,
-                );
+                schedule_task(task_source_kind, &target_task, &task_context, false, cx);
                 Some(())
             })?
             .is_some();
