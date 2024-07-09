@@ -357,7 +357,7 @@ impl TerminalPanel {
             return;
         };
         #[cfg(target_os = "windows")]
-        let windows_shell_type = Shell::to_windows_shell(&shell);
+        let windows_shell_type = Shell::to_windows_shell_type(&shell);
 
         #[cfg(not(target_os = "windows"))]
         {
@@ -390,7 +390,7 @@ impl TerminalPanel {
                 #[cfg(not(target_os = "windows"))]
                 command.push_str(&arg);
                 #[cfg(target_os = "windows")]
-                command.push_str(&Shell::to_windows_variable(windows_shell_type, arg));
+                command.push_str(&Shell::to_windows_shell_variable(windows_shell_type, arg));
                 command
             });
 

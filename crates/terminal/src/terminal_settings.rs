@@ -288,25 +288,23 @@ impl Shell {
     /// Convert unix-shell variable syntax to windows-shell syntax.
     /// `powershell` and `cmd` are considered valid here.
     #[cfg(target_os = "windows")]
-    pub fn to_windows_variable(shell_type: WindowsShellType, input: String) -> String {
+    pub fn to_windows_shell_variable(shell_type: WindowsShellType, input: String) -> String {
         match shell_type {
             WindowsShellType::Powershell => to_powershell_variable(input),
             WindowsShellType::Cmd => to_cmd_variable(input),
-            WindowsShellType::Other => {
-                // Someother shell detected, the user might install and use a
-                // unix-like shell.
-                input
-            }
+            WindowsShellType::Other => input,
         }
     }
 
     #[cfg(target_os = "windows")]
-    pub fn to_windows_shell(shell: &str) -> WindowsShellType {
+    pub fn to_windows_shell_type(shell: &str) -> WindowsShellType {
         if shell == "powershell" || shell.ends_with("powershell.exe") {
             WindowsShellType::Powershell
         } else if shell == "cmd" || shell.ends_with("cmd.exe") {
             WindowsShellType::Cmd
         } else {
+            // Someother shell detected, the user might install and use a
+            // unix-like shell.
             WindowsShellType::Other
         }
     }
