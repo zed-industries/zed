@@ -36,49 +36,42 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
 
 /// Generates methods for visibility styles.
 #[proc_macro]
-#[doc(hidden)]
 pub fn visibility_style_methods(input: TokenStream) -> TokenStream {
     styles::visibility_style_methods(input)
 }
 
 /// Generates methods for margin styles.
 #[proc_macro]
-#[doc(hidden)]
 pub fn margin_style_methods(input: TokenStream) -> TokenStream {
     styles::margin_style_methods(input)
 }
 
 /// Generates methods for padding styles.
 #[proc_macro]
-#[doc(hidden)]
 pub fn padding_style_methods(input: TokenStream) -> TokenStream {
     styles::padding_style_methods(input)
 }
 
 /// Generates methods for position styles.
 #[proc_macro]
-#[doc(hidden)]
 pub fn position_style_methods(input: TokenStream) -> TokenStream {
     styles::position_style_methods(input)
 }
 
 /// Generates methods for overflow styles.
 #[proc_macro]
-#[doc(hidden)]
 pub fn overflow_style_methods(input: TokenStream) -> TokenStream {
     styles::overflow_style_methods(input)
 }
 
 /// Generates methods for cursor styles.
 #[proc_macro]
-#[doc(hidden)]
 pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
     styles::cursor_style_methods(input)
 }
 
 /// Generates methods for box shadow styles.
 #[proc_macro]
-#[doc(hidden)]
 pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
     styles::box_shadow_style_methods(input)
 }
