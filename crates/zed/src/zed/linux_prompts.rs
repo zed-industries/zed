@@ -31,7 +31,7 @@ pub fn fallback_prompt_renderer(
             detail: detail.map(ToString::to_string),
             actions: actions.iter().map(ToString::to_string).collect(),
             focus: cx.focus_handle(),
-            active_action_id: 0,
+            active_action_id: actions.len() - 1,
         }
     });
 
@@ -119,7 +119,7 @@ impl Render for FallbackPromptRenderer {
                     .child(detail)
             }))
             .child(h_flex().justify_end().gap_2().children(
-                self.actions.iter().enumerate().rev().map(|(ix, action)| {
+                self.actions.iter().rev().enumerate().map(|(ix, action)| {
                     ui::Button::new(ix, action.clone())
                         .label_size(LabelSize::Large)
                         .style(ButtonStyle::Filled)
