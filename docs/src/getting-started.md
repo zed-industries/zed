@@ -24,7 +24,7 @@ curl https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 
 This script supports `x86_64` and `AArch64`, as well as common Linux distributions: Ubuntu, Arch, Debian, RedHat, CentOS, Fedora, and more.
 
-If this script is insufficient for your use case or you run into problems running Zed, please see our [linux-specific documentation](./linux.md)
+If this script is insufficient for your use case or you run into problems running Zed, please see our [Linux-specific documentation](./linux.md).
 
 ## Configure Zed
 
