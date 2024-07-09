@@ -6,13 +6,11 @@ use collections::{BTreeMap, HashSet};
 pub struct Network<T: Clone, R: rand::Rng> {
     inboxes: BTreeMap<ReplicaId, Vec<Envelope<T>>>,
     disconnected_peers: HashSet<ReplicaId>,
-    out_of_order_delivery: bool,
     rng: R,
 }
 
 #[derive(Clone, Debug)]
 struct Envelope<T: Clone> {
-    sender: ReplicaId,
     message: T,
 }
 
@@ -21,7 +19,6 @@ impl<T: Clone, R: rand::Rng> Network<T, R> {
         Network {
             inboxes: BTreeMap::default(),
             disconnected_peers: HashSet::default(),
-            out_of_order_delivery: true,
             rng,
         }
     }
@@ -48,10 +45,6 @@ impl<T: Clone, R: rand::Rng> Network<T, R> {
         !self.disconnected_peers.is_empty()
     }
 
-    pub fn set_out_of_order_delivery(&mut self, out_of_order_delivery: bool) {
-        self.out_of_order_delivery = out_of_order_delivery;
-    }
-
     pub fn replicate(&mut self, old_replica_id: ReplicaId, new_replica_id: ReplicaId) {
         self.inboxes
             .insert(new_replica_id, self.inboxes[&old_replica_id].clone());
@@ -70,28 +63,13 @@ impl<T: Clone, R: rand::Rng> Network<T, R> {
         for (replica, inbox) in self.inboxes.iter_mut() {
             if *replica != sender && !self.disconnected_peers.contains(replica) {
                 for message in &messages {
-                    let start_ix = if self.out_of_order_delivery {
-                        // Allow inserting this message potentially *before* a previous
-                        // message sent by this peer.
-                        0
-                    } else if let Some((prev_message_ix, _)) = inbox
-                        .iter()
-                        .enumerate()
-                        .rev()
-                        .find(|envelope| envelope.1.sender == sender)
-                    {
-                        prev_message_ix + 1
-                    } else {
-                        0
-                    };
-
-                    // Insert one or more duplicates of this message.
+                    // Insert one or more duplicates of this message, potentially *before* the previous
+                    // message sent by this peer to simulate out-of-order delivery.
                     for _ in 0..self.rng.gen_range(1..4) {
-                        let insertion_index = self.rng.gen_range(start_ix..=inbox.len());
+                        let insertion_index = self.rng.gen_range(0..inbox.len() + 1);
                         inbox.insert(
                             insertion_index,
                             Envelope {
-                                sender,
                                 message: message.clone(),
                             },
                         );

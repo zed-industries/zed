@@ -37,16 +37,22 @@ pub enum ContextOperation {
     InsertMessage {
         anchor: MessageAnchor,
         metadata: MessageMetadata,
+        version: clock::Global,
     },
     UpdateMessage {
         message_id: MessageId,
         metadata: MessageMetadata,
+        version: clock::Global,
     },
-    UpdateSummary(ContextSummary),
+    UpdateSummary {
+        summary: ContextSummary,
+        version: clock::Global,
+    },
     SlashCommandFinished {
         id: SlashCommandId,
         output_range: Range<language::Anchor>,
         sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+        version: clock::Global,
     },
     BufferOperation(language::Operation),
 }
@@ -74,6 +80,7 @@ impl ContextOperation {
                         ),
                         timestamp: id.0,
                     },
+                    version: language::proto::deserialize_version(&insert.version),
                 })
             }
             proto::context_operation::Variant::UpdateMessage(update) => Ok(Self::UpdateMessage {
@@ -87,16 +94,18 @@ impl ContextOperation {
                         update.timestamp.context("invalid timestamp")?,
                     ),
                 },
+                version: language::proto::deserialize_version(&update.version),
             }),
-            proto::context_operation::Variant::UpdateSummary(update) => {
-                Ok(Self::UpdateSummary(ContextSummary {
+            proto::context_operation::Variant::UpdateSummary(update) => Ok(Self::UpdateSummary {
+                summary: ContextSummary {
                     text: update.summary,
                     done: update.done,
                     timestamp: language::proto::deserialize_timestamp(
                         update.timestamp.context("invalid timestamp")?,
                     ),
-                }))
-            }
+                },
+                version: language::proto::deserialize_version(&update.version),
+            }),
             proto::context_operation::Variant::SlashCommandFinished(finished) => {
                 Ok(Self::SlashCommandFinished {
                     id: SlashCommandId(language::proto::deserialize_timestamp(
@@ -118,6 +127,7 @@ impl ContextOperation {
                             })
                         })
                         .collect::<Result<Vec<_>>>()?,
+                    version: language::proto::deserialize_version(&finished.version),
                 })
             }
             proto::context_operation::Variant::BufferOperation(op) => Ok(Self::BufferOperation(
@@ -130,7 +140,11 @@ impl ContextOperation {
 
     fn to_proto(&self) -> proto::ContextOperation {
         match self {
-            Self::InsertMessage { anchor, metadata } => proto::ContextOperation {
+            Self::InsertMessage {
+                anchor,
+                metadata,
+                version,
+            } => proto::ContextOperation {
                 variant: Some(proto::context_operation::Variant::InsertMessage(
                     proto::context_operation::InsertMessage {
                         message: Some(proto::ContextMessage {
@@ -139,12 +153,14 @@ impl ContextOperation {
                             role: metadata.role.to_proto() as i32,
                             status: Some(metadata.status.to_proto()),
                         }),
+                        version: language::proto::serialize_version(version),
                     },
                 )),
             },
             Self::UpdateMessage {
                 message_id,
                 metadata,
+                version,
             } => proto::ContextOperation {
                 variant: Some(proto::context_operation::Variant::UpdateMessage(
                     proto::context_operation::UpdateMessage {
@@ -152,15 +168,17 @@ impl ContextOperation {
                         role: metadata.role.to_proto() as i32,
                         status: Some(metadata.status.to_proto()),
                         timestamp: Some(language::proto::serialize_timestamp(metadata.timestamp)),
+                        version: language::proto::serialize_version(version),
                     },
                 )),
             },
-            Self::UpdateSummary(summary) => proto::ContextOperation {
+            Self::UpdateSummary { summary, version } => proto::ContextOperation {
                 variant: Some(proto::context_operation::Variant::UpdateSummary(
                     proto::context_operation::UpdateSummary {
                         summary: summary.text.clone(),
                         done: summary.done,
                         timestamp: Some(language::proto::serialize_timestamp(summary.timestamp)),
+                        version: language::proto::serialize_version(version),
                     },
                 )),
             },
@@ -168,6 +186,7 @@ impl ContextOperation {
                 id,
                 output_range,
                 sections,
+                version,
             } => proto::ContextOperation {
                 variant: Some(proto::context_operation::Variant::SlashCommandFinished(
                     proto::context_operation::SlashCommandFinished {
@@ -188,6 +207,7 @@ impl ContextOperation {
                                 }
                             })
                             .collect(),
+                        version: language::proto::serialize_version(version),
                     },
                 )),
             },
@@ -205,10 +225,23 @@ impl ContextOperation {
         match self {
             Self::InsertMessage { anchor, .. } => anchor.id.0,
             Self::UpdateMessage { metadata, .. } => metadata.timestamp,
-            Self::UpdateSummary(summary) => summary.timestamp,
+            Self::UpdateSummary { summary, .. } => summary.timestamp,
             Self::SlashCommandFinished { id, .. } => id.0,
             Self::BufferOperation(_) => {
                 panic!("reading the timestamp of a buffer operation is not supported")
+            }
+        }
+    }
+
+    /// Returns the current version of the context operation.
+    pub fn version(&self) -> &clock::Global {
+        match self {
+            Self::InsertMessage { version, .. }
+            | Self::UpdateMessage { version, .. }
+            | Self::UpdateSummary { version, .. }
+            | Self::SlashCommandFinished { version, .. } => version,
+            Self::BufferOperation(_) => {
+                panic!("reading the version of a buffer operation is not supported")
             }
         }
     }
@@ -288,8 +321,8 @@ pub struct Context {
     id: Option<String>,
     timestamp: clock::Lamport,
     version: clock::Global,
-    deferred_replicas: HashSet<ReplicaId>,
     pending_ops: Vec<ContextOperation>,
+    operations: Vec<ContextOperation>,
     buffer: Model<Buffer>,
     edit_suggestions: Vec<EditSuggestion>,
     pending_slash_commands: Vec<PendingSlashCommand>,
@@ -338,8 +371,8 @@ impl Context {
             id: Some(Uuid::new_v4().to_string()),
             timestamp: clock::Lamport::new(replica_id),
             version: clock::Global::new(),
-            deferred_replicas: HashSet::default(),
             pending_ops: Vec::new(),
+            operations: Vec::new(),
             message_anchors: Default::default(),
             messages_metadata: Default::default(),
             edit_suggestions: Vec::new(),
@@ -470,8 +503,8 @@ impl Context {
                 id,
                 timestamp,
                 version,
-                deferred_replicas: HashSet::default(),
                 pending_ops: Vec::new(),
+                operations: Vec::new(),
                 message_anchors,
                 messages_metadata: saved_context.message_metadata,
                 edit_suggestions: Vec::new(),
@@ -529,11 +562,6 @@ impl Context {
         timestamp
     }
 
-    fn observe_timestamp(&mut self, timestamp: clock::Lamport) {
-        self.version.observe(timestamp);
-        self.timestamp.observe(timestamp);
-    }
-
     pub fn serialize_ops(
         &self,
         since: &ContextVersion,
@@ -544,42 +572,12 @@ impl Context {
             .read(cx)
             .serialize_ops(Some(since.buffer.clone()), cx);
 
-        let mut context_ops = Vec::new();
-        for anchor in &self.message_anchors {
-            let metadata = &self.messages_metadata[&anchor.id];
-            if !since.context.observed(anchor.id.0) {
-                context_ops.push(ContextOperation::InsertMessage {
-                    anchor: anchor.clone(),
-                    metadata: MessageMetadata {
-                        role: metadata.role,
-                        status: metadata.status.clone(),
-                        timestamp: anchor.id.0,
-                    },
-                });
-                if metadata.timestamp > anchor.id.0 {
-                    context_ops.push(ContextOperation::UpdateMessage {
-                        message_id: anchor.id,
-                        metadata: metadata.clone(),
-                    });
-                }
-            } else if !since.context.observed(metadata.timestamp) {
-                context_ops.push(ContextOperation::UpdateMessage {
-                    message_id: anchor.id,
-                    metadata: metadata.clone(),
-                });
-            }
-        }
-
-        for (command_id, command) in &self.finished_slash_commands {
-            if !since.context.observed(command_id.0) {
-                context_ops.push(ContextOperation::SlashCommandFinished {
-                    id: *command_id,
-                    output_range: command.output_range.clone(),
-                    sections: command.sections.clone(),
-                });
-            }
-        }
-
+        let mut context_ops = self
+            .operations
+            .iter()
+            .filter(|op| !since.context.observed(op.timestamp()))
+            .cloned()
+            .collect::<Vec<_>>();
         context_ops.extend(self.pending_ops.iter().cloned());
 
         cx.background_executor().spawn(async move {
@@ -618,18 +616,18 @@ impl Context {
         let mut messages_changed = false;
         let mut summary_changed = false;
 
-        self.deferred_replicas.clear();
         self.pending_ops.sort_unstable_by_key(|op| op.timestamp());
         for op in mem::take(&mut self.pending_ops) {
             if !self.can_apply_op(&op, cx) {
-                self.deferred_replicas.insert(op.timestamp().replica_id);
                 self.pending_ops.push(op);
                 continue;
             }
 
             let timestamp = op.timestamp();
-            match op {
-                ContextOperation::InsertMessage { anchor, metadata } => {
+            match op.clone() {
+                ContextOperation::InsertMessage {
+                    anchor, metadata, ..
+                } => {
                     if self.messages_metadata.contains_key(&anchor.id) {
                         // We already applied this operation.
                     } else {
@@ -640,6 +638,7 @@ impl Context {
                 ContextOperation::UpdateMessage {
                     message_id,
                     metadata: new_metadata,
+                    ..
                 } => {
                     let metadata = self.messages_metadata.get_mut(&message_id).unwrap();
                     if new_metadata.timestamp > metadata.timestamp {
@@ -647,7 +646,10 @@ impl Context {
                         messages_changed = true;
                     }
                 }
-                ContextOperation::UpdateSummary(new_summary) => {
+                ContextOperation::UpdateSummary {
+                    summary: new_summary,
+                    ..
+                } => {
                     if self
                         .summary
                         .as_ref()
@@ -661,6 +663,7 @@ impl Context {
                     id,
                     output_range,
                     sections,
+                    ..
                 } => {
                     if !self.finished_slash_commands.contains_key(&id) {
                         let buffer = self.buffer.read(cx);
@@ -685,7 +688,9 @@ impl Context {
                 ContextOperation::BufferOperation(_) => unreachable!(),
             }
 
-            self.observe_timestamp(timestamp);
+            self.version.observe(timestamp);
+            self.timestamp.observe(timestamp);
+            self.operations.push(op);
         }
 
         if messages_changed {
@@ -700,7 +705,7 @@ impl Context {
     }
 
     fn can_apply_op(&self, op: &ContextOperation, cx: &AppContext) -> bool {
-        if self.deferred_replicas.contains(&op.timestamp().replica_id) {
+        if !self.version.observed_all(op.version()) {
             return false;
         }
 
@@ -733,6 +738,11 @@ impl Context {
                 panic!("buffer operations should always be applied")
             }
         }
+    }
+
+    fn push_op(&mut self, op: ContextOperation, cx: &mut ModelContext<Self>) {
+        self.operations.push(op.clone());
+        cx.emit(ContextEvent::Operation(op));
     }
 
     pub fn buffer(&self) -> &Model<Buffer> {
@@ -1025,8 +1035,9 @@ impl Context {
                             output.text.push('\n');
                         }
 
+                        let version = this.version.clone();
                         let command_id = SlashCommandId(this.next_timestamp());
-                        let events = this.buffer.update(cx, |buffer, cx| {
+                        let (operation, event) = this.buffer.update(cx, |buffer, cx| {
                             let start = command_range.start.to_offset(buffer);
                             let old_end = command_range.end.to_offset(buffer);
                             let new_end = start + output.text.len();
@@ -1059,23 +1070,23 @@ impl Context {
                                 },
                             );
 
-                            [
-                                ContextEvent::Operation(ContextOperation::SlashCommandFinished {
+                            (
+                                ContextOperation::SlashCommandFinished {
                                     id: command_id,
                                     output_range: output_range.clone(),
                                     sections: sections.clone(),
-                                }),
+                                    version,
+                                },
                                 ContextEvent::SlashCommandFinished {
                                     output_range,
                                     sections,
                                     run_commands_in_output: output.run_commands_in_text,
                                 },
-                            ]
+                            )
                         });
 
-                        for event in events {
-                            cx.emit(event);
-                        }
+                        this.push_op(operation, cx);
+                        cx.emit(event);
                     }
                     Err(error) => {
                         if let Some(pending_command) =
@@ -1297,14 +1308,17 @@ impl Context {
         cx: &mut ModelContext<Self>,
         f: impl FnOnce(&mut MessageMetadata),
     ) {
+        let version = self.version.clone();
         let timestamp = self.next_timestamp();
         if let Some(metadata) = self.messages_metadata.get_mut(&id) {
             f(metadata);
             metadata.timestamp = timestamp;
-            cx.emit(ContextEvent::Operation(ContextOperation::UpdateMessage {
+            let operation = ContextOperation::UpdateMessage {
                 message_id: id,
                 metadata: metadata.clone(),
-            }));
+                version,
+            };
+            self.push_op(operation, cx);
             cx.emit(ContextEvent::MessagesEdited);
             cx.notify();
         }
@@ -1342,6 +1356,7 @@ impl Context {
                 buffer.anchor_before(offset + 1)
             });
 
+            let version = self.version.clone();
             let anchor = MessageAnchor {
                 id: MessageId(self.next_timestamp()),
                 start,
@@ -1352,10 +1367,14 @@ impl Context {
                 timestamp: anchor.id.0,
             };
             self.insert_message(anchor.clone(), metadata.clone(), cx);
-            cx.emit(ContextEvent::Operation(ContextOperation::InsertMessage {
-                anchor: anchor.clone(),
-                metadata,
-            }));
+            self.push_op(
+                ContextOperation::InsertMessage {
+                    anchor: anchor.clone(),
+                    metadata,
+                    version,
+                },
+                cx,
+            );
             Some(anchor)
         } else {
             None
@@ -1389,6 +1408,7 @@ impl Context {
                 }
             }
 
+            let version = self.version.clone();
             let suffix = if let Some(suffix_start) = suffix_start {
                 MessageAnchor {
                     id: MessageId(self.next_timestamp()),
@@ -1411,10 +1431,14 @@ impl Context {
                 timestamp: suffix.id.0,
             };
             self.insert_message(suffix.clone(), suffix_metadata.clone(), cx);
-            cx.emit(ContextEvent::Operation(ContextOperation::InsertMessage {
-                anchor: suffix.clone(),
-                metadata: suffix_metadata,
-            }));
+            self.push_op(
+                ContextOperation::InsertMessage {
+                    anchor: suffix.clone(),
+                    metadata: suffix_metadata,
+                    version,
+                },
+                cx,
+            );
 
             let new_messages =
                 if range.start == range.end || range.start == message.offset_range.start {
@@ -1433,6 +1457,7 @@ impl Context {
                         }
                     }
 
+                    let version = self.version.clone();
                     let selection = if let Some(prefix_end) = prefix_end {
                         MessageAnchor {
                             id: MessageId(self.next_timestamp()),
@@ -1455,10 +1480,14 @@ impl Context {
                         timestamp: selection.id.0,
                     };
                     self.insert_message(selection.clone(), selection_metadata.clone(), cx);
-                    cx.emit(ContextEvent::Operation(ContextOperation::InsertMessage {
-                        anchor: selection.clone(),
-                        metadata: selection_metadata,
-                    }));
+                    self.push_op(
+                        ContextOperation::InsertMessage {
+                            anchor: selection.clone(),
+                            metadata: selection_metadata,
+                            version,
+                        },
+                        cx,
+                    );
 
                     (Some(selection), Some(suffix))
                 };
@@ -1523,13 +1552,16 @@ impl Context {
                         let text = message?;
                         let mut lines = text.lines();
                         this.update(&mut cx, |this, cx| {
+                            let version = this.version.clone();
                             let timestamp = this.next_timestamp();
                             let summary = this.summary.get_or_insert(Default::default());
                             summary.text.extend(lines.next());
                             summary.timestamp = timestamp;
-                            cx.emit(ContextEvent::Operation(ContextOperation::UpdateSummary(
-                                summary.clone(),
-                            )));
+                            let operation = ContextOperation::UpdateSummary {
+                                summary: summary.clone(),
+                                version,
+                            };
+                            this.push_op(operation, cx);
                             cx.emit(ContextEvent::SummaryChanged);
                         })?;
 
@@ -1540,13 +1572,16 @@ impl Context {
                     }
 
                     this.update(&mut cx, |this, cx| {
+                        let version = this.version.clone();
                         let timestamp = this.next_timestamp();
                         if let Some(summary) = this.summary.as_mut() {
                             summary.done = true;
                             summary.timestamp = timestamp;
-                            cx.emit(ContextEvent::Operation(ContextOperation::UpdateSummary(
-                                summary.clone(),
-                            )));
+                            let operation = ContextOperation::UpdateSummary {
+                                summary: summary.clone(),
+                                version,
+                            };
+                            this.push_op(operation, cx);
                             cx.emit(ContextEvent::SummaryChanged);
                         }
                     })?;
@@ -2600,7 +2635,6 @@ mod tests {
 
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
         let network = Arc::new(Mutex::new(Network::new(rng.clone())));
-        network.lock().set_out_of_order_delivery(false);
         let mut contexts = Vec::new();
 
         let num_peers = rng.gen_range(min_peers..=max_peers);
