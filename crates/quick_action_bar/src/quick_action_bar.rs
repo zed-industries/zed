@@ -22,6 +22,7 @@ use workspace::{
 
 pub struct QuickActionBar {
     buffer_search_bar: View<BufferSearchBar>,
+    repl_menu: Option<View<ContextMenu>>,
     toggle_settings_menu: Option<View<ContextMenu>>,
     toggle_selections_menu: Option<View<ContextMenu>>,
     active_item: Option<Box<dyn ItemHandle>>,
@@ -40,6 +41,7 @@ impl QuickActionBar {
             buffer_search_bar,
             toggle_settings_menu: None,
             toggle_selections_menu: None,
+            repl_menu: None,
             active_item: None,
             _inlay_hints_enabled_subscription: None,
             workspace: workspace.weak_handle(),
@@ -148,6 +150,21 @@ impl Render for QuickActionBar {
                 }
             },
         );
+
+        // TODO - probably goes to editor
+        let todo_supports_repl = true;
+
+        let repl_dropdown = todo_supports_repl.then(|| {
+            IconButton::new("toggle_repl_icon", IconName::ReplPlay)
+                .size(ButtonSize::Compact)
+                .icon_size(IconSize::Small)
+                .style(ButtonStyle::Subtle)
+                .tooltip(|cx| Tooltip::text("REPL", cx))
+                .on_click({
+                    let workspace = self.workspace.clone();
+                    cx.listener(move |_quick_action_bar, _, cx| {})
+                })
+        });
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
             IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
@@ -290,9 +307,13 @@ impl Render for QuickActionBar {
             .child(
                 h_flex()
                     .gap(Spacing::Medium.rems(cx))
+                    .children(repl_dropdown)
                     .children(editor_selections_dropdown)
                     .child(editor_settings_dropdown),
             )
+            .when_some(self.repl_menu.as_ref(), |el, repl_menu| {
+                el.child(Self::render_menu_overlay(repl_menu))
+            })
             .when_some(
                 self.toggle_settings_menu.as_ref(),
                 |el, toggle_settings_menu| {
