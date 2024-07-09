@@ -1,7 +1,6 @@
 mod outline_panel_settings;
 
 use std::{
-    borrow::Cow,
     cmp,
     ops::Range,
     path::{Path, PathBuf},
@@ -2437,12 +2436,11 @@ impl OutlinePanel {
                                 let parent_expanded = parent_dirs
                                     .iter()
                                     .rev()
-                                    .skip_while(|(parent_path, ..)| {
-                                        !folded_dirs
+                                    .find(|(parent_path, ..)| {
+                                        folded_dirs
                                             .iter()
-                                            .any(|entry| entry.path.as_ref() == *parent_path)
+                                            .all(|entry| entry.path.as_ref() != *parent_path)
                                     })
-                                    .next()
                                     .map_or(true, |&(_, _, parent_expanded, _)| parent_expanded);
                                 if parent_expanded || query.is_some() {
                                     outline_panel.push_entry(
@@ -2465,12 +2463,11 @@ impl OutlinePanel {
                                 let parent_expanded = parent_dirs
                                     .iter()
                                     .rev()
-                                    .skip_while(|(parent_path, ..)| {
+                                    .find(|(parent_path, ..)| {
                                         folded_dirs
                                             .iter()
-                                            .any(|entry| entry.path.as_ref() == *parent_path)
+                                            .all(|entry| entry.path.as_ref() != *parent_path)
                                     })
-                                    .next()
                                     .map_or(true, |&(_, _, parent_expanded, _)| parent_expanded);
                                 if parent_expanded || query.is_some() {
                                     outline_panel.push_entry(
@@ -2599,12 +2596,11 @@ impl OutlinePanel {
                     let parent_expanded = parent_dirs
                         .iter()
                         .rev()
-                        .skip_while(|(parent_path, ..)| {
+                        .find(|(parent_path, ..)| {
                             folded_dirs
                                 .iter()
-                                .any(|entry| entry.path.as_ref() == *parent_path)
+                                .all(|entry| entry.path.as_ref() != *parent_path)
                         })
-                        .next()
                         .map_or(true, |&(_, _, parent_expanded, _)| parent_expanded);
                     if parent_expanded || query.is_some() {
                         outline_panel.push_entry(
@@ -2914,11 +2910,11 @@ impl Render for OutlinePanel {
 
         if self.cached_entries_with_depth.is_empty() {
             let header = if self.updating_fs_entries {
-                Cow::Borrowed("Loading outlines")
+                "Loading outlines"
             } else if query.is_some() {
-                Cow::Owned(format!("No matches for query"))
+                "No matches for query"
             } else {
-                Cow::Borrowed("No outlines available")
+                "No outlines available"
             };
 
             outline_panel.child(
