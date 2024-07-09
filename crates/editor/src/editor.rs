@@ -151,7 +151,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{FollowableViewRegistry, OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
+use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
 
@@ -268,8 +268,7 @@ pub fn init(cx: &mut AppContext) {
     init_settings(cx);
 
     workspace::register_project_item::<Editor>(cx);
-    cx.default_global::<FollowableViewRegistry>()
-        .register_item::<Editor>();
+    workspace::register_followable_item::<Editor>(cx);
     workspace::register_deserializable_item::<Editor>(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {

@@ -29,14 +29,14 @@ use futures::{
 use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyElement, AnyView, AnyWeakView, AppContext, AsyncAppContext,
-    AsyncWindowContext, BorrowAppContext, Bounds, CursorStyle, Decorations, DragMoveEvent,
-    Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global, Hsla, KeyContext,
-    Keystroke, ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point,
-    PromptLevel, ReadGlobal, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling,
-    UpdateGlobal, View, WeakView, WindowBounds, WindowHandle, WindowOptions,
+    AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
+    EventEmitter, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, ManagedView,
+    Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
+    Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds, WindowHandle,
+    WindowOptions,
 };
 use item::{
-    FollowableView, FollowableViewHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
+    FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
     ProjectItem,
 };
 use itertools::Itertools;
@@ -290,8 +290,6 @@ pub fn init_settings(cx: &mut AppContext) {
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
-    cx.set_global(FollowableViewRegistry::default());
-
     init_settings(cx);
     notifications::init(cx);
 
@@ -358,76 +356,41 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
     });
 }
 
-#[derive(Default)]
-pub struct FollowableViewRegistry(HashMap<TypeId, FollowableViewDescriptor>);
-
-struct FollowableViewDescriptor {
-    build: FollowableViewBuilder,
-    to_followable_view: fn(&AnyView) -> Box<dyn FollowableViewHandle>,
-    // TODO: in the future, this could be optional if we want to have views that
-    // can be followed that are not `Item`s.
-    to_item: fn(&AnyView) -> Box<dyn ItemHandle>,
-}
-
-type FollowableViewBuilder = fn(
+type FollowableItemBuilder = fn(
     View<Pane>,
     View<Workspace>,
     ViewId,
     &mut Option<proto::view::Variant>,
     &mut WindowContext,
-) -> Option<Task<Result<Box<dyn FollowableViewHandle>>>>;
+) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
 
-impl Global for FollowableViewRegistry {}
+#[derive(Default, Deref, DerefMut)]
+struct FollowableItemBuilders(
+    HashMap<
+        TypeId,
+        (
+            FollowableItemBuilder,
+            fn(&AnyView) -> Box<dyn FollowableItemHandle>,
+        ),
+    >,
+);
 
-impl FollowableViewRegistry {
-    pub fn register_item<I: FollowableView + Item>(&mut self) {
-        self.0.insert(
-            TypeId::of::<I>(),
-            FollowableViewDescriptor {
-                build: |pane, workspace, id, state, cx| {
-                    I::from_state_proto(pane, workspace, id, state, cx).map(|task| {
-                        cx.foreground_executor()
-                            .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
-                    })
-                },
-                to_followable_view: |this| Box::new(this.clone().downcast::<I>().unwrap()),
-                to_item: |this| Box::new(this.clone().downcast::<I>().unwrap()),
+impl Global for FollowableItemBuilders {}
+
+pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
+    let builders = cx.default_global::<FollowableItemBuilders>();
+    builders.insert(
+        TypeId::of::<I>(),
+        (
+            |pane, workspace, id, state, cx| {
+                I::from_state_proto(pane, workspace, id, state, cx).map(|task| {
+                    cx.foreground_executor()
+                        .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
+                })
             },
-        );
-    }
-
-    pub fn build_view(
-        &self,
-        pane: View<Pane>,
-        workspace: View<Workspace>,
-        id: ViewId,
-        variant: &mut Option<proto::view::Variant>,
-        cx: &mut WindowContext,
-    ) -> Option<Task<Result<Box<dyn FollowableViewHandle>>>> {
-        self.0.values().find_map(|descriptor| {
-            (descriptor.build)(pane.clone(), workspace.clone(), id, variant, cx)
-        })
-    }
-
-    pub fn followable_view_to_item(
-        &self,
-        view: &dyn FollowableViewHandle,
-    ) -> Option<Box<dyn ItemHandle>> {
-        let view = view.to_any();
-        self.0
-            .get(&view.entity_type())
-            .map(|descriptor| (descriptor.to_item)(&view))
-    }
-
-    pub fn item_to_followable_view(
-        &self,
-        view: &dyn ItemHandle,
-    ) -> Option<Box<dyn FollowableViewHandle>> {
-        let view = view.to_any();
-        self.0
-            .get(&view.entity_type())
-            .map(|descriptor| (descriptor.to_followable_view)(&view))
-    }
+            |this| Box::new(this.clone().downcast::<I>().unwrap()),
+        ),
+    );
 }
 
 #[derive(Default, Deref, DerefMut)]
@@ -665,7 +628,7 @@ pub struct ViewId {
 struct FollowerState {
     leader_id: PeerId,
     active_view_id: Option<ViewId>,
-    views: HashMap<ViewId, Box<dyn FollowableViewHandle>>,
+    items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
 }
 
 impl Workspace {
@@ -2815,7 +2778,7 @@ impl Workspace {
     fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
         self.follower_states.retain(|_, state| {
             if state.leader_id == peer_id {
-                for item in state.views.values() {
+                for item in state.items_by_leader_view_id.values() {
                     item.set_leader_peer_id(None, cx);
                 }
                 false
@@ -2841,7 +2804,7 @@ impl Workspace {
             FollowerState {
                 leader_id,
                 active_view_id: None,
-                views: Default::default(),
+                items_by_leader_view_id: Default::default(),
             },
         );
         cx.notify();
@@ -2971,8 +2934,8 @@ impl Workspace {
     pub fn unfollow(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) -> Option<PeerId> {
         let state = self.follower_states.remove(pane)?;
         let leader_id = state.leader_id;
-        for (_, view) in state.views {
-            view.set_leader_peer_id(None, cx);
+        for (_, item) in state.items_by_leader_view_id {
+            item.set_leader_peer_id(None, cx);
         }
 
         if self
@@ -3102,8 +3065,7 @@ impl Workspace {
             .pane_for(&*item)
             .and_then(|pane| self.leader_for_pane(&pane));
 
-        let item_handle =
-            FollowableViewRegistry::global(cx).item_to_followable_view(item.as_ref())?;
+        let item_handle = item.to_followable_item_handle(cx)?;
         let id = item_handle.remote_id(&self.app_state.client, cx)?;
         let variant = item_handle.to_state_proto(cx)?;
 
@@ -3146,8 +3108,7 @@ impl Workspace {
                     pane.read(cx).items().filter_map({
                         let cx = &cx;
                         move |item| {
-                            let followable_view = FollowableViewRegistry::global(cx)
-                                .item_to_followable_view(item.as_ref())?;
+                            let item = item.to_followable_item_handle(cx)?;
 
                             // If the item belongs to a particular project, then it should
                             // only be included if this project is shared, and the follower
@@ -3156,14 +3117,14 @@ impl Workspace {
                             // Some items, like channel notes, do not belong to a particular
                             // project, so they should be included regardless of whether the
                             // current project is shared, or what project the follower is in.
-                            if followable_view.is_project_item(cx)
+                            if item.is_project_item(cx)
                                 && (project_id.is_none() || project_id != follower_project_id)
                             {
                                 return None;
                             }
 
-                            let id = followable_view.remote_id(client, cx)?.to_proto();
-                            let variant = followable_view.to_state_proto(cx)?;
+                            let id = item.remote_id(client, cx)?.to_proto();
+                            let variant = item.to_state_proto(cx)?;
                             Some(proto::View {
                                 id: Some(id),
                                 leader_id,
@@ -3209,10 +3170,9 @@ impl Workspace {
                                 None
                             };
 
-                        if state
-                            .active_view_id
-                            .is_some_and(|view_id| !state.views.contains_key(&view_id))
-                        {
+                        if state.active_view_id.is_some_and(|view_id| {
+                            !state.items_by_leader_view_id.contains_key(&view_id)
+                        }) {
                             panes.push(pane.clone())
                         }
                     }
@@ -3239,8 +3199,8 @@ impl Workspace {
                     for (_, state) in &mut this.follower_states {
                         if state.leader_id == leader_id {
                             let view_id = ViewId::from_proto(id.clone())?;
-                            if let Some(view) = state.views.get(&view_id) {
-                                tasks.push(view.apply_update_proto(&project, variant.clone(), cx));
+                            if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
+                                tasks.push(item.apply_update_proto(&project, variant.clone(), cx));
                             }
                         }
                     }
@@ -3272,6 +3232,13 @@ impl Workspace {
     ) -> Result<()> {
         let this = this.upgrade().context("workspace dropped")?;
 
+        let item_builders = cx.update(|cx| {
+            cx.default_global::<FollowableItemBuilders>()
+                .values()
+                .map(|b| b.0)
+                .collect::<Vec<_>>()
+        })?;
+
         let Some(id) = view.id.clone() else {
             return Err(anyhow!("no id for view"));
         };
@@ -3282,14 +3249,11 @@ impl Workspace {
             Err(anyhow!("missing view variant"))?;
         }
 
-        let task = cx
-            .update(|cx| {
-                FollowableViewRegistry::update_global(cx, |registry, cx| {
-                    registry.build_view(pane.clone(), this.clone(), id, &mut variant, cx)
-                })
-            })
-            .log_err()
-            .flatten();
+        let task = item_builders.iter().find_map(|build_item| {
+            cx.update(|cx| build_item(pane.clone(), this.clone(), id, &mut variant, cx))
+                .log_err()
+                .flatten()
+        });
         let Some(task) = task else {
             return Err(anyhow!(
                 "failed to construct view from leader (maybe from a different version of zed?)"
@@ -3301,7 +3265,7 @@ impl Workspace {
         this.update(cx, |this, cx| {
             let state = this.follower_states.get_mut(&pane)?;
             item.set_leader_peer_id(Some(leader_id), cx);
-            state.views.insert(id, item);
+            state.items_by_leader_view_id.insert(id, item);
 
             Some(())
         })?;
@@ -3318,9 +3282,16 @@ impl Workspace {
     ) -> Result<()> {
         let this = this.upgrade().context("workspace dropped")?;
 
-        let mut view_tasks_by_pane = HashMap::default();
+        let item_builders = cx.update(|cx| {
+            cx.default_global::<FollowableItemBuilders>()
+                .values()
+                .map(|b| b.0)
+                .collect::<Vec<_>>()
+        })?;
+
+        let mut item_tasks_by_pane = HashMap::default();
         for pane in panes {
-            let mut view_tasks = Vec::new();
+            let mut item_tasks = Vec::new();
             let mut leader_view_ids = Vec::new();
             for view in &views {
                 let Some(id) = &view.id else {
@@ -3331,33 +3302,32 @@ impl Workspace {
                 if variant.is_none() {
                     Err(anyhow!("missing view variant"))?;
                 }
-
-                let task = cx.update(|cx| {
-                    FollowableViewRegistry::update_global(cx, |registry, cx| {
-                        registry.build_view(pane.clone(), this.clone(), id, &mut variant, cx)
-                    })
-                })?;
-                if let Some(task) = task {
-                    view_tasks.push(task);
-                    leader_view_ids.push(id);
-                    break;
-                } else if variant.is_none() {
-                    Err(anyhow!(
-                        "failed to construct view from leader (maybe from a different version of zed?)"
-                    ))?;
+                for build_item in &item_builders {
+                    let task = cx.update(|cx| {
+                        build_item(pane.clone(), this.clone(), id, &mut variant, cx)
+                    })?;
+                    if let Some(task) = task {
+                        item_tasks.push(task);
+                        leader_view_ids.push(id);
+                        break;
+                    } else if variant.is_none() {
+                        Err(anyhow!(
+                            "failed to construct view from leader (maybe from a different version of zed?)"
+                        ))?;
+                    }
                 }
             }
 
-            view_tasks_by_pane.insert(pane, (view_tasks, leader_view_ids));
+            item_tasks_by_pane.insert(pane, (item_tasks, leader_view_ids));
         }
 
-        for (pane, (view_tasks, leader_view_ids)) in view_tasks_by_pane {
-            let views = futures::future::try_join_all(view_tasks).await?;
+        for (pane, (item_tasks, leader_view_ids)) in item_tasks_by_pane {
+            let items = futures::future::try_join_all(item_tasks).await?;
             this.update(cx, |this, cx| {
                 let state = this.follower_states.get_mut(&pane)?;
-                for (id, view) in leader_view_ids.into_iter().zip(views) {
-                    view.set_leader_peer_id(Some(leader_id), cx);
-                    state.views.insert(id, view);
+                for (id, item) in leader_view_ids.into_iter().zip(items) {
+                    item.set_leader_peer_id(Some(leader_id), cx);
+                    state.items_by_leader_view_id.insert(id, item);
                 }
 
                 Some(())
@@ -3376,22 +3346,20 @@ impl Workspace {
                         .pane_for(&*item)
                         .and_then(|pane| self.leader_for_pane(&pane));
 
-                    if let Some(followable_view) =
-                        FollowableViewRegistry::global(cx).item_to_followable_view(item.as_ref())
-                    {
-                        let id = followable_view
+                    if let Some(item) = item.to_followable_item_handle(cx) {
+                        let id = item
                             .remote_id(&self.app_state.client, cx)
                             .map(|id| id.to_proto());
 
                         if let Some(id) = id.clone() {
-                            if let Some(variant) = followable_view.to_state_proto(cx) {
+                            if let Some(variant) = item.to_state_proto(cx) {
                                 let view = Some(proto::View {
                                     id: Some(id.clone()),
                                     leader_id,
                                     variant: Some(variant),
                                 });
 
-                                is_project_item = followable_view.is_project_item(cx);
+                                is_project_item = item.is_project_item(cx);
                                 update = proto::UpdateActiveView {
                                     view,
                                     // TODO: once v0.124.0 is retired we can stop sending these
@@ -3469,13 +3437,9 @@ impl Workspace {
                 continue;
             }
             if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
-                if let Some(view) = state.views.get(&active_view_id) {
-                    if leader_in_this_project || !view.is_project_item(cx) {
-                        if let Some(item) = FollowableViewRegistry::global(cx)
-                            .followable_view_to_item(view.as_ref())
-                        {
-                            items_to_activate.push((pane.clone(), item));
-                        }
+                if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
+                    if leader_in_this_project || !item.is_project_item(cx) {
+                        items_to_activate.push((pane.clone(), item.boxed_clone()));
                     }
                 }
                 continue;

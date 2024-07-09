@@ -34,18 +34,16 @@ use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
 use ui::{h_flex, prelude::*, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
-use workspace::item::{BreadcrumbText, FollowEvent, FollowableViewHandle};
+use workspace::item::{BreadcrumbText, FollowEvent, FollowableItemHandle};
 use workspace::{
-    item::{FollowableView, Item, ItemEvent, ItemHandle, ProjectItem},
+    item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
     ItemId, ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 
-impl FollowableView for Editor {
-    type Event = EditorEvent;
-
+impl FollowableItem for Editor {
     fn remote_id(&self) -> Option<ViewId> {
         self.remote_id
     }

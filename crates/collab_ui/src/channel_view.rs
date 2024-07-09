@@ -22,18 +22,18 @@ use std::{
 };
 use ui::{prelude::*, Label};
 use util::ResultExt;
+use workspace::notifications::NotificationId;
 use workspace::{
-    item::{FollowableView, Item, ItemEvent, ItemHandle, TabContentParams},
+    item::{FollowableItem, Item, ItemEvent, ItemHandle, TabContentParams},
+    register_followable_item,
     searchable::SearchableItemHandle,
     ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{notifications::NotificationId, FollowableViewRegistry};
 
 actions!(collab, [CopyLink]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.default_global::<FollowableViewRegistry>()
-        .register_item::<ChannelView>();
+    register_followable_item::<ChannelView>(cx)
 }
 
 pub struct ChannelView {
@@ -452,9 +452,7 @@ impl Item for ChannelView {
     }
 }
 
-impl FollowableView for ChannelView {
-    type Event = EditorEvent;
-
+impl FollowableItem for ChannelView {
     fn remote_id(&self) -> Option<workspace::ViewId> {
         self.remote_id
     }
