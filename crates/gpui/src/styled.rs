@@ -1,11 +1,10 @@
+use crate::TextStyleRefinement;
 use crate::{
-    self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
-    DefiniteLength, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla,
-    JustifyContent, Length, SharedString, StyleRefinement, WhiteSpace,
+    self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
+    Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
+    SharedString, StyleRefinement, WhiteSpace,
 };
-use crate::{BoxShadow, TextStyleRefinement};
 pub use gpui_macros::{margin_style_methods, padding_style_methods, position_style_methods};
-use smallvec::{smallvec, SmallVec};
 use taffy::style::{AlignContent, Display};
 
 /// A trait for elements that can be styled.
@@ -21,6 +20,7 @@ pub trait Styled: Sized {
     gpui_macros::position_style_methods!();
     gpui_macros::overflow_style_methods!();
     gpui_macros::cursor_style_methods!();
+    gpui_macros::box_shadow_style_methods!();
 
     /// Sets the display type of the element to `block`.
     /// [Docs](https://tailwindcss.com/docs/display)
@@ -300,104 +300,6 @@ pub trait Styled: Sized {
         Self: Sized,
     {
         self.style().border_color = Some(border_color.into());
-        self
-    }
-
-    /// Sets the box shadow of the element.
-    /// [Docs](https://tailwindcss.com/docs/box-shadow)
-    fn shadow(mut self, shadows: SmallVec<[BoxShadow; 2]>) -> Self {
-        self.style().box_shadow = Some(shadows);
-        self
-    }
-
-    /// Clears the box shadow of the element.
-    /// [Docs](https://tailwindcss.com/docs/box-shadow)
-    fn shadow_none(mut self) -> Self {
-        self.style().box_shadow = Some(Default::default());
-        self
-    }
-
-    /// Sets the box shadow of the element.
-    /// [Docs](https://tailwindcss.com/docs/box-shadow)
-    fn shadow_sm(mut self) -> Self {
-        self.style().box_shadow = Some(smallvec::smallvec![BoxShadow {
-            color: hsla(0., 0., 0., 0.05),
-            offset: point(px(0.), px(1.)),
-            blur_radius: px(2.),
-            spread_radius: px(0.),
-        }]);
-        self
-    }
-
-    /// Sets the box shadow of the element.
-    /// [Docs](https://tailwindcss.com/docs/box-shadow)
-    fn shadow_md(mut self) -> Self {
-        self.style().box_shadow = Some(smallvec![
-            BoxShadow {
-                color: hsla(0.5, 0., 0., 0.1),
-                offset: point(px(0.), px(4.)),
-                blur_radius: px(6.),
-                spread_radius: px(-1.),
-            },
-            BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
-                offset: point(px(0.), px(2.)),
-                blur_radius: px(4.),
-                spread_radius: px(-2.),
-            }
-        ]);
-        self
-    }
-
-    /// Sets the box shadow of the element.
-    /// [Docs](https://tailwindcss.com/docs/box-shadow)
-    fn shadow_lg(mut self) -> Self {
-        self.style().box_shadow = Some(smallvec![
-            BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
-                offset: point(px(0.), px(10.)),
-                blur_radius: px(15.),
-                spread_radius: px(-3.),
-            },
-            BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
-                offset: point(px(0.), px(4.)),
-                blur_radius: px(6.),
-                spread_radius: px(-4.),
-            }
-        ]);
-        self
-    }
-
-    /// Sets the box shadow of the element.
-    /// [Docs](https://tailwindcss.com/docs/box-shadow)
-    fn shadow_xl(mut self) -> Self {
-        self.style().box_shadow = Some(smallvec![
-            BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
-                offset: point(px(0.), px(20.)),
-                blur_radius: px(25.),
-                spread_radius: px(-5.),
-            },
-            BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
-                offset: point(px(0.), px(8.)),
-                blur_radius: px(10.),
-                spread_radius: px(-6.),
-            }
-        ]);
-        self
-    }
-
-    /// Sets the box shadow of the element.
-    /// [Docs](https://tailwindcss.com/docs/box-shadow)
-    fn shadow_2xl(mut self) -> Self {
-        self.style().box_shadow = Some(smallvec![BoxShadow {
-            color: hsla(0., 0., 0., 0.25),
-            offset: point(px(0.), px(25.)),
-            blur_radius: px(50.),
-            spread_radius: px(-12.),
-        }]);
         self
     }
 

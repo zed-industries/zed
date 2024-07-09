@@ -76,6 +76,13 @@ pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
     styles::cursor_style_methods(input)
 }
 
+/// Generates methods for box shadow styles.
+#[proc_macro]
+#[doc(hidden)]
+pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
+    styles::box_shadow_style_methods(input)
+}
+
 /// #[gpui::test] can be used to annotate test functions that run with GPUI support.
 /// it supports both synchronous and asynchronous tests, and can provide you with
 /// as many `TestAppContext` instances as you need.
