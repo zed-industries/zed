@@ -2,6 +2,7 @@ use std::{ops::Range, sync::OnceLock, time::Duration};
 
 use gpui::{actions, impl_actions, ViewContext};
 use language::Point;
+use multi_buffer::MultiBufferRow;
 use regex::Regex;
 use search::{buffer_search, BufferSearchBar, SearchOptions};
 use serde_derive::Deserialize;
@@ -362,9 +363,11 @@ fn replace_command(
         if let Some(editor) = editor.as_mut() {
             editor.update(cx, |editor, cx| {
                 let snapshot = &editor.snapshot(cx).buffer_snapshot;
+                let end_row = MultiBufferRow(range.end.saturating_sub(1) as u32);
+                let end_point = Point::new(end_row.0, snapshot.line_len(end_row));
                 let range = snapshot
                     .anchor_before(Point::new(range.start.saturating_sub(1) as u32, 0))
-                    ..snapshot.anchor_before(Point::new(range.end as u32, 0));
+                    ..snapshot.anchor_after(end_point);
                 editor.set_search_within_ranges(&[range], cx)
             })
         }
@@ -724,6 +727,50 @@ mod test {
              «three fˇ»our
              five six
              "
+        });
+    }
+
+    // cargo test -p vim --features neovim test_replace_with_range_at_start
+    #[gpui::test]
+    async fn test_replace_with_range_at_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "ˇa
+            a
+            a
+            a
+            a
+            a
+            a
+             "
+        })
+        .await;
+        cx.simulate_shared_keystrokes(": 2 , 5 s / ^ / b").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "a
+            ba
+            ba
+            ba
+            ˇba
+            a
+            a
+             "
+        });
+        cx.executor().advance_clock(Duration::from_millis(250));
+        cx.run_until_parked();
+
+        cx.simulate_shared_keystrokes("/ a enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "a
+                ba
+                ba
+                ba
+                bˇa
+                a
+                a
+                 "
         });
     }
 
