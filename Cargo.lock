@@ -8040,6 +8040,7 @@ dependencies = [
  "similar",
  "smol",
  "snippet",
+ "snippet_provider",
  "task",
  "tempfile",
  "terminal",
@@ -9854,6 +9855,21 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "smallvec",
+]
+
+[[package]]
+name = "snippet_provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "serde",
+ "serde_json",
+ "snippet",
+ "util",
 ]
 
 [[package]]
