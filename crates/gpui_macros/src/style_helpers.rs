@@ -2,15 +2,38 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
+    braced,
     parse::{Parse, ParseStream, Result},
-    parse_macro_input,
+    parse_macro_input, Token, Visibility,
 };
 
-struct StyleableMacroInput;
+#[derive(Debug)]
+struct StyleableMacroInput {
+    method_visibility: Visibility,
+}
 
 impl Parse for StyleableMacroInput {
-    fn parse(_input: ParseStream) -> Result<Self> {
-        Ok(StyleableMacroInput)
+    fn parse(input: ParseStream) -> Result<Self> {
+        if !input.peek(syn::token::Brace) {
+            return Ok(Self {
+                method_visibility: Visibility::Inherited,
+            });
+        }
+
+        let content;
+        braced!(content in input);
+
+        let mut method_visibility = None;
+
+        let ident: syn::Ident = content.parse()?;
+        if ident == "visibility" {
+            let _colon: Token![:] = content.parse()?;
+            method_visibility = Some(content.parse()?);
+        }
+
+        Ok(Self {
+            method_visibility: method_visibility.unwrap_or(Visibility::Inherited),
+        })
     }
 }
 
@@ -25,8 +48,12 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
 }
 
 pub fn margin_style_methods(input: TokenStream) -> TokenStream {
-    let _ = parse_macro_input!(input as StyleableMacroInput);
-    let methods = generate_box_style_methods(margin_box_style_prefixes(), box_style_suffixes());
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let methods = generate_box_style_methods(
+        margin_box_style_prefixes(),
+        box_style_suffixes(),
+        input.method_visibility,
+    );
     let output = quote! {
         #(#methods)*
     };
@@ -35,9 +62,28 @@ pub fn margin_style_methods(input: TokenStream) -> TokenStream {
 }
 
 pub fn padding_style_methods(input: TokenStream) -> TokenStream {
-    let _ = parse_macro_input!(input as StyleableMacroInput);
-    let methods = generate_box_style_methods(padding_box_style_prefixes(), box_style_suffixes());
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+    let methods = generate_box_style_methods(
+        padding_box_style_prefixes(),
+        box_style_suffixes(),
+        visibility.clone(),
+    );
     let output = quote! {
+        /// Sets the position of the element to `relative`.
+        /// [Docs](https://tailwindcss.com/docs/position)
+        #visibility fn relative(mut self) -> Self {
+            self.style().position = Some(gpui::Position::Relative);
+            self
+        }
+
+        /// Sets the position of the element to `absolute`.
+        /// [Docs](https://tailwindcss.com/docs/position)
+        #visibility fn absolute(mut self) -> Self {
+            self.style().position = Some(gpui::Position::Absolute);
+            self
+        }
+
         #(#methods)*
     };
 
@@ -45,8 +91,12 @@ pub fn padding_style_methods(input: TokenStream) -> TokenStream {
 }
 
 pub fn position_style_methods(input: TokenStream) -> TokenStream {
-    let _ = parse_macro_input!(input as StyleableMacroInput);
-    let methods = generate_box_style_methods(position_box_style_prefixes(), box_style_suffixes());
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let methods = generate_box_style_methods(
+        position_box_style_prefixes(),
+        box_style_suffixes(),
+        input.method_visibility,
+    );
     let output = quote! {
         #(#methods)*
     };
@@ -94,11 +144,13 @@ struct BorderStyleSuffix {
 fn generate_box_style_methods(
     prefixes: Vec<BoxStylePrefix>,
     suffixes: Vec<BoxStyleSuffix>,
+    visibility: Visibility,
 ) -> Vec<TokenStream2> {
     let mut methods = Vec::new();
 
     for box_style_prefix in prefixes {
         methods.push(generate_custom_value_setter(
+            visibility.clone(),
             box_style_prefix.prefix,
             if box_style_prefix.auto_allowed {
                 quote! { Length }
@@ -112,6 +164,7 @@ fn generate_box_style_methods(
         for box_style_suffix in &suffixes {
             if box_style_suffix.suffix != "auto" || box_style_prefix.auto_allowed {
                 methods.push(generate_predefined_setter(
+                    visibility.clone(),
                     box_style_prefix.prefix,
                     box_style_suffix.suffix,
                     &box_style_prefix.fields,
@@ -127,6 +180,7 @@ fn generate_box_style_methods(
 
             if box_style_suffix.suffix != "auto" {
                 methods.push(generate_predefined_setter(
+                    visibility.clone(),
                     box_style_prefix.prefix,
                     box_style_suffix.suffix,
                     &box_style_prefix.fields,
@@ -146,10 +200,13 @@ fn generate_box_style_methods(
 }
 
 fn generate_methods() -> Vec<TokenStream2> {
-    let mut methods = generate_box_style_methods(box_prefixes(), box_style_suffixes());
+    let visibility = Visibility::Inherited;
+    let mut methods =
+        generate_box_style_methods(box_prefixes(), box_style_suffixes(), visibility.clone());
 
     for corner_style_prefix in corner_prefixes() {
         methods.push(generate_custom_value_setter(
+            visibility.clone(),
             corner_style_prefix.prefix,
             quote! { AbsoluteLength },
             &corner_style_prefix.fields,
@@ -158,6 +215,7 @@ fn generate_methods() -> Vec<TokenStream2> {
 
         for corner_style_suffix in corner_suffixes() {
             methods.push(generate_predefined_setter(
+                visibility.clone(),
                 corner_style_prefix.prefix,
                 corner_style_suffix.suffix,
                 &corner_style_prefix.fields,
@@ -174,6 +232,7 @@ fn generate_methods() -> Vec<TokenStream2> {
 
     for border_style_prefix in border_prefixes() {
         methods.push(generate_custom_value_setter(
+            visibility.clone(),
             border_style_prefix.prefix,
             quote! { AbsoluteLength },
             &border_style_prefix.fields,
@@ -182,6 +241,7 @@ fn generate_methods() -> Vec<TokenStream2> {
 
         for border_style_suffix in border_suffixes() {
             methods.push(generate_predefined_setter(
+                visibility.clone(),
                 border_style_prefix.prefix,
                 border_style_suffix.suffix,
                 &border_style_prefix.fields,
@@ -199,6 +259,7 @@ fn generate_methods() -> Vec<TokenStream2> {
 }
 
 fn generate_predefined_setter(
+    visibility: Visibility,
     name: &'static str,
     length: &'static str,
     fields: &[TokenStream2],
@@ -229,7 +290,7 @@ fn generate_predefined_setter(
 
     let method = quote! {
         #[doc = #doc_string]
-        fn #method_name(mut self) -> Self {
+        #visibility fn #method_name(mut self) -> Self {
             let style = self.style();
             #(#field_assignments)*
             self
@@ -240,6 +301,7 @@ fn generate_predefined_setter(
 }
 
 fn generate_custom_value_setter(
+    visibility: Visibility,
     prefix: &str,
     length_type: TokenStream2,
     fields: &[TokenStream2],
@@ -262,7 +324,7 @@ fn generate_custom_value_setter(
 
     let method = quote! {
         #[doc = #doc_string]
-        fn #method_name(mut self, length: impl std::clone::Clone + Into<gpui::#length_type>) -> Self {
+        #visibility fn #method_name(mut self, length: impl std::clone::Clone + Into<gpui::#length_type>) -> Self {
             let style = self.style();
             #(#field_assignments)*
             self
