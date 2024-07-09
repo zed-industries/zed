@@ -1,4 +1,4 @@
-use gpui::{relative, AnyElement, FontWeight, Styled};
+use gpui::{relative, AnyElement, FontWeight, StyleRefinement, Styled};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -43,6 +43,7 @@ pub trait LabelCommon {
 
 #[derive(IntoElement)]
 pub struct LabelLike {
+    pub(super) base: Div,
     size: LabelSize,
     weight: FontWeight,
     line_height_style: LineHeightStyle,
@@ -55,6 +56,7 @@ pub struct LabelLike {
 impl LabelLike {
     pub fn new() -> Self {
         Self {
+            base: div(),
             size: LabelSize::Default,
             weight: FontWeight::default(),
             line_height_style: LineHeightStyle::default(),
@@ -64,6 +66,17 @@ impl LabelLike {
             children: SmallVec::new(),
         }
     }
+}
+
+// Style methods.
+impl LabelLike {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.base.style()
+    }
+
+    gpui::margin_style_methods!({
+        visibility: pub
+    });
 }
 
 impl LabelCommon for LabelLike {
@@ -106,7 +119,7 @@ impl ParentElement for LabelLike {
 
 impl RenderOnce for LabelLike {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        div()
+        self.base
             .when(self.strikethrough, |this| {
                 this.relative().child(
                     div()

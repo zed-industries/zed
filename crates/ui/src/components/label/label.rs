@@ -1,4 +1,4 @@
-use gpui::WindowContext;
+use gpui::{StyleRefinement, WindowContext};
 
 use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 
@@ -68,6 +68,17 @@ impl Label {
         self.single_line = true;
         self
     }
+}
+
+// Style methods.
+impl Label {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.base.base.style()
+    }
+
+    gpui::margin_style_methods!({
+        visibility: pub
+    });
 }
 
 impl LabelCommon for Label {
