@@ -1259,7 +1259,7 @@ fn is_modifier(virtual_key: VIRTUAL_KEY) -> bool {
 }
 
 #[inline]
-fn current_modifiers() -> Modifiers {
+pub(crate) fn current_modifiers() -> Modifiers {
     Modifiers {
         control: is_virtual_key_pressed(VK_CONTROL),
         alt: is_virtual_key_pressed(VK_MENU),

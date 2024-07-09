@@ -2,10 +2,11 @@ use anyhow::Context;
 
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    px, size, AnyWindowHandle, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowKind, WindowParams, X11ClientStatePtr,
+    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, Modifiers,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowParams,
+    X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
@@ -14,23 +15,17 @@ use util::{maybe, ResultExt};
 use x11rb::{
     connection::Connection,
     protocol::{
+        sync,
         xinput::{self, ConnectionExt as _},
-        xproto::{
-            self, ClientMessageEvent, ConnectionExt as _, EventMask, TranslateCoordinatesReply,
-        },
+        xproto::{self, ClientMessageEvent, ConnectionExt, EventMask, TranslateCoordinatesReply},
     },
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
 
 use std::{
-    cell::RefCell,
-    ffi::c_void,
-    num::NonZeroU32,
-    ops::Div,
-    ptr::NonNull,
-    rc::Rc,
-    sync::{self, Arc},
+    cell::RefCell, ffi::c_void, mem::size_of, num::NonZeroU32, ops::Div, ptr::NonNull, rc::Rc,
+    sync::Arc,
 };
 
 use super::{X11Display, XINPUT_MASTER_DEVICE};
@@ -48,10 +43,18 @@ x11rb::atom_manager! {
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
         _NET_ACTIVE_WINDOW,
+        _NET_WM_SYNC_REQUEST,
+        _NET_WM_SYNC_REQUEST_COUNTER,
+        _NET_WM_BYPASS_COMPOSITOR,
         _NET_WM_MOVERESIZE,
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
+        _NET_WM_SYNC,
+        _NET_SUPPORTED,
+        _MOTIF_WM_HINTS,
         _GTK_SHOW_WINDOW_MENU,
+        _GTK_FRAME_EXTENTS,
+        _GTK_EDGE_CONSTRAINTS,
     }
 }
 
@@ -65,6 +68,64 @@ fn query_render_extent(xcb_connection: &XCBConnection, x_window: xproto::Window)
         width: reply.width as u32,
         height: reply.height as u32,
         depth: 1,
+    }
+}
+
+impl ResizeEdge {
+    fn to_moveresize(&self) -> u32 {
+        match self {
+            ResizeEdge::TopLeft => 0,
+            ResizeEdge::Top => 1,
+            ResizeEdge::TopRight => 2,
+            ResizeEdge::Right => 3,
+            ResizeEdge::BottomRight => 4,
+            ResizeEdge::Bottom => 5,
+            ResizeEdge::BottomLeft => 6,
+            ResizeEdge::Left => 7,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct EdgeConstraints {
+    top_tiled: bool,
+    #[allow(dead_code)]
+    top_resizable: bool,
+
+    right_tiled: bool,
+    #[allow(dead_code)]
+    right_resizable: bool,
+
+    bottom_tiled: bool,
+    #[allow(dead_code)]
+    bottom_resizable: bool,
+
+    left_tiled: bool,
+    #[allow(dead_code)]
+    left_resizable: bool,
+}
+
+impl EdgeConstraints {
+    fn from_atom(atom: u32) -> Self {
+        EdgeConstraints {
+            top_tiled: (atom & (1 << 0)) != 0,
+            top_resizable: (atom & (1 << 1)) != 0,
+            right_tiled: (atom & (1 << 2)) != 0,
+            right_resizable: (atom & (1 << 3)) != 0,
+            bottom_tiled: (atom & (1 << 4)) != 0,
+            bottom_resizable: (atom & (1 << 5)) != 0,
+            left_tiled: (atom & (1 << 6)) != 0,
+            left_resizable: (atom & (1 << 7)) != 0,
+        }
+    }
+
+    fn to_tiling(&self) -> Tiling {
+        Tiling {
+            top: self.top_tiled,
+            right: self.right_tiled,
+            bottom: self.bottom_tiled,
+            left: self.left_tiled,
+        }
     }
 }
 
@@ -163,6 +224,8 @@ pub struct X11WindowState {
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
     x_root_window: xproto::Window,
+    pub(crate) counter_id: sync::Counter,
+    pub(crate) last_sync_counter: Option<sync::Int64>,
     _raw: RawWindow,
     bounds: Bounds<Pixels>,
     scale_factor: f32,
@@ -170,7 +233,23 @@ pub struct X11WindowState {
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
+    background_appearance: WindowBackgroundAppearance,
+    maximized_vertical: bool,
+    maximized_horizontal: bool,
+    hidden: bool,
+    active: bool,
+    fullscreen: bool,
+    client_side_decorations_supported: bool,
+    decorations: WindowDecorations,
+    edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
+    last_insets: [u32; 4],
+}
+
+impl X11WindowState {
+    fn is_transparent(&self) -> bool {
+        self.background_appearance != WindowBackgroundAppearance::Opaque
+    }
 }
 
 #[derive(Clone)]
@@ -216,6 +295,7 @@ impl X11WindowState {
         executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
+        client_side_decorations_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
@@ -227,19 +307,11 @@ impl X11WindowState {
             .map_or(x_main_screen_index, |did| did.0 as usize);
 
         let visual_set = find_visuals(&xcb_connection, x_screen_index);
-        let visual_maybe = match params.window_background {
-            WindowBackgroundAppearance::Opaque => visual_set.opaque,
-            WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
-                visual_set.transparent
-            }
-        };
-        let visual = match visual_maybe {
+
+        let visual = match visual_set.transparent {
             Some(visual) => visual,
             None => {
-                log::warn!(
-                    "Unable to find a matching visual for {:?}",
-                    params.window_background
-                );
+                log::warn!("Unable to find a transparent visual",);
                 visual_set.inherit
             }
         };
@@ -266,7 +338,8 @@ impl X11WindowState {
                     | xproto::EventMask::STRUCTURE_NOTIFY
                     | xproto::EventMask::FOCUS_CHANGE
                     | xproto::EventMask::KEY_PRESS
-                    | xproto::EventMask::KEY_RELEASE,
+                    | xproto::EventMask::KEY_RELEASE
+                    | EventMask::PROPERTY_CHANGE,
             );
 
         let mut bounds = params.bounds.to_device_pixels(scale_factor);
@@ -346,7 +419,26 @@ impl X11WindowState {
                 x_window,
                 atoms.WM_PROTOCOLS,
                 xproto::AtomEnum::ATOM,
-                &[atoms.WM_DELETE_WINDOW],
+                &[atoms.WM_DELETE_WINDOW, atoms._NET_WM_SYNC_REQUEST],
+            )
+            .unwrap();
+
+        sync::initialize(xcb_connection, 3, 1).unwrap();
+        let sync_request_counter = xcb_connection.generate_id().unwrap();
+        sync::create_counter(
+            xcb_connection,
+            sync_request_counter,
+            sync::Int64 { lo: 0, hi: 0 },
+        )
+        .unwrap();
+
+        xcb_connection
+            .change_property32(
+                xproto::PropMode::REPLACE,
+                x_window,
+                atoms._NET_WM_SYNC_REQUEST_COUNTER,
+                xproto::AtomEnum::CARDINAL,
+                &[sync_request_counter],
             )
             .unwrap();
 
@@ -393,7 +485,11 @@ impl X11WindowState {
             // Note: this has to be done after the GPU init, or otherwise
             // the sizes are immediately invalidated.
             size: query_render_extent(xcb_connection, x_window),
-            transparent: params.window_background != WindowBackgroundAppearance::Opaque,
+            // We set it to transparent by default, even if we have client-side
+            // decorations, since those seem to work on X11 even without `true` here.
+            // If the window appearance changes, then the renderer will get updated
+            // too
+            transparent: false,
         };
         xcb_connection.map_window(x_window).unwrap();
 
@@ -410,9 +506,21 @@ impl X11WindowState {
             renderer: BladeRenderer::new(gpu, config),
             atoms: *atoms,
             input_handler: None,
+            active: false,
+            fullscreen: false,
+            maximized_vertical: false,
+            maximized_horizontal: false,
+            hidden: false,
             appearance,
             handle,
+            background_appearance: WindowBackgroundAppearance::Opaque,
             destroyed: false,
+            client_side_decorations_supported,
+            decorations: WindowDecorations::Server,
+            last_insets: [0, 0, 0, 0],
+            edge_constraints: None,
+            counter_id: sync_request_counter,
+            last_sync_counter: None,
         })
     }
 
@@ -476,19 +584,21 @@ impl X11Window {
         executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
+        client_side_decorations_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
         scale_factor: f32,
         appearance: WindowAppearance,
     ) -> anyhow::Result<Self> {
-        Ok(Self(X11WindowStatePtr {
+        let ptr = X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
                 handle,
                 client,
                 executor,
                 params,
                 xcb_connection,
+                client_side_decorations_supported,
                 x_main_screen_index,
                 x_window,
                 atoms,
@@ -498,7 +608,12 @@ impl X11Window {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
             x_window,
-        }))
+        };
+
+        let state = ptr.state.borrow_mut();
+        ptr.set_wm_properties(state);
+
+        Ok(Self(ptr))
     }
 
     fn set_wm_hints(&self, wm_hint_property_state: WmHintPropertyState, prop1: u32, prop2: u32) {
@@ -517,30 +632,9 @@ impl X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
-            .unwrap();
-    }
-
-    fn get_wm_hints(&self) -> Vec<u32> {
-        let reply = self
-            .0
-            .xcb_connection
-            .get_property(
-                false,
-                self.0.x_window,
-                self.0.state.borrow().atoms._NET_WM_STATE,
-                xproto::AtomEnum::ATOM,
-                0,
-                u32::MAX,
-            )
             .unwrap()
-            .reply()
+            .check()
             .unwrap();
-        // Reply is in u8 but atoms are represented as u32
-        reply
-            .value
-            .chunks_exact(4)
-            .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-            .collect()
     }
 
     fn get_root_position(&self, position: Point<Pixels>) -> TranslateCoordinatesReply {
@@ -557,6 +651,48 @@ impl X11Window {
             .reply()
             .unwrap()
     }
+
+    fn send_moveresize(&self, flag: u32) {
+        let state = self.0.state.borrow();
+
+        self.0
+            .xcb_connection
+            .ungrab_pointer(x11rb::CURRENT_TIME)
+            .unwrap()
+            .check()
+            .unwrap();
+
+        let pointer = self
+            .0
+            .xcb_connection
+            .query_pointer(self.0.x_window)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let message = ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            state.atoms._NET_WM_MOVERESIZE,
+            [
+                pointer.root_x as u32,
+                pointer.root_y as u32,
+                flag,
+                0, // Left mouse button
+                0,
+            ],
+        );
+        self.0
+            .xcb_connection
+            .send_event(
+                false,
+                state.x_root_window,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
+            .unwrap();
+
+        self.0.xcb_connection.flush().unwrap();
+    }
 }
 
 impl X11WindowStatePtr {
@@ -568,6 +704,78 @@ impl X11WindowStatePtr {
             result
         } else {
             true
+        }
+    }
+
+    pub fn property_notify(&self, event: xproto::PropertyNotifyEvent) {
+        let mut state = self.state.borrow_mut();
+        if event.atom == state.atoms._NET_WM_STATE {
+            self.set_wm_properties(state);
+        } else if event.atom == state.atoms._GTK_EDGE_CONSTRAINTS {
+            self.set_edge_constraints(state);
+        }
+    }
+
+    fn set_edge_constraints(&self, mut state: std::cell::RefMut<X11WindowState>) {
+        let reply = self
+            .xcb_connection
+            .get_property(
+                false,
+                self.x_window,
+                state.atoms._GTK_EDGE_CONSTRAINTS,
+                xproto::AtomEnum::CARDINAL,
+                0,
+                4,
+            )
+            .unwrap()
+            .reply()
+            .unwrap();
+
+        if reply.value_len != 0 {
+            let atom = u32::from_ne_bytes(reply.value[0..4].try_into().unwrap());
+            let edge_constraints = EdgeConstraints::from_atom(atom);
+            state.edge_constraints.replace(edge_constraints);
+        }
+    }
+
+    fn set_wm_properties(&self, mut state: std::cell::RefMut<X11WindowState>) {
+        let reply = self
+            .xcb_connection
+            .get_property(
+                false,
+                self.x_window,
+                state.atoms._NET_WM_STATE,
+                xproto::AtomEnum::ATOM,
+                0,
+                u32::MAX,
+            )
+            .unwrap()
+            .reply()
+            .unwrap();
+
+        let atoms = reply
+            .value
+            .chunks_exact(4)
+            .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+
+        state.active = false;
+        state.fullscreen = false;
+        state.maximized_vertical = false;
+        state.maximized_horizontal = false;
+        state.hidden = true;
+
+        for atom in atoms {
+            if atom == state.atoms._NET_WM_STATE_FOCUSED {
+                state.active = true;
+            } else if atom == state.atoms._NET_WM_STATE_FULLSCREEN {
+                state.fullscreen = true;
+            } else if atom == state.atoms._NET_WM_STATE_MAXIMIZED_VERT {
+                state.maximized_vertical = true;
+            } else if atom == state.atoms._NET_WM_STATE_MAXIMIZED_HORZ {
+                state.maximized_horizontal = true;
+            } else if atom == state.atoms._NET_WM_STATE_HIDDEN {
+                state.hidden = true;
+            }
         }
     }
 
@@ -686,6 +894,9 @@ impl X11WindowStatePtr {
                 ));
                 resize_args = Some((state.content_size(), state.scale_factor));
             }
+            if let Some(value) = state.last_sync_counter.take() {
+                sync::set_counter(&self.xcb_connection, state.counter_id, value).unwrap();
+            }
         }
 
         let mut callbacks = self.callbacks.borrow_mut();
@@ -708,8 +919,12 @@ impl X11WindowStatePtr {
     }
 
     pub fn set_appearance(&mut self, appearance: WindowAppearance) {
-        self.state.borrow_mut().appearance = appearance;
-
+        let mut state = self.state.borrow_mut();
+        state.appearance = appearance;
+        let is_transparent = state.is_transparent();
+        state.renderer.update_transparency(is_transparent);
+        state.appearance = appearance;
+        drop(state);
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(ref mut fun) = callbacks.appearance_changed {
             (fun)()
@@ -724,11 +939,9 @@ impl PlatformWindow for X11Window {
 
     fn is_maximized(&self) -> bool {
         let state = self.0.state.borrow();
-        let wm_hints = self.get_wm_hints();
+
         // A maximized window that gets minimized will still retain its maximized state.
-        !wm_hints.contains(&state.atoms._NET_WM_STATE_HIDDEN)
-            && wm_hints.contains(&state.atoms._NET_WM_STATE_MAXIMIZED_VERT)
-            && wm_hints.contains(&state.atoms._NET_WM_STATE_MAXIMIZED_HORZ)
+        !state.hidden && state.maximized_vertical && state.maximized_horizontal
     }
 
     fn window_bounds(&self) -> WindowBounds {
@@ -826,12 +1039,11 @@ impl PlatformWindow for X11Window {
                 xproto::Time::CURRENT_TIME,
             )
             .log_err();
+        self.0.xcb_connection.flush().unwrap();
     }
 
     fn is_active(&self) -> bool {
-        let state = self.0.state.borrow();
-        self.get_wm_hints()
-            .contains(&state.atoms._NET_WM_STATE_FOCUSED)
+        self.0.state.borrow().active
     }
 
     fn set_title(&mut self, title: &str) {
@@ -856,6 +1068,7 @@ impl PlatformWindow for X11Window {
                 title.as_bytes(),
             )
             .unwrap();
+        self.0.xcb_connection.flush().unwrap();
     }
 
     fn set_app_id(&mut self, app_id: &str) {
@@ -873,6 +1086,8 @@ impl PlatformWindow for X11Window {
                 xproto::AtomEnum::STRING,
                 &data,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -880,10 +1095,11 @@ impl PlatformWindow for X11Window {
         log::info!("ignoring macOS specific set_edited");
     }
 
-    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
-        let mut inner = self.0.state.borrow_mut();
-        let transparent = background_appearance != WindowBackgroundAppearance::Opaque;
-        inner.renderer.update_transparency(transparent);
+    fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
+        let mut state = self.0.state.borrow_mut();
+        state.background_appearance = background_appearance;
+        let transparent = state.is_transparent();
+        state.renderer.update_transparency(transparent);
     }
 
     fn show_character_palette(&self) {
@@ -907,6 +1123,8 @@ impl PlatformWindow for X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
@@ -929,9 +1147,7 @@ impl PlatformWindow for X11Window {
     }
 
     fn is_fullscreen(&self) -> bool {
-        let state = self.0.state.borrow();
-        self.get_wm_hints()
-            .contains(&state.atoms._NET_WM_STATE_FULLSCREEN)
+        self.0.state.borrow().fullscreen
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
@@ -971,7 +1187,7 @@ impl PlatformWindow for X11Window {
         inner.renderer.draw(scene);
     }
 
-    fn sprite_atlas(&self) -> sync::Arc<dyn PlatformAtlas> {
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         let inner = self.0.state.borrow();
         inner.renderer.sprite_atlas().clone()
     }
@@ -999,43 +1215,147 @@ impl PlatformWindow for X11Window {
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             )
+            .unwrap()
+            .check()
             .unwrap();
     }
 
-    fn start_system_move(&self) {
-        let state = self.0.state.borrow();
-        let pointer = self
-            .0
-            .xcb_connection
-            .query_pointer(self.0.x_window)
-            .unwrap()
-            .reply()
-            .unwrap();
+    fn start_window_move(&self) {
         const MOVERESIZE_MOVE: u32 = 8;
-        let message = ClientMessageEvent::new(
-            32,
-            self.0.x_window,
-            state.atoms._NET_WM_MOVERESIZE,
-            [
-                pointer.root_x as u32,
-                pointer.root_y as u32,
-                MOVERESIZE_MOVE,
-                1, // Left mouse button
-                1,
-            ],
-        );
+        self.send_moveresize(MOVERESIZE_MOVE);
+    }
+
+    fn start_window_resize(&self, edge: ResizeEdge) {
+        self.send_moveresize(edge.to_moveresize());
+    }
+
+    fn window_decorations(&self) -> crate::Decorations {
+        let state = self.0.state.borrow();
+
+        // Client window decorations require compositor support
+        if !state.client_side_decorations_supported {
+            return Decorations::Server;
+        }
+
+        match state.decorations {
+            WindowDecorations::Server => Decorations::Server,
+            WindowDecorations::Client => {
+                let tiling = if state.fullscreen {
+                    Tiling::tiled()
+                } else if let Some(edge_constraints) = &state.edge_constraints {
+                    edge_constraints.to_tiling()
+                } else {
+                    // https://source.chromium.org/chromium/chromium/src/+/main:ui/ozone/platform/x11/x11_window.cc;l=2519;drc=1f14cc876cc5bf899d13284a12c451498219bb2d
+                    Tiling {
+                        top: state.maximized_vertical,
+                        bottom: state.maximized_vertical,
+                        left: state.maximized_horizontal,
+                        right: state.maximized_horizontal,
+                    }
+                };
+                Decorations::Client { tiling }
+            }
+        }
+    }
+
+    fn set_client_inset(&self, inset: Pixels) {
+        let mut state = self.0.state.borrow_mut();
+
+        let dp = (inset.0 * state.scale_factor) as u32;
+
+        let insets = if state.fullscreen {
+            [0, 0, 0, 0]
+        } else if let Some(edge_constraints) = &state.edge_constraints {
+            let left = if edge_constraints.left_tiled { 0 } else { dp };
+            let top = if edge_constraints.top_tiled { 0 } else { dp };
+            let right = if edge_constraints.right_tiled { 0 } else { dp };
+            let bottom = if edge_constraints.bottom_tiled { 0 } else { dp };
+
+            [left, right, top, bottom]
+        } else {
+            let (left, right) = if state.maximized_horizontal {
+                (0, 0)
+            } else {
+                (dp, dp)
+            };
+            let (top, bottom) = if state.maximized_vertical {
+                (0, 0)
+            } else {
+                (dp, dp)
+            };
+            [left, right, top, bottom]
+        };
+
+        if state.last_insets != insets {
+            state.last_insets = insets;
+
+            self.0
+                .xcb_connection
+                .change_property(
+                    xproto::PropMode::REPLACE,
+                    self.0.x_window,
+                    state.atoms._GTK_FRAME_EXTENTS,
+                    xproto::AtomEnum::CARDINAL,
+                    size_of::<u32>() as u8 * 8,
+                    4,
+                    bytemuck::cast_slice::<u32, u8>(&insets),
+                )
+                .unwrap()
+                .check()
+                .unwrap();
+        }
+    }
+
+    fn request_decorations(&self, mut decorations: crate::WindowDecorations) {
+        let mut state = self.0.state.borrow_mut();
+
+        if matches!(decorations, crate::WindowDecorations::Client)
+            && !state.client_side_decorations_supported
+        {
+            log::info!(
+                "x11: no compositor present, falling back to server-side window decorations"
+            );
+            decorations = crate::WindowDecorations::Server;
+        }
+
+        // https://github.com/rust-windowing/winit/blob/master/src/platform_impl/linux/x11/util/hint.rs#L53-L87
+        let hints_data: [u32; 5] = match decorations {
+            WindowDecorations::Server => [1 << 1, 0, 1, 0, 0],
+            WindowDecorations::Client => [1 << 1, 0, 0, 0, 0],
+        };
+
         self.0
             .xcb_connection
-            .send_event(
-                false,
-                state.x_root_window,
-                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-                message,
+            .change_property(
+                xproto::PropMode::REPLACE,
+                self.0.x_window,
+                state.atoms._MOTIF_WM_HINTS,
+                state.atoms._MOTIF_WM_HINTS,
+                std::mem::size_of::<u32>() as u8 * 8,
+                5,
+                bytemuck::cast_slice::<u32, u8>(&hints_data),
             )
+            .unwrap()
+            .check()
             .unwrap();
-    }
 
-    fn should_render_window_controls(&self) -> bool {
-        false
+        match decorations {
+            WindowDecorations::Server => {
+                state.decorations = WindowDecorations::Server;
+                let is_transparent = state.is_transparent();
+                state.renderer.update_transparency(is_transparent);
+            }
+            WindowDecorations::Client => {
+                state.decorations = WindowDecorations::Client;
+                let is_transparent = state.is_transparent();
+                state.renderer.update_transparency(is_transparent);
+            }
+        }
+
+        drop(state);
+        let mut callbacks = self.0.callbacks.borrow_mut();
+        if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
+            appearance_changed();
+        }
     }
 }

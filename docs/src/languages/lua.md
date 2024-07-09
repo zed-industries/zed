@@ -1,4 +1,3 @@
 # Lua
 
-- Tree Sitter: [tree-sitter-lua](https://github.com/MunifTanjim/tree-sitter-lua)
-- Language Server: [lua-language-server](https://github.com/LuaLS/lua-language-server)
+Lua support is available through the [Lua extension](https://github.com/zed-industries/zed/tree/main/extensions/lua).

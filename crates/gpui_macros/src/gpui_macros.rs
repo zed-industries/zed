@@ -27,11 +27,32 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
     derive_render::derive_render(input)
 }
 
-/// Used by gpui to generate the style helpers.
+/// Used by GPUI to generate the style helpers.
 #[proc_macro]
 #[doc(hidden)]
 pub fn style_helpers(input: TokenStream) -> TokenStream {
     style_helpers::style_helpers(input)
+}
+
+/// Generates methods for margin styles.
+#[proc_macro]
+#[doc(hidden)]
+pub fn margin_style_methods(input: TokenStream) -> TokenStream {
+    style_helpers::margin_style_methods(input)
+}
+
+/// Generates methods for padding styles.
+#[proc_macro]
+#[doc(hidden)]
+pub fn padding_style_methods(input: TokenStream) -> TokenStream {
+    style_helpers::padding_style_methods(input)
+}
+
+/// Generates methods for position styles.
+#[proc_macro]
+#[doc(hidden)]
+pub fn position_style_methods(input: TokenStream) -> TokenStream {
+    style_helpers::position_style_methods(input)
 }
 
 /// #[gpui::test] can be used to annotate test functions that run with GPUI support.

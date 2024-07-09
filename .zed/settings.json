@@ -14,6 +14,12 @@
     },
     "JSON": {
       "tab_size": 2,
+      "preferred_line_length": 100,
+      "formatter": "prettier"
+    },
+    "JSONC": {
+      "tab_size": 2,
+      "preferred_line_length": 100,
       "formatter": "prettier"
     },
     "JavaScript": {

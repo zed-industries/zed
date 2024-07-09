@@ -19,7 +19,7 @@ use client::{
     TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
-use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet, VecDeque};
+use collections::{btree_map, hash_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::{
@@ -84,6 +84,7 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
 use smol::lock::Semaphore;
 use snippet::Snippet;
+use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -229,6 +230,7 @@ pub struct Project {
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
+    snippets: Model<SnippetProvider>,
 }
 
 pub enum LanguageServerToQuery {
@@ -719,7 +721,9 @@ impl Project {
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             let tasks = Inventory::new(cx);
-
+            let global_snippets_dir = paths::config_dir().join("snippets");
+            let snippets =
+                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
             Self {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
@@ -745,6 +749,7 @@ impl Project {
                 _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 active_entry: None,
+                snippets,
                 languages,
                 client,
                 user_store,
@@ -841,6 +846,9 @@ impl Project {
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
+            let global_snippets_dir = paths::config_dir().join("snippets");
+            let snippets =
+                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
             // BIG CAUTION NOTE: The order in which we initialize fields here matters and it should match what's done in Self::local.
             // Otherwise, you might run into issues where worktree id on remote is different than what's on local host.
             // That's because Worktree's identifier is entity id, which should probably be changed.
@@ -859,6 +867,7 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
+
             let mut this = Self {
                 worktrees: Vec::new(),
                 worktrees_reordered: false,
@@ -877,6 +886,7 @@ impl Project {
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 languages,
                 user_store: user_store.clone(),
+                snippets,
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
@@ -1334,6 +1344,10 @@ impl Project {
 
     pub fn task_inventory(&self) -> &Model<Inventory> {
         &self.tasks
+    }
+
+    pub fn snippets(&self) -> &Model<SnippetProvider> {
+        &self.snippets
     }
 
     pub fn search_history(&self) -> &SearchHistory {
@@ -3662,29 +3676,26 @@ impl Project {
                     let this = this.clone();
                     let name = name.to_string();
                     async move {
-                        if let Some(actions) = params.actions {
-                            let (tx, mut rx) = smol::channel::bounded(1);
-                            let request = LanguageServerPromptRequest {
-                                level: match params.typ {
-                                    lsp::MessageType::ERROR => PromptLevel::Critical,
-                                    lsp::MessageType::WARNING => PromptLevel::Warning,
-                                    _ => PromptLevel::Info,
-                                },
-                                message: params.message,
-                                actions,
-                                response_channel: tx,
-                                lsp_name: name.clone(),
-                            };
+                        let actions = params.actions.unwrap_or_default();
+                        let (tx, mut rx) = smol::channel::bounded(1);
+                        let request = LanguageServerPromptRequest {
+                            level: match params.typ {
+                                lsp::MessageType::ERROR => PromptLevel::Critical,
+                                lsp::MessageType::WARNING => PromptLevel::Warning,
+                                _ => PromptLevel::Info,
+                            },
+                            message: params.message,
+                            actions,
+                            response_channel: tx,
+                            lsp_name: name.clone(),
+                        };
 
-                            if let Ok(_) = this.update(&mut cx, |_, cx| {
-                                cx.emit(Event::LanguageServerPrompt(request));
-                            }) {
-                                let response = rx.next().await;
+                        if let Ok(_) = this.update(&mut cx, |_, cx| {
+                            cx.emit(Event::LanguageServerPrompt(request));
+                        }) {
+                            let response = rx.next().await;
 
-                                Ok(response)
-                            } else {
-                                Ok(None)
-                            }
+                            Ok(response)
                         } else {
                             Ok(None)
                         }
@@ -3739,7 +3750,33 @@ impl Project {
                 }
             })
             .detach();
+        language_server
+            .on_notification::<lsp::notification::ShowMessage, _>({
+                let this = this.clone();
+                let name = name.to_string();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    let name = name.to_string();
 
+                    let (tx, _) = smol::channel::bounded(1);
+                    let request = LanguageServerPromptRequest {
+                        level: match params.typ {
+                            lsp::MessageType::ERROR => PromptLevel::Critical,
+                            lsp::MessageType::WARNING => PromptLevel::Warning,
+                            _ => PromptLevel::Info,
+                        },
+                        message: params.message,
+                        actions: vec![],
+                        response_channel: tx,
+                        lsp_name: name.clone(),
+                    };
+
+                    let _ = this.update(&mut cx, |_, cx| {
+                        cx.emit(Event::LanguageServerPrompt(request));
+                    });
+                }
+            })
+            .detach();
         language_server
             .on_notification::<lsp::notification::Progress, _>(move |params, mut cx| {
                 if let Some(this) = this.upgrade() {
