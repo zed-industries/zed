@@ -3,7 +3,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+};
 use gpui::{AppContext, Model, Task, WeakView};
 use indexed_docs::{
     IndexedDocsRegistry, IndexedDocsStore, LocalProvider, PackageName, ProviderId, RustdocIndexer,
@@ -92,7 +94,7 @@ impl SlashCommand for DocsSlashCommand {
         _cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         self.ensure_rustdoc_provider_is_registered(workspace, cx);
 
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
@@ -102,15 +104,17 @@ impl SlashCommand for DocsSlashCommand {
             .ok_or_else(|| anyhow!("no docs provider specified"))
             .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
         cx.background_executor().spawn(async move {
-            /// HACK: Prefixes the completions with the provider ID so that it doesn't get deleted
-            /// when a completion is accepted.
-            ///
-            /// We will likely want to extend `complete_argument` with support for replacing just
-            /// a particular range of the argument when a completion is accepted.
-            fn prefix_with_provider(provider: ProviderId, items: Vec<String>) -> Vec<String> {
+            fn build_completions(
+                provider: ProviderId,
+                items: Vec<String>,
+            ) -> Vec<ArgumentCompletion> {
                 items
                     .into_iter()
-                    .map(|item| format!("{provider} {item}"))
+                    .map(|item| ArgumentCompletion {
+                        label: item.clone(),
+                        new_text: format!("{provider} {item}"),
+                        run_command: true,
+                    })
                     .collect()
             }
 
@@ -119,7 +123,11 @@ impl SlashCommand for DocsSlashCommand {
                     let providers = indexed_docs_registry.list_providers();
                     Ok(providers
                         .into_iter()
-                        .map(|provider| provider.to_string())
+                        .map(|provider| ArgumentCompletion {
+                            label: provider.to_string(),
+                            new_text: provider.to_string(),
+                            run_command: false,
+                        })
                         .collect())
                 }
                 DocsSlashCommandArgs::SearchPackageDocs {
@@ -136,7 +144,7 @@ impl SlashCommand for DocsSlashCommand {
                     }
 
                     let items = store.search(package).await;
-                    Ok(prefix_with_provider(provider, items))
+                    Ok(build_completions(provider, items))
                 }
                 DocsSlashCommandArgs::SearchItemDocs {
                     provider,
@@ -145,7 +153,7 @@ impl SlashCommand for DocsSlashCommand {
                 } => {
                     let store = store?;
                     let items = store.search(item_path).await;
-                    Ok(prefix_with_provider(provider, items))
+                    Ok(build_completions(provider, items))
                 }
             }
         })

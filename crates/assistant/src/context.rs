@@ -1136,7 +1136,7 @@ impl Context {
             }
 
             let request = self.to_completion_request(cx);
-            let stream = CompletionProvider::global(cx).complete(request);
+            let stream = CompletionProvider::global(cx).complete(request, cx);
             let assistant_message = self
                 .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
                 .unwrap();
@@ -1153,7 +1153,7 @@ impl Context {
                     let mut response_latency = None;
                     let stream_completion = async {
                         let request_start = Instant::now();
-                        let mut messages = stream.await?;
+                        let mut messages = stream.await.inner.await?;
 
                         while let Some(message) = messages.next().await {
                             if response_latency.is_none() {
@@ -1510,10 +1510,10 @@ impl Context {
                 temperature: 1.0,
             };
 
-            let stream = CompletionProvider::global(cx).complete(request);
+            let stream = CompletionProvider::global(cx).complete(request, cx);
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
-                    let mut messages = stream.await?;
+                    let mut messages = stream.await.inner.await?;
 
                     while let Some(message) = messages.next().await {
                         let text = message?;
@@ -2107,7 +2107,7 @@ mod tests {
         slash_command::{active_command, file_command},
         FakeCompletionProvider, MessageId,
     };
-    use assistant_slash_command::SlashCommand;
+    use assistant_slash_command::{ArgumentCompletion, SlashCommand};
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext, WeakView};
     use language::LspAdapterDelegate;
@@ -2127,7 +2127,7 @@ mod tests {
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        FakeCompletionProvider::setup_test(cx);
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
@@ -2259,7 +2259,7 @@ mod tests {
     fn test_message_splitting(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        FakeCompletionProvider::setup_test(cx);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
@@ -2352,7 +2352,7 @@ mod tests {
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        FakeCompletionProvider::setup_test(cx);
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
@@ -2437,7 +2437,7 @@ mod tests {
     async fn test_slash_commands(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        cx.update(FakeCompletionProvider::setup_test);
         cx.update(Project::init_settings);
         cx.update(assistant_panel::init);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -2631,7 +2631,7 @@ mod tests {
     async fn test_serialization(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        cx.update(FakeCompletionProvider::setup_test);
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
@@ -2707,7 +2707,7 @@ mod tests {
 
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
+        cx.update(FakeCompletionProvider::setup_test);
         cx.update(assistant_panel::init);
         let slash_commands = cx.update(SlashCommandRegistry::default_global);
         slash_commands.register_command(FakeSlashCommand("cmd-1".into()), false);
@@ -2990,7 +2990,7 @@ mod tests {
             _cancel: Arc<AtomicBool>,
             _workspace: Option<WeakView<Workspace>>,
             _cx: &mut AppContext,
-        ) -> Task<Result<Vec<String>>> {
+        ) -> Task<Result<Vec<ArgumentCompletion>>> {
             Task::ready(Ok(vec![]))
         }
 

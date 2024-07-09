@@ -12,6 +12,7 @@ use ui::prelude::*;
 #[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentStory {
+    ApplicationMenu,
     AutoHeightEditor,
     Avatar,
     Button,
@@ -35,7 +36,6 @@ pub enum ComponentStory {
     Tab,
     TabBar,
     Text,
-    // TitleBar,
     ToggleButton,
     ToolStrip,
     ViewportUnits,
@@ -45,6 +45,7 @@ pub enum ComponentStory {
 impl ComponentStory {
     pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
+            Self::ApplicationMenu => cx.new_view(|_| title_bar::ApplicationMenuStory).into(),
             Self::AutoHeightEditor => AutoHeightEditorStory::new(cx).into(),
             Self::Avatar => cx.new_view(|_| ui::AvatarStory).into(),
             Self::Button => cx.new_view(|_| ui::ButtonStory).into(),
@@ -69,7 +70,6 @@ impl ComponentStory {
             Self::Text => TextStory::view(cx).into(),
             Self::Tab => cx.new_view(|_| ui::TabStory).into(),
             Self::TabBar => cx.new_view(|_| ui::TabBarStory).into(),
-            // Self::TitleBar => cx.new_view(|_| title_bar::TitleBarStory).into(),
             Self::ToggleButton => cx.new_view(|_| ui::ToggleButtonStory).into(),
             Self::ToolStrip => cx.new_view(|_| ui::ToolStripStory).into(),
             Self::ViewportUnits => cx.new_view(|_| crate::stories::ViewportUnitsStory).into(),

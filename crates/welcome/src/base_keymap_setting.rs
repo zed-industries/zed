@@ -32,6 +32,7 @@ impl Display for BaseKeymap {
 }
 
 impl BaseKeymap {
+    #[cfg(target_os = "macos")]
     pub const OPTIONS: [(&'static str, Self); 5] = [
         ("VSCode (Default)", Self::VSCode),
         ("Atom", Self::Atom),
@@ -40,12 +41,31 @@ impl BaseKeymap {
         ("TextMate", Self::TextMate),
     ];
 
+    #[cfg(not(target_os = "macos"))]
+    pub const OPTIONS: [(&'static str, Self); 4] = [
+        ("VSCode (Default)", Self::VSCode),
+        ("Atom", Self::Atom),
+        ("JetBrains", Self::JetBrains),
+        ("Sublime Text", Self::SublimeText),
+    ];
+
     pub fn asset_path(&self) -> Option<&'static str> {
+        #[cfg(target_os = "macos")]
         match self {
-            BaseKeymap::JetBrains => Some("keymaps/jetbrains.json"),
-            BaseKeymap::SublimeText => Some("keymaps/sublime_text.json"),
-            BaseKeymap::Atom => Some("keymaps/atom.json"),
-            BaseKeymap::TextMate => Some("keymaps/textmate.json"),
+            BaseKeymap::JetBrains => Some("keymaps/macos/jetbrains.json"),
+            BaseKeymap::SublimeText => Some("keymaps/macos/sublime_text.json"),
+            BaseKeymap::Atom => Some("keymaps/macos/atom.json"),
+            BaseKeymap::TextMate => Some("keymaps/macos/textmate.json"),
+            BaseKeymap::VSCode => None,
+            BaseKeymap::None => None,
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        match self {
+            BaseKeymap::JetBrains => Some("keymaps/linux/jetbrains.json"),
+            BaseKeymap::SublimeText => Some("keymaps/linux/sublime_text.json"),
+            BaseKeymap::Atom => Some("keymaps/linux/atom.json"),
+            BaseKeymap::TextMate => None,
             BaseKeymap::VSCode => None,
             BaseKeymap::None => None,
         }

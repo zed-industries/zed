@@ -690,6 +690,7 @@
   // }
   //
   "file_types": {
+    "JSON": ["flake.lock"],
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json"]
   },
   // The extensions that Zed should automatically install on startup.
@@ -775,7 +776,8 @@
     "PHP": {
       "prettier": {
         "allowed": true,
-        "plugins": ["@prettier/plugin-php"]
+        "plugins": ["@prettier/plugin-php"],
+        "parser": "php"
       }
     },
     "Ruby": {

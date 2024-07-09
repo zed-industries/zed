@@ -1026,9 +1026,10 @@ impl Codegen {
 
         let telemetry = self.telemetry.clone();
         let model_telemetry_id = prompt.model.telemetry_id();
-        let response = CompletionProvider::global(cx).complete(prompt);
+        let response = CompletionProvider::global(cx).complete(prompt, cx);
 
         self.generation = cx.spawn(|this, mut cx| async move {
+            let response = response.await;
             let generate = async {
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 
@@ -1036,7 +1037,7 @@ impl Codegen {
                     let mut response_latency = None;
                     let request_start = Instant::now();
                     let task = async {
-                        let mut response = response.await?;
+                        let mut response = response.inner.await?;
                         while let Some(chunk) = response.next().await {
                             if response_latency.is_none() {
                                 response_latency = Some(request_start.elapsed());
