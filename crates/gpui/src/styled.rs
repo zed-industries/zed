@@ -1,7 +1,7 @@
 use crate::{
     self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
     DefiniteLength, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla,
-    JustifyContent, Length, Position, SharedString, StyleRefinement, Visibility, WhiteSpace,
+    JustifyContent, Length, SharedString, StyleRefinement, Visibility, WhiteSpace,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 pub use gpui_macros::{margin_style_methods, padding_style_methods, position_style_methods};
