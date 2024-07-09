@@ -34,7 +34,21 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
     style_helpers::style_helpers(input)
 }
 
-/// Used by GPUI to generate the methods for position styles.
+/// Generates methods for margin styles.
+#[proc_macro]
+#[doc(hidden)]
+pub fn margin_style_methods(input: TokenStream) -> TokenStream {
+    style_helpers::margin_style_methods(input)
+}
+
+/// Generates methods for padding styles.
+#[proc_macro]
+#[doc(hidden)]
+pub fn padding_style_methods(input: TokenStream) -> TokenStream {
+    style_helpers::padding_style_methods(input)
+}
+
+/// Generates methods for position styles.
 #[proc_macro]
 #[doc(hidden)]
 pub fn position_style_methods(input: TokenStream) -> TokenStream {

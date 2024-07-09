@@ -24,6 +24,26 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
     output.into()
 }
 
+pub fn margin_style_methods(input: TokenStream) -> TokenStream {
+    let _ = parse_macro_input!(input as StyleableMacroInput);
+    let methods = generate_box_style_methods(margin_box_style_prefixes(), box_style_suffixes());
+    let output = quote! {
+        #(#methods)*
+    };
+
+    output.into()
+}
+
+pub fn padding_style_methods(input: TokenStream) -> TokenStream {
+    let _ = parse_macro_input!(input as StyleableMacroInput);
+    let methods = generate_box_style_methods(padding_box_style_prefixes(), box_style_suffixes());
+    let output = quote! {
+        #(#methods)*
+    };
+
+    output.into()
+}
+
 pub fn position_style_methods(input: TokenStream) -> TokenStream {
     let _ = parse_macro_input!(input as StyleableMacroInput);
     let methods = generate_box_style_methods(position_box_style_prefixes(), box_style_suffixes());
@@ -252,6 +272,110 @@ fn generate_custom_value_setter(
     method
 }
 
+fn margin_box_style_prefixes() -> Vec<BoxStylePrefix> {
+    vec![
+        BoxStylePrefix {
+            prefix: "m",
+            auto_allowed: true,
+            fields: vec![
+                quote! { margin.top },
+                quote! { margin.bottom },
+                quote! { margin.left },
+                quote! { margin.right },
+            ],
+            doc_string_prefix: "Sets the margin of the element. [Docs](https://tailwindcss.com/docs/margin)",
+        },
+        BoxStylePrefix {
+            prefix: "mt",
+            auto_allowed: true,
+            fields: vec![quote! { margin.top }],
+            doc_string_prefix: "Sets the top margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
+        },
+        BoxStylePrefix {
+            prefix: "mb",
+            auto_allowed: true,
+            fields: vec![quote! { margin.bottom }],
+            doc_string_prefix: "Sets the bottom margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
+        },
+        BoxStylePrefix {
+            prefix: "my",
+            auto_allowed: true,
+            fields: vec![quote! { margin.top }, quote! { margin.bottom }],
+            doc_string_prefix: "Sets the vertical margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-vertical-margin)",
+        },
+        BoxStylePrefix {
+            prefix: "mx",
+            auto_allowed: true,
+            fields: vec![quote! { margin.left }, quote! { margin.right }],
+            doc_string_prefix: "Sets the horizontal margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-horizontal-margin)",
+        },
+        BoxStylePrefix {
+            prefix: "ml",
+            auto_allowed: true,
+            fields: vec![quote! { margin.left }],
+            doc_string_prefix: "Sets the left margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
+        },
+        BoxStylePrefix {
+            prefix: "mr",
+            auto_allowed: true,
+            fields: vec![quote! { margin.right }],
+            doc_string_prefix: "Sets the right margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
+        },
+    ]
+}
+
+fn padding_box_style_prefixes() -> Vec<BoxStylePrefix> {
+    vec![
+        BoxStylePrefix {
+            prefix: "p",
+            auto_allowed: false,
+            fields: vec![
+                quote! { padding.top },
+                quote! { padding.bottom },
+                quote! { padding.left },
+                quote! { padding.right },
+            ],
+            doc_string_prefix: "Sets the padding of the element. [Docs](https://tailwindcss.com/docs/padding)",
+        },
+        BoxStylePrefix {
+            prefix: "pt",
+            auto_allowed: false,
+            fields: vec![quote! { padding.top }],
+            doc_string_prefix: "Sets the top padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
+        },
+        BoxStylePrefix {
+            prefix: "pb",
+            auto_allowed: false,
+            fields: vec![quote! { padding.bottom }],
+            doc_string_prefix: "Sets the bottom padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
+        },
+        BoxStylePrefix {
+            prefix: "px",
+            auto_allowed: false,
+            fields: vec![quote! { padding.left }, quote! { padding.right }],
+            doc_string_prefix: "Sets the horizontal padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-horizontal-padding)",
+        },
+        BoxStylePrefix {
+            prefix: "py",
+            auto_allowed: false,
+            fields: vec![quote! { padding.top }, quote! { padding.bottom }],
+            doc_string_prefix: "Sets the vertical padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-vertical-padding)",
+        },
+        BoxStylePrefix {
+            prefix: "pl",
+            auto_allowed: false,
+            fields: vec![quote! { padding.left }],
+            doc_string_prefix: "Sets the left padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
+        },
+        BoxStylePrefix {
+            prefix: "pr",
+            auto_allowed: false,
+            fields: vec![quote! { padding.right }],
+            doc_string_prefix: "Sets the right padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
+        },
+    ]
+}
+
 fn position_box_style_prefixes() -> Vec<BoxStylePrefix> {
     vec![
         BoxStylePrefix {
@@ -343,100 +467,6 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
             auto_allowed: true,
             fields: vec![quote! { max_size.height }],
             doc_string_prefix: "Sets the maximum height of the element. [Docs](https://tailwindcss.com/docs/max-height)",
-        },
-        BoxStylePrefix {
-            prefix: "m",
-            auto_allowed: true,
-            fields: vec![
-                quote! { margin.top },
-                quote! { margin.bottom },
-                quote! { margin.left },
-                quote! { margin.right },
-            ],
-            doc_string_prefix: "Sets the margin of the element. [Docs](https://tailwindcss.com/docs/margin)",
-        },
-        BoxStylePrefix {
-            prefix: "mt",
-            auto_allowed: true,
-            fields: vec![quote! { margin.top }],
-            doc_string_prefix: "Sets the top margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
-        },
-        BoxStylePrefix {
-            prefix: "mb",
-            auto_allowed: true,
-            fields: vec![quote! { margin.bottom }],
-            doc_string_prefix: "Sets the bottom margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
-        },
-        BoxStylePrefix {
-            prefix: "my",
-            auto_allowed: true,
-            fields: vec![quote! { margin.top }, quote! { margin.bottom }],
-            doc_string_prefix: "Sets the vertical margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-vertical-margin)",
-        },
-        BoxStylePrefix {
-            prefix: "mx",
-            auto_allowed: true,
-            fields: vec![quote! { margin.left }, quote! { margin.right }],
-            doc_string_prefix: "Sets the horizontal margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-horizontal-margin)",
-        },
-        BoxStylePrefix {
-            prefix: "ml",
-            auto_allowed: true,
-            fields: vec![quote! { margin.left }],
-            doc_string_prefix: "Sets the left margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
-        },
-        BoxStylePrefix {
-            prefix: "mr",
-            auto_allowed: true,
-            fields: vec![quote! { margin.right }],
-            doc_string_prefix: "Sets the right margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
-        },
-        BoxStylePrefix {
-            prefix: "p",
-            auto_allowed: false,
-            fields: vec![
-                quote! { padding.top },
-                quote! { padding.bottom },
-                quote! { padding.left },
-                quote! { padding.right },
-            ],
-            doc_string_prefix: "Sets the padding of the element. [Docs](https://tailwindcss.com/docs/padding)",
-        },
-        BoxStylePrefix {
-            prefix: "pt",
-            auto_allowed: false,
-            fields: vec![quote! { padding.top }],
-            doc_string_prefix: "Sets the top padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
-        },
-        BoxStylePrefix {
-            prefix: "pb",
-            auto_allowed: false,
-            fields: vec![quote! { padding.bottom }],
-            doc_string_prefix: "Sets the bottom padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
-        },
-        BoxStylePrefix {
-            prefix: "px",
-            auto_allowed: false,
-            fields: vec![quote! { padding.left }, quote! { padding.right }],
-            doc_string_prefix: "Sets the horizontal padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-horizontal-padding)",
-        },
-        BoxStylePrefix {
-            prefix: "py",
-            auto_allowed: false,
-            fields: vec![quote! { padding.top }, quote! { padding.bottom }],
-            doc_string_prefix: "Sets the vertical padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-vertical-padding)",
-        },
-        BoxStylePrefix {
-            prefix: "pl",
-            auto_allowed: false,
-            fields: vec![quote! { padding.left }],
-            doc_string_prefix: "Sets the left padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
-        },
-        BoxStylePrefix {
-            prefix: "pr",
-            auto_allowed: false,
-            fields: vec![quote! { padding.right }],
-            doc_string_prefix: "Sets the right padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
         },
         BoxStylePrefix {
             prefix: "gap",

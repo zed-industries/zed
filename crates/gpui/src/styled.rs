@@ -14,6 +14,8 @@ pub trait Styled: Sized {
     fn style(&mut self) -> &mut StyleRefinement;
 
     gpui_macros::style_helpers!();
+    gpui_macros::margin_style_methods!();
+    gpui_macros::padding_style_methods!();
     gpui_macros::position_style_methods!();
 
     /// Sets the position of the element to `relative`.
