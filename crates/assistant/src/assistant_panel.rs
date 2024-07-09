@@ -616,8 +616,9 @@ impl AssistantPanel {
                 .filter(|editor| editor.read(cx).context.read(cx).path.as_ref() == Some(&path))
         });
         if let Some(existing_context) = existing_context {
-            self.show_context(existing_context, cx);
-            return Task::ready(Ok(()));
+            return cx.spawn(|this, mut cx| async move {
+                this.update(&mut cx, |this, cx| this.show_context(existing_context, cx))
+            });
         }
 
         let saved_context = self.context_store.read(cx).load(path.clone(), cx);
