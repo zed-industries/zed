@@ -523,6 +523,7 @@
   {
     "context": "OutlinePanel",
     "bindings": {
+      "escape": "menu::Cancel",
       "left": "outline_panel::CollapseSelectedEntry",
       "right": "outline_panel::ExpandSelectedEntry",
       "cmd-alt-c": "outline_panel::CopyPath",
