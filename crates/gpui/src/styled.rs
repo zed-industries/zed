@@ -1,9 +1,10 @@
 use crate::{
     self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
     DefiniteLength, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla,
-    JustifyContent, Length, Position, SharedString, StyleRefinement, Visibility, WhiteSpace,
+    JustifyContent, Length, SharedString, StyleRefinement, Visibility, WhiteSpace,
 };
 use crate::{BoxShadow, TextStyleRefinement};
+pub use gpui_macros::{margin_style_methods, padding_style_methods, position_style_methods};
 use smallvec::{smallvec, SmallVec};
 use taffy::style::{AlignContent, Display, Overflow};
 
@@ -14,20 +15,9 @@ pub trait Styled: Sized {
     fn style(&mut self) -> &mut StyleRefinement;
 
     gpui_macros::style_helpers!();
-
-    /// Sets the position of the element to `relative`.
-    /// [Docs](https://tailwindcss.com/docs/position)
-    fn relative(mut self) -> Self {
-        self.style().position = Some(Position::Relative);
-        self
-    }
-
-    /// Sets the position of the element to `absolute`.
-    /// [Docs](https://tailwindcss.com/docs/position)
-    fn absolute(mut self) -> Self {
-        self.style().position = Some(Position::Absolute);
-        self
-    }
+    gpui_macros::margin_style_methods!();
+    gpui_macros::padding_style_methods!();
+    gpui_macros::position_style_methods!();
 
     /// Sets the display type of the element to `block`.
     /// [Docs](https://tailwindcss.com/docs/display)
