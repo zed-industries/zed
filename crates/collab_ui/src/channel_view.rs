@@ -12,8 +12,8 @@ use editor::{
 };
 use gpui::{
     actions, AnyElement, AnyView, AppContext, ClipboardItem, Entity as _, EventEmitter,
-    FocusableView, IntoElement as _, Model, Pixels, Point, Render, Subscription, Task,
-    UpdateGlobal, View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    FocusableView, IntoElement as _, Model, Pixels, Point, Render, Subscription, Task, View,
+    ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use project::Project;
 use std::{
@@ -32,9 +32,8 @@ use workspace::{notifications::NotificationId, FollowableViewRegistry};
 actions!(collab, [CopyLink]);
 
 pub fn init(cx: &mut AppContext) {
-    FollowableViewRegistry::update_global(cx, |registry, _| {
-        registry.register_item::<ChannelView>()
-    });
+    cx.default_global::<FollowableViewRegistry>()
+        .register_item::<ChannelView>();
 }
 
 pub struct ChannelView {

@@ -29,11 +29,11 @@ use futures::{
 use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyElement, AnyView, AnyWeakView, AppContext, AsyncAppContext,
-    AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, ManagedView,
-    Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, ReadGlobal, Render,
-    ResizeEdge, Size, Stateful, Subscription, Task, Tiling, UpdateGlobal, View, WeakView,
-    WindowBounds, WindowHandle, WindowOptions,
+    AsyncWindowContext, BorrowAppContext, Bounds, CursorStyle, Decorations, DragMoveEvent,
+    Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global, Hsla, KeyContext,
+    Keystroke, ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point,
+    PromptLevel, ReadGlobal, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling,
+    UpdateGlobal, View, WeakView, WindowBounds, WindowHandle, WindowOptions,
 };
 use item::{
     FollowableView, FollowableViewHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -290,7 +290,7 @@ pub fn init_settings(cx: &mut AppContext) {
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
-    cx.set_global(FollowableViewRegistry::new());
+    cx.set_global(FollowableViewRegistry::default());
 
     init_settings(cx);
     notifications::init(cx);
@@ -358,6 +358,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
     });
 }
 
+#[derive(Default)]
 pub struct FollowableViewRegistry(HashMap<TypeId, FollowableViewDescriptor>);
 
 struct FollowableViewDescriptor {
@@ -379,10 +380,6 @@ type FollowableViewBuilder = fn(
 impl Global for FollowableViewRegistry {}
 
 impl FollowableViewRegistry {
-    fn new() -> Self {
-        Self(HashMap::default())
-    }
-
     pub fn register_item<I: FollowableView + Item>(&mut self) {
         self.0.insert(
             TypeId::of::<I>(),

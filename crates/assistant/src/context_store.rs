@@ -29,7 +29,7 @@ pub struct ContextStore {
     host_contexts: Vec<proto::ContextMetadata>,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
-    telemetry: Option<Arc<Telemetry>>,
+    telemetry: Arc<Telemetry>,
     _watch_updates: Task<Option<()>>,
     client: Arc<Client>,
     project: Model<Project>,
@@ -60,13 +60,10 @@ impl ContextHandle {
 }
 
 impl ContextStore {
-    pub fn new(
-        project: Model<Project>,
-        fs: Arc<dyn Fs>,
-        languages: Arc<LanguageRegistry>,
-        telemetry: Option<Arc<Telemetry>>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Model<Self>>> {
+    pub fn new(project: Model<Project>, cx: &mut AppContext) -> Task<Result<Model<Self>>> {
+        let fs = project.read(cx).fs().clone();
+        let languages = project.read(cx).languages().clone();
+        let telemetry = project.read(cx).client().telemetry().clone();
         cx.spawn(|mut cx| async move {
             const CONTEXT_WATCH_DURATION: Duration = Duration::from_millis(100);
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
@@ -281,8 +278,9 @@ impl ContextStore {
     }
 
     pub fn create(&mut self, cx: &mut ModelContext<Self>) -> Model<Context> {
-        let context =
-            cx.new_model(|cx| Context::local(self.languages.clone(), self.telemetry.clone(), cx));
+        let context = cx.new_model(|cx| {
+            Context::local(self.languages.clone(), Some(self.telemetry.clone()), cx)
+        });
         self.register_context(&context, cx);
         context
     }
@@ -309,9 +307,14 @@ impl ContextStore {
 
         cx.spawn(|this, mut cx| async move {
             let saved_context = load.await?;
-            let context =
-                Context::deserialize(saved_context, path.clone(), languages, telemetry, &mut cx)
-                    .await?;
+            let context = Context::deserialize(
+                saved_context,
+                path.clone(),
+                languages,
+                Some(telemetry),
+                &mut cx,
+            )
+            .await?;
             this.update(&mut cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_context_for_path(&path, cx) {
                     existing_context
@@ -380,7 +383,7 @@ impl ContextStore {
                     replica_id,
                     capability,
                     language_registry,
-                    telemetry,
+                    Some(telemetry),
                     cx,
                 )
             })?;
@@ -557,6 +560,10 @@ impl ContextStore {
                     .collect()
             }
         })
+    }
+
+    pub fn host_contexts(&self) -> &[proto::ContextMetadata] {
+        &self.host_contexts
     }
 
     fn reload(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {

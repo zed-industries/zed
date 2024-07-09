@@ -205,14 +205,7 @@ impl AssistantPanel {
         cx.spawn(|mut cx| async move {
             let context_store = workspace
                 .update(&mut cx, |workspace, cx| {
-                    let app_state = workspace.app_state();
-                    ContextStore::new(
-                        workspace.project().clone(),
-                        app_state.fs.clone(),
-                        app_state.languages.clone(),
-                        Some(app_state.client.telemetry().clone()),
-                        cx,
-                    )
+                    ContextStore::new(workspace.project().clone(), cx)
                 })?
                 .await?;
             workspace.update(&mut cx, |workspace, cx| {

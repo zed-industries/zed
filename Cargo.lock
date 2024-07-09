@@ -2467,6 +2467,7 @@ version = "0.44.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "assistant",
  "async-trait",
  "async-tungstenite",
  "audio",

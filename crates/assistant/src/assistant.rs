@@ -17,9 +17,9 @@ use assistant_settings::{AnthropicModel, AssistantSettings, CloudModel, OllamaMo
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
-pub(crate) use completion_provider::*;
-pub(crate) use context::*;
-pub(crate) use context_store::*;
+pub use completion_provider::*;
+pub use context::*;
+pub use context_store::*;
 use fs::Fs;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;

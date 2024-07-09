@@ -294,6 +294,7 @@ impl TestServer {
             menu::init();
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
+            cx.set_global(assistant::CompletionProvider::fake());
         });
 
         client

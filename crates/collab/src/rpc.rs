@@ -551,6 +551,13 @@ impl Server {
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::LinkedEditingRange>,
             ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::OpenContext>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::SynchronizeContexts>,
+            ))
+            // todo!("context updates")
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
@@ -558,6 +565,7 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferReloaded>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferSaved>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateDiffBase>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
             .add_request_handler(get_users)
             .add_request_handler(user_handler(fuzzy_search_users))
             .add_request_handler(user_handler(request_contact))

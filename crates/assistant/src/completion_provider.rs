@@ -1,13 +1,13 @@
 mod anthropic;
 mod cloud;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 mod fake;
 mod ollama;
 mod open_ai;
 
 pub use anthropic::*;
 pub use cloud::*;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use fake::*;
 pub use ollama::*;
 pub use open_ai::*;
@@ -206,7 +206,7 @@ pub enum CompletionProvider {
     OpenAi(OpenAiCompletionProvider),
     Anthropic(AnthropicCompletionProvider),
     Cloud(CloudCompletionProvider),
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     Fake(FakeCompletionProvider),
     Ollama(OllamaCompletionProvider),
 }
@@ -216,6 +216,11 @@ impl gpui::Global for CompletionProvider {}
 impl CompletionProvider {
     pub fn global(cx: &AppContext) -> &Self {
         cx.global::<Self>()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake() -> Self {
+        Self::Fake(FakeCompletionProvider::default())
     }
 
     pub fn available_models(&self, cx: &AppContext) -> Vec<LanguageModel> {
@@ -236,7 +241,7 @@ impl CompletionProvider {
                 .available_models()
                 .map(|model| LanguageModel::Ollama(model.clone()))
                 .collect(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CompletionProvider::Fake(_) => unimplemented!(),
         }
     }
@@ -247,7 +252,7 @@ impl CompletionProvider {
             CompletionProvider::Anthropic(provider) => provider.settings_version(),
             CompletionProvider::Cloud(provider) => provider.settings_version(),
             CompletionProvider::Ollama(provider) => provider.settings_version(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CompletionProvider::Fake(_) => unimplemented!(),
         }
     }
@@ -258,7 +263,7 @@ impl CompletionProvider {
             CompletionProvider::Anthropic(provider) => provider.is_authenticated(),
             CompletionProvider::Cloud(provider) => provider.is_authenticated(),
             CompletionProvider::Ollama(provider) => provider.is_authenticated(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CompletionProvider::Fake(_) => true,
         }
     }
@@ -269,7 +274,7 @@ impl CompletionProvider {
             CompletionProvider::Anthropic(provider) => provider.authenticate(cx),
             CompletionProvider::Cloud(provider) => provider.authenticate(cx),
             CompletionProvider::Ollama(provider) => provider.authenticate(cx),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CompletionProvider::Fake(_) => Task::ready(Ok(())),
         }
     }
@@ -280,7 +285,7 @@ impl CompletionProvider {
             CompletionProvider::Anthropic(provider) => provider.authentication_prompt(cx),
             CompletionProvider::Cloud(provider) => provider.authentication_prompt(cx),
             CompletionProvider::Ollama(provider) => provider.authentication_prompt(cx),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CompletionProvider::Fake(_) => unimplemented!(),
         }
     }
@@ -291,7 +296,7 @@ impl CompletionProvider {
             CompletionProvider::Anthropic(provider) => provider.reset_credentials(cx),
             CompletionProvider::Cloud(_) => Task::ready(Ok(())),
             CompletionProvider::Ollama(provider) => provider.reset_credentials(cx),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CompletionProvider::Fake(_) => Task::ready(Ok(())),
         }
     }
@@ -302,7 +307,7 @@ impl CompletionProvider {
             CompletionProvider::Anthropic(provider) => LanguageModel::Anthropic(provider.model()),
             CompletionProvider::Cloud(provider) => LanguageModel::Cloud(provider.model()),
             CompletionProvider::Ollama(provider) => LanguageModel::Ollama(provider.model()),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CompletionProvider::Fake(_) => LanguageModel::default(),
         }
     }
@@ -317,7 +322,7 @@ impl CompletionProvider {
             CompletionProvider::Anthropic(provider) => provider.count_tokens(request, cx),
             CompletionProvider::Cloud(provider) => provider.count_tokens(request, cx),
             CompletionProvider::Ollama(provider) => provider.count_tokens(request, cx),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CompletionProvider::Fake(_) => futures::FutureExt::boxed(futures::future::ready(Ok(0))),
         }
     }
@@ -331,7 +336,7 @@ impl CompletionProvider {
             CompletionProvider::Anthropic(provider) => provider.complete(request),
             CompletionProvider::Cloud(provider) => provider.complete(request),
             CompletionProvider::Ollama(provider) => provider.complete(request),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             CompletionProvider::Fake(provider) => provider.complete(),
         }
     }
