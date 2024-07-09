@@ -3662,29 +3662,26 @@ impl Project {
                     let this = this.clone();
                     let name = name.to_string();
                     async move {
-                        if let Some(actions) = params.actions {
-                            let (tx, mut rx) = smol::channel::bounded(1);
-                            let request = LanguageServerPromptRequest {
-                                level: match params.typ {
-                                    lsp::MessageType::ERROR => PromptLevel::Critical,
-                                    lsp::MessageType::WARNING => PromptLevel::Warning,
-                                    _ => PromptLevel::Info,
-                                },
-                                message: params.message,
-                                actions,
-                                response_channel: tx,
-                                lsp_name: name.clone(),
-                            };
+                        let actions = params.actions.unwrap_or_default();
+                        let (tx, mut rx) = smol::channel::bounded(1);
+                        let request = LanguageServerPromptRequest {
+                            level: match params.typ {
+                                lsp::MessageType::ERROR => PromptLevel::Critical,
+                                lsp::MessageType::WARNING => PromptLevel::Warning,
+                                _ => PromptLevel::Info,
+                            },
+                            message: params.message,
+                            actions,
+                            response_channel: tx,
+                            lsp_name: name.clone(),
+                        };
 
-                            if let Ok(_) = this.update(&mut cx, |_, cx| {
-                                cx.emit(Event::LanguageServerPrompt(request));
-                            }) {
-                                let response = rx.next().await;
+                        if let Ok(_) = this.update(&mut cx, |_, cx| {
+                            cx.emit(Event::LanguageServerPrompt(request));
+                        }) {
+                            let response = rx.next().await;
 
-                                Ok(response)
-                            } else {
-                                Ok(None)
-                            }
+                            Ok(response)
                         } else {
                             Ok(None)
                         }
@@ -3739,7 +3736,33 @@ impl Project {
                 }
             })
             .detach();
+        language_server
+            .on_notification::<lsp::notification::ShowMessage, _>({
+                let this = this.clone();
+                let name = name.to_string();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    let name = name.to_string();
 
+                    let (tx, _) = smol::channel::bounded(1);
+                    let request = LanguageServerPromptRequest {
+                        level: match params.typ {
+                            lsp::MessageType::ERROR => PromptLevel::Critical,
+                            lsp::MessageType::WARNING => PromptLevel::Warning,
+                            _ => PromptLevel::Info,
+                        },
+                        message: params.message,
+                        actions: vec![],
+                        response_channel: tx,
+                        lsp_name: name.clone(),
+                    };
+
+                    let _ = this.update(&mut cx, |_, cx| {
+                        cx.emit(Event::LanguageServerPrompt(request));
+                    });
+                }
+            })
+            .detach();
         language_server
             .on_notification::<lsp::notification::Progress, _>(move |params, mut cx| {
                 if let Some(this) = this.upgrade() {
