@@ -27,38 +27,44 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
 fn generate_methods() -> Vec<TokenStream2> {
     let mut methods = Vec::new();
 
-    for (prefix, auto_allowed, fields, prefix_doc_string) in box_prefixes() {
+    for box_style in box_prefixes() {
         methods.push(generate_custom_value_setter(
-            prefix,
-            if auto_allowed {
+            box_style.prefix,
+            if box_style.auto_allowed {
                 quote! { Length }
             } else {
                 quote! { DefiniteLength }
             },
-            &fields,
-            prefix_doc_string,
+            &box_style.fields,
+            &box_style.doc_string_prefix,
         ));
 
         for (suffix, length_tokens, suffix_doc_string) in box_suffixes() {
-            if suffix != "auto" || auto_allowed {
+            if suffix != "auto" || box_style.auto_allowed {
                 methods.push(generate_predefined_setter(
-                    prefix,
+                    box_style.prefix,
                     suffix,
-                    &fields,
+                    &box_style.fields,
                     &length_tokens,
                     false,
-                    &format!("{prefix_doc_string}\n\n{suffix_doc_string}"),
+                    &format!(
+                        "{prefix_doc_string}\n\n{suffix_doc_string}",
+                        prefix_doc_string = box_style.doc_string_prefix
+                    ),
                 ));
             }
 
             if suffix != "auto" {
                 methods.push(generate_predefined_setter(
-                    prefix,
+                    box_style.prefix,
                     suffix,
-                    &fields,
+                    &box_style.fields,
                     &length_tokens,
                     true,
-                    &format!("{prefix_doc_string}\n\n{suffix_doc_string}"),
+                    &format!(
+                        "{prefix_doc_string}\n\n{suffix_doc_string}",
+                        prefix_doc_string = box_style.doc_string_prefix
+                    ),
                 ));
             }
         }
@@ -180,186 +186,208 @@ fn generate_custom_value_setter(
     method
 }
 
+struct BoxStylePrefix {
+    prefix: &'static str,
+    auto_allowed: bool,
+    fields: Vec<TokenStream2>,
+    doc_string_prefix: &'static str,
+}
+
 /// Returns a vec of (Property name, has 'auto' suffix, tokens for accessing the property, documentation)
-fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>, &'static str)> {
+fn box_prefixes() -> Vec<BoxStylePrefix> {
     vec![
-        (
-            "w",
-            true,
-            vec![quote! { size.width }],
-            "Sets the width of the element. [Docs](https://tailwindcss.com/docs/width)",
-        ),
-        ("h", true, vec![quote! { size.height }], "Sets the height of the element. [Docs](https://tailwindcss.com/docs/height)"),
-        (
-            "size",
-            true,
-            vec![quote! {size.width}, quote! {size.height}],
-            "Sets the width and height of the element."
-        ),
+        BoxStylePrefix {
+            prefix: "w",
+            auto_allowed: true,
+            fields: vec![quote! { size.width }],
+            doc_string_prefix: "Sets the width of the element. [Docs](https://tailwindcss.com/docs/width)",
+        },
+        BoxStylePrefix {
+            prefix: "h",
+            auto_allowed: true,
+            fields: vec![quote! { size.height }],
+            doc_string_prefix: "Sets the height of the element. [Docs](https://tailwindcss.com/docs/height)"
+        },
+        BoxStylePrefix {
+            prefix: "size",
+            auto_allowed: true,
+            fields: vec![quote! {size.width}, quote! {size.height}],
+            doc_string_prefix: "Sets the width and height of the element."
+        },
         // TODO: These don't use the same size ramp as the others
         // see https://tailwindcss.com/docs/max-width
-        (
-            "min_w",
-            true,
-            vec![quote! { min_size.width }],
-            "Sets the minimum width of the element. [Docs](https://tailwindcss.com/docs/min-width)",
-        ),
+        BoxStylePrefix {
+            prefix: "min_w",
+            auto_allowed: true,
+            fields: vec![quote! { min_size.width }],
+            doc_string_prefix: "Sets the minimum width of the element. [Docs](https://tailwindcss.com/docs/min-width)",
+        },
         // TODO: These don't use the same size ramp as the others
         // see https://tailwindcss.com/docs/max-width
-        (
-            "min_h",
-            true,
-            vec![quote! { min_size.height }],
-            "Sets the minimum height of the element. [Docs](https://tailwindcss.com/docs/min-height)",
-        ),
+        BoxStylePrefix {
+            prefix: "min_h",
+            auto_allowed: true,
+            fields: vec![quote! { min_size.height }],
+            doc_string_prefix: "Sets the minimum height of the element. [Docs](https://tailwindcss.com/docs/min-height)",
+        },
         // TODO: These don't use the same size ramp as the others
         // see https://tailwindcss.com/docs/max-width
-        (
-            "max_w",
-            true,
-            vec![quote! { max_size.width }],
-            "Sets the maximum width of the element. [Docs](https://tailwindcss.com/docs/max-width)",
-        ),
+        BoxStylePrefix {
+            prefix: "max_w",
+            auto_allowed: true,
+            fields: vec![quote! { max_size.width }],
+            doc_string_prefix: "Sets the maximum width of the element. [Docs](https://tailwindcss.com/docs/max-width)",
+        },
         // TODO: These don't use the same size ramp as the others
         // see https://tailwindcss.com/docs/max-width
-        (
-            "max_h",
-            true,
-            vec![quote! { max_size.height }],
-            "Sets the maximum height of the element. [Docs](https://tailwindcss.com/docs/max-height)",
-        ),
-        (
-            "m",
-            true,
-            vec![
+        BoxStylePrefix {
+            prefix: "max_h",
+            auto_allowed: true,
+            fields: vec![quote! { max_size.height }],
+            doc_string_prefix: "Sets the maximum height of the element. [Docs](https://tailwindcss.com/docs/max-height)",
+        },
+        BoxStylePrefix {
+            prefix: "m",
+            auto_allowed: true,
+            fields: vec![
                 quote! { margin.top },
                 quote! { margin.bottom },
                 quote! { margin.left },
                 quote! { margin.right },
             ],
-            "Sets the margin of the element. [Docs](https://tailwindcss.com/docs/margin)"
-        ),
-        ("mt", true, vec![quote! { margin.top }], "Sets the top margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"),
-        (
-            "mb",
-            true,
-            vec![quote! { margin.bottom }],
-            "Sets the bottom margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
-        ),
-        (
-            "my",
-            true,
-            vec![quote! { margin.top }, quote! { margin.bottom }],
-            "Sets the vertical margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-vertical-margin)"
-        ),
-        (
-            "mx",
-            true,
-            vec![quote! { margin.left }, quote! { margin.right }],
-            "Sets the horizontal margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-horizontal-margin)"
-        ),
-        ("ml", true, vec![quote! { margin.left }], "Sets the left margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"),
-        (
-            "mr",
-            true,
-            vec![quote! { margin.right }],
-            "Sets the right margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
-        ),
-        (
-            "p",
-            false,
-            vec![
+            doc_string_prefix: "Sets the margin of the element. [Docs](https://tailwindcss.com/docs/margin)"
+        },
+        BoxStylePrefix {
+            prefix: "mt",
+            auto_allowed: true,
+            fields: vec![quote! { margin.top }],
+            doc_string_prefix: "Sets the top margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
+        },
+        BoxStylePrefix {
+            prefix: "mb",
+            auto_allowed: true,
+            fields: vec![quote! { margin.bottom }],
+            doc_string_prefix: "Sets the bottom margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
+        },
+        BoxStylePrefix {
+            prefix: "my",
+            auto_allowed: true,
+            fields: vec![quote! { margin.top }, quote! { margin.bottom }],
+            doc_string_prefix: "Sets the vertical margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-vertical-margin)"
+        },
+        BoxStylePrefix {
+            prefix: "mx",
+            auto_allowed: true,
+            fields: vec![quote! { margin.left }, quote! { margin.right }],
+            doc_string_prefix: "Sets the horizontal margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-horizontal-margin)"
+        },
+        BoxStylePrefix {
+            prefix: "ml",
+            auto_allowed: true,
+            fields: vec![quote! { margin.left }],
+            doc_string_prefix: "Sets the left margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
+        },
+        BoxStylePrefix {
+            prefix: "mr",
+            auto_allowed: true,
+            fields: vec![quote! { margin.right }],
+            doc_string_prefix: "Sets the right margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
+        },
+        BoxStylePrefix {
+            prefix: "p",
+            auto_allowed: false,
+            fields: vec![
                 quote! { padding.top },
                 quote! { padding.bottom },
                 quote! { padding.left },
                 quote! { padding.right },
             ],
-            "Sets the padding of the element. [Docs](https://tailwindcss.com/docs/padding)"
-        ),
-        (
-            "pt",
-            false,
-            vec![quote! { padding.top }],
-            "Sets the top padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
-        ),
-        (
-            "pb",
-            false,
-            vec![quote! { padding.bottom }],
-            "Sets the bottom padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
-        ),
-        (
-            "px",
-            false,
-            vec![quote! { padding.left }, quote! { padding.right }],
-            "Sets the horizontal padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-horizontal-padding)"
-        ),
-        (
-            "py",
-            false,
-            vec![quote! { padding.top }, quote! { padding.bottom }],
-            "Sets the vertical padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-vertical-padding)"
-        ),
-        (
-            "pl",
-            false,
-            vec![quote! { padding.left }],
-            "Sets the left padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
-        ),
-        (
-            "pr",
-            false,
-            vec![quote! { padding.right }],
-            "Sets the right padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
-        ),
-        (
-            "inset",
-            true,
-            vec![quote! { inset.top }, quote! { inset.right }, quote! { inset.bottom }, quote! { inset.left }],
-            "Sets the top, right, bottom, and left values of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
-        ),
-        (
-            "top",
-            true,
-            vec![quote! { inset.top }],
-            "Sets the top value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
-        ),
-        (
-            "bottom",
-            true,
-            vec![quote! { inset.bottom }],
-            "Sets the bottom value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
-        ),
-        (
-            "left",
-            true,
-            vec![quote! { inset.left }],
-            "Sets the left value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
-        ),
-        (
-            "right",
-            true,
-            vec![quote! { inset.right }],
-            "Sets the right value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
-        ),
-        (
-            "gap",
-            false,
-            vec![quote! { gap.width }, quote! { gap.height }],
-            "Sets the gap between rows and columns in flex layouts. [Docs](https://tailwindcss.com/docs/gap)"
-        ),
-        (
-            "gap_x",
-            false,
-            vec![quote! { gap.width }],
-            "Sets the gap between columns in flex layouts. [Docs](https://tailwindcss.com/docs/gap#changing-row-and-column-gaps-independently)"
-        ),
-        (
-            "gap_y",
-            false,
-            vec![quote! { gap.height }],
-            "Sets the gap between rows in flex layouts. [Docs](https://tailwindcss.com/docs/gap#changing-row-and-column-gaps-independently)"
-        ),
+            doc_string_prefix: "Sets the padding of the element. [Docs](https://tailwindcss.com/docs/padding)"
+        },
+        BoxStylePrefix {
+            prefix: "pt",
+            auto_allowed: false,
+            fields: vec![quote! { padding.top }],
+            doc_string_prefix: "Sets the top padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
+        },
+        BoxStylePrefix {
+            prefix: "pb",
+            auto_allowed: false,
+            fields: vec![quote! { padding.bottom }],
+            doc_string_prefix: "Sets the bottom padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
+        },
+        BoxStylePrefix {
+            prefix: "px",
+            auto_allowed: false,
+            fields: vec![quote! { padding.left }, quote! { padding.right }],
+            doc_string_prefix: "Sets the horizontal padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-horizontal-padding)"
+        },
+        BoxStylePrefix {
+            prefix: "py",
+            auto_allowed: false,
+            fields: vec![quote! { padding.top }, quote! { padding.bottom }],
+            doc_string_prefix: "Sets the vertical padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-vertical-padding)"
+        },
+        BoxStylePrefix {
+            prefix: "pl",
+            auto_allowed: false,
+            fields: vec![quote! { padding.left }],
+            doc_string_prefix: "Sets the left padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
+        },
+        BoxStylePrefix {
+            prefix: "pr",
+            auto_allowed: false,
+            fields: vec![quote! { padding.right }],
+            doc_string_prefix: "Sets the right padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
+        },
+        BoxStylePrefix {
+            prefix: "inset",
+            auto_allowed: true,
+            fields: vec![quote! { inset.top }, quote! { inset.right }, quote! { inset.bottom }, quote! { inset.left }],
+            doc_string_prefix: "Sets the top, right, bottom, and left values of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        },
+        BoxStylePrefix {
+            prefix: "top",
+            auto_allowed: true,
+            fields: vec![quote! { inset.top }],
+            doc_string_prefix: "Sets the top value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        },
+        BoxStylePrefix {
+            prefix: "bottom",
+            auto_allowed: true,
+            fields: vec![quote! { inset.bottom }],
+            doc_string_prefix: "Sets the bottom value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        },
+        BoxStylePrefix {
+            prefix: "left",
+            auto_allowed: true,
+            fields: vec![quote! { inset.left }],
+            doc_string_prefix: "Sets the left value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        },
+        BoxStylePrefix {
+            prefix: "right",
+            auto_allowed: true,
+            fields: vec![quote! { inset.right }],
+            doc_string_prefix: "Sets the right value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        },
+        BoxStylePrefix {
+            prefix: "gap",
+            auto_allowed: false,
+            fields: vec![quote! { gap.width }, quote! { gap.height }],
+            doc_string_prefix: "Sets the gap between rows and columns in flex layouts. [Docs](https://tailwindcss.com/docs/gap)"
+        },
+        BoxStylePrefix {
+            prefix: "gap_x",
+            auto_allowed: false,
+            fields: vec![quote! { gap.width }],
+            doc_string_prefix: "Sets the gap between columns in flex layouts. [Docs](https://tailwindcss.com/docs/gap#changing-row-and-column-gaps-independently)"
+        },
+        BoxStylePrefix {
+            prefix: "gap_y",
+            auto_allowed: false,
+            fields: vec![quote! { gap.height }],
+            doc_string_prefix: "Sets the gap between rows in flex layouts. [Docs](https://tailwindcss.com/docs/gap#changing-row-and-column-gaps-independently)"
+        },
     ]
 }
 
