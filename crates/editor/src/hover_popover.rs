@@ -587,7 +587,7 @@ impl DiagnosticPopover {
         div()
             .id("diagnostic")
             .block()
-            .elevation_2(cx)
+            .elevation_2_borderless(cx)
             .max_w(max_size.width)
             .max_h(max_size.height)
             .cursor(CursorStyle::PointingHand)
@@ -609,7 +609,7 @@ impl DiagnosticPopover {
                     .text_color(style.text.color)
                     .border_1()
                     .border_color(diagnostic_colors.border)
-                    .rounded_md()
+                    .rounded_lg()
                     .child(SharedString::from(text)),
             )
             .into_any_element()
