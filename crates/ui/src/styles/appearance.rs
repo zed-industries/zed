@@ -8,7 +8,7 @@ pub fn appearance(cx: &WindowContext) -> Appearance {
 }
 
 /// Returns the [WindowBackgroundAppearance].
-pub fn window_appereance(cx: &WindowContext) -> WindowBackgroundAppearance {
+pub fn window_appearance(cx: &WindowContext) -> WindowBackgroundAppearance {
     cx.theme().styles.window_background_appearance
 }
 
@@ -18,7 +18,7 @@ pub fn window_appereance(cx: &WindowContext) -> WindowBackgroundAppearance {
 /// Helps determine if you need to take extra steps to prevent
 /// transparent backgrounds.
 pub fn window_is_transparent(cx: &WindowContext) -> bool {
-    match window_appereance(cx) {
+    match window_appearance(cx) {
         WindowBackgroundAppearance::Transparent => true,
         WindowBackgroundAppearance::Blurred => true,
         _ => false,
