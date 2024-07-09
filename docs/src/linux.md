@@ -1,6 +1,23 @@
-# Other ways to install Zed on Linux
+# Getting started
 
-## Installing from source
+For most people we recommend using the script on the [download](/download) page to install Zed:
+
+```sh
+curl https://zed.dev/install.sh | sh
+```
+
+We also offer a preview build of Zed which receives updates about a week ahead of stable. You can install it with:
+
+```sh
+curl https://zed.dev/install.sh | ZED_CHANNEL=preview sh
+```
+
+The install script does not work on systems that:
+* have no system-wide glibc (for example on NixOS or Alpine)
+* have a glibc older than version 2.29 (for example Amazon Linux 2 or Ubuntu 18 and earlier)
+* use an architecture other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
+
+# Other ways to install Zed on Linux
 
 Zed is open source, and [you can install from source](./development/linux.md).
 
