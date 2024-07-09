@@ -247,7 +247,7 @@ impl X11Client {
         let root = xcb_connection.setup().roots[0].root;
         let compositor_present = check_compositor_present(&xcb_connection, root);
         let gtk_frame_extents_supported =
-            check_gtk_frame_extents_supprted(&xcb_connection, &atoms, root);
+            check_gtk_frame_extents_supported(&xcb_connection, &atoms, root);
         let client_side_decorations_supported = compositor_present && gtk_frame_extents_supported;
         log::info!(
             "x11: compositor present: {}, gtk_frame_extents_supported: {}",
@@ -1369,7 +1369,7 @@ fn check_compositor_present(xcb_connection: &XCBConnection, root: u32) -> bool {
     method1 || method2 || method3
 }
 
-fn check_gtk_frame_extents_supprted(
+fn check_gtk_frame_extents_supported(
     xcb_connection: &XCBConnection,
     atoms: &XcbAtoms,
     root: xproto::Window,
