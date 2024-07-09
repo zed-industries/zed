@@ -21,6 +21,11 @@ impl SnippetRegistry {
         GlobalSnippetRegistry::global(cx).0.clone()
     }
 
+    pub fn try_global(cx: &AppContext) -> Option<Arc<Self>> {
+        cx.try_global::<GlobalSnippetRegistry>()
+            .map(|registry| registry.0.clone())
+    }
+
     pub fn init_global(cx: &mut AppContext) {
         GlobalSnippetRegistry::set_global(cx, GlobalSnippetRegistry(Arc::new(Self::new())))
     }

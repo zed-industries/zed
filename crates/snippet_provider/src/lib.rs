@@ -188,7 +188,12 @@ impl SnippetProvider {
             .into_iter()
             .flat_map(|(_, snippets)| snippets.into_iter())
             .collect();
-        let registry_snippets = SnippetRegistry::global(cx).get_snippets(language);
+
+        let Some(registry) = SnippetRegistry::try_global(cx) else {
+            return user_snippets;
+        };
+
+        let registry_snippets = registry.get_snippets(language);
         user_snippets.extend(registry_snippets);
 
         user_snippets
