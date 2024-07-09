@@ -32,6 +32,7 @@ pub struct SignatureHelpState {
     task: Option<Task<()>>,
     popover: Option<SignatureHelpPopover>,
     hidden_by: Option<SignatureHelpHiddenBy>,
+    backspace_pressed: bool,
 }
 
 impl SignatureHelpState {
@@ -40,6 +41,7 @@ impl SignatureHelpState {
             task: None,
             popover: None,
             hidden_by: None,
+            backspace_pressed: false,
         }
     }
 
@@ -52,13 +54,20 @@ impl SignatureHelpState {
         self.task = None;
     }
 
-    #[cfg(test)]
     pub fn popover(&self) -> Option<&SignatureHelpPopover> {
         self.popover.as_ref()
     }
 
     pub fn popover_mut(&mut self) -> Option<&mut SignatureHelpPopover> {
         self.popover.as_mut()
+    }
+
+    pub fn backspace_pressed(&self) -> bool {
+        self.backspace_pressed
+    }
+
+    pub fn set_backspace_pressed(&mut self, backspace_pressed: bool) {
+        self.backspace_pressed = backspace_pressed;
     }
 
     pub fn set_popover(&mut self, popover: SignatureHelpPopover) {
@@ -85,6 +94,14 @@ impl SignatureHelpState {
 #[derive(Clone, Debug)]
 pub struct SignatureHelpPopover {
     pub parsed_content: ParsedMarkdown,
+}
+
+impl PartialEq for SignatureHelpPopover {
+    fn eq(&self, other: &Self) -> bool {
+        let str_equality = self.parsed_content.text.as_str() == other.parsed_content.text.as_str();
+        let highlight_equality = self.parsed_content.highlights == other.parsed_content.highlights;
+        str_equality && highlight_equality
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

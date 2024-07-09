@@ -2669,7 +2669,7 @@ impl EditorElement {
         );
 
         let maybe_element = self.editor.update(cx, |editor, cx| {
-            if let Some(popover) = &mut editor.signature_help_state.popover_mut() {
+            if let Some(popover) = editor.signature_help_state.popover_mut() {
                 let element = popover.render(
                     &self.style,
                     max_size,
@@ -2682,8 +2682,15 @@ impl EditorElement {
             }
         });
         if let Some(mut element) = maybe_element {
+            let window_size = cx.viewport_size();
             let size = element.layout_as_root(Size::<AvailableSpace>::default(), cx);
-            let point = point(start_x, start_y - size.height);
+            let mut point = point(start_x, start_y - size.height);
+
+            // Adjusting to ensure the popover does not overflow in the X-axis direction.
+            if point.x + size.width >= window_size.width {
+                point.x = window_size.width - size.width;
+            }
+
             cx.defer_draw(element, point, 1)
         }
     }

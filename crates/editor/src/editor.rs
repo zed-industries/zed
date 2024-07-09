@@ -2421,9 +2421,14 @@ impl Editor {
             }
             self.selections_did_change(true, &old_cursor_position, request_completions, cx);
 
-            if self.should_open_signature_help_automatically(&old_cursor_position, cx) {
+            if self.should_open_signature_help_automatically(
+                &old_cursor_position,
+                self.signature_help_state.backspace_pressed(),
+                cx,
+            ) {
                 self.show_signature_help(&ShowSignatureHelp, cx);
             }
+            self.signature_help_state.set_backspace_pressed(false);
         }
 
         result
@@ -4040,14 +4045,18 @@ impl Editor {
     fn should_open_signature_help_automatically(
         &mut self,
         old_cursor_position: &Anchor,
+        backspace_pressed: bool,
         cx: &mut ViewContext<Self>,
     ) -> bool {
-        if !self.auto_signature_help_enabled(cx) {
+        if !(self.signature_help_state.is_shown() || self.auto_signature_help_enabled(cx)) {
             return false;
         }
         let newest_selection = self.selections.newest::<usize>(cx);
         let head = newest_selection.head();
-        if !newest_selection.is_empty() || head != newest_selection.tail() {
+
+        // There are two cases where the head and tail of a selection are different: selecting multiple ranges and using backspace.
+        // If we don’t exclude the backspace case, signature_help will blink every time backspace is pressed, so we need to prevent this.
+        if !newest_selection.is_empty() && !backspace_pressed && head != newest_selection.tail() {
             self.signature_help_state
                 .hide(SignatureHelpHiddenBy::Selection);
             return false;
@@ -4155,16 +4164,19 @@ impl Editor {
                 };
                 editor
                     .update(&mut cx, |editor, cx| {
-                        if let Some(signature_help_popover) = signature_help_popover {
-                            editor
-                                .signature_help_state
-                                .set_popover(signature_help_popover);
-                        } else {
-                            editor
-                                .signature_help_state
-                                .hide(SignatureHelpHiddenBy::AutoClose);
+                        let previous_popover = editor.signature_help_state.popover();
+                        if previous_popover != signature_help_popover.as_ref() {
+                            if let Some(signature_help_popover) = signature_help_popover {
+                                editor
+                                    .signature_help_state
+                                    .set_popover(signature_help_popover);
+                            } else {
+                                editor
+                                    .signature_help_state
+                                    .hide(SignatureHelpHiddenBy::AutoClose);
+                            }
+                            cx.notify();
                         }
-                        cx.notify();
                     })
                     .ok();
             }));
@@ -5509,6 +5521,7 @@ impl Editor {
                 }
             }
 
+            this.signature_help_state.set_backspace_pressed(true);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
             this.insert("", cx);
             let empty_str: Arc<str> = Arc::from("");
