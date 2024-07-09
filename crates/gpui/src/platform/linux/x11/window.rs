@@ -211,6 +211,7 @@ pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
     input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
+    mouse_active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
@@ -238,6 +239,7 @@ pub struct X11WindowState {
     maximized_horizontal: bool,
     hidden: bool,
     active: bool,
+    mouse_active: bool,
     fullscreen: bool,
     client_side_decorations_supported: bool,
     decorations: WindowDecorations,
@@ -508,6 +510,7 @@ impl X11WindowState {
             atoms: *atoms,
             input_handler: None,
             active: false,
+            mouse_active: false,
             fullscreen: false,
             maximized_vertical: false,
             maximized_horizontal: false,
@@ -760,6 +763,7 @@ impl X11WindowStatePtr {
             .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
 
         state.active = false;
+        state.mouse_active = false;
         state.fullscreen = false;
         state.maximized_vertical = false;
         state.maximized_horizontal = false;
@@ -913,8 +917,14 @@ impl X11WindowStatePtr {
         }
     }
 
-    pub fn set_focused(&self, focus: bool) {
+    pub fn set_active(&self, focus: bool) {
         if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
+            fun(focus);
+        }
+    }
+
+    pub fn set_mouse_active(&self, focus: bool) {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().mouse_active_status_change {
             fun(focus);
         }
     }
@@ -1047,6 +1057,10 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().active
     }
 
+    fn is_mouse_active(&self) -> bool {
+        self.0.state.borrow().mouse_active
+    }
+
     fn set_title(&mut self, title: &str) {
         self.0
             .xcb_connection
@@ -1161,6 +1175,10 @@ impl PlatformWindow for X11Window {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
+    }
+
+    fn on_mouse_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.callbacks.borrow_mut().mouse_active_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {

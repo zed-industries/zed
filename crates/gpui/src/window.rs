@@ -541,6 +541,7 @@ pub struct Window {
     appearance: WindowAppearance,
     appearance_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
+    active_mouse: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
@@ -672,6 +673,7 @@ impl Window {
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let dirty = Rc::new(Cell::new(true));
         let active = Rc::new(Cell::new(platform_window.is_active()));
+        let active_mouse = Rc::new(Cell::new(platform_window.is_mouse_active()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
@@ -778,7 +780,17 @@ impl Window {
                     .log_err();
             }
         }));
-
+        platform_window.on_mouse_active_status_change(Box::new({
+            let mut cx = cx.to_async();
+            move |active| {
+                handle
+                    .update(&mut cx, |_, cx| {
+                        cx.window.active_mouse.set(active);
+                        cx.refresh();
+                    })
+                    .log_err();
+            }
+        }));
         platform_window.on_input({
             let mut cx = cx.to_async();
             Box::new(move |event| {
@@ -829,6 +841,7 @@ impl Window {
             appearance,
             appearance_observers: SubscriberSet::new(),
             active,
+            active_mouse,
             dirty,
             needs_present,
             last_input_timestamp,
@@ -1220,6 +1233,12 @@ impl<'a> WindowContext<'a> {
     /// Returns whether this window is focused by the operating system (receiving key events).
     pub fn is_window_active(&self) -> bool {
         self.window.active.get()
+    }
+
+    /// Returns whether this window is hovered over by the users mouse
+    /// cursor (on linux)
+    pub fn is_window_mouse_active(&self) -> bool {
+        self.window.active_mouse.get()
     }
 
     /// Toggle zoom on the window.
@@ -2980,7 +2999,7 @@ impl<'a> WindowContext<'a> {
 
     fn reset_cursor_style(&self) {
         // Set the cursor only if we're the active window.
-        if self.is_window_active() {
+        if self.is_window_active() || self.is_window_mouse_active() {
             let style = self
                 .window
                 .rendered_frame

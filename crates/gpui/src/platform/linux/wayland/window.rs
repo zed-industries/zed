@@ -36,6 +36,7 @@ pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
     input: Option<Box<dyn FnMut(crate::PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
+    mouse_active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
@@ -97,6 +98,7 @@ pub struct WaylandWindowState {
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
     active: bool,
+    mouse_active: bool,
     in_progress_configure: Option<InProgressConfigure>,
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
@@ -181,6 +183,7 @@ impl WaylandWindowState {
             appearance,
             handle,
             active: false,
+            mouse_active: false,
             in_progress_window_controls: None,
             // Assume that we can do anything, unless told otherwise
             window_controls: WindowControls {
@@ -700,6 +703,13 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    pub fn set_mouse_focused(&self, focus: bool) {
+        self.state.borrow_mut().active = focus;
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().mouse_active_status_change {
+            fun(focus);
+        }
+    }
+
     pub fn set_appearance(&mut self, appearance: WindowAppearance) {
         self.state.borrow_mut().appearance = appearance;
 
@@ -845,6 +855,10 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().active
     }
 
+    fn is_mouse_active(&self) -> bool {
+        self.borrow().mouse_active
+    }
+
     fn set_title(&mut self, title: &str) {
         self.borrow().toplevel.set_title(title.to_string());
     }
@@ -897,6 +911,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
+    }
+
+    fn on_mouse_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.callbacks.borrow_mut().mouse_active_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {

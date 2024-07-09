@@ -593,7 +593,7 @@ impl X11Client {
             }
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
-                window.set_focused(true);
+                window.set_active(true);
                 let mut state = self.0.borrow_mut();
                 state.keyboard_focused_window = Some(event.event);
                 drop(state);
@@ -601,7 +601,7 @@ impl X11Client {
             }
             Event::FocusOut(event) => {
                 let window = self.get_window(event.event)?;
-                window.set_focused(false);
+                window.set_active(false);
                 let mut state = self.0.borrow_mut();
                 state.keyboard_focused_window = None;
                 if let Some(compose_state) = state.compose_state.as_mut() {
@@ -880,7 +880,7 @@ impl X11Client {
             }
             Event::XinputEnter(event) if event.mode == xinput::NotifyMode::NORMAL => {
                 let window = self.get_window(event.event)?;
-                window.set_focused(true);
+                window.set_mouse_active(true);
                 let mut state = self.0.borrow_mut();
                 state.mouse_focused_window = Some(event.event);
             }
@@ -905,7 +905,7 @@ impl X11Client {
                     position,
                     modifiers,
                 }));
-                window.set_focused(false);
+                window.set_mouse_active(false);
             }
             _ => {}
         };
