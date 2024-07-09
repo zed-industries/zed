@@ -1796,9 +1796,11 @@ impl Project {
                 }
             }
 
-            self.client.send(proto::UnshareProject {
-                project_id: remote_id,
-            })?;
+            self.client
+                .send(proto::UnshareProject {
+                    project_id: remote_id,
+                })
+                .ok();
 
             Ok(())
         } else {

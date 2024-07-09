@@ -89,7 +89,7 @@ impl ContextStore {
                     }),
                     client_subscription: None,
                     _project_subscriptions: vec![
-                        cx.observe(&project, Self::project_changed),
+                        cx.observe(&project, Self::handle_project_changed),
                         cx.subscribe(&project, Self::handle_project_event),
                     ],
                     project_is_shared: false,
@@ -97,7 +97,7 @@ impl ContextStore {
                     project: project.clone(),
                 };
                 this.register_handlers();
-                this.project_changed(project, cx);
+                this.handle_project_changed(project, cx);
                 this
             })?;
             this.update(&mut cx, |this, cx| this.reload(cx))?
@@ -218,7 +218,7 @@ impl ContextStore {
         })?
     }
 
-    fn project_changed(&mut self, _: Model<Project>, cx: &mut ModelContext<Self>) {
+    fn handle_project_changed(&mut self, _: Model<Project>, cx: &mut ModelContext<Self>) {
         let is_shared = self.project.read(cx).is_shared();
         let was_shared = mem::replace(&mut self.project_is_shared, is_shared);
         if is_shared == was_shared {
@@ -242,21 +242,7 @@ impl ContextStore {
                 .map(|subscription| subscription.set_model(&cx.handle(), &mut cx.to_async()));
             self.advertise_contexts(cx);
         } else {
-            self.contexts.retain_mut(|context| {
-                if let Some(strong_context) = context.upgrade() {
-                    *context = ContextHandle::Weak(context.downgrade());
-                    strong_context.update(cx, |context, cx| {
-                        if context.replica_id() != ReplicaId::default() {
-                            context.set_capability(language::Capability::ReadOnly, cx);
-                        }
-                    });
-                    true
-                } else {
-                    false
-                }
-            });
             self.client_subscription = None;
-            self.host_contexts.clear();
         }
     }
 
@@ -272,6 +258,23 @@ impl ContextStore {
             }
             project::Event::HostReshared | project::Event::Rejoined => {
                 self.synchronize_contexts(cx);
+            }
+            project::Event::DisconnectedFromHost => {
+                self.contexts.retain_mut(|context| {
+                    if let Some(strong_context) = context.upgrade() {
+                        *context = ContextHandle::Weak(context.downgrade());
+                        strong_context.update(cx, |context, cx| {
+                            if context.replica_id() != ReplicaId::default() {
+                                context.set_capability(language::Capability::ReadOnly, cx);
+                            }
+                        });
+                        true
+                    } else {
+                        false
+                    }
+                });
+                self.host_contexts.clear();
+                cx.notify();
             }
             _ => {}
         }
@@ -431,16 +434,22 @@ impl ContextStore {
             return;
         };
 
-        if let ContextEvent::Operation(operation) = event {
-            let context_id = context.read(cx).id().to_proto();
-            let operation = operation.to_proto();
-            self.client
-                .send(proto::UpdateContext {
-                    project_id,
-                    context_id,
-                    operation: Some(operation),
-                })
-                .log_err();
+        match event {
+            ContextEvent::SummaryChanged => {
+                self.advertise_contexts(cx);
+            }
+            ContextEvent::Operation(operation) => {
+                let context_id = context.read(cx).id().to_proto();
+                let operation = operation.to_proto();
+                self.client
+                    .send(proto::UpdateContext {
+                        project_id,
+                        context_id,
+                        operation: Some(operation),
+                    })
+                    .log_err();
+            }
+            _ => {}
         }
     }
 
