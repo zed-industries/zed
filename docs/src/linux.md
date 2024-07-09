@@ -1,4 +1,4 @@
-# Getting started
+# Zed on Linux
 
 For most people we recommend using the script on the [download](/download) page to install Zed:
 
@@ -17,11 +17,11 @@ The install script does not work on systems that:
 * have a glibc older than version 2.29 (for example Amazon Linux 2 or Ubuntu 18 and earlier)
 * use an architecture other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
 
-# Other ways to install Zed on Linux
+## Other ways to install Zed on Linux
 
 Zed is open source, and [you can install from source](./development/linux.md).
 
-## Installing via a package manager
+### Installing via a package manager
 
 Several people have created third-party Zed packages for various Linux package managers. You may be able to install Zed using these packages.
 
@@ -35,7 +35,7 @@ When installing a third-party package please be aware that it may not be complet
 
 We'd love your help making Zed available for everyone. If Zed is not yet available for your package manager, and you would like to fix that, we have some notes on [how to do it](./development/linux.md#notes-for-packaging-zed).
 
-## Downloading manually.
+### Downloading manually.
 
 If you'd prefer, you can install Zed by downloading our pre-built .tar.gz. This is the same artifact that our install script uses, but you can customize the location of your installation by modifying the instructions below:
 
@@ -63,15 +63,15 @@ sed -i "s|Icon=zed|Icon=$HOME/.local/zed.app/share/icons/hicolor/512x512/apps/ze
 sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/libexec/zed-editor|g" ~/.local/share/applications/zed.desktop
 ```
 
-# Troubleshooting
+## Troubleshooting
 
 Linux works on a large variety of systems configured in many different ways. We primarily test Zed on a vanilla Ubuntu setup, as it is the most common distribution our users use, that said we do expect it to work on a wide variety of machines.
 
-## Zed fails to start
+### Zed fails to start
 
 If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it means that your distribution's version of glibc is too old. You can either upgrade your system, or [install Zed from source](./development/linux.md).
 
-## Zed fails to open windows
+### Zed fails to open windows
 
 Zed requires a GPU to run effectively. Under the hood, we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed fails to load, it is possible that Vulkan is the culprit.
 
@@ -89,8 +89,7 @@ In most cases this can be fixed by configuring Vulkan and installing compatible 
 
 For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps.
 
-
-## Zed is very slow
+### Zed is very slow
 
 If you're on relatively modern hardware Zed should feel fast to use. That said, we do rely on the GPU to make rendering quick.
 
@@ -100,7 +99,7 @@ For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/titl
 
 If Vulkan is configured correctly, and Zed is still slow for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
 
-## Opening files does not work
+### Opening files does not work
 
 If opening new files or projects is not working, the likely problem is that your XDG desktop does not provide a file picker.
 
