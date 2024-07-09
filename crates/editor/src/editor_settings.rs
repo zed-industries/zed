@@ -26,6 +26,7 @@ pub struct EditorSettings {
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
     pub auto_signature_help: bool,
+    pub show_signature_help_after_completion: bool,
     #[serde(default)]
     pub jupyter: Jupyter,
 }
@@ -232,8 +233,13 @@ pub struct EditorSettingsContent {
 
     /// Whether to automatically show a signature help pop-up or not.
     ///
-    /// Default: true
+    /// Default: false
     pub auto_signature_help: Option<bool>,
+
+    /// Whether to show the signature help pop-up after completion.
+    ///
+    /// Default: true
+    pub show_signature_help_after_completion: Option<bool>,
 
     /// Jupyter REPL settings.
     pub jupyter: Option<Jupyter>,

@@ -4498,7 +4498,7 @@ impl Editor {
             cx,
         );
 
-        if EditorSettings::get_global(cx).auto_signature_help {
+        if EditorSettings::get_global(cx).show_signature_help_after_completion {
             // After the code completion is finished, users often want to know what signatures are needed.
             // so we should automatically call signature_help
             self.show_signature_help(&ShowSignatureHelp, cx);
