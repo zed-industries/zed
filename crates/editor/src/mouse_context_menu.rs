@@ -3,9 +3,10 @@ use std::ops::Range;
 use crate::{
     selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut, DisplayPoint,
     DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
-    GoToTypeDefinition, Paste, Rename, RevealInFinder, SelectMode, ToDisplayPoint,
+    GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode, ToDisplayPoint,
     ToggleCodeActions,
 };
+use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
 
@@ -113,7 +114,12 @@ pub fn deploy_context_menu(
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
                 .separator()
-                .action("Reveal in Finder", Box::new(RevealInFinder))
+                .when(cfg!(target_os = "macos"), |builder| {
+                    builder.action("Reveal in Finder", Box::new(RevealInFileManager))
+                })
+                .when(cfg!(not(target_os = "macos")), |builder| {
+                    builder.action("Reveal in File Manager", Box::new(RevealInFileManager))
+                })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .action("Copy Permalink", Box::new(CopyPermalinkToLine));
             match focus {
