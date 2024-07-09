@@ -4984,10 +4984,7 @@ impl Project {
                     .await?
                     .transaction
                     .ok_or_else(|| anyhow!("missing transaction"))?;
-                project_transaction = this
-                    .update(&mut cx, |this, cx| {
-                        this.deserialize_project_transaction(response, push_to_history, cx)
-                    })?
+                Self::deserialize_project_transaction(this, response, push_to_history, cx.clone())
                     .await?;
             }
 
@@ -5050,7 +5047,6 @@ impl Project {
             let remote_id = self.remote_id();
             let client = self.client.clone();
             cx.spawn(move |this, mut cx| async move {
-                let mut project_transaction = ProjectTransaction::default();
                 if let Some(project_id) = remote_id {
                     let response = client
                         .request(proto::FormatBuffers {
@@ -5066,13 +5062,10 @@ impl Project {
                         .await?
                         .transaction
                         .ok_or_else(|| anyhow!("missing transaction"))?;
-                    project_transaction = this
-                        .update(&mut cx, |this, cx| {
-                            this.deserialize_project_transaction(response, push_to_history, cx)
-                        })?
-                        .await?;
+                    Self::deserialize_project_transaction(this, response, push_to_history, cx).await
+                } else {
+                    Ok(ProjectTransaction::default())
                 }
-                Ok(project_transaction)
             })
         }
     }
@@ -6528,16 +6521,13 @@ impl Project {
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
                 action: Some(Self::serialize_code_action(&action)),
             };
-            cx.spawn(move |this, mut cx| async move {
+            cx.spawn(move |this, cx| async move {
                 let response = client
                     .request(request)
                     .await?
                     .transaction
                     .ok_or_else(|| anyhow!("missing transaction"))?;
-                this.update(&mut cx, |this, cx| {
-                    this.deserialize_project_transaction(response, push_to_history, cx)
-                })?
-                .await
+                Self::deserialize_project_transaction(this, response, push_to_history, cx).await
             })
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
@@ -10208,42 +10198,39 @@ impl Project {
         serialized_transaction
     }
 
-    fn deserialize_project_transaction(
-        &mut self,
+    async fn deserialize_project_transaction(
+        this: WeakModel<Self>,
         message: proto::ProjectTransaction,
         push_to_history: bool,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ProjectTransaction>> {
-        cx.spawn(move |this, mut cx| async move {
-            let mut project_transaction = ProjectTransaction::default();
-            for (buffer_id, transaction) in message.buffer_ids.into_iter().zip(message.transactions)
-            {
-                let buffer_id = BufferId::new(buffer_id)?;
-                let buffer = this
-                    .update(&mut cx, |this, cx| {
-                        this.wait_for_remote_buffer(buffer_id, cx)
-                    })?
-                    .await?;
-                let transaction = language::proto::deserialize_transaction(transaction)?;
-                project_transaction.0.insert(buffer, transaction);
+        mut cx: AsyncAppContext,
+    ) -> Result<ProjectTransaction> {
+        let mut project_transaction = ProjectTransaction::default();
+        for (buffer_id, transaction) in message.buffer_ids.into_iter().zip(message.transactions) {
+            let buffer_id = BufferId::new(buffer_id)?;
+            let buffer = this
+                .update(&mut cx, |this, cx| {
+                    this.wait_for_remote_buffer(buffer_id, cx)
+                })?
+                .await?;
+            let transaction = language::proto::deserialize_transaction(transaction)?;
+            project_transaction.0.insert(buffer, transaction);
+        }
+
+        for (buffer, transaction) in &project_transaction.0 {
+            buffer
+                .update(&mut cx, |buffer, _| {
+                    buffer.wait_for_edits(transaction.edit_ids.iter().copied())
+                })?
+                .await?;
+
+            if push_to_history {
+                buffer.update(&mut cx, |buffer, _| {
+                    buffer.push_transaction(transaction.clone(), Instant::now());
+                })?;
             }
+        }
 
-            for (buffer, transaction) in &project_transaction.0 {
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_edits(transaction.edit_ids.iter().copied())
-                    })?
-                    .await?;
-
-                if push_to_history {
-                    buffer.update(&mut cx, |buffer, _| {
-                        buffer.push_transaction(transaction.clone(), Instant::now());
-                    })?;
-                }
-            }
-
-            Ok(project_transaction)
-        })
+        Ok(project_transaction)
     }
 
     fn create_buffer_for_peer(
