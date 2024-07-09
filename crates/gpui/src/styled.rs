@@ -4,7 +4,10 @@ use crate::{
     Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
     SharedString, StyleRefinement, WhiteSpace,
 };
-pub use gpui_macros::{margin_style_methods, padding_style_methods, position_style_methods};
+pub use gpui_macros::{
+    box_shadow_style_methods, cursor_style_methods, margin_style_methods, overflow_style_methods,
+    padding_style_methods, position_style_methods, visibility_style_methods,
+};
 use taffy::style::{AlignContent, Display};
 
 /// A trait for elements that can be styled.
