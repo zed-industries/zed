@@ -706,6 +706,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_task_context_for_location);
         client.add_model_request_handler(Self::handle_task_templates);
         client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
+        client.add_model_request_handler(Self::handle_signature_help);
     }
 
     pub fn local(
@@ -5777,16 +5778,8 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<lsp::SignatureHelp>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.signature_help_impl(buffer, position, cx)
-    }
-
-    fn signature_help_impl(
-        &self,
-        buffer: &Model<Buffer>,
-        position: PointUtf16,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Option<lsp::SignatureHelp>> {
-        if self.is_local() {
+        // TODO kb remove `true` after fixing all conversion-related todo!'s
+        if true || self.is_local() {
             let all_actions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
@@ -5794,9 +5787,46 @@ impl Project {
                 GetSignatureHelp { position },
                 cx,
             );
-            cx.spawn(|_, _| async move { all_actions_task.await.into_iter().flatten().next() })
+            cx.spawn(|_, _| async move {
+                all_actions_task
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .find(|help| !help.signatures.is_empty())
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let position_anchor = buffer
+                .read(cx)
+                .anchor_at(buffer.read(cx).point_utf16_to_offset(position), Bias::Right);
+            let request = self.client.request(proto::GetSignatureHelp {
+                project_id,
+                position: Some(serialize_anchor(&position_anchor)),
+                buffer_id: buffer.read(cx).remote_id().to_proto(),
+                version: serialize_version(&buffer.read(cx).version()),
+            });
+            cx.spawn(move |project, mut cx| async move {
+                let response = request.await.log_err()?;
+                let buffer_id = BufferId::new(response.buffer_id).ok()?;
+                let buffer = project
+                    .update(&mut cx, |project, cx| {
+                        project.wait_for_remote_buffer(buffer_id, cx)
+                    })
+                    .ok()?
+                    .await
+                    .log_err()?;
+                let project = project.upgrade()?;
+                GetSignatureHelp::response_from_proto(
+                    GetSignatureHelp { position },
+                    response,
+                    project,
+                    buffer,
+                    cx,
+                )
+                .await
+                .log_err()
+                .flatten()
+            })
         } else {
-            // TODO: Handle cases that are not local later
             Task::ready(None)
         }
     }
@@ -9871,6 +9901,48 @@ impl Project {
             .collect();
 
         Ok(proto::TaskTemplatesResponse { templates })
+    }
+
+    async fn handle_signature_help(
+        project: Model<Self>,
+        envelope: TypedEnvelope<proto::GetSignatureHelp>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::GetSignatureHelpResponse> {
+        let sender_id = envelope.original_sender_id()?;
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let buffer = project.update(&mut cx, |project, _| {
+            project
+                .opened_buffers
+                .get(&buffer_id)
+                .and_then(|buffer| buffer.upgrade())
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
+        })??;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&envelope.payload.version))
+            })?
+            .await
+            .with_context(|| format!("waiting for version for buffer {}", buffer.entity_id()))?;
+        let position = envelope
+            .payload
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+
+        let help_response = project
+            .update(&mut cx, |project, cx| {
+                project.signature_help(&buffer, position, cx)
+            })?
+            .await;
+        project.update(&mut cx, |project, cx| {
+            GetSignatureHelp::response_to_proto(
+                help_response,
+                project,
+                sender_id,
+                &buffer.read(cx).version(),
+                cx,
+            )
+        })
     }
 
     async fn try_resolve_code_action(

@@ -1233,6 +1233,7 @@ impl LspCommand for GetDocumentHighlights {
     }
 }
 
+// TODO kb create an inner SignatureHelp struct and use that instead of the LSP one
 #[async_trait(?Send)]
 impl LspCommand for GetSignatureHelp {
     type Response = Option<SignatureHelp>;
@@ -1311,9 +1312,8 @@ impl LspCommand for GetSignatureHelp {
         anyhow::bail!("GetSignatureHelp::response_from_proto is unimplemented")
     }
 
-    fn buffer_id_from_proto(_: &Self::ProtoRequest) -> Result<BufferId> {
-        // TODO: Handle cases that are not local later
-        anyhow::bail!("GetSignatureHelp::buffer_id_from_proto is unimplemented")
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 
