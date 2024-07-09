@@ -3340,7 +3340,6 @@ impl Workspace {
                         .pane_for(&*item)
                         .and_then(|pane| self.leader_for_pane(&pane));
 
-                    // todo!(handle followable views from panels)
                     if let Some(followable_view) =
                         FollowableViewRegistry::global(cx).item_to_followable_view(item.as_ref())
                     {
