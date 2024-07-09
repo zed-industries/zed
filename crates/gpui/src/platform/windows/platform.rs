@@ -27,10 +27,7 @@ use windows::{
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*, Time::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
-    UI::{
-        Color,
-        ViewManagement::{UIColorType, UISettings},
-    },
+    UI::ViewManagement::UISettings,
 };
 
 use crate::*;
@@ -676,25 +673,6 @@ fn load_icon() -> Result<HICON> {
         .context("unable to load icon file")?
     };
     Ok(HICON(handle.0))
-}
-
-// https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/apply-windows-themes
-#[inline]
-fn system_appearance() -> Result<WindowAppearance> {
-    let ui_settings = UISettings::new()?;
-    let foreground_color = ui_settings.GetColorValue(UIColorType::Foreground)?;
-    // If the foreground is light, then is_color_light will evaluate to true,
-    // meaning Dark mode is enabled.
-    if is_color_light(&foreground_color) {
-        Ok(WindowAppearance::Dark)
-    } else {
-        Ok(WindowAppearance::Light)
-    }
-}
-
-#[inline(always)]
-fn is_color_light(color: &Color) -> bool {
-    ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
 }
 
 #[inline]
