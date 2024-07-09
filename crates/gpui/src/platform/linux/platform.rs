@@ -28,7 +28,6 @@ use calloop::{EventLoop, LoopHandle, LoopSignal};
 use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
-use mio::Waker;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use util::ResultExt;
@@ -88,16 +87,6 @@ pub(crate) struct PlatformHandlers {
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
 
-pub trait QuitSignal {
-    fn quit(&mut self);
-}
-
-impl QuitSignal for LoopSignal {
-    fn quit(&mut self) {
-        self.stop();
-    }
-}
-
 pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
@@ -105,20 +94,17 @@ pub(crate) struct LinuxCommon {
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
-    pub(crate) quit_signal: Box<dyn QuitSignal>,
+    pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
 }
 
 impl LinuxCommon {
-    pub fn new(
-        quit_signal: Box<dyn QuitSignal>,
-        main_waker: Option<Arc<Waker>>,
-    ) -> (Self, Channel<Runnable>) {
+    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
 
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone(), main_waker));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
 
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
 
@@ -129,7 +115,7 @@ impl LinuxCommon {
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
             callbacks,
-            quit_signal,
+            signal,
             menus: Vec::new(),
         };
 
@@ -163,7 +149,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn quit(&self) {
-        self.with_common(|common| common.quit_signal.quit());
+        self.with_common(|common| common.signal.stop());
     }
 
     fn compositor_name(&self) -> &'static str {

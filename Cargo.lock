@@ -4888,7 +4888,6 @@ dependencies = [
  "log",
  "media",
  "metal",
- "mio 1.0.0",
  "num_cpus",
  "objc",
  "oo7",
@@ -5689,7 +5688,7 @@ dependencies = [
  "fnv",
  "lazy_static",
  "libc",
- "mio 0.8.11",
+ "mio",
  "rand 0.8.5",
  "serde",
  "tempfile",
@@ -6620,19 +6619,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mio"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4929e1f84c5e54c3ec6141cd5d8b5a5c055f031f80cf78f2072920173cb4d880"
-dependencies = [
- "hermit-abi 0.3.9",
- "libc",
- "log",
- "wasi 0.11.0+wasi-snapshot-preview1",
- "windows-sys 0.52.0",
-]
-
-[[package]]
 name = "miow"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6870,7 +6856,7 @@ dependencies = [
  "kqueue",
  "libc",
  "log",
- "mio 0.8.11",
+ "mio",
  "walkdir",
  "windows-sys 0.48.0",
 ]
@@ -11080,7 +11066,7 @@ dependencies = [
  "backtrace",
  "bytes 1.5.0",
  "libc",
- "mio 0.8.11",
+ "mio",
  "num_cpus",
  "parking_lot",
  "pin-project-lite",
