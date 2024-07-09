@@ -34,6 +34,13 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
     style_helpers::style_helpers(input)
 }
 
+/// Generates methods for visibility styles.
+#[proc_macro]
+#[doc(hidden)]
+pub fn visibility_style_methods(input: TokenStream) -> TokenStream {
+    style_helpers::visibility_style_methods(input)
+}
+
 /// Generates methods for margin styles.
 #[proc_macro]
 #[doc(hidden)]

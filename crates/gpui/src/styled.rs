@@ -1,7 +1,7 @@
 use crate::{
     self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
     DefiniteLength, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla,
-    JustifyContent, Length, SharedString, StyleRefinement, Visibility, WhiteSpace,
+    JustifyContent, Length, SharedString, StyleRefinement, WhiteSpace,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 pub use gpui_macros::{margin_style_methods, padding_style_methods, position_style_methods};
@@ -15,6 +15,7 @@ pub trait Styled: Sized {
     fn style(&mut self) -> &mut StyleRefinement;
 
     gpui_macros::style_helpers!();
+    gpui_macros::visibility_style_methods!();
     gpui_macros::margin_style_methods!();
     gpui_macros::padding_style_methods!();
     gpui_macros::position_style_methods!();
@@ -30,20 +31,6 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/display)
     fn flex(mut self) -> Self {
         self.style().display = Some(Display::Flex);
-        self
-    }
-
-    /// Sets the visibility of the element to `visible`.
-    /// [Docs](https://tailwindcss.com/docs/visibility)
-    fn visible(mut self) -> Self {
-        self.style().visibility = Some(Visibility::Visible);
-        self
-    }
-
-    /// Sets the visibility of the element to `hidden`.
-    /// [Docs](https://tailwindcss.com/docs/visibility)
-    fn invisible(mut self) -> Self {
-        self.style().visibility = Some(Visibility::Hidden);
         self
     }
 

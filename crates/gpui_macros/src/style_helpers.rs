@@ -47,6 +47,28 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
     output.into()
 }
 
+pub fn visibility_style_methods(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+    let output = quote! {
+        /// Sets the visibility of the element to `visible`.
+        /// [Docs](https://tailwindcss.com/docs/visibility)
+        #visibility fn visible(mut self) -> Self {
+            self.style().visibility = Some(gpui::Visibility::Visible);
+            self
+        }
+
+        /// Sets the visibility of the element to `hidden`.
+        /// [Docs](https://tailwindcss.com/docs/visibility)
+        #visibility fn invisible(mut self) -> Self {
+            self.style().visibility = Some(gpui::Visibility::Hidden);
+            self
+        }
+    };
+
+    output.into()
+}
+
 pub fn margin_style_methods(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as StyleableMacroInput);
     let methods = generate_box_style_methods(
