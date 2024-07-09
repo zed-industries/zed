@@ -99,6 +99,10 @@ impl Render for TitleBar {
                             el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
                         .when(!(tiling.top || tiling.left), |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING))
+                        // this border is to avoid a transparent gap in the rounded corners
+                        .mt(px(-1.))
+                        .border(px(1.))
+                        .border_color(cx.theme().colors().title_bar_background),
                 }
             })
             .bg(cx.theme().colors().title_bar_background)
