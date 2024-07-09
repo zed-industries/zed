@@ -27,6 +27,27 @@ impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
 /// Initializes the language settings.
 pub fn init(cx: &mut AppContext) {
     AllLanguageSettings::register(cx);
+    DownloadConfiguration::register(cx);
+}
+
+#[derive(Default, Serialize, Deserialize, Clone)]
+pub struct DownloadConfiguration {
+    enable_binary_downloads: bool,
+}
+
+#[derive(Deserialize)]
+struct DownloadConfigurationContent {
+    enable_binary_downloads: Option<bool>,
+}
+
+impl settings::Settings for DownloadConfiguration {
+    const KEY: Option<&'static str> = None;
+
+    type FileContent = DownloadConfigurationContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
+    }
 }
 
 /// Returns the settings for the specified language from the provided file.

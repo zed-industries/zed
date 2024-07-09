@@ -6797,6 +6797,7 @@ dependencies = [
  "async_zip",
  "futures 0.3.28",
  "http 0.1.0",
+ "language",
  "log",
  "paths",
  "semver",

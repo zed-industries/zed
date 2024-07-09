@@ -83,6 +83,9 @@
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
   "restore_on_startup": "last_workspace",
+  // Whether zed should automatically download binaries to run
+  // language servers if they are missing.
+  "download_missing_binaries": true,
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
@@ -128,14 +131,7 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": [
-    "**/.env*",
-    "**/*.pem",
-    "**/*.key",
-    "**/*.cert",
-    "**/*.crt",
-    "**/secrets.yml"
-  ],
+  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,

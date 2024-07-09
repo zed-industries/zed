@@ -14,6 +14,7 @@ pub struct WorkspaceSettings {
     pub restore_on_startup: RestoreOnStartupBehaviour,
     pub drop_target_size: f32,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
+    pub download_missing_binaries: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]

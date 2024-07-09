@@ -198,6 +198,10 @@ impl nodejs::Host for WasmState {
         package_name: String,
         version: String,
     ) -> wasmtime::Result<Result<(), String>> {
+        if !self.host.enable_binary_downloads.get() {
+            return Err("binary downloads are disabled".into()).to_wasmtime_result();
+        }
+
         self.host
             .node_runtime
             .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
@@ -372,6 +376,10 @@ impl ExtensionImports for WasmState {
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
         maybe!(async {
+            if !self.host.enable_binary_downloads.get() {
+                return Err("binary downloads are disabled".into()).to_wasmtime_result();
+            }
+
             let path = PathBuf::from(path);
             let extension_work_dir = self.host.work_dir.join(self.manifest.id.as_ref());
 
@@ -435,6 +443,10 @@ impl ExtensionImports for WasmState {
     }
 
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
+        if !self.host.enable_binary_downloads.get() {
+            return Err("binary downloads are disabled".into()).to_wasmtime_result();
+        }
+
         #[allow(unused)]
         let path = self
             .host

@@ -18,6 +18,7 @@ use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
+use std::sync::atomic::AtomicBool;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
@@ -39,6 +40,7 @@ pub(crate) struct WasmHost {
     pub(crate) work_dir: PathBuf,
     _main_thread_message_task: Task<()>,
     main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
+    enable_binary_downloads: bool,
 }
 
 #[derive(Clone)]
@@ -91,7 +93,11 @@ impl WasmHost {
                 message(&mut cx).await;
             }
         });
-        Arc::new(Self {
+
+        let enable_binary_downloads =
+            AtomicBool::new(DownloadConfiguration::get_global(cx).enable_binary_downloads);
+
+        let this = Arc::new(Self {
             engine: wasm_engine(),
             fs,
             work_dir,
@@ -101,7 +107,18 @@ impl WasmHost {
             release_channel: ReleaseChannel::global(cx),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
+            enable_binary_downloads: enable_binary_downloads.clone(),
+        });
+
+        cx.observe_global::<SettingsStore>(move |cx| {
+            enable_binary_downloads.store(
+                DownloadConfiguration::get_global(cx).enable_binary_downloads,
+                Ordering::SeqCst,
+            )
         })
+        .detach();
+
+        this
     }
 
     pub fn load_extension(
