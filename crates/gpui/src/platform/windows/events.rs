@@ -659,6 +659,13 @@ fn handle_calc_client_size(
     requested_client_rect[0].left += frame_x + padding;
     requested_client_rect[0].bottom -= frame_y + padding;
 
+    if state_ptr.state.borrow().is_maximized() {
+        requested_client_rect[0].top += frame_y + padding;
+    } else {
+        // Magic number that calculates the width of the border
+        requested_client_rect[0].top += frame_y - 3;
+    }
+
     Some(0)
 }
 
@@ -821,14 +828,14 @@ fn handle_hit_test_msg(
 
     let dpi = unsafe { GetDpiForWindow(handle) };
     let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
-    let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
 
     let mut cursor_point = POINT {
         x: lparam.signed_loword().into(),
         y: lparam.signed_hiword().into(),
     };
     unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-    if cursor_point.y > 0 && cursor_point.y < frame_y + padding {
+    if !state_ptr.state.borrow().is_maximized() && cursor_point.y >= 0 && cursor_point.y <= frame_y
+    {
         return Some(HTTOP as _);
     }
 

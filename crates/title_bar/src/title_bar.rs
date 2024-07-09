@@ -77,8 +77,7 @@ impl Render for TitleBar {
         h_flex()
             .id("titlebar")
             .w_full()
-            .pt(Self::top_padding(cx))
-            .h(height + Self::top_padding(cx))
+            .h(height)
             .map(|this| {
                 if cx.is_fullscreen() {
                     this.pl_2()
@@ -233,28 +232,6 @@ impl TitleBar {
     pub fn height(_cx: &mut WindowContext) -> Pixels {
         // todo(windows) instead of hard coded size report the actual size to the Windows platform API
         px(32.)
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn top_padding(_cx: &WindowContext) -> Pixels {
-        px(0.)
-    }
-
-    #[cfg(target_os = "windows")]
-    fn top_padding(cx: &WindowContext) -> Pixels {
-        use windows::Win32::UI::{
-            HiDpi::GetSystemMetricsForDpi,
-            WindowsAndMessaging::{SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI},
-        };
-
-        // This top padding is not dependent on the title bar style and is instead a quirk of maximized windows on Windows:
-        // https://devblogs.microsoft.com/oldnewthing/20150304-00/?p=44543
-        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI) };
-        if cx.is_maximized() {
-            px((padding * 2) as f32)
-        } else {
-            px(0.)
-        }
     }
 
     /// Sets the platform style.
