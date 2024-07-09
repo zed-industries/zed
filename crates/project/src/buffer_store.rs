@@ -11,8 +11,8 @@ use worktree::{File, ProjectEntryId};
 
 #[derive(Default)]
 pub(crate) struct BufferStore {
-    loading_buffers: HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
+    loading_buffers: HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
     incomplete_remote_buffers: HashMap<BufferId, Model<Buffer>>,
     local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
@@ -210,8 +210,8 @@ impl BufferStore {
     }
 
     pub fn buffer_version_info(
-        &mut self,
-        cx: &mut AppContext,
+        &self,
+        cx: &AppContext,
     ) -> (Vec<proto::BufferVersion>, Vec<BufferId>) {
         let buffers = self
             .buffers()
@@ -228,7 +228,6 @@ impl BufferStore {
             .keys()
             .copied()
             .collect::<Vec<_>>();
-
         (buffers, incomplete_buffer_ids)
     }
 
@@ -277,36 +276,6 @@ impl BufferStore {
             .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
     }
 
-    pub fn buffer_file_changed(
-        &mut self,
-        buffer: Model<Buffer>,
-        cx: &mut AppContext,
-    ) -> Option<()> {
-        let file = File::from_dyn(buffer.read(cx).file())?;
-
-        let remote_id = buffer.read(cx).remote_id();
-        if let Some(entry_id) = file.entry_id {
-            match self.local_buffer_ids_by_entry_id.get(&entry_id) {
-                Some(_) => {
-                    return None;
-                }
-                None => {
-                    self.local_buffer_ids_by_entry_id
-                        .insert(entry_id, remote_id);
-                }
-            }
-        };
-        self.local_buffer_ids_by_path.insert(
-            ProjectPath {
-                worktree_id: file.worktree_id(cx),
-                path: file.path.clone(),
-            },
-            remote_id,
-        );
-
-        Some(())
-    }
-
     pub fn local_buffer_file_changed(
         &mut self,
         buffer_id: BufferId,
@@ -340,6 +309,36 @@ impl BufferStore {
                     .insert(entry_id, buffer_id);
             }
         }
+    }
+
+    pub fn buffer_changed_file(
+        &mut self,
+        buffer: Model<Buffer>,
+        cx: &mut AppContext,
+    ) -> Option<()> {
+        let file = File::from_dyn(buffer.read(cx).file())?;
+
+        let remote_id = buffer.read(cx).remote_id();
+        if let Some(entry_id) = file.entry_id {
+            match self.local_buffer_ids_by_entry_id.get(&entry_id) {
+                Some(_) => {
+                    return None;
+                }
+                None => {
+                    self.local_buffer_ids_by_entry_id
+                        .insert(entry_id, remote_id);
+                }
+            }
+        };
+        self.local_buffer_ids_by_path.insert(
+            ProjectPath {
+                worktree_id: file.worktree_id(cx),
+                path: file.path.clone(),
+            },
+            remote_id,
+        );
+
+        Some(())
     }
 
     pub fn handle_update_buffer(

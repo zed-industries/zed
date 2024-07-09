@@ -1129,7 +1129,7 @@ impl OutlinePanel {
             EntryOwned::Entry(FsEntry::File(worktree_id, _, buffer_id, _)) => {
                 let project = self.project.read(cx);
                 let entry_id = project
-                    .buffer_for_id(buffer_id)
+                    .buffer_for_id(buffer_id, cx)
                     .and_then(|buffer| buffer.read(cx).entry_id(cx));
                 project
                     .worktree_for_id(worktree_id, cx)
@@ -1147,7 +1147,7 @@ impl OutlinePanel {
                     .remove(&CollapsedEntry::Excerpt(buffer_id, excerpt_id));
                 let project = self.project.read(cx);
                 let entry_id = project
-                    .buffer_for_id(buffer_id)
+                    .buffer_for_id(buffer_id, cx)
                     .and_then(|buffer| buffer.read(cx).entry_id(cx));
 
                 entry_id.and_then(|entry_id| {
