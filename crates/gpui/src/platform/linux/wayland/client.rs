@@ -326,7 +326,7 @@ impl WaylandClientStatePtr {
             }
         }
         if state.windows.is_empty() {
-            state.common.quit_signal.quit();
+            state.common.signal.stop();
         }
     }
 }
@@ -422,7 +422,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(Box::new(event_loop.get_signal()), None);
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
         handle
@@ -459,7 +459,7 @@ impl WaylandClient {
         let mut cursor = Cursor::new(&conn, &globals, 24);
 
         handle
-            .insert_source(XDPEventSource::new(&common.background_executor, None), {
+            .insert_source(XDPEventSource::new(&common.background_executor), {
                 move |event, _, client| match event {
                     XDPEvent::WindowAppearance(appearance) => {
                         if let Some(client) = client.0.upgrade() {
