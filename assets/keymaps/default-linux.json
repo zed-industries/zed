@@ -100,7 +100,7 @@
       "ctrl-k ctrl-r": "editor::RevertSelectedHunks",
       "ctrl-'": "editor::ToggleHunkDiff",
       "ctrl-\"": "editor::ExpandAllHunkDiffs",
-      "ctrl-alt-g b": "editor::ToggleGitBlame"
+      "alt-g b": "editor::ToggleGitBlame"
     }
   },
   {
