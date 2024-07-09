@@ -367,10 +367,17 @@ impl TerminalPanel {
         {
             use terminal::terminal_settings::WindowsShellType;
 
-            if windows_shell_type != WindowsShellType::Other {
-                spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label);
-            } else {
-                spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+            match windows_shell_type {
+                WindowsShellType::Powershell => {
+                    spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label)
+                }
+                WindowsShellType::Cmd => {
+                    spawn_task.command_label = format!("{shell} /C `{}`", spawn_task.command_label)
+                }
+                WindowsShellType::Other => {
+                    spawn_task.command_label =
+                        format!("{shell} -i -c `{}`", spawn_task.command_label)
+                }
             }
         }
 
@@ -393,10 +400,14 @@ impl TerminalPanel {
         {
             use terminal::terminal_settings::WindowsShellType;
 
-            if windows_shell_type != WindowsShellType::Other {
-                user_args.extend(["-C".to_owned(), combined_command]);
-            } else {
-                user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command])
+            match windows_shell_type {
+                WindowsShellType::Powershell => {
+                    user_args.extend(["-C".to_owned(), combined_command])
+                }
+                WindowsShellType::Cmd => user_args.extend(["/C".to_owned(), combined_command]),
+                WindowsShellType::Other => {
+                    user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command])
+                }
             }
         }
         spawn_task.args = user_args;
