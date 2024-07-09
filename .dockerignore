@@ -1,4 +1,5 @@
 .git
+.github
 **/.gitignore
 **/.gitkeep
 .gitattributes
