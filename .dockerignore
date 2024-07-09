@@ -1,3 +1,6 @@
+.git
+.gitignore
+.gitattributes
 **/target
 zed.xcworkspace
 .DS_Store
