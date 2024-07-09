@@ -343,7 +343,12 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
         BoxStylePrefix {
             prefix: "inset",
             auto_allowed: true,
-            fields: vec![quote! { inset.top }, quote! { inset.right }, quote! { inset.bottom }, quote! { inset.left }],
+            fields: vec![
+                quote! { inset.top },
+                quote! { inset.right },
+                quote! { inset.bottom },
+                quote! { inset.left },
+            ],
             doc_string_prefix: "Sets the top, right, bottom, and left values of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
         },
         BoxStylePrefix {
