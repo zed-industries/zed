@@ -96,22 +96,26 @@ fn generate_methods() -> Vec<TokenStream2> {
         }
     }
 
-    for (prefix, fields, prefix_doc_string) in border_prefixes() {
+    for border_style_prefix in border_prefixes() {
         methods.push(generate_custom_value_setter(
-            prefix,
+            border_style_prefix.prefix,
             quote! { AbsoluteLength },
-            &fields,
-            prefix_doc_string,
+            &border_style_prefix.fields,
+            border_style_prefix.doc_string_prefix,
         ));
 
-        for (suffix, width_tokens, suffix_doc_string) in border_suffixes() {
+        for border_style_suffix in border_suffixes() {
             methods.push(generate_predefined_setter(
-                prefix,
-                suffix,
-                &fields,
-                &width_tokens,
+                border_style_prefix.prefix,
+                border_style_suffix.suffix,
+                &border_style_prefix.fields,
+                &border_style_suffix.width_tokens,
                 false,
-                &format!("{prefix_doc_string}\n\n{suffix_doc_string}"),
+                &format!(
+                    "{prefix}\n\n{suffix}",
+                    prefix = border_style_prefix.doc_string_prefix,
+                    suffix = border_style_suffix.doc_string_suffix,
+                ),
             ));
         }
     }
@@ -766,75 +770,155 @@ fn corner_suffixes() -> Vec<CornerStyleSuffix> {
     ]
 }
 
-fn border_prefixes() -> Vec<(&'static str, Vec<TokenStream2>, &'static str)> {
+struct BorderStylePrefix {
+    prefix: &'static str,
+    fields: Vec<TokenStream2>,
+    doc_string_prefix: &'static str,
+}
+
+fn border_prefixes() -> Vec<BorderStylePrefix> {
     vec![
-        (
-            "border",
-            vec![
+        BorderStylePrefix {
+            prefix: "border",
+            fields: vec![
                 quote! { border_widths.top },
                 quote! { border_widths.right },
                 quote! { border_widths.bottom },
                 quote! { border_widths.left },
             ],
-            "Sets the border width of the element. [Docs](https://tailwindcss.com/docs/border-width)"
-        ),
-        (
-            "border_t",
-            vec![quote! { border_widths.top }],
-            "Sets the border width of the top side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
-        ),
-        (
-            "border_b",
-            vec![quote! { border_widths.bottom }],
-            "Sets the border width of the bottom side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
-        ),
-        (
-            "border_r",
-            vec![quote! { border_widths.right }],
-            "Sets the border width of the right side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
-        ),
-        (
-            "border_l",
-            vec![quote! { border_widths.left }],
-            "Sets the border width of the left side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
-        ),
-        (
-            "border_x",
-            vec![
+            doc_string_prefix: "Sets the border width of the element. [Docs](https://tailwindcss.com/docs/border-width)"
+        },
+        BorderStylePrefix {
+            prefix: "border_t",
+            fields: vec![quote! { border_widths.top }],
+            doc_string_prefix: "Sets the border width of the top side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
+        },
+        BorderStylePrefix {
+            prefix: "border_b",
+            fields: vec![quote! { border_widths.bottom }],
+            doc_string_prefix: "Sets the border width of the bottom side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
+        },
+        BorderStylePrefix {
+            prefix: "border_r",
+            fields: vec![quote! { border_widths.right }],
+            doc_string_prefix: "Sets the border width of the right side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
+        },
+        BorderStylePrefix {
+            prefix: "border_l",
+            fields: vec![quote! { border_widths.left }],
+            doc_string_prefix: "Sets the border width of the left side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
+        },
+        BorderStylePrefix {
+            prefix: "border_x",
+            fields: vec![
                 quote! { border_widths.left },
                 quote! { border_widths.right },
             ],
-            "Sets the border width of the vertical sides of the element. [Docs](https://tailwindcss.com/docs/border-width#horizontal-and-vertical-sides)"
-        ),
-        (
-            "border_y",
-            vec![
+            doc_string_prefix: "Sets the border width of the vertical sides of the element. [Docs](https://tailwindcss.com/docs/border-width#horizontal-and-vertical-sides)"
+        },
+        BorderStylePrefix {
+            prefix: "border_y",
+            fields: vec![
                 quote! { border_widths.top },
                 quote! { border_widths.bottom },
             ],
-            "Sets the border width of the horizontal sides of the element. [Docs](https://tailwindcss.com/docs/border-width#horizontal-and-vertical-sides)"
-        ),
+            doc_string_prefix: "Sets the border width of the horizontal sides of the element. [Docs](https://tailwindcss.com/docs/border-width#horizontal-and-vertical-sides)"
+        },
     ]
 }
 
-fn border_suffixes() -> Vec<(&'static str, TokenStream2, &'static str)> {
+struct BorderStyleSuffix {
+    suffix: &'static str,
+    width_tokens: TokenStream2,
+    doc_string_suffix: &'static str,
+}
+
+fn border_suffixes() -> Vec<BorderStyleSuffix> {
     vec![
-        ("0", quote! { px(0.)}, "0px"),
-        ("1", quote! { px(1.) }, "1px"),
-        ("2", quote! { px(2.) }, "2px"),
-        ("3", quote! { px(3.) }, "3px"),
-        ("4", quote! { px(4.) }, "4px"),
-        ("5", quote! { px(5.) }, "5px"),
-        ("6", quote! { px(6.) }, "6px"),
-        ("7", quote! { px(7.) }, "7px"),
-        ("8", quote! { px(8.) }, "8px"),
-        ("9", quote! { px(9.) }, "9px"),
-        ("10", quote! { px(10.) }, "10px"),
-        ("11", quote! { px(11.) }, "11px"),
-        ("12", quote! { px(12.) }, "12px"),
-        ("16", quote! { px(16.) }, "16px"),
-        ("20", quote! { px(20.) }, "20px"),
-        ("24", quote! { px(24.) }, "24px"),
-        ("32", quote! { px(32.) }, "32px"),
+        BorderStyleSuffix {
+            suffix: "0",
+            width_tokens: quote! { px(0.)},
+            doc_string_suffix: "0px",
+        },
+        BorderStyleSuffix {
+            suffix: "1",
+            width_tokens: quote! { px(1.) },
+            doc_string_suffix: "1px",
+        },
+        BorderStyleSuffix {
+            suffix: "2",
+            width_tokens: quote! { px(2.) },
+            doc_string_suffix: "2px",
+        },
+        BorderStyleSuffix {
+            suffix: "3",
+            width_tokens: quote! { px(3.) },
+            doc_string_suffix: "3px",
+        },
+        BorderStyleSuffix {
+            suffix: "4",
+            width_tokens: quote! { px(4.) },
+            doc_string_suffix: "4px",
+        },
+        BorderStyleSuffix {
+            suffix: "5",
+            width_tokens: quote! { px(5.) },
+            doc_string_suffix: "5px",
+        },
+        BorderStyleSuffix {
+            suffix: "6",
+            width_tokens: quote! { px(6.) },
+            doc_string_suffix: "6px",
+        },
+        BorderStyleSuffix {
+            suffix: "7",
+            width_tokens: quote! { px(7.) },
+            doc_string_suffix: "7px",
+        },
+        BorderStyleSuffix {
+            suffix: "8",
+            width_tokens: quote! { px(8.) },
+            doc_string_suffix: "8px",
+        },
+        BorderStyleSuffix {
+            suffix: "9",
+            width_tokens: quote! { px(9.) },
+            doc_string_suffix: "9px",
+        },
+        BorderStyleSuffix {
+            suffix: "10",
+            width_tokens: quote! { px(10.) },
+            doc_string_suffix: "10px",
+        },
+        BorderStyleSuffix {
+            suffix: "11",
+            width_tokens: quote! { px(11.) },
+            doc_string_suffix: "11px",
+        },
+        BorderStyleSuffix {
+            suffix: "12",
+            width_tokens: quote! { px(12.) },
+            doc_string_suffix: "12px",
+        },
+        BorderStyleSuffix {
+            suffix: "16",
+            width_tokens: quote! { px(16.) },
+            doc_string_suffix: "16px",
+        },
+        BorderStyleSuffix {
+            suffix: "20",
+            width_tokens: quote! { px(20.) },
+            doc_string_suffix: "20px",
+        },
+        BorderStyleSuffix {
+            suffix: "24",
+            width_tokens: quote! { px(24.) },
+            doc_string_suffix: "24px",
+        },
+        BorderStyleSuffix {
+            suffix: "32",
+            width_tokens: quote! { px(32.) },
+            doc_string_suffix: "32px",
+        },
     ]
 }
