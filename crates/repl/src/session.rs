@@ -89,6 +89,7 @@ impl EditorBlock {
         let render = move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
             let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
+            let text_font_size = ThemeSettings::get_global(cx).buffer_font_size;
             // Note: we'll want to use `cx.anchor_x` when someone runs something with no output -- just show a checkmark and not make the full block below the line
 
             let gutter_width = cx.gutter_dimensions.width;
@@ -101,6 +102,7 @@ impl EditorBlock {
                 .pl(gutter_width)
                 .child(
                     div()
+                        .text_size(text_font_size)
                         .font_family(text_font)
                         // .ml(gutter_width)
                         .mx_1()
