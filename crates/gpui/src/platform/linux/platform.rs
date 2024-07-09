@@ -640,6 +640,8 @@ impl Keystroke {
             Keysym::Prior => "pageup".to_owned(),
             Keysym::Next => "pagedown".to_owned(),
             Keysym::ISO_Left_Tab => "tab".to_owned(),
+            Keysym::KP_Prior => "pageup".to_owned(),
+            Keysym::KP_Next => "pagedown".to_owned(),
 
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),
@@ -677,7 +679,14 @@ impl Keystroke {
             Keysym::equal => "=".to_owned(),
             Keysym::plus => "+".to_owned(),
 
-            _ => xkb::keysym_get_name(key_sym).to_lowercase(),
+            _ => {
+                let name = xkb::keysym_get_name(key_sym).to_lowercase();
+                if key_sym.is_keypad_key() {
+                    name.replace("kp_", "")
+                } else {
+                    name
+                }
+            }
         };
 
         if modifiers.shift {
