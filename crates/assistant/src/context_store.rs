@@ -310,14 +310,9 @@ impl ContextStore {
 
         cx.spawn(|this, mut cx| async move {
             let saved_context = load.await?;
-            let context = Context::deserialize(
-                saved_context,
-                path.clone(),
-                languages,
-                Some(telemetry),
-                &mut cx,
-            )
-            .await?;
+            let context = cx.new_model(|cx| {
+                Context::deserialize(saved_context, path.clone(), languages, Some(telemetry), cx)
+            })?;
             this.update(&mut cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_context_for_path(&path, cx) {
                     existing_context
