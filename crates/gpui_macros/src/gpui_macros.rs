@@ -62,6 +62,13 @@ pub fn position_style_methods(input: TokenStream) -> TokenStream {
     styles::position_style_methods(input)
 }
 
+/// Generates methods for overflow styles.
+#[proc_macro]
+#[doc(hidden)]
+pub fn overflow_style_methods(input: TokenStream) -> TokenStream {
+    styles::overflow_style_methods(input)
+}
+
 /// Generates methods for cursor styles.
 #[proc_macro]
 #[doc(hidden)]

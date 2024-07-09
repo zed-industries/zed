@@ -6,7 +6,7 @@ use crate::{
 use crate::{BoxShadow, TextStyleRefinement};
 pub use gpui_macros::{margin_style_methods, padding_style_methods, position_style_methods};
 use smallvec::{smallvec, SmallVec};
-use taffy::style::{AlignContent, Display, Overflow};
+use taffy::style::{AlignContent, Display};
 
 /// A trait for elements that can be styled.
 /// Use this to opt-in to a CSS-like styling API.
@@ -19,6 +19,7 @@ pub trait Styled: Sized {
     gpui_macros::margin_style_methods!();
     gpui_macros::padding_style_methods!();
     gpui_macros::position_style_methods!();
+    gpui_macros::overflow_style_methods!();
     gpui_macros::cursor_style_methods!();
 
     /// Sets the display type of the element to `block`.
@@ -32,28 +33,6 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/display)
     fn flex(mut self) -> Self {
         self.style().display = Some(Display::Flex);
-        self
-    }
-
-    /// Sets the behavior of content that overflows the container to be hidden.
-    /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
-    fn overflow_hidden(mut self) -> Self {
-        self.style().overflow.x = Some(Overflow::Hidden);
-        self.style().overflow.y = Some(Overflow::Hidden);
-        self
-    }
-
-    /// Sets the behavior of content that overflows the container on the X axis to be hidden.
-    /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
-    fn overflow_x_hidden(mut self) -> Self {
-        self.style().overflow.x = Some(Overflow::Hidden);
-        self
-    }
-
-    /// Sets the behavior of content that overflows the container on the Y axis to be hidden.
-    /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
-    fn overflow_y_hidden(mut self) -> Self {
-        self.style().overflow.y = Some(Overflow::Hidden);
         self
     }
 

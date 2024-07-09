@@ -126,6 +126,36 @@ pub fn position_style_methods(input: TokenStream) -> TokenStream {
     output.into()
 }
 
+pub fn overflow_style_methods(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+    let output = quote! {
+        /// Sets the behavior of content that overflows the container to be hidden.
+        /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
+        #visibility fn overflow_hidden(mut self) -> Self {
+            self.style().overflow.x = Some(gpui::Overflow::Hidden);
+            self.style().overflow.y = Some(gpui::Overflow::Hidden);
+            self
+        }
+
+        /// Sets the behavior of content that overflows the container on the X axis to be hidden.
+        /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
+        #visibility fn overflow_x_hidden(mut self) -> Self {
+            self.style().overflow.x = Some(gpui::Overflow::Hidden);
+            self
+        }
+
+        /// Sets the behavior of content that overflows the container on the Y axis to be hidden.
+        /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
+        #visibility fn overflow_y_hidden(mut self) -> Self {
+            self.style().overflow.y = Some(gpui::Overflow::Hidden);
+            self
+        }
+    };
+
+    output.into()
+}
+
 pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as StyleableMacroInput);
     let visibility = input.method_visibility;
