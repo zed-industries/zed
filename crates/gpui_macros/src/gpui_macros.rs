@@ -62,6 +62,13 @@ pub fn position_style_methods(input: TokenStream) -> TokenStream {
     style_helpers::position_style_methods(input)
 }
 
+/// Generates methods for cursor styles.
+#[proc_macro]
+#[doc(hidden)]
+pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
+    style_helpers::cursor_style_methods(input)
+}
+
 /// #[gpui::test] can be used to annotate test functions that run with GPUI support.
 /// it supports both synchronous and asynchronous tests, and can provide you with
 /// as many `TestAppContext` instances as you need.

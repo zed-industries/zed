@@ -126,6 +126,167 @@ pub fn position_style_methods(input: TokenStream) -> TokenStream {
     output.into()
 }
 
+pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+    let output = quote! {
+        /// Set the cursor style when hovering over this element
+        #visibility fn cursor(mut self, cursor: CursorStyle) -> Self {
+            self.style().mouse_cursor = Some(cursor);
+            self
+        }
+
+        /// Sets the cursor style when hovering an element to `default`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_default(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::Arrow);
+            self
+        }
+
+        /// Sets the cursor style when hovering an element to `pointer`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_pointer(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::PointingHand);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `text`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_text(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::IBeam);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `move`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_move(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ClosedHand);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `not-allowed`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_not_allowed(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::OperationNotAllowed);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `context-menu`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_context_menu(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ContextualMenu);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `crosshair`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_crosshair(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::Crosshair);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `vertical-text`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_vertical_text(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::IBeamCursorForVerticalLayout);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `alias`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_alias(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::DragLink);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `copy`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_copy(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::DragCopy);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `no-drop`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_no_drop(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::OperationNotAllowed);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `grab`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_grab(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::OpenHand);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `grabbing`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_grabbing(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ClosedHand);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `ew-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_ew_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeLeftRight);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `ns-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_ns_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeUpDown);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `col-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_col_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeColumn);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `row-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_row_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeRow);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `n-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_n_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeUp);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `e-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_e_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeRight);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `s-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_s_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeDown);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `w-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_w_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeLeft);
+            self
+        }
+    };
+
+    output.into()
+}
+
 struct BoxStylePrefix {
     prefix: &'static str,
     auto_allowed: bool,
