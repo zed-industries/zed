@@ -4076,6 +4076,7 @@ impl Project {
             return;
         }
 
+        #[allow(clippy::mutable_key_type)]
         let language_server_lookup_info: HashSet<(Model<Worktree>, Arc<Language>)> = buffers
             .into_iter()
             .filter_map(|buffer| {
@@ -11035,6 +11036,7 @@ async fn populate_labels_for_symbols(
     lsp_adapter: Option<Arc<CachedLspAdapter>>,
     output: &mut Vec<Symbol>,
 ) {
+    #[allow(clippy::mutable_key_type)]
     let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
 
     let mut unknown_path = None;
