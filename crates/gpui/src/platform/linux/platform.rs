@@ -67,7 +67,7 @@ pub trait LinuxClient {
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
 
-    fn set_tray_item(&self, options: StatusNotifierItemOptions, menu: DBusMenu);
+    fn set_tray_item(&self, options: StatusNotifierItemOptions, menu: Option<DBusMenu>);
 
     fn open_window(
         &self,
@@ -152,8 +152,8 @@ impl LinuxCommon {
                 label,
                 icon,
                 toggle_type,
-                on_click,
                 children,
+                ..
             } => {
                 let mut this = DBusMenuItem::new(id);
                 this.set_label(label);
@@ -172,9 +172,9 @@ impl LinuxCommon {
                         }
                     }
                 }
-                if let Some(action) = on_click {
-                    self.tray_actions.insert(id.to_string(), action);
-                }
+                // if let Some(action) = on_click {
+                //     self.tray_actions.insert(id.to_string(), action);
+                // }
                 let mut submenus = Vec::default();
                 for child in children {
                     submenus.push(self.create_submenu(child));
@@ -442,30 +442,26 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn set_tray_item(&self, item: TrayItem) {
-        let mut options: Option<StatusNotifierItemOptions> = None;
+        let icon = match item.icon {
+            TrayIcon::Name(name) => dbus::dbusmenu::Icon::Name(name.to_owned()),
+        };
+        let mut options = StatusNotifierItemOptions::new()
+            .title(item.title)
+            .icon(icon)
+            .tooltip(
+                ToolTip::new()
+                    .title(item.title)
+                    .description(item.description),
+            );
         let mut menu: Option<DBusMenu> = None;
         self.with_common(|common| {
-            let icon = match item.icon {
-                TrayIcon::Name(name) => dbus::dbusmenu::Icon::Name(name.to_owned()),
-            };
-            options = Some(
-                StatusNotifierItemOptions::new()
-                    .title(item.title)
-                    .icon(icon)
-                    .tooltip(
-                        ToolTip::new()
-                            .title(item.title)
-                            .description(item.description),
-                    ),
-            );
-
             let mut dbus_menu = DBusMenu::new();
             for submenu in item.submenus {
                 dbus_menu = dbus_menu.submenu(common.create_submenu(submenu));
             }
             menu = Some(dbus_menu);
         });
-        self.set_tray_item(options.unwrap(), menu.unwrap());
+        self.set_tray_item(options, menu);
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {

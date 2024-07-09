@@ -601,7 +601,7 @@ impl LinuxClient for WaylandClient {
         None
     }
 
-    fn set_tray_item(&self, options: StatusNotifierItemOptions, menu: DBusMenu) {
+    fn set_tray_item(&self, options: StatusNotifierItemOptions, menu: Option<DBusMenu>) {
         self.0
             .borrow()
             .common
@@ -609,9 +609,7 @@ impl LinuxClient for WaylandClient {
             .spawn({
                 let state = self.0.clone();
                 async move {
-                    let item = StatusNotifierItem::new(1, options, Some(menu))
-                        .await
-                        .log_err();
+                    let item = StatusNotifierItem::new(1, options, menu).await.log_err();
                     if let Some(item) = item {
                         let mut state = state.borrow_mut();
                         if let Some(token) = state.tray_item_token {

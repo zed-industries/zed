@@ -1033,9 +1033,10 @@ impl LinuxClient for X11Client {
     fn set_tray_item(
         &self,
         options: crate::platform::linux::dbus::status_notifier::StatusNotifierItemOptions,
-        menu: crate::platform::linux::dbus::dbusmenu::DBusMenu,
+        menu: Option<crate::platform::linux::dbus::dbusmenu::DBusMenu>,
     ) {
     }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
         let setup = state.xcb_connection.setup();

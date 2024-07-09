@@ -1,4 +1,4 @@
-use crate::Action;
+use crate::AppContext;
 
 ///
 pub enum TrayIcon<'a> {
@@ -41,8 +41,6 @@ pub enum TrayMenuItem<'a> {
         ///
         toggle_type: Option<TrayToggleType>,
         ///
-        on_click: Option<Box<dyn Action + Sync>>,
-        ///
         children: Vec<TrayMenuItem<'a>>,
     },
 }
@@ -54,6 +52,7 @@ pub struct TrayItem<'a> {
     pub icon: TrayIcon<'a>,
     /// Smaller icon displayed on top of the main icon.
     /// Some desktops environments support this feature.
+    #[cfg(target_os = "linux")]
     pub overlay: Option<TrayIcon<'a>>,
     /// Title of this item.
     pub title: &'a str,
@@ -61,4 +60,6 @@ pub struct TrayItem<'a> {
     pub description: &'a str,
     ///
     pub submenus: Vec<TrayMenuItem<'a>>,
+    ///
+    pub event: Option<Box<dyn FnMut(&mut AppContext)>>,
 }

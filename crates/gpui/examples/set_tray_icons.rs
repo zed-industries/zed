@@ -24,28 +24,6 @@ fn main() {
             icon: TrayIcon::Name("kmail"),
             title: "Testing",
             description: "Description",
-            submenus: Vec::from_iter([
-                TrayMenuItem::Submenu {
-                    id: "Quit",
-                    label: "Quit",
-                    icon: Some(TrayIcon::Name("konqueror")),
-                    toggle_type: None,
-                    on_click: Some(Box::new(Quit)),
-                    children: Vec::default(),
-                },
-                TrayMenuItem::Separator {
-                    id: "Sep1",
-                    label: Some("Testing"),
-                },
-                TrayMenuItem::Submenu {
-                    id: "test",
-                    label: "test",
-                    icon: Some(TrayIcon::Name("konqueror")),
-                    children: Vec::default(),
-                    on_click: None,
-                    toggle_type: None,
-                },
-            ]),
             ..Default::default()
         });
         cx.open_window(WindowOptions::default(), |cx| {
