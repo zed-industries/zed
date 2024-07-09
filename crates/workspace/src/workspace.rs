@@ -2869,14 +2869,8 @@ impl Workspace {
                 Ok::<_, anyhow::Error>(())
             })??;
             if let Some(view) = response.active_view {
-                Self::add_views_from_leader(
-                    this.clone(),
-                    leader_id,
-                    vec![pane.clone()],
-                    vec![view],
-                    &mut cx,
-                )
-                .await?;
+                Self::add_view_from_leader(this.clone(), leader_id, pane.clone(), &view, &mut cx)
+                    .await?;
             }
             Self::add_views_from_leader(
                 this.clone(),
@@ -3226,14 +3220,10 @@ impl Workspace {
                 })??;
 
                 if let Some(view) = update_active_view.view {
-                    Self::add_views_from_leader(
-                        this.clone(),
-                        leader_id,
-                        panes_missing_view,
-                        vec![view],
-                        cx,
-                    )
-                    .await?;
+                    for pane in panes_missing_view {
+                        Self::add_view_from_leader(this.clone(), leader_id, pane.clone(), &view, cx)
+                            .await?
+                    }
                 }
             }
             proto::update_followers::Variant::UpdateView(update_view) => {
@@ -3270,6 +3260,52 @@ impl Workspace {
             }
         }
         this.update(cx, |this, cx| this.leader_updated(leader_id, cx))?;
+        Ok(())
+    }
+
+    async fn add_view_from_leader(
+        this: WeakView<Self>,
+        leader_id: PeerId,
+        pane: View<Pane>,
+        view: &proto::View,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        let this = this.upgrade().context("workspace dropped")?;
+
+        let Some(id) = view.id.clone() else {
+            return Err(anyhow!("no id for view"));
+        };
+        let id = ViewId::from_proto(id)?;
+
+        let mut variant = view.variant.clone();
+        if variant.is_none() {
+            Err(anyhow!("missing view variant"))?;
+        }
+
+        let task = cx
+            .update(|cx| {
+                FollowableViewRegistry::update_global(cx, |registry, cx| {
+                    registry.build_view(pane.clone(), this.clone(), id, &mut variant, cx)
+                })
+            })
+            .log_err()
+            .flatten();
+        let Some(task) = task else {
+            return Err(anyhow!(
+                "failed to construct view from leader (maybe from a different version of zed?)"
+            ));
+        };
+
+        let item = task.await?;
+
+        this.update(cx, |this, cx| {
+            let state = this.follower_states.get_mut(&pane)?;
+            item.set_leader_peer_id(Some(leader_id), cx);
+            state.views.insert(id, item);
+
+            Some(())
+        })?;
+
         Ok(())
     }
 
