@@ -785,15 +785,25 @@ pub(crate) struct ClickState {
     button: MouseButton,
     last_click: Instant,
     last_position: Point<DevicePixels>,
+    double_click_spatial_tolerance_width: i32,
+    double_click_spatial_tolerance_height: i32,
+    double_click_interval: Duration,
     pub(crate) current_count: usize,
 }
 
 impl ClickState {
     pub fn new() -> Self {
+        let double_click_spatial_tolerance_width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
+        let double_click_spatial_tolerance_height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
+        let double_click_interval = Duration::from_millis(unsafe { GetDoubleClickTime() } as u64);
+
         ClickState {
             button: MouseButton::Left,
             last_click: Instant::now(),
             last_position: Point::default(),
+            double_click_spatial_tolerance_width,
+            double_click_spatial_tolerance_height,
+            double_click_interval,
             current_count: 0,
         }
     }
@@ -812,13 +822,19 @@ impl ClickState {
         self.current_count
     }
 
+    pub fn system_update(&mut self) {
+        self.double_click_spatial_tolerance_width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
+        self.double_click_spatial_tolerance_height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
+        self.double_click_interval = Duration::from_millis(unsafe { GetDoubleClickTime() } as u64);
+    }
+
     #[inline]
     fn is_double_click(&self, new_position: Point<DevicePixels>) -> bool {
         let diff = self.last_position - new_position;
 
-        self.last_click.elapsed() < DOUBLE_CLICK_INTERVAL
-            && diff.x.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
-            && diff.y.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
+        self.last_click.elapsed() < self.double_click_interval
+            && diff.x.0.abs() <= self.double_click_spatial_tolerance_width
+            && diff.y.0.abs() <= self.double_click_spatial_tolerance_height
     }
 }
 
@@ -926,10 +942,6 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
-// https://learn.microsoft.com/en-us/windows/win32/controls/ttm-setdelaytime?redirectedfrom=MSDN
-const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
-// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
-const DOUBLE_CLICK_SPATIAL_TOLERANCE: i32 = 4;
 
 mod windows_renderer {
     use std::{num::NonZeroIsize, sync::Arc};
