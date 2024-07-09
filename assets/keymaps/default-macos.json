@@ -3,10 +3,14 @@
   {
     "bindings": {
       "up": "menu::SelectPrev",
+      "shift-tab": "menu::SelectPrev",
+      "home": "menu::SelectFirst",
       "pageup": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
       "ctrl-p": "menu::SelectPrev",
       "down": "menu::SelectNext",
+      "tab": "menu::SelectNext",
+      "end": "menu::SelectLast",
       "pagedown": "menu::SelectLast",
       "shift-pagedown": "menu::SelectFirst",
       "ctrl-n": "menu::SelectNext",
