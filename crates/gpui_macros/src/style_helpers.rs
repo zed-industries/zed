@@ -27,43 +27,45 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
 fn generate_methods() -> Vec<TokenStream2> {
     let mut methods = Vec::new();
 
-    for box_style in box_prefixes() {
+    for box_style_prefix in box_prefixes() {
         methods.push(generate_custom_value_setter(
-            box_style.prefix,
-            if box_style.auto_allowed {
+            box_style_prefix.prefix,
+            if box_style_prefix.auto_allowed {
                 quote! { Length }
             } else {
                 quote! { DefiniteLength }
             },
-            &box_style.fields,
-            &box_style.doc_string_prefix,
+            &box_style_prefix.fields,
+            &box_style_prefix.doc_string_prefix,
         ));
 
-        for (suffix, length_tokens, suffix_doc_string) in box_suffixes() {
-            if suffix != "auto" || box_style.auto_allowed {
+        for box_style_suffix in box_suffixes() {
+            if box_style_suffix.suffix != "auto" || box_style_prefix.auto_allowed {
                 methods.push(generate_predefined_setter(
-                    box_style.prefix,
-                    suffix,
-                    &box_style.fields,
-                    &length_tokens,
+                    box_style_prefix.prefix,
+                    box_style_suffix.suffix,
+                    &box_style_prefix.fields,
+                    &box_style_suffix.length_tokens,
                     false,
                     &format!(
-                        "{prefix_doc_string}\n\n{suffix_doc_string}",
-                        prefix_doc_string = box_style.doc_string_prefix
+                        "{prefix}\n\n{suffix}",
+                        prefix = box_style_prefix.doc_string_prefix,
+                        suffix = box_style_suffix.doc_string_suffix
                     ),
                 ));
             }
 
-            if suffix != "auto" {
+            if box_style_suffix.suffix != "auto" {
                 methods.push(generate_predefined_setter(
-                    box_style.prefix,
-                    suffix,
-                    &box_style.fields,
-                    &length_tokens,
+                    box_style_prefix.prefix,
+                    box_style_suffix.suffix,
+                    &box_style_prefix.fields,
+                    &box_style_suffix.length_tokens,
                     true,
                     &format!(
-                        "{prefix_doc_string}\n\n{suffix_doc_string}",
-                        prefix_doc_string = box_style.doc_string_prefix
+                        "{prefix}\n\n{suffix}",
+                        prefix = box_style_prefix.doc_string_prefix,
+                        suffix = box_style_suffix.doc_string_suffix
                     ),
                 ));
             }
@@ -193,7 +195,6 @@ struct BoxStylePrefix {
     doc_string_prefix: &'static str,
 }
 
-/// Returns a vec of (Property name, has 'auto' suffix, tokens for accessing the property, documentation)
 fn box_prefixes() -> Vec<BoxStylePrefix> {
     vec![
         BoxStylePrefix {
@@ -206,13 +207,13 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
             prefix: "h",
             auto_allowed: true,
             fields: vec![quote! { size.height }],
-            doc_string_prefix: "Sets the height of the element. [Docs](https://tailwindcss.com/docs/height)"
+            doc_string_prefix: "Sets the height of the element. [Docs](https://tailwindcss.com/docs/height)",
         },
         BoxStylePrefix {
             prefix: "size",
             auto_allowed: true,
             fields: vec![quote! {size.width}, quote! {size.height}],
-            doc_string_prefix: "Sets the width and height of the element."
+            doc_string_prefix: "Sets the width and height of the element.",
         },
         // TODO: These don't use the same size ramp as the others
         // see https://tailwindcss.com/docs/max-width
@@ -255,43 +256,43 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
                 quote! { margin.left },
                 quote! { margin.right },
             ],
-            doc_string_prefix: "Sets the margin of the element. [Docs](https://tailwindcss.com/docs/margin)"
+            doc_string_prefix: "Sets the margin of the element. [Docs](https://tailwindcss.com/docs/margin)",
         },
         BoxStylePrefix {
             prefix: "mt",
             auto_allowed: true,
             fields: vec![quote! { margin.top }],
-            doc_string_prefix: "Sets the top margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
+            doc_string_prefix: "Sets the top margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
         },
         BoxStylePrefix {
             prefix: "mb",
             auto_allowed: true,
             fields: vec![quote! { margin.bottom }],
-            doc_string_prefix: "Sets the bottom margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
+            doc_string_prefix: "Sets the bottom margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
         },
         BoxStylePrefix {
             prefix: "my",
             auto_allowed: true,
             fields: vec![quote! { margin.top }, quote! { margin.bottom }],
-            doc_string_prefix: "Sets the vertical margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-vertical-margin)"
+            doc_string_prefix: "Sets the vertical margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-vertical-margin)",
         },
         BoxStylePrefix {
             prefix: "mx",
             auto_allowed: true,
             fields: vec![quote! { margin.left }, quote! { margin.right }],
-            doc_string_prefix: "Sets the horizontal margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-horizontal-margin)"
+            doc_string_prefix: "Sets the horizontal margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-horizontal-margin)",
         },
         BoxStylePrefix {
             prefix: "ml",
             auto_allowed: true,
             fields: vec![quote! { margin.left }],
-            doc_string_prefix: "Sets the left margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
+            doc_string_prefix: "Sets the left margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
         },
         BoxStylePrefix {
             prefix: "mr",
             auto_allowed: true,
             fields: vec![quote! { margin.right }],
-            doc_string_prefix: "Sets the right margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
+            doc_string_prefix: "Sets the right margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)",
         },
         BoxStylePrefix {
             prefix: "p",
@@ -302,43 +303,43 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
                 quote! { padding.left },
                 quote! { padding.right },
             ],
-            doc_string_prefix: "Sets the padding of the element. [Docs](https://tailwindcss.com/docs/padding)"
+            doc_string_prefix: "Sets the padding of the element. [Docs](https://tailwindcss.com/docs/padding)",
         },
         BoxStylePrefix {
             prefix: "pt",
             auto_allowed: false,
             fields: vec![quote! { padding.top }],
-            doc_string_prefix: "Sets the top padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
+            doc_string_prefix: "Sets the top padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
         },
         BoxStylePrefix {
             prefix: "pb",
             auto_allowed: false,
             fields: vec![quote! { padding.bottom }],
-            doc_string_prefix: "Sets the bottom padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
+            doc_string_prefix: "Sets the bottom padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
         },
         BoxStylePrefix {
             prefix: "px",
             auto_allowed: false,
             fields: vec![quote! { padding.left }, quote! { padding.right }],
-            doc_string_prefix: "Sets the horizontal padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-horizontal-padding)"
+            doc_string_prefix: "Sets the horizontal padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-horizontal-padding)",
         },
         BoxStylePrefix {
             prefix: "py",
             auto_allowed: false,
             fields: vec![quote! { padding.top }, quote! { padding.bottom }],
-            doc_string_prefix: "Sets the vertical padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-vertical-padding)"
+            doc_string_prefix: "Sets the vertical padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-vertical-padding)",
         },
         BoxStylePrefix {
             prefix: "pl",
             auto_allowed: false,
             fields: vec![quote! { padding.left }],
-            doc_string_prefix: "Sets the left padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
+            doc_string_prefix: "Sets the left padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
         },
         BoxStylePrefix {
             prefix: "pr",
             auto_allowed: false,
             fields: vec![quote! { padding.right }],
-            doc_string_prefix: "Sets the right padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
+            doc_string_prefix: "Sets the right padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
         },
         BoxStylePrefix {
             prefix: "inset",
@@ -396,55 +397,244 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
     ]
 }
 
-/// Returns a vec of (Suffix size, tokens that correspond to this size, documentation)
-fn box_suffixes() -> Vec<(&'static str, TokenStream2, &'static str)> {
+struct BoxStyleSuffix {
+    suffix: &'static str,
+    length_tokens: TokenStream2,
+    doc_string_suffix: &'static str,
+}
+
+fn box_suffixes() -> Vec<BoxStyleSuffix> {
     vec![
-        ("0", quote! { px(0.) }, "0px"),
-        ("0p5", quote! { rems(0.125) }, "2px (0.125rem)"),
-        ("1", quote! { rems(0.25) }, "4px (0.25rem)"),
-        ("1p5", quote! { rems(0.375) }, "6px (0.375rem)"),
-        ("2", quote! { rems(0.5) }, "8px (0.5rem)"),
-        ("2p5", quote! { rems(0.625) }, "10px (0.625rem)"),
-        ("3", quote! { rems(0.75) }, "12px (0.75rem)"),
-        ("3p5", quote! { rems(0.875) }, "14px (0.875rem)"),
-        ("4", quote! { rems(1.) }, "16px (1rem)"),
-        ("5", quote! { rems(1.25) }, "20px (1.25rem)"),
-        ("6", quote! { rems(1.5) }, "24px (1.5rem)"),
-        ("7", quote! { rems(1.75) }, "28px (1.75rem)"),
-        ("8", quote! { rems(2.0) }, "32px (2rem)"),
-        ("9", quote! { rems(2.25) }, "36px (2.25rem)"),
-        ("10", quote! { rems(2.5) }, "40px (2.5rem)"),
-        ("11", quote! { rems(2.75) }, "44px (2.75rem)"),
-        ("12", quote! { rems(3.) }, "48px (3rem)"),
-        ("16", quote! { rems(4.) }, "64px (4rem)"),
-        ("20", quote! { rems(5.) }, "80px (5rem)"),
-        ("24", quote! { rems(6.) }, "96px (6rem)"),
-        ("32", quote! { rems(8.) }, "128px (8rem)"),
-        ("40", quote! { rems(10.) }, "160px (10rem)"),
-        ("48", quote! { rems(12.) }, "192px (12rem)"),
-        ("56", quote! { rems(14.) }, "224px (14rem)"),
-        ("64", quote! { rems(16.) }, "256px (16rem)"),
-        ("72", quote! { rems(18.) }, "288px (18rem)"),
-        ("80", quote! { rems(20.) }, "320px (20rem)"),
-        ("96", quote! { rems(24.) }, "384px (24rem)"),
-        ("112", quote! { rems(28.) }, "448px (28rem)"),
-        ("128", quote! { rems(32.) }, "512px (32rem)"),
-        ("auto", quote! { auto() }, "Auto"),
-        ("px", quote! { px(1.) }, "1px"),
-        ("full", quote! { relative(1.) }, "100%"),
-        ("1_2", quote! { relative(0.5) }, "50% (1/2)"),
-        ("1_3", quote! { relative(1./3.) }, "33% (1/3)"),
-        ("2_3", quote! { relative(2./3.) }, "66% (2/3)"),
-        ("1_4", quote! { relative(0.25) }, "25% (1/4)"),
-        ("2_4", quote! { relative(0.5) }, "50% (2/4)"),
-        ("3_4", quote! { relative(0.75) }, "75% (3/4)"),
-        ("1_5", quote! { relative(0.2) }, "20% (1/5)"),
-        ("2_5", quote! { relative(0.4) }, "40% (2/5)"),
-        ("3_5", quote! { relative(0.6) }, "60% (3/5)"),
-        ("4_5", quote! { relative(0.8) }, "80% (4/5)"),
-        ("1_6", quote! { relative(1./6.) }, "16% (1/6)"),
-        ("5_6", quote! { relative(5./6.) }, "80% (5/6)"),
-        ("1_12", quote! { relative(1./12.) }, "8% (1/12)"),
+        BoxStyleSuffix {
+            suffix: "0",
+            length_tokens: quote! { px(0.) },
+            doc_string_suffix: "0px",
+        },
+        BoxStyleSuffix {
+            suffix: "0p5",
+            length_tokens: quote! { rems(0.125) },
+            doc_string_suffix: "2px (0.125rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "1",
+            length_tokens: quote! { rems(0.25) },
+            doc_string_suffix: "4px (0.25rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "1p5",
+            length_tokens: quote! { rems(0.375) },
+            doc_string_suffix: "6px (0.375rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "2",
+            length_tokens: quote! { rems(0.5) },
+            doc_string_suffix: "8px (0.5rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "2p5",
+            length_tokens: quote! { rems(0.625) },
+            doc_string_suffix: "10px (0.625rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "3",
+            length_tokens: quote! { rems(0.75) },
+            doc_string_suffix: "12px (0.75rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "3p5",
+            length_tokens: quote! { rems(0.875) },
+            doc_string_suffix: "14px (0.875rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "4",
+            length_tokens: quote! { rems(1.) },
+            doc_string_suffix: "16px (1rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "5",
+            length_tokens: quote! { rems(1.25) },
+            doc_string_suffix: "20px (1.25rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "6",
+            length_tokens: quote! { rems(1.5) },
+            doc_string_suffix: "24px (1.5rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "7",
+            length_tokens: quote! { rems(1.75) },
+            doc_string_suffix: "28px (1.75rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "8",
+            length_tokens: quote! { rems(2.0) },
+            doc_string_suffix: "32px (2rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "9",
+            length_tokens: quote! { rems(2.25) },
+            doc_string_suffix: "36px (2.25rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "10",
+            length_tokens: quote! { rems(2.5) },
+            doc_string_suffix: "40px (2.5rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "11",
+            length_tokens: quote! { rems(2.75) },
+            doc_string_suffix: "44px (2.75rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "12",
+            length_tokens: quote! { rems(3.) },
+            doc_string_suffix: "48px (3rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "16",
+            length_tokens: quote! { rems(4.) },
+            doc_string_suffix: "64px (4rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "20",
+            length_tokens: quote! { rems(5.) },
+            doc_string_suffix: "80px (5rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "24",
+            length_tokens: quote! { rems(6.) },
+            doc_string_suffix: "96px (6rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "32",
+            length_tokens: quote! { rems(8.) },
+            doc_string_suffix: "128px (8rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "40",
+            length_tokens: quote! { rems(10.) },
+            doc_string_suffix: "160px (10rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "48",
+            length_tokens: quote! { rems(12.) },
+            doc_string_suffix: "192px (12rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "56",
+            length_tokens: quote! { rems(14.) },
+            doc_string_suffix: "224px (14rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "64",
+            length_tokens: quote! { rems(16.) },
+            doc_string_suffix: "256px (16rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "72",
+            length_tokens: quote! { rems(18.) },
+            doc_string_suffix: "288px (18rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "80",
+            length_tokens: quote! { rems(20.) },
+            doc_string_suffix: "320px (20rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "96",
+            length_tokens: quote! { rems(24.) },
+            doc_string_suffix: "384px (24rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "112",
+            length_tokens: quote! { rems(28.) },
+            doc_string_suffix: "448px (28rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "128",
+            length_tokens: quote! { rems(32.) },
+            doc_string_suffix: "512px (32rem)",
+        },
+        BoxStyleSuffix {
+            suffix: "auto",
+            length_tokens: quote! { auto() },
+            doc_string_suffix: "Auto",
+        },
+        BoxStyleSuffix {
+            suffix: "px",
+            length_tokens: quote! { px(1.) },
+            doc_string_suffix: "1px",
+        },
+        BoxStyleSuffix {
+            suffix: "full",
+            length_tokens: quote! { relative(1.) },
+            doc_string_suffix: "100%",
+        },
+        BoxStyleSuffix {
+            suffix: "1_2",
+            length_tokens: quote! { relative(0.5) },
+            doc_string_suffix: "50% (1/2)",
+        },
+        BoxStyleSuffix {
+            suffix: "1_3",
+            length_tokens: quote! { relative(1./3.) },
+            doc_string_suffix: "33% (1/3)",
+        },
+        BoxStyleSuffix {
+            suffix: "2_3",
+            length_tokens: quote! { relative(2./3.) },
+            doc_string_suffix: "66% (2/3)",
+        },
+        BoxStyleSuffix {
+            suffix: "1_4",
+            length_tokens: quote! { relative(0.25) },
+            doc_string_suffix: "25% (1/4)",
+        },
+        BoxStyleSuffix {
+            suffix: "2_4",
+            length_tokens: quote! { relative(0.5) },
+            doc_string_suffix: "50% (2/4)",
+        },
+        BoxStyleSuffix {
+            suffix: "3_4",
+            length_tokens: quote! { relative(0.75) },
+            doc_string_suffix: "75% (3/4)",
+        },
+        BoxStyleSuffix {
+            suffix: "1_5",
+            length_tokens: quote! { relative(0.2) },
+            doc_string_suffix: "20% (1/5)",
+        },
+        BoxStyleSuffix {
+            suffix: "2_5",
+            length_tokens: quote! { relative(0.4) },
+            doc_string_suffix: "40% (2/5)",
+        },
+        BoxStyleSuffix {
+            suffix: "3_5",
+            length_tokens: quote! { relative(0.6) },
+            doc_string_suffix: "60% (3/5)",
+        },
+        BoxStyleSuffix {
+            suffix: "4_5",
+            length_tokens: quote! { relative(0.8) },
+            doc_string_suffix: "80% (4/5)",
+        },
+        BoxStyleSuffix {
+            suffix: "1_6",
+            length_tokens: quote! { relative(1./6.) },
+            doc_string_suffix: "16% (1/6)",
+        },
+        BoxStyleSuffix {
+            suffix: "5_6",
+            length_tokens: quote! { relative(5./6.) },
+            doc_string_suffix: "80% (5/6)",
+        },
+        BoxStyleSuffix {
+            suffix: "1_12",
+            length_tokens: quote! { relative(1./12.) },
+            doc_string_suffix: "8% (1/12)",
+        },
     ]
 }
 
