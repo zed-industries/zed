@@ -11766,21 +11766,10 @@ fn snippet_completions(
     cx: &mut AppContext,
 ) -> Vec<Completion> {
     let language = buffer.read(cx).language_at(buffer_position);
-    let language_name = language
-        .as_ref()
-        .map(|language| language.name().to_lowercase());
+    let language_name = language.as_ref().map(|language| language.lsp_id());
     let snippet_store = project.snippets().read(cx);
-    let has_language = language_name.is_some();
-    let mut snippets = snippet_store
-        .snippets_for(language_name)
-        .unwrap_or_default();
+    let snippets = snippet_store.snippets_for(language_name);
 
-    if has_language {
-        // Append global snippets in case we don't have any.
-        if let Some(global_snippets) = snippet_store.snippets_for(None) {
-            snippets.extend(global_snippets);
-        }
-    }
     if snippets.is_empty() {
         return vec![];
     }

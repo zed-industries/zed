@@ -168,13 +168,29 @@ impl SnippetProvider {
             Ok(())
         })
     }
-    pub fn snippets_for(&self, language: SnippetKind) -> Option<Vec<Arc<Snippet>>> {
+    fn lookup_snippets<'a>(
+        &'a self,
+        language: &'a SnippetKind,
+    ) -> Option<impl Iterator<Item = Arc<Snippet>> + 'a> {
         Some(
             self.snippets
                 .get(&language)?
                 .iter()
-                .flat_map(|(_, snippets)| snippets.iter().cloned())
-                .collect(),
+                .flat_map(|(_, snippets)| snippets.iter().cloned()),
         )
+    }
+
+    pub fn snippets_for(&self, language: SnippetKind) -> Vec<Arc<Snippet>> {
+        let mut requested_snippets: Vec<_> = self
+            .lookup_snippets(&language)
+            .map(|snippets| snippets.collect())
+            .unwrap_or_default();
+        if language.is_some() {
+            // Look up global snippets as well.
+            if let Some(global_snippets) = self.lookup_snippets(&None) {
+                requested_snippets.extend(global_snippets);
+            }
+        }
+        requested_snippets
     }
 }
