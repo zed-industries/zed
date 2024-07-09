@@ -24,10 +24,60 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
     output.into()
 }
 
-fn generate_methods() -> Vec<TokenStream2> {
+pub fn position_style_methods(input: TokenStream) -> TokenStream {
+    let _ = parse_macro_input!(input as StyleableMacroInput);
+    let methods = generate_box_style_methods(position_box_style_prefixes(), box_style_suffixes());
+    let output = quote! {
+        #(#methods)*
+    };
+
+    output.into()
+}
+
+struct BoxStylePrefix {
+    prefix: &'static str,
+    auto_allowed: bool,
+    fields: Vec<TokenStream2>,
+    doc_string_prefix: &'static str,
+}
+
+struct BoxStyleSuffix {
+    suffix: &'static str,
+    length_tokens: TokenStream2,
+    doc_string_suffix: &'static str,
+}
+
+struct CornerStylePrefix {
+    prefix: &'static str,
+    fields: Vec<TokenStream2>,
+    doc_string_prefix: &'static str,
+}
+
+struct CornerStyleSuffix {
+    suffix: &'static str,
+    radius_tokens: TokenStream2,
+    doc_string_suffix: &'static str,
+}
+
+struct BorderStylePrefix {
+    prefix: &'static str,
+    fields: Vec<TokenStream2>,
+    doc_string_prefix: &'static str,
+}
+
+struct BorderStyleSuffix {
+    suffix: &'static str,
+    width_tokens: TokenStream2,
+    doc_string_suffix: &'static str,
+}
+
+fn generate_box_style_methods(
+    prefixes: Vec<BoxStylePrefix>,
+    suffixes: Vec<BoxStyleSuffix>,
+) -> Vec<TokenStream2> {
     let mut methods = Vec::new();
 
-    for box_style_prefix in box_prefixes() {
+    for box_style_prefix in prefixes {
         methods.push(generate_custom_value_setter(
             box_style_prefix.prefix,
             if box_style_prefix.auto_allowed {
@@ -39,7 +89,7 @@ fn generate_methods() -> Vec<TokenStream2> {
             &box_style_prefix.doc_string_prefix,
         ));
 
-        for box_style_suffix in box_suffixes() {
+        for box_style_suffix in &suffixes {
             if box_style_suffix.suffix != "auto" || box_style_prefix.auto_allowed {
                 methods.push(generate_predefined_setter(
                     box_style_prefix.prefix,
@@ -71,6 +121,12 @@ fn generate_methods() -> Vec<TokenStream2> {
             }
         }
     }
+
+    methods
+}
+
+fn generate_methods() -> Vec<TokenStream2> {
+    let mut methods = generate_box_style_methods(box_prefixes(), box_style_suffixes());
 
     for corner_style_prefix in corner_prefixes() {
         methods.push(generate_custom_value_setter(
@@ -196,11 +252,44 @@ fn generate_custom_value_setter(
     method
 }
 
-struct BoxStylePrefix {
-    prefix: &'static str,
-    auto_allowed: bool,
-    fields: Vec<TokenStream2>,
-    doc_string_prefix: &'static str,
+fn position_box_style_prefixes() -> Vec<BoxStylePrefix> {
+    vec![
+        BoxStylePrefix {
+            prefix: "inset",
+            auto_allowed: true,
+            fields: vec![
+                quote! { inset.top },
+                quote! { inset.right },
+                quote! { inset.bottom },
+                quote! { inset.left },
+            ],
+            doc_string_prefix: "Sets the top, right, bottom, and left values of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        },
+        BoxStylePrefix {
+            prefix: "top",
+            auto_allowed: true,
+            fields: vec![quote! { inset.top }],
+            doc_string_prefix: "Sets the top value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        },
+        BoxStylePrefix {
+            prefix: "bottom",
+            auto_allowed: true,
+            fields: vec![quote! { inset.bottom }],
+            doc_string_prefix: "Sets the bottom value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        },
+        BoxStylePrefix {
+            prefix: "left",
+            auto_allowed: true,
+            fields: vec![quote! { inset.left }],
+            doc_string_prefix: "Sets the left value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        },
+        BoxStylePrefix {
+            prefix: "right",
+            auto_allowed: true,
+            fields: vec![quote! { inset.right }],
+            doc_string_prefix: "Sets the right value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
+        },
+    ]
 }
 
 fn box_prefixes() -> Vec<BoxStylePrefix> {
@@ -350,41 +439,6 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
             doc_string_prefix: "Sets the right padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)",
         },
         BoxStylePrefix {
-            prefix: "inset",
-            auto_allowed: true,
-            fields: vec![
-                quote! { inset.top },
-                quote! { inset.right },
-                quote! { inset.bottom },
-                quote! { inset.left },
-            ],
-            doc_string_prefix: "Sets the top, right, bottom, and left values of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
-        },
-        BoxStylePrefix {
-            prefix: "top",
-            auto_allowed: true,
-            fields: vec![quote! { inset.top }],
-            doc_string_prefix: "Sets the top value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
-        },
-        BoxStylePrefix {
-            prefix: "bottom",
-            auto_allowed: true,
-            fields: vec![quote! { inset.bottom }],
-            doc_string_prefix: "Sets the bottom value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
-        },
-        BoxStylePrefix {
-            prefix: "left",
-            auto_allowed: true,
-            fields: vec![quote! { inset.left }],
-            doc_string_prefix: "Sets the left value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
-        },
-        BoxStylePrefix {
-            prefix: "right",
-            auto_allowed: true,
-            fields: vec![quote! { inset.right }],
-            doc_string_prefix: "Sets the right value of a positioned element. [Docs](https://tailwindcss.com/docs/top-right-bottom-left)",
-        },
-        BoxStylePrefix {
             prefix: "gap",
             auto_allowed: false,
             fields: vec![quote! { gap.width }, quote! { gap.height }],
@@ -405,13 +459,7 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
     ]
 }
 
-struct BoxStyleSuffix {
-    suffix: &'static str,
-    length_tokens: TokenStream2,
-    doc_string_suffix: &'static str,
-}
-
-fn box_suffixes() -> Vec<BoxStyleSuffix> {
+fn box_style_suffixes() -> Vec<BoxStyleSuffix> {
     vec![
         BoxStyleSuffix {
             suffix: "0",
@@ -646,12 +694,6 @@ fn box_suffixes() -> Vec<BoxStyleSuffix> {
     ]
 }
 
-struct CornerStylePrefix {
-    prefix: &'static str,
-    fields: Vec<TokenStream2>,
-    doc_string_prefix: &'static str,
-}
-
 fn corner_prefixes() -> Vec<CornerStylePrefix> {
     vec![
         CornerStylePrefix {
@@ -719,12 +761,6 @@ fn corner_prefixes() -> Vec<CornerStylePrefix> {
     ]
 }
 
-struct CornerStyleSuffix {
-    suffix: &'static str,
-    radius_tokens: TokenStream2,
-    doc_string_suffix: &'static str,
-}
-
 fn corner_suffixes() -> Vec<CornerStyleSuffix> {
     vec![
         CornerStyleSuffix {
@@ -768,12 +804,6 @@ fn corner_suffixes() -> Vec<CornerStyleSuffix> {
             doc_string_suffix: "9999px",
         },
     ]
-}
-
-struct BorderStylePrefix {
-    prefix: &'static str,
-    fields: Vec<TokenStream2>,
-    doc_string_prefix: &'static str,
 }
 
 fn border_prefixes() -> Vec<BorderStylePrefix> {
@@ -825,12 +855,6 @@ fn border_prefixes() -> Vec<BorderStylePrefix> {
             doc_string_prefix: "Sets the border width of the horizontal sides of the element. [Docs](https://tailwindcss.com/docs/border-width#horizontal-and-vertical-sides)"
         },
     ]
-}
-
-struct BorderStyleSuffix {
-    suffix: &'static str,
-    width_tokens: TokenStream2,
-    doc_string_suffix: &'static str,
 }
 
 fn border_suffixes() -> Vec<BorderStyleSuffix> {
