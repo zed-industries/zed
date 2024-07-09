@@ -450,12 +450,12 @@ impl Context {
             zed: "context".into(),
             version: SavedContext::VERSION.into(),
             text: buffer.text(),
-            message_metadata: self.messages_metadata.clone(),
             messages: self
                 .messages(cx)
                 .map(|message| SavedMessage {
                     id: message.id,
                     start: message.offset_range.start,
+                    metadata: self.messages_metadata[&message.id].clone(),
                 })
                 .collect(),
             summary: self
@@ -703,8 +703,13 @@ impl Context {
                     .map(|section| &section.range)
                     .chain([output_range])
                     .all(|range| {
-                        version.observed(range.start.timestamp)
-                            && version.observed(range.end.timestamp)
+                        let observed_start = range.start == language::Anchor::MIN
+                            || range.start == language::Anchor::MAX
+                            || version.observed(range.start.timestamp);
+                        let observed_end = range.end == language::Anchor::MIN
+                            || range.end == language::Anchor::MAX
+                            || version.observed(range.end.timestamp);
+                        observed_start && observed_end
                     })
             }
             ContextOperation::BufferOperation(_) => {
@@ -1830,6 +1835,7 @@ pub enum PendingSlashCommandStatus {
 pub struct SavedMessage {
     pub id: MessageId,
     pub start: usize,
+    pub metadata: MessageMetadata,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1839,7 +1845,6 @@ pub struct SavedContext {
     pub version: String,
     pub text: String,
     pub messages: Vec<SavedMessage>,
-    pub message_metadata: HashMap<MessageId, MessageMetadata>,
     pub summary: String,
     pub slash_command_output_sections:
         Vec<assistant_slash_command::SlashCommandOutputSection<usize>>,
@@ -1880,7 +1885,7 @@ impl SavedContext {
     }
 
     fn into_ops(
-        mut self,
+        self,
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Context>,
     ) -> Vec<ContextOperation> {
@@ -1890,25 +1895,23 @@ impl SavedContext {
 
         let mut first_message_metadata = None;
         for message in self.messages {
-            if let Some(metadata) = self.message_metadata.remove(&message.id) {
-                if message.id == MessageId(clock::Lamport::default()) {
-                    first_message_metadata = Some(metadata);
-                } else {
-                    operations.push(ContextOperation::InsertMessage {
-                        anchor: MessageAnchor {
-                            id: message.id,
-                            start: buffer.read(cx).anchor_before(message.start),
-                        },
-                        metadata: MessageMetadata {
-                            role: metadata.role,
-                            status: metadata.status,
-                            timestamp: metadata.timestamp,
-                        },
-                        version: version.clone(),
-                    });
-                    version.observe(message.id.0);
-                    next_timestamp.observe(message.id.0);
-                }
+            if message.id == MessageId(clock::Lamport::default()) {
+                first_message_metadata = Some(message.metadata);
+            } else {
+                operations.push(ContextOperation::InsertMessage {
+                    anchor: MessageAnchor {
+                        id: message.id,
+                        start: buffer.read(cx).anchor_before(message.start),
+                    },
+                    metadata: MessageMetadata {
+                        role: message.metadata.role,
+                        status: message.metadata.status,
+                        timestamp: message.metadata.timestamp,
+                    },
+                    version: version.clone(),
+                });
+                version.observe(message.id.0);
+                next_timestamp.observe(message.id.0);
             }
         }
 
@@ -2001,30 +2004,21 @@ impl SavedContextV0_3_0 {
             messages: self
                 .messages
                 .into_iter()
-                .map(|message| SavedMessage {
-                    id: MessageId(clock::Lamport {
-                        replica_id: ReplicaId::default(),
-                        value: message.id.0 as u32,
-                    }),
-                    start: message.start,
-                })
-                .collect(),
-            message_metadata: self
-                .message_metadata
-                .into_iter()
-                .map(|(id, metadata)| {
+                .filter_map(|message| {
+                    let metadata = self.message_metadata.get(&message.id)?;
                     let timestamp = clock::Lamport {
                         replica_id: ReplicaId::default(),
-                        value: id.0 as u32,
+                        value: message.id.0 as u32,
                     };
-                    (
-                        MessageId(timestamp),
-                        MessageMetadata {
+                    Some(SavedMessage {
+                        id: MessageId(timestamp),
+                        start: message.start,
+                        metadata: MessageMetadata {
                             role: metadata.role,
-                            status: metadata.status,
+                            status: metadata.status.clone(),
                             timestamp,
                         },
-                    )
+                    })
                 })
                 .collect(),
             summary: self.summary,
