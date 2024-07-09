@@ -156,7 +156,7 @@ use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 use crate::hover_links::find_url;
 use crate::signature_help_popover::{
     create_signature_help_markdown_string, SignatureHelpHiddenBy, SignatureHelpPopover,
-    SignatureHelpState,
+    SignatureHelpState, QUOTES_PAIRS,
 };
 
 pub const FILE_HEADER_HEIGHT: u8 = 1;
@@ -4069,18 +4069,25 @@ impl Editor {
             (a, b) if b <= buffer_snapshot.len() => a - 1..b,
             (a, b) => a - 1..b - 1,
         };
+        let range_filter = |start: Range<usize>, end: Range<usize>| {
+            let text = buffer_snapshot.text();
+            let (text_start, text_end) = (text.get(start), text.get(end));
+            QUOTES_PAIRS
+                .into_iter()
+                .all(|(start, end)| text_start != Some(start) && text_end != Some(end))
+        };
 
         let previous_position = old_cursor_position.to_offset(&buffer_snapshot);
         let previous_brackets_range = bracket_range(previous_position);
         let previous_brackets_surround = buffer_snapshot
-            .innermost_enclosing_bracket_ranges(previous_brackets_range, None)
+            .innermost_enclosing_bracket_ranges(previous_brackets_range, Some(&range_filter))
             .filter(|(start_bracket_range, end_bracket_range)| {
                 start_bracket_range.start != previous_position
                     && end_bracket_range.end != previous_position
             });
         let current_brackets_range = bracket_range(head);
         let current_brackets_surround = buffer_snapshot
-            .innermost_enclosing_bracket_ranges(current_brackets_range, None)
+            .innermost_enclosing_bracket_ranges(current_brackets_range, Some(&range_filter))
             .filter(|(start_bracket_range, end_bracket_range)| {
                 start_bracket_range.start != head && end_bracket_range.end != head
             });

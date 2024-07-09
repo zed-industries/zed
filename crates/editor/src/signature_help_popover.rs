@@ -91,6 +91,8 @@ impl SignatureHelpState {
     }
 }
 
+pub const QUOTES_PAIRS: [(&'static str, &'static str); 3] = [("'", "'"), ("\"", "\""), ("`", "`")];
+
 #[derive(Clone, Debug)]
 pub struct SignatureHelpPopover {
     pub parsed_content: ParsedMarkdown,
