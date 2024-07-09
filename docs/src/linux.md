@@ -25,6 +25,7 @@ Zed is open source, and [you can install from source](./development/linux.md).
 
 There are several third-party Zed packages for various Linux distributions and package managers, sometimes under `zed-editor`. You may be able to install Zed using these packages:
 
+* Homebrew: [`zed`](https://formulae.brew.sh/cask/zed), [`zed@preview`](https://formulae.brew.sh/cask/zed@preview)
 * Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
 * Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview),  [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
 * Alpine: `zed` ([aarch64](https://pkgs.alpinelinux.org/package/edge/testing/aarch64/zed)) ([x86_65](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zed))
@@ -32,7 +33,6 @@ There are several third-party Zed packages for various Linux distributions and p
 * Fedora 39 & 40 (Terra): `zed-nightly` ([aarch64](https://fedora.pkgs.org/40/terra/zed-nightly-0:0.142.0%5e20240619.0129d4e-1.fc40.aarch64.rpm.html)) ([x86_64](https://fedora.pkgs.org/40/terra/zed-nightly-0:0.142.0%5e20240619.0129d4e-1.fc40.x86_64.rpm.html)) `zed-preview` ([aarch64](https://fedora.pkgs.org/40/terra/zed-preview-0:0.142.1-pre1.fc40.aarch64.rpm.html)) ([x86_64](https://fedora.pkgs.org/40/terra/zed-nightly-0:0.142.0%5e20240619.0129d4e-1.fc40.x86_64.rpm.html))
 * Solus: [`zed`](https://github.com/getsolus/packages/tree/main/packages/z/zed)
 * Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
-* HomeBrew: [`zed`](https://formulae.brew.sh/cask/zed), [`zed@preview`](https://formulae.brew.sh/cask/zed@preview)
 * Manjaro: [`zed`](https://packages.manjaro.org/?query=zed)
 * Please add others to this list!
 
