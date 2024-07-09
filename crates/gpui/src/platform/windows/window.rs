@@ -252,7 +252,7 @@ impl WindowsWindow {
             .titlebar
             .as_ref()
             .map(|titlebar| titlebar.appears_transparent)
-            .unwrap_or(false);
+            .unwrap_or(true);
         let windowname = HSTRING::from(
             params
                 .titlebar
