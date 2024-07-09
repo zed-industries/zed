@@ -591,7 +591,7 @@ impl X11Client {
                 let window = self.get_window(event.window)?;
                 window.property_notify(event);
             }
-            Event::FocusIn(event) if event.mode == xproto::NotifyMode::NORMAL => {
+            Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_focused(true);
                 let mut state = self.0.borrow_mut();
@@ -599,7 +599,7 @@ impl X11Client {
                 drop(state);
                 self.enable_ime();
             }
-            Event::FocusOut(event) if event.mode == xproto::NotifyMode::NORMAL => {
+            Event::FocusOut(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_focused(false);
                 let mut state = self.0.borrow_mut();
