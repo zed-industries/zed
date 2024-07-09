@@ -20,6 +20,8 @@ use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
+mod repl_menu;
+
 pub struct QuickActionBar {
     buffer_search_bar: View<BufferSearchBar>,
     repl_menu: Option<View<ContextMenu>>,
@@ -150,21 +152,6 @@ impl Render for QuickActionBar {
                 }
             },
         );
-
-        // TODO - probably goes to editor
-        let todo_supports_repl = true;
-
-        let repl_dropdown = todo_supports_repl.then(|| {
-            IconButton::new("toggle_repl_icon", IconName::ReplPlay)
-                .size(ButtonSize::Compact)
-                .icon_size(IconSize::Small)
-                .style(ButtonStyle::Subtle)
-                .tooltip(|cx| Tooltip::text("REPL", cx))
-                .on_click({
-                    let workspace = self.workspace.clone();
-                    cx.listener(move |_quick_action_bar, _, cx| {})
-                })
-        });
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
             IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
@@ -307,7 +294,7 @@ impl Render for QuickActionBar {
             .child(
                 h_flex()
                     .gap(Spacing::Medium.rems(cx))
-                    .children(repl_dropdown)
+                    .children(self.render_repl_menu(cx))
                     .children(editor_selections_dropdown)
                     .child(editor_settings_dropdown),
             )

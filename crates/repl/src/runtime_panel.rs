@@ -334,6 +334,11 @@ impl RuntimePanel {
             cx.notify();
         }
     }
+
+    pub fn session(&mut self, editor: WeakView<Editor>) -> Option<View<Session>> {
+        let entity_id = editor.entity_id();
+        self.sessions.get(&entity_id).cloned()
+    }
 }
 
 impl Panel for RuntimePanel {

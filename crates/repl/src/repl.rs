@@ -11,7 +11,11 @@ mod session;
 mod stdio;
 
 pub use jupyter_settings::JupyterSettings;
+pub use kernels::{Kernel, KernelSpecification};
 pub use runtime_panel::RuntimePanel;
+pub use session::Session;
+pub use runtimelib::ExecutionState;
+pub use runtime_panel::Run;
 
 fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
     struct ZedDispatcher {
