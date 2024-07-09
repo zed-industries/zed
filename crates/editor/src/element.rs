@@ -3660,7 +3660,7 @@ impl EditorElement {
                         if scroll_position != current_scroll_position {
                             editor.scroll(scroll_position, axis, cx);
                             cx.stop_propagation();
-                        } else {
+                        } else if y < 0. {
                             cx.notify();
                         }
                     });
