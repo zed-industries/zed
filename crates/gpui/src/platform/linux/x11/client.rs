@@ -120,6 +120,7 @@ pub struct X11ClientState {
     pub(crate) compose_state: Option<xkbc::compose::State>,
     pub(crate) pre_edit_text: Option<String>,
     pub(crate) composing: bool,
+    pub(crate) pre_ime_key_down: Option<Keystroke>,
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
     pub(crate) cursor_cache: HashMap<CursorStyle, xproto::Cursor>,
@@ -354,6 +355,7 @@ impl X11Client {
 
             compose_state,
             pre_edit_text: None,
+            pre_ime_key_down: None,
             composing: false,
 
             cursor_handle,
@@ -641,6 +643,7 @@ impl X11Client {
 
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
+                state.pre_ime_key_down.take();
 
                 let keystroke = {
                     let code = event.detail.into();
@@ -928,6 +931,11 @@ impl X11Client {
         match event {
             Event::KeyPress(event) | Event::KeyRelease(event) => {
                 let mut state = self.0.borrow_mut();
+                state.pre_ime_key_down = Some(Keystroke::from_xkb(
+                    &state.xkb,
+                    state.modifiers,
+                    event.detail.into(),
+                ));
                 let mut ximc = state.ximc.take().unwrap();
                 let mut xim_handler = state.xim_handler.take().unwrap();
                 drop(state);
@@ -954,6 +962,16 @@ impl X11Client {
     fn xim_handle_commit(&self, window: xproto::Window, text: String) -> Option<()> {
         let window = self.get_window(window).unwrap();
         let mut state = self.0.borrow_mut();
+        if !state.composing {
+            if let Some(keystroke) = state.pre_ime_key_down.take() {
+                drop(state);
+                window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
+                    keystroke,
+                    is_held: false,
+                }));
+                return Some(());
+            }
+        }
         state.composing = false;
         drop(state);
 
