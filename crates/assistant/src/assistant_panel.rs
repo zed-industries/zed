@@ -50,7 +50,9 @@ use std::{cmp, fmt::Write, ops::Range, path::PathBuf, sync::Arc, time::Duration}
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
+    prelude::*,
+    utils::{format_distance_from_now, DateTimeType},
+    Avatar, AvatarShape, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use util::ResultExt;
@@ -191,42 +193,66 @@ impl PickerDelegate for SavedContextPickerDelegate {
         let context = self.matches.get(ix)?;
         let item = match context {
             ContextMetadata::Remote(context) => {
-                let host_username = if let Some(host) =
-                    self.project.read(cx).host().and_then(|collaborator| {
-                        self.project
-                            .read(cx)
-                            .user_store()
-                            .read(cx)
-                            .get_cached_user(collaborator.user_id)
-                    }) {
-                    format!("@{}", host.github_login)
-                } else {
-                    "host".to_string()
-                };
+                let host_user = self.project.read(cx).host().and_then(|collaborator| {
+                    self.project
+                        .read(cx)
+                        .user_store()
+                        .read(cx)
+                        .get_cached_user(collaborator.user_id)
+                });
                 div()
                     .flex()
                     .w_full()
+                    .justify_between()
                     .gap_2()
                     .child(
-                        Label::new(format!("Shared by {}", host_username))
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
+                        h_flex().flex_1().overflow_x_hidden().child(
+                            Label::new(context.summary.clone().unwrap_or("New Context".into()))
+                                .size(LabelSize::Small),
+                        ),
                     )
                     .child(
-                        Label::new(context.summary.clone().unwrap_or("New Context".into()))
-                            .size(LabelSize::Small),
+                        h_flex()
+                            .gap_2()
+                            .children(if let Some(host_user) = host_user {
+                                vec![
+                                    Avatar::new(host_user.avatar_uri.clone())
+                                        .shape(AvatarShape::Circle)
+                                        .into_any_element(),
+                                    Label::new(format!("Shared by @{}", host_user.github_login))
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small)
+                                        .into_any_element(),
+                                ]
+                            } else {
+                                vec![Label::new("Shared by host")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small)
+                                    .into_any_element()]
+                            }),
                     )
             }
             ContextMetadata::Saved(context) => div()
                 .flex()
                 .w_full()
+                .justify_between()
                 .gap_2()
                 .child(
-                    Label::new(context.mtime.format("%F %I:%M%p").to_string())
-                        .color(Color::Muted)
-                        .size(LabelSize::Small),
+                    h_flex()
+                        .flex_1()
+                        .child(Label::new(context.title.clone()).size(LabelSize::Small))
+                        .overflow_x_hidden(),
                 )
-                .child(Label::new(context.title.clone()).size(LabelSize::Small)),
+                .child(
+                    Label::new(format_distance_from_now(
+                        DateTimeType::Local(context.mtime),
+                        false,
+                        true,
+                        true,
+                    ))
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+                ),
         };
         Some(
             ListItem::new(ix)
@@ -702,8 +728,9 @@ impl AssistantPanel {
                 .filter(|editor| *editor.read(cx).context.read(cx).id() == id)
         });
         if let Some(existing_context) = existing_context {
-            self.show_context(existing_context, cx);
-            return Task::ready(Ok(()));
+            return cx.spawn(|this, mut cx| async move {
+                this.update(&mut cx, |this, cx| this.show_context(existing_context, cx))
+            });
         }
 
         let context = self
