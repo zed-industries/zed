@@ -288,11 +288,11 @@ impl Shell {
     /// Convert unix-shell variable syntax to windows-shell syntax.
     /// `powershell` and `cmd` are considered valid here.
     #[cfg(target_os = "windows")]
-    pub fn to_windows_variable(shell: &str, input: String) -> String {
-        match Self::to_windows_shell(shell).as_str() {
-            "powershell" => to_powershell_variable(input),
-            "cmd" => to_cmd_variable(input),
-            _ => {
+    pub fn to_windows_variable(shell_type: WindowsShellType, input: String) -> String {
+        match shell_type {
+            WindowsShellType::Powershell => to_powershell_variable(input),
+            WindowsShellType::Cmd => to_cmd_variable(input),
+            WindowsShellType::Other => {
                 // Someother shell detected, the user might install and use a
                 // unix-like shell.
                 input
@@ -301,13 +301,13 @@ impl Shell {
     }
 
     #[cfg(target_os = "windows")]
-    pub fn to_windows_shell(shell: &str) -> String {
+    pub fn to_windows_shell(shell: &str) -> WindowsShellType {
         if shell == "powershell" || shell.ends_with("powershell.exe") {
-            "powershel".to_owned()
+            WindowsShellType::Powershell
         } else if shell == "cmd" || shell.ends_with("cmd.exe") {
-            "cmd".to_owned()
+            WindowsShellType::Cmd
         } else {
-            "other".to_owned()
+            WindowsShellType::Other
         }
     }
 }
@@ -342,6 +342,14 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub title: Option<bool>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowsShellType {
+    Powershell,
+    Cmd,
+    Other,
 }
 
 /// Convert `${SOME_VAR}`, `$SOME_VAR` to `%SOME_VAR%`.
