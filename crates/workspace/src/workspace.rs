@@ -6596,7 +6596,6 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                 .on_mouse_move(|_e, cx| {
                     cx.stop_propagation();
                 })
-                .bg(cx.theme().colors().border)
                 .size_full()
                 .child(element),
         )
