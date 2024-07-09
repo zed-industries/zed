@@ -68,10 +68,10 @@ use gpui::{
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
     Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusOutEvent, FocusableView,
     FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString,
-    Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle,
-    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle,
-    WeakView, WhiteSpace, WindowContext,
+    ListSizingBehavior, Model, ModelContext, MouseButton, PaintQuad, ParentElement, Pixels, Render,
+    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
+    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
+    WeakFocusHandle, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -3526,26 +3526,27 @@ impl Editor {
         let autoindent = text.is_empty().not().then(|| AutoindentMode::Block {
             original_indent_columns: Vec::new(),
         });
-        self.insert_with_modes(text, autoindent, None, cx);
+        self.insert_change_tx(cx, |buffer, selections, cx| {
+            buffer.edit(
+                selections.iter().map(|s| ((s.start..s.end), text)),
+                autoindent,
+                cx,
+            );
+        });
     }
 
-    fn insert_with_modes(
+    fn insert_change_tx(
         &mut self,
-        text: &str,
-        autoindent_mode: Option<AutoindentMode>,
-        truncation_mode: Option<TruncationMode>,
         cx: &mut ViewContext<Self>,
+        update: impl FnOnce(&mut MultiBuffer, Vec<Selection<Point>>, &mut ModelContext<MultiBuffer>),
     ) {
         if self.read_only(cx) {
             return;
         }
 
-        let text: Arc<str> = text.into();
-
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let old_selections = self.selections.all_adjusted(cx);
 
         self.transact(cx, |this, cx| {
-            let old_selections = this.selections.all_adjusted(cx);
             let selection_anchors = this.buffer.update(cx, |buffer, cx| {
                 let anchors = {
                     let snapshot = buffer.read(cx);
@@ -3557,18 +3558,7 @@ impl Editor {
                         })
                         .collect::<Vec<_>>()
                 };
-                buffer.edit(
-                    old_selections.iter().map(|s| {
-                        // truncate the line
-                        let edit_end = display_map.next_line_boundary(s.start).0;
-                        match truncation_mode {
-                            Some(TruncationMode::EndOfLine) => ((s.start..edit_end), text.clone()),
-                            None => ((s.start..s.end), text.clone()),
-                        }
-                    }),
-                    autoindent_mode,
-                    cx,
-                );
+                update(buffer, old_selections, cx);
                 anchors
             });
 
@@ -4879,7 +4869,25 @@ impl Editor {
             utf16_range_to_replace: None,
             text: completion.text.to_string().into(),
         });
-        self.insert_with_modes(&completion.text.to_string(), None, truncation_mode, cx);
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        let text = &completion.text.to_string();
+
+        self.insert_change_tx(cx, |buffer, selections, cx| {
+            buffer.edit(
+                selections.iter().map(|s| {
+                    // truncate the line
+                    let edit_end = display_map.next_line_boundary(s.start).0;
+                    match truncation_mode {
+                        Some(TruncationMode::EndOfLine) => ((s.start..edit_end), text.clone()),
+                        None => ((s.start..s.end), text.clone()),
+                    }
+                }),
+                None,
+                cx,
+            );
+        });
         self.refresh_inline_completion(true, cx);
         cx.notify();
     }
@@ -4910,7 +4918,28 @@ impl Editor {
                     utf16_range_to_replace: None,
                     text: partial_completion.clone().into(),
                 });
-                self.insert_with_modes(&partial_completion, None, truncation_mode, cx);
+
+                let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+                let text = &completion.text.to_string();
+
+                self.insert_change_tx(cx, |buffer, selections, cx| {
+                    buffer.edit(
+                        selections.iter().map(|s| {
+                            // truncate the line
+                            let edit_end = display_map.next_line_boundary(s.start).0;
+                            match truncation_mode {
+                                Some(TruncationMode::EndOfLine) => {
+                                    ((s.start..edit_end), text.clone())
+                                }
+                                None => ((s.start..s.end), text.clone()),
+                            }
+                        }),
+                        None,
+                        cx,
+                    );
+                });
+
                 self.refresh_inline_completion(true, cx);
                 cx.notify();
             }
