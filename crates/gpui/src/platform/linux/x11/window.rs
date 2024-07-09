@@ -50,6 +50,7 @@ x11rb::atom_manager! {
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
         _NET_WM_SYNC,
+        _NET_SUPPORTED,
         _MOTIF_WM_HINTS,
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
@@ -238,6 +239,7 @@ pub struct X11WindowState {
     hidden: bool,
     active: bool,
     fullscreen: bool,
+    client_side_decorations_supported: bool,
     decorations: WindowDecorations,
     edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
@@ -293,6 +295,7 @@ impl X11WindowState {
         executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
+        client_side_decorations_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
@@ -513,6 +516,7 @@ impl X11WindowState {
             handle,
             background_appearance: WindowBackgroundAppearance::Opaque,
             destroyed: false,
+            client_side_decorations_supported,
             decorations: WindowDecorations::Server,
             last_insets: [0, 0, 0, 0],
             edge_constraints: None,
@@ -581,6 +585,7 @@ impl X11Window {
         executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
+        client_side_decorations_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
@@ -594,6 +599,7 @@ impl X11Window {
                 executor,
                 params,
                 xcb_connection,
+                client_side_decorations_supported,
                 x_main_screen_index,
                 x_window,
                 atoms,
@@ -1227,6 +1233,11 @@ impl PlatformWindow for X11Window {
     fn window_decorations(&self) -> crate::Decorations {
         let state = self.0.state.borrow();
 
+        // Client window decorations require compositor support
+        if !state.client_side_decorations_supported {
+            return Decorations::Server;
+        }
+
         match state.decorations {
             WindowDecorations::Server => Decorations::Server,
             WindowDecorations::Client => {
@@ -1293,14 +1304,23 @@ impl PlatformWindow for X11Window {
         }
     }
 
-    fn request_decorations(&self, decorations: crate::WindowDecorations) {
+    fn request_decorations(&self, mut decorations: crate::WindowDecorations) {
+        let mut state = self.0.state.borrow_mut();
+
+        if matches!(decorations, crate::WindowDecorations::Client)
+            && !state.client_side_decorations_supported
+        {
+            log::info!(
+                "x11: no compositor present, falling back to server-side window decorations"
+            );
+            decorations = crate::WindowDecorations::Server;
+        }
+
         // https://github.com/rust-windowing/winit/blob/master/src/platform_impl/linux/x11/util/hint.rs#L53-L87
         let hints_data: [u32; 5] = match decorations {
             WindowDecorations::Server => [1 << 1, 0, 1, 0, 0],
             WindowDecorations::Client => [1 << 1, 0, 0, 0, 0],
         };
-
-        let mut state = self.0.state.borrow_mut();
 
         self.0
             .xcb_connection
