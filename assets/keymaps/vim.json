@@ -147,6 +147,7 @@
       "8": ["vim::Number", 8],
       "9": ["vim::Number", 9],
       // window related commands (ctrl-w X)
+      "ctrl-w": null,
       "ctrl-w left": ["workspace::ActivatePaneInDirection", "Left"],
       "ctrl-w right": ["workspace::ActivatePaneInDirection", "Right"],
       "ctrl-w up": ["workspace::ActivatePaneInDirection", "Up"],
@@ -429,6 +430,7 @@
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
+      "ctrl-x": null,
       "ctrl-x ctrl-o": "editor::ShowCompletions",
       "ctrl-x ctrl-a": "assistant::InlineAssist", // zed specific
       "ctrl-x ctrl-c": "editor::ShowInlineCompletion", // zed specific
