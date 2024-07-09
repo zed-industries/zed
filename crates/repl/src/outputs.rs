@@ -120,7 +120,6 @@ impl TableView {
         let text_system = cx.text_system();
         let text_style = cx.text_style();
         let text_font = ThemeSettings::get_global(cx).buffer_font.clone();
-        dbg!(&text_style.font_size, &text_style.font_family);
         let font_size = ThemeSettings::get_global(cx).buffer_font_size;
         let mut runs = [TextRun {
             len: 0,
