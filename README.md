@@ -6,26 +6,17 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 
 ## Installation
 
-You can [download](https://zed.dev/download) Zed today for macOS (v10.15+) and most Linux installations.
 
-Support for additional platforms is on our [roadmap](https://zed.dev/roadmap):
+<a href="https://repology.org/project/zed-editor/versions">
+    <img src="https://repology.org/badge/vertical-allrepos/zed-editor.svg" alt="Packaging status" align="right">
+</a>
+
+You can [download or install](https://zed.dev/download) Zed directly today for macOS and Linux, or use your [local package manager](https://zed.dev/docs/linux#installing-via-a-package-manager)
+
+Other platforms are not yet available:
 
 - Windows ([tracking issue](https://github.com/zed-industries/zed/issues/5394))
 - Web ([tracking issue](https://github.com/zed-industries/zed/issues/5396))
-
-For macOS users, you can also install Zed using [Homebrew](https://brew.sh/):
-
-```sh
-brew install --cask zed
-```
-
-Alternatively, to install the Preview release:
-
-```sh
-brew install --cask zed@preview
-```
-
-For Linux users, [other installation options are available](https://zed.dev/docs/linux#other-ways-to-install-zed-on-linux) depending on your package manager.
 
 ## Developing Zed
 
