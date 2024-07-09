@@ -23,9 +23,7 @@ Zed is open source, and [you can install from source](./development/linux.md).
 
 ### Installing via a package manager
 
-Several people have created third-party Zed packages for various Linux package managers. You may be able to install Zed using these packages.
-
-There are several third-party Zed packages for various Linux distrobutions and package managers, sometimes under `zed-editor`. You may be able to install Zed using these packages:
+There are several third-party Zed packages for various Linux distributions and package managers, sometimes under `zed-editor`. You may be able to install Zed using these packages:
 
 * Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
 * Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview),  [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
