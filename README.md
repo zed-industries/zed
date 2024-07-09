@@ -10,7 +10,7 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 
 
 <a href="https://repology.org/project/zed-editor/versions">
-    <img src="https://repology.org/badge/vertical-allrepos/zed-editor.svg?minversion=0.142.0" alt="Packaging status" align="right">
+    <img src="https://repology.org/badge/vertical-allrepos/zed-editor.svg?minversion=0.143.0" alt="Packaging status" align="right">
 </a>
 
 On macOS and Linux you can [download Zed directly](https://zed.dev/download) or [install Zed via your local package manager](https://zed.dev/docs/linux#installing-via-a-package-manager).
