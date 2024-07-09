@@ -3304,14 +3304,13 @@ impl ContextEditorToolbarItem {
                                     let command_name = command_name.clone();
                                     move |_cx| {
                                         h_flex()
+                                            .gap_4()
                                             .w_full()
                                             .justify_between()
                                             .child(Label::new(menu_text.clone()))
                                             .child(
-                                                div().ml_4().child(
-                                                    Label::new(format!("/{command_name}"))
-                                                        .color(Color::Muted),
-                                                ),
+                                                Label::new(format!("/{command_name}"))
+                                                    .color(Color::Muted),
                                             )
                                             .into_any()
                                     }
