@@ -451,6 +451,7 @@ impl Render for TextInput {
             .flex()
             .key_context("TextInput")
             .track_focus(&self.focus_handle)
+            .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
@@ -494,7 +495,7 @@ struct InputExample {
 }
 
 impl Render for InputExample {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .bg(rgb(0xaaaaaa))
             .flex()
@@ -554,9 +555,8 @@ fn main() {
                 },
             )
             .unwrap();
-        let handle = window.clone();
         cx.observe_keystrokes(move |ev, cx| {
-            handle
+            window
                 .update(cx, |view, cx| {
                     view.recent_keystrokes.push(ev.keystroke.clone());
                     cx.notify();
