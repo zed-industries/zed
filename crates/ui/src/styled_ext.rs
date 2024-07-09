@@ -1,4 +1,4 @@
-use gpui::{hsla, px, Styled, WindowContext};
+use gpui::{hsla, Styled, WindowContext};
 
 use crate::prelude::*;
 use crate::ElevationIndex;
