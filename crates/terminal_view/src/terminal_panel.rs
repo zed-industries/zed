@@ -367,7 +367,7 @@ impl TerminalPanel {
         {
             use terminal::terminal_settings::WindowsShellType;
 
-            if windows_shell_type != WindowsShellType::Powershell {
+            if windows_shell_type != WindowsShellType::Other {
                 spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label);
             } else {
                 spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
@@ -387,7 +387,6 @@ impl TerminalPanel {
                 command
             });
 
-        println!("==> command: {:?}", combined_command);
         #[cfg(not(target_os = "windows"))]
         user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
         #[cfg(target_os = "windows")]
