@@ -5,6 +5,7 @@ use futures::channel::oneshot;
 use gpui::{AppContext, Context as _, Model, Task, WeakModel};
 use language::{Buffer, Capability, Operation};
 use rpc::{proto, ErrorExt as _, TypedEnvelope};
+use std::{path::Path, sync::Arc};
 use text::BufferId;
 use util::{debug_panic, maybe};
 use worktree::{File, ProjectEntryId};
@@ -170,12 +171,12 @@ impl BufferStore {
             .or_else(|| self.incomplete_remote_buffers.get(&buffer_id).cloned())
     }
 
-    pub fn get_or_remove_by_file(
+    fn get_or_remove_by_file(
         &mut self,
-        entry_id: &ProjectEntryId,
+        entry_id: ProjectEntryId,
         project_path: &ProjectPath,
     ) -> Option<(BufferId, Model<Buffer>)> {
-        let buffer_id = match self.local_buffer_ids_by_entry_id.get(entry_id) {
+        let buffer_id = match self.local_buffer_ids_by_entry_id.get(&entry_id) {
             Some(&buffer_id) => buffer_id,
             None => match self.local_buffer_ids_by_path.get(project_path) {
                 Some(&buffer_id) => buffer_id,
@@ -189,7 +190,7 @@ impl BufferStore {
         } else {
             self.opened_buffers.remove(&buffer_id);
             self.local_buffer_ids_by_path.remove(project_path);
-            self.local_buffer_ids_by_entry_id.remove(entry_id);
+            self.local_buffer_ids_by_entry_id.remove(&entry_id);
             return None;
         };
         Some((buffer_id, buffer))
@@ -276,39 +277,96 @@ impl BufferStore {
             .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
     }
 
-    pub fn local_buffer_file_changed(
+    pub fn file_changed(
         &mut self,
-        buffer_id: BufferId,
-        buffer: Model<Buffer>,
-        old_file: &File,
-        new_file: &File,
-        renamed_buffers: &mut Vec<(Model<Buffer>, File)>,
+        path: Arc<Path>,
+        entry_id: ProjectEntryId,
+        worktree_handle: &Model<worktree::Worktree>,
+        snapshot: &worktree::Snapshot,
         cx: &mut AppContext,
-    ) {
-        if new_file.path != old_file.path {
-            renamed_buffers.push((buffer, old_file.clone()));
-            self.local_buffer_ids_by_path.remove(&ProjectPath {
-                path: old_file.path.clone(),
-                worktree_id: old_file.worktree_id(cx),
-            });
-            self.local_buffer_ids_by_path.insert(
-                ProjectPath {
-                    worktree_id: new_file.worktree_id(cx),
-                    path: new_file.path.clone(),
-                },
-                buffer_id,
-            );
-        }
+    ) -> Option<(Model<Buffer>, File, Arc<File>)> {
+        let (buffer_id, buffer) = self.get_or_remove_by_file(
+            entry_id,
+            &ProjectPath {
+                worktree_id: snapshot.id(),
+                path,
+            },
+        )?;
 
-        if new_file.entry_id != old_file.entry_id {
-            if let Some(entry_id) = old_file.entry_id {
-                self.local_buffer_ids_by_entry_id.remove(&entry_id);
+        buffer.update(cx, |buffer, cx| {
+            let old_file = File::from_dyn(buffer.file())?;
+            if old_file.worktree != *worktree_handle {
+                return None;
             }
-            if let Some(entry_id) = new_file.entry_id {
-                self.local_buffer_ids_by_entry_id
-                    .insert(entry_id, buffer_id);
+
+            let new_file = if let Some(entry) = old_file
+                .entry_id
+                .and_then(|entry_id| snapshot.entry_for_id(entry_id))
+            {
+                File {
+                    is_local: true,
+                    entry_id: Some(entry.id),
+                    mtime: entry.mtime,
+                    path: entry.path.clone(),
+                    worktree: worktree_handle.clone(),
+                    is_deleted: false,
+                    is_private: entry.is_private,
+                }
+            } else if let Some(entry) = snapshot.entry_for_path(old_file.path.as_ref()) {
+                File {
+                    is_local: true,
+                    entry_id: Some(entry.id),
+                    mtime: entry.mtime,
+                    path: entry.path.clone(),
+                    worktree: worktree_handle.clone(),
+                    is_deleted: false,
+                    is_private: entry.is_private,
+                }
+            } else {
+                File {
+                    is_local: true,
+                    entry_id: old_file.entry_id,
+                    path: old_file.path.clone(),
+                    mtime: old_file.mtime,
+                    worktree: worktree_handle.clone(),
+                    is_deleted: true,
+                    is_private: old_file.is_private,
+                }
+            };
+
+            if new_file != *old_file {
+                if new_file.path != old_file.path {
+                    self.local_buffer_ids_by_path.remove(&ProjectPath {
+                        path: old_file.path.clone(),
+                        worktree_id: old_file.worktree_id(cx),
+                    });
+                    self.local_buffer_ids_by_path.insert(
+                        ProjectPath {
+                            worktree_id: new_file.worktree_id(cx),
+                            path: new_file.path.clone(),
+                        },
+                        buffer_id,
+                    );
+                }
+
+                if new_file.entry_id != old_file.entry_id {
+                    if let Some(entry_id) = old_file.entry_id {
+                        self.local_buffer_ids_by_entry_id.remove(&entry_id);
+                    }
+                    if let Some(entry_id) = new_file.entry_id {
+                        self.local_buffer_ids_by_entry_id
+                            .insert(entry_id, buffer_id);
+                    }
+                }
+
+                let old_file = old_file.clone();
+                let new_file = Arc::new(new_file);
+                buffer.file_updated(new_file.clone(), cx);
+                return Some((cx.handle(), old_file, new_file));
             }
-        }
+
+            None
+        })
     }
 
     pub fn buffer_changed_file(

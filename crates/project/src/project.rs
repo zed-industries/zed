@@ -7767,91 +7767,31 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
-
         let mut renamed_buffers = Vec::new();
-        for (path, entry_id, _) in changes {
-            let worktree_id = worktree_handle.read(cx).id();
-            let project_path = ProjectPath {
-                worktree_id,
-                path: path.clone(),
-            };
-
-            self.buffer_store.update(cx, |buffer_store, cx| {
-                let Some((buffer_id, buffer)) =
-                    buffer_store.get_or_remove_by_file(entry_id, &project_path)
-                else {
-                    return;
-                };
-
-                buffer.update(cx, |buffer, cx| {
-                    if let Some(old_file) = File::from_dyn(buffer.file()) {
-                        if old_file.worktree != *worktree_handle {
-                            return;
-                        }
-
-                        let new_file = if let Some(entry) = old_file
-                            .entry_id
-                            .and_then(|entry_id| snapshot.entry_for_id(entry_id))
-                        {
-                            File {
-                                is_local: true,
-                                entry_id: Some(entry.id),
-                                mtime: entry.mtime,
-                                path: entry.path.clone(),
-                                worktree: worktree_handle.clone(),
-                                is_deleted: false,
-                                is_private: entry.is_private,
-                            }
-                        } else if let Some(entry) =
-                            snapshot.entry_for_path(old_file.path().as_ref())
-                        {
-                            File {
-                                is_local: true,
-                                entry_id: Some(entry.id),
-                                mtime: entry.mtime,
-                                path: entry.path.clone(),
-                                worktree: worktree_handle.clone(),
-                                is_deleted: false,
-                                is_private: entry.is_private,
-                            }
-                        } else {
-                            File {
-                                is_local: true,
-                                entry_id: old_file.entry_id,
-                                path: old_file.path().clone(),
-                                mtime: old_file.mtime(),
-                                worktree: worktree_handle.clone(),
-                                is_deleted: true,
-                                is_private: old_file.is_private,
-                            }
-                        };
-
-                        buffer_store.local_buffer_file_changed(
-                            buffer_id,
-                            cx.handle(),
-                            old_file,
-                            &new_file,
-                            &mut renamed_buffers,
-                            cx,
-                        );
-
-                        if new_file != *old_file {
-                            if let Some(project_id) = self.remote_id() {
-                                self.client
-                                    .send(proto::UpdateBufferFile {
-                                        project_id,
-                                        buffer_id: buffer_id.into(),
-                                        file: Some(new_file.to_proto()),
-                                    })
-                                    .log_err();
-                            }
-
-                            buffer.file_updated(Arc::new(new_file), cx);
-                        }
+        self.buffer_store.clone().update(cx, |buffer_store, cx| {
+            for (path, entry_id, _) in changes {
+                if let Some((buffer, old_file, new_file)) = buffer_store.file_changed(
+                    path.clone(),
+                    *entry_id,
+                    worktree_handle,
+                    &snapshot,
+                    cx,
+                ) {
+                    if let Some(project_id) = self.remote_id() {
+                        self.client
+                            .send(proto::UpdateBufferFile {
+                                project_id,
+                                buffer_id: buffer.read(cx).remote_id().into(),
+                                file: Some(new_file.to_proto()),
+                            })
+                            .log_err();
                     }
-                });
-            });
-        }
+                    if old_file.path != new_file.path {
+                        renamed_buffers.push((buffer, old_file));
+                    }
+                }
+            }
+        });
 
         for (buffer, old_file) in renamed_buffers {
             self.unregister_buffer_from_language_servers(&buffer, &old_file, cx);
