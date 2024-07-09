@@ -446,6 +446,39 @@ impl Render for TextInput {
     }
 }
 
+impl FocusableView for TextInput {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+struct InputExample {
+    text_input: View<TextInput>,
+    recent_keystrokes: Vec<Keystroke>,
+}
+
+impl Render for InputExample {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+            .bg(rgb(0xaaaaaa))
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(self.text_input.clone())
+            .children(self.recent_keystrokes.iter().rev().map(|ks| {
+                format!(
+                    "{:} {}",
+                    ks,
+                    if let Some(ime_key) = ks.ime_key.as_ref() {
+                        format!("-> {}", ime_key)
+                    } else {
+                        "".to_owned()
+                    }
+                )
+            }))
+    }
+}
+
 fn main() {
     App::new().run(|cx: &mut AppContext| {
         let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
@@ -468,21 +501,35 @@ fn main() {
                     ..Default::default()
                 },
                 |cx| {
-                    cx.new_view(|cx| TextInput {
+                    let text_input = cx.new_view(|cx| TextInput {
                         focus_handle: cx.focus_handle(),
                         content: "".into(),
                         selected_range: 0..0,
                         selection_reversed: false,
                         marked_range: None,
                         last_layout: None,
+                    });
+                    cx.new_view(|_| InputExample {
+                        text_input,
+                        recent_keystrokes: vec![],
                     })
                 },
             )
             .unwrap();
+        let handle = window.clone();
+        cx.observe_keystrokes(move |ev, cx| {
+            handle
+                .update(cx, |view, cx| {
+                    view.recent_keystrokes.push(ev.keystroke.clone());
+                    cx.notify();
+                })
+                .unwrap();
+        })
+        .detach();
         window
             .update(cx, |view, cx| {
-                view.focus_handle.focus(cx);
-                cx.activate(true)
+                cx.focus_view(&view.text_input);
+                cx.activate(true);
             })
             .unwrap();
     });
