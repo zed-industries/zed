@@ -356,6 +356,8 @@ impl TerminalPanel {
         }) else {
             return;
         };
+        #[cfg(target_os = "windows")]
+        let windows_shell_type = Shell::to_windows_shell(&shell);
 
         #[cfg(not(target_os = "windows"))]
         {
@@ -363,10 +365,13 @@ impl TerminalPanel {
         }
         #[cfg(target_os = "windows")]
         {
-            spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label);
+            if windows_shell_type != "other" {
+                spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label);
+            } else {
+                spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+            }
         }
-        #[cfg(target_os = "windows")]
-        let windows_shell = shell.clone();
+
         let task_command = std::mem::replace(&mut spawn_task.command, shell);
         let task_args = std::mem::take(&mut spawn_task.args);
         let combined_command = task_args
@@ -376,13 +381,20 @@ impl TerminalPanel {
                 #[cfg(not(target_os = "windows"))]
                 command.push_str(&arg);
                 #[cfg(target_os = "windows")]
-                command.push_str(&task::to_windows_variable(&windows_shell, arg));
+                command.push_str(&Shell::to_windows_variable(&windows_shell_type, arg));
                 command
             });
+
         #[cfg(not(target_os = "windows"))]
         user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
         #[cfg(target_os = "windows")]
-        user_args.extend(["-C".to_owned(), combined_command]);
+        {
+            if windows_shell_type != "other" {
+                user_args.extend(["-C".to_owned(), combined_command]);
+            } else {
+                user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command])
+            }
+        }
         spawn_task.args = user_args;
         let spawn_task = spawn_task;
 

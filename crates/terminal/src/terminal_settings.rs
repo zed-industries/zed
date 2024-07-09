@@ -284,6 +284,32 @@ impl Shell {
         #[cfg(target_os = "windows")]
         return Some("powershell".to_owned());
     }
+
+    /// Convert unix-shell variable syntax to windows-shell syntax.
+    /// `powershell` and `cmd` are considered valid here.
+    #[cfg(target_os = "windows")]
+    pub fn to_windows_variable(shell: &str, input: String) -> String {
+        match Self::to_windows_shell(shell).as_str() {
+            "powershell" => to_powershell_variable(input),
+            "cmd" => to_cmd_variable(input),
+            _ => {
+                // Someother shell detected, the user might install and use a
+                // unix-like shell.
+                input
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn to_windows_shell(shell: &str) -> String {
+        if shell == "powershell" || shell.ends_with("powershell.exe") {
+            "powershel".to_owned()
+        } else if shell == "cmd" || shell.ends_with("cmd.exe") {
+            "cmd".to_owned()
+        } else {
+            "other".to_owned()
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -316,4 +342,48 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub title: Option<bool>,
+}
+
+/// Convert `${SOME_VAR}`, `$SOME_VAR` to `%SOME_VAR%`.
+#[inline]
+#[cfg(target_os = "windows")]
+fn to_cmd_variable(input: String) -> String {
+    if let Some(var_str) = input.strip_prefix("${") {
+        if var_str.find(':').is_none() {
+            // If the input starts with "${", remove the trailing "}"
+            format!("%{}%", &var_str[..var_str.len() - 1])
+        } else {
+            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
+            // which will result in the task failing to run in such cases.
+            input
+        }
+    } else if let Some(var_str) = input.strip_prefix('$') {
+        // If the input starts with "$", directly append to "$env:"
+        format!("%{}%", var_str)
+    } else {
+        // If no prefix is found, return the input as is
+        input
+    }
+}
+
+/// Convert `${SOME_VAR}`, `$SOME_VAR` to `$env:SOME_VAR`.
+#[inline]
+#[cfg(target_os = "windows")]
+fn to_powershell_variable(input: String) -> String {
+    if let Some(var_str) = input.strip_prefix("${") {
+        if var_str.find(':').is_none() {
+            // If the input starts with "${", remove the trailing "}"
+            format!("$env:{}", &var_str[..var_str.len() - 1])
+        } else {
+            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
+            // which will result in the task failing to run in such cases.
+            input
+        }
+    } else if let Some(var_str) = input.strip_prefix('$') {
+        // If the input starts with "$", directly append to "$env:"
+        format!("$env:{}", var_str)
+    } else {
+        // If no prefix is found, return the input as is
+        input
+    }
 }
