@@ -63,9 +63,23 @@ pub fn margin_style_methods(input: TokenStream) -> TokenStream {
 
 pub fn padding_style_methods(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as StyleableMacroInput);
-    let visibility = input.method_visibility;
     let methods = generate_box_style_methods(
         padding_box_style_prefixes(),
+        box_style_suffixes(),
+        input.method_visibility,
+    );
+    let output = quote! {
+        #(#methods)*
+    };
+
+    output.into()
+}
+
+pub fn position_style_methods(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+    let methods = generate_box_style_methods(
+        position_box_style_prefixes(),
         box_style_suffixes(),
         visibility.clone(),
     );
@@ -84,20 +98,6 @@ pub fn padding_style_methods(input: TokenStream) -> TokenStream {
             self
         }
 
-        #(#methods)*
-    };
-
-    output.into()
-}
-
-pub fn position_style_methods(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as StyleableMacroInput);
-    let methods = generate_box_style_methods(
-        position_box_style_prefixes(),
-        box_style_suffixes(),
-        input.method_visibility,
-    );
-    let output = quote! {
         #(#methods)*
     };
 
