@@ -1240,7 +1240,9 @@ impl PlatformWindow for X11Window {
         match state.decorations {
             WindowDecorations::Server => Decorations::Server,
             WindowDecorations::Client => {
-                let tiling = if let Some(edge_constraints) = &state.edge_constraints {
+                let tiling = if state.fullscreen {
+                    Tiling::tiled()
+                } else if let Some(edge_constraints) = &state.edge_constraints {
                     edge_constraints.to_tiling()
                 } else {
                     // https://source.chromium.org/chromium/chromium/src/+/main:ui/ozone/platform/x11/x11_window.cc;l=2519;drc=1f14cc876cc5bf899d13284a12c451498219bb2d
@@ -1251,7 +1253,6 @@ impl PlatformWindow for X11Window {
                         right: state.maximized_horizontal,
                     }
                 };
-
                 Decorations::Client { tiling }
             }
         }
@@ -1262,7 +1263,9 @@ impl PlatformWindow for X11Window {
 
         let dp = (inset.0 * state.scale_factor) as u32;
 
-        let insets = if let Some(edge_constraints) = &state.edge_constraints {
+        let insets = if state.fullscreen {
+            [0, 0, 0, 0]
+        } else if let Some(edge_constraints) = &state.edge_constraints {
             let left = if edge_constraints.left_tiled { 0 } else { dp };
             let top = if edge_constraints.top_tiled { 0 } else { dp };
             let right = if edge_constraints.right_tiled { 0 } else { dp };
