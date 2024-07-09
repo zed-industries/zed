@@ -370,8 +370,8 @@
       "ctrl-shift-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
-      "alt-ctrl-r": "editor::RevealInFinder",
-      "ctrl-k r": "editor::RevealInFinder",
+      "alt-ctrl-r": "editor::RevealInFileManager",
+      "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-k p": "editor::CopyPath",
       "ctrl-\\": "pane::SplitRight",
       "ctrl-k v": "markdown::OpenPreviewToTheSide",
@@ -590,7 +590,7 @@
       "right": "outline_panel::ExpandSelectedEntry",
       "ctrl-alt-c": "outline_panel::CopyPath",
       "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
-      "alt-ctrl-r": "outline_panel::RevealInFinder",
+      "alt-ctrl-r": "outline_panel::RevealInFileManager",
       "space": "outline_panel::Open",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev"
@@ -612,37 +612,12 @@
       "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
       "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
-      "backspace": [
-        "project_panel::Trash",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "shift-delete": [
-        "project_panel::Delete",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "delete": [
-        "project_panel::Trash",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "ctrl-backspace": [
-        "project_panel::Delete",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "ctrl-delete": [
-        "project_panel::Delete",
-        {
-          "skip_prompt": false
-        }
-      ],
-      "alt-ctrl-r": "project_panel::RevealInFinder",
+      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
+      "delete": ["project_panel::Trash", { "skip_prompt": false }],
+      "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
+      "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
+      "alt-ctrl-r": "project_panel::RevealInFileManager",
       "alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",

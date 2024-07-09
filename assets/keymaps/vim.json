@@ -717,7 +717,7 @@
       "t": "project_panel::OpenPermanent",
       "v": "project_panel::OpenPermanent",
       "p": "project_panel::Open",
-      "x": "project_panel::RevealInFinder",
+      "x": "project_panel::RevealInFileManager",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
       "-": "project_panel::SelectParent"
