@@ -380,19 +380,19 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
             prefix: "gap",
             auto_allowed: false,
             fields: vec![quote! { gap.width }, quote! { gap.height }],
-            doc_string_prefix: "Sets the gap between rows and columns in flex layouts. [Docs](https://tailwindcss.com/docs/gap)"
+            doc_string_prefix: "Sets the gap between rows and columns in flex layouts. [Docs](https://tailwindcss.com/docs/gap)",
         },
         BoxStylePrefix {
             prefix: "gap_x",
             auto_allowed: false,
             fields: vec![quote! { gap.width }],
-            doc_string_prefix: "Sets the gap between columns in flex layouts. [Docs](https://tailwindcss.com/docs/gap#changing-row-and-column-gaps-independently)"
+            doc_string_prefix: "Sets the gap between columns in flex layouts. [Docs](https://tailwindcss.com/docs/gap#changing-row-and-column-gaps-independently)",
         },
         BoxStylePrefix {
             prefix: "gap_y",
             auto_allowed: false,
             fields: vec![quote! { gap.height }],
-            doc_string_prefix: "Sets the gap between rows in flex layouts. [Docs](https://tailwindcss.com/docs/gap#changing-row-and-column-gaps-independently)"
+            doc_string_prefix: "Sets the gap between rows in flex layouts. [Docs](https://tailwindcss.com/docs/gap#changing-row-and-column-gaps-independently)",
         },
     ]
 }
