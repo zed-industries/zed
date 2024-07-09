@@ -1,6 +1,5 @@
 pub mod connection_manager;
 pub mod debounced_delay;
-mod debugger_inventory;
 pub mod lsp_command;
 pub mod lsp_ext_command;
 mod prettier_support;
@@ -27,7 +26,6 @@ use dap::{
     SourceBreakpoint,
 };
 use debounced_delay::DebouncedDelay;
-use debugger_inventory::DebuggerInventory;
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver},
@@ -236,7 +234,6 @@ pub struct Project {
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
-    debugger_configs: Model<DebuggerInventory>,
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
@@ -744,7 +741,6 @@ impl Project {
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             let tasks = Inventory::new(cx);
-            let debugger_configs = DebuggerInventory::new(cx);
 
             Self {
                 worktrees: Vec::new(),
@@ -802,7 +798,6 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
-                debugger_configs,
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
@@ -870,7 +865,6 @@ impl Project {
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
-            let debugger_configs = DebuggerInventory::new(cx);
             // BIG CAUTION NOTE: The order in which we initialize fields here matters and it should match what's done in Self::local.
             // Otherwise, you might run into issues where worktree id on remote is different than what's on local host.
             // That's because Worktree's identifier is entity id, which should probably be changed.
@@ -965,7 +959,6 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
                 tasks,
-                debugger_configs,
                 hosted_project_id: None,
                 dev_server_project_id: response
                     .payload
@@ -1527,10 +1520,6 @@ impl Project {
 
     pub fn task_inventory(&self) -> &Model<Inventory> {
         &self.tasks
-    }
-
-    pub fn debugger_configs(&self) -> &Model<DebuggerInventory> {
-        &self.debugger_configs
     }
 
     pub fn search_history(&self) -> &SearchHistory {
