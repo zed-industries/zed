@@ -241,6 +241,17 @@ impl RuntimePanel {
         Some((selected_text, language_name, anchor_range))
     }
 
+    pub fn language(
+        &self,
+        editor: WeakView<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Arc<str>> {
+        match self.snippet(editor, cx) {
+            Some((_, language, _)) => Some(language),
+            None => None,
+        }
+    }
+
     pub fn refresh_kernelspecs(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
         let kernel_specifications = kernel_specifications(self.fs.clone());
         cx.spawn(|this, mut cx| async move {
@@ -334,10 +345,51 @@ impl RuntimePanel {
             cx.notify();
         }
     }
+}
 
-    pub fn session(&mut self, editor: WeakView<Editor>) -> Option<View<Session>> {
+pub enum SessionSupport {
+    ActiveSession(View<Session>),
+    Inactive(KernelSpecification),
+    RequiresSetup(String),
+    Unsupported,
+}
+
+impl RuntimePanel {
+    pub fn session(
+        &mut self,
+        editor: WeakView<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> SessionSupport {
         let entity_id = editor.entity_id();
-        self.sessions.get(&entity_id).cloned()
+        let session = self.sessions.get(&entity_id).cloned();
+
+        match session {
+            Some(session) => SessionSupport::ActiveSession(session),
+            None => {
+                let language = self.language(editor, cx);
+                let language = match language {
+                    Some(language) => language,
+                    None => return SessionSupport::Unsupported,
+                };
+                // Check for kernelspec
+                let kernelspec = self.kernelspec(&language, cx);
+
+                match kernelspec {
+                    Some(kernelspec) => SessionSupport::Inactive(kernelspec),
+                    None => {
+                        let language: String = language.to_lowercase();
+                        // If no kernelspec but language is one of typescript, python, r, or julia
+                        // then we return RequiresSetup
+                        match language.as_str() {
+                            "typescript" | "python" | "r" | "julia" => {
+                                SessionSupport::RequiresSetup(language)
+                            }
+                            _ => SessionSupport::Unsupported,
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
