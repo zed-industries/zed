@@ -47,6 +47,28 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
     output.into()
 }
 
+pub fn visibility_style_methods(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+    let output = quote! {
+        /// Sets the visibility of the element to `visible`.
+        /// [Docs](https://tailwindcss.com/docs/visibility)
+        #visibility fn visible(mut self) -> Self {
+            self.style().visibility = Some(gpui::Visibility::Visible);
+            self
+        }
+
+        /// Sets the visibility of the element to `hidden`.
+        /// [Docs](https://tailwindcss.com/docs/visibility)
+        #visibility fn invisible(mut self) -> Self {
+            self.style().visibility = Some(gpui::Visibility::Hidden);
+            self
+        }
+    };
+
+    output.into()
+}
+
 pub fn margin_style_methods(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as StyleableMacroInput);
     let methods = generate_box_style_methods(
@@ -99,6 +121,318 @@ pub fn position_style_methods(input: TokenStream) -> TokenStream {
         }
 
         #(#methods)*
+    };
+
+    output.into()
+}
+
+pub fn overflow_style_methods(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+    let output = quote! {
+        /// Sets the behavior of content that overflows the container to be hidden.
+        /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
+        #visibility fn overflow_hidden(mut self) -> Self {
+            self.style().overflow.x = Some(gpui::Overflow::Hidden);
+            self.style().overflow.y = Some(gpui::Overflow::Hidden);
+            self
+        }
+
+        /// Sets the behavior of content that overflows the container on the X axis to be hidden.
+        /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
+        #visibility fn overflow_x_hidden(mut self) -> Self {
+            self.style().overflow.x = Some(gpui::Overflow::Hidden);
+            self
+        }
+
+        /// Sets the behavior of content that overflows the container on the Y axis to be hidden.
+        /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
+        #visibility fn overflow_y_hidden(mut self) -> Self {
+            self.style().overflow.y = Some(gpui::Overflow::Hidden);
+            self
+        }
+    };
+
+    output.into()
+}
+
+pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+    let output = quote! {
+        /// Set the cursor style when hovering over this element
+        #visibility fn cursor(mut self, cursor: CursorStyle) -> Self {
+            self.style().mouse_cursor = Some(cursor);
+            self
+        }
+
+        /// Sets the cursor style when hovering an element to `default`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_default(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::Arrow);
+            self
+        }
+
+        /// Sets the cursor style when hovering an element to `pointer`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_pointer(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::PointingHand);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `text`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_text(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::IBeam);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `move`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_move(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ClosedHand);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `not-allowed`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_not_allowed(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::OperationNotAllowed);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `context-menu`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_context_menu(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ContextualMenu);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `crosshair`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_crosshair(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::Crosshair);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `vertical-text`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_vertical_text(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::IBeamCursorForVerticalLayout);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `alias`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_alias(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::DragLink);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `copy`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_copy(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::DragCopy);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `no-drop`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_no_drop(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::OperationNotAllowed);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `grab`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_grab(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::OpenHand);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `grabbing`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_grabbing(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ClosedHand);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `ew-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_ew_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeLeftRight);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `ns-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_ns_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeUpDown);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `col-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_col_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeColumn);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `row-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_row_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeRow);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `n-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_n_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeUp);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `e-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_e_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeRight);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `s-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_s_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeDown);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `w-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_w_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeLeft);
+            self
+        }
+    };
+
+    output.into()
+}
+
+pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as StyleableMacroInput);
+    let visibility = input.method_visibility;
+    let output = quote! {
+        /// Sets the box shadow of the element.
+        /// [Docs](https://tailwindcss.com/docs/box-shadow)
+        #visibility fn shadow(mut self, shadows: smallvec::SmallVec<[gpui::BoxShadow; 2]>) -> Self {
+            self.style().box_shadow = Some(shadows);
+            self
+        }
+
+        /// Clears the box shadow of the element.
+        /// [Docs](https://tailwindcss.com/docs/box-shadow)
+        #visibility fn shadow_none(mut self) -> Self {
+            self.style().box_shadow = Some(Default::default());
+            self
+        }
+
+        /// Sets the box shadow of the element.
+        /// [Docs](https://tailwindcss.com/docs/box-shadow)
+        #visibility fn shadow_sm(mut self) -> Self {
+            use gpui::{BoxShadow, hsla, point, px};
+            use smallvec::smallvec;
+
+            self.style().box_shadow = Some(smallvec![BoxShadow {
+                color: hsla(0., 0., 0., 0.05),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(2.),
+                spread_radius: px(0.),
+            }]);
+            self
+        }
+
+        /// Sets the box shadow of the element.
+        /// [Docs](https://tailwindcss.com/docs/box-shadow)
+        #visibility fn shadow_md(mut self) -> Self {
+            use gpui::{BoxShadow, hsla, point, px};
+            use smallvec::smallvec;
+
+            self.style().box_shadow = Some(smallvec![
+                BoxShadow {
+                    color: hsla(0.5, 0., 0., 0.1),
+                    offset: point(px(0.), px(4.)),
+                    blur_radius: px(6.),
+                    spread_radius: px(-1.),
+                },
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.1),
+                    offset: point(px(0.), px(2.)),
+                    blur_radius: px(4.),
+                    spread_radius: px(-2.),
+                }
+            ]);
+            self
+        }
+
+        /// Sets the box shadow of the element.
+        /// [Docs](https://tailwindcss.com/docs/box-shadow)
+        #visibility fn shadow_lg(mut self) -> Self {
+            use gpui::{BoxShadow, hsla, point, px};
+            use smallvec::smallvec;
+
+            self.style().box_shadow = Some(smallvec![
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.1),
+                    offset: point(px(0.), px(10.)),
+                    blur_radius: px(15.),
+                    spread_radius: px(-3.),
+                },
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.1),
+                    offset: point(px(0.), px(4.)),
+                    blur_radius: px(6.),
+                    spread_radius: px(-4.),
+                }
+            ]);
+            self
+        }
+
+        /// Sets the box shadow of the element.
+        /// [Docs](https://tailwindcss.com/docs/box-shadow)
+        #visibility fn shadow_xl(mut self) -> Self {
+            use gpui::{BoxShadow, hsla, point, px};
+            use smallvec::smallvec;
+
+            self.style().box_shadow = Some(smallvec![
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.1),
+                    offset: point(px(0.), px(20.)),
+                    blur_radius: px(25.),
+                    spread_radius: px(-5.),
+                },
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.1),
+                    offset: point(px(0.), px(8.)),
+                    blur_radius: px(10.),
+                    spread_radius: px(-6.),
+                }
+            ]);
+            self
+        }
+
+        /// Sets the box shadow of the element.
+        /// [Docs](https://tailwindcss.com/docs/box-shadow)
+        #visibility fn shadow_2xl(mut self) -> Self {
+            use gpui::{BoxShadow, hsla, point, px};
+            use smallvec::smallvec;
+
+            self.style().box_shadow = Some(smallvec![BoxShadow {
+                color: hsla(0., 0., 0., 0.25),
+                offset: point(px(0.), px(25.)),
+                blur_radius: px(50.),
+                spread_radius: px(-12.),
+            }]);
+            self
+        }
     };
 
     output.into()

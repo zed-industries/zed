@@ -1,7 +1,7 @@
 mod derive_into_element;
 mod derive_render;
 mod register_action;
-mod style_helpers;
+mod styles;
 mod test;
 
 use proc_macro::TokenStream;
@@ -31,28 +31,49 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
 #[proc_macro]
 #[doc(hidden)]
 pub fn style_helpers(input: TokenStream) -> TokenStream {
-    style_helpers::style_helpers(input)
+    styles::style_helpers(input)
+}
+
+/// Generates methods for visibility styles.
+#[proc_macro]
+pub fn visibility_style_methods(input: TokenStream) -> TokenStream {
+    styles::visibility_style_methods(input)
 }
 
 /// Generates methods for margin styles.
 #[proc_macro]
-#[doc(hidden)]
 pub fn margin_style_methods(input: TokenStream) -> TokenStream {
-    style_helpers::margin_style_methods(input)
+    styles::margin_style_methods(input)
 }
 
 /// Generates methods for padding styles.
 #[proc_macro]
-#[doc(hidden)]
 pub fn padding_style_methods(input: TokenStream) -> TokenStream {
-    style_helpers::padding_style_methods(input)
+    styles::padding_style_methods(input)
 }
 
 /// Generates methods for position styles.
 #[proc_macro]
-#[doc(hidden)]
 pub fn position_style_methods(input: TokenStream) -> TokenStream {
-    style_helpers::position_style_methods(input)
+    styles::position_style_methods(input)
+}
+
+/// Generates methods for overflow styles.
+#[proc_macro]
+pub fn overflow_style_methods(input: TokenStream) -> TokenStream {
+    styles::overflow_style_methods(input)
+}
+
+/// Generates methods for cursor styles.
+#[proc_macro]
+pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
+    styles::cursor_style_methods(input)
+}
+
+/// Generates methods for box shadow styles.
+#[proc_macro]
+pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
+    styles::box_shadow_style_methods(input)
 }
 
 /// #[gpui::test] can be used to annotate test functions that run with GPUI support.
