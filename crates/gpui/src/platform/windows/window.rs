@@ -252,7 +252,7 @@ impl WindowsWindow {
             .titlebar
             .as_ref()
             .map(|titlebar| titlebar.appears_transparent)
-            .unwrap_or(false);
+            .unwrap_or(true);
         let windowname = HSTRING::from(
             params
                 .titlebar
@@ -383,9 +383,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().scale_factor
     }
 
-    // todo(windows)
     fn appearance(&self) -> WindowAppearance {
-        WindowAppearance::Dark
+        system_appearance().log_err().unwrap_or_default()
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
@@ -405,9 +404,8 @@ impl PlatformWindow for WindowsWindow {
         logical_point(point.x as f32, point.y as f32, scale_factor)
     }
 
-    // todo(windows)
     fn modifiers(&self) -> Modifiers {
-        Modifiers::none()
+        current_modifiers()
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {

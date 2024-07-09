@@ -341,9 +341,8 @@ dependencies = [
 
 [[package]]
 name = "ashpd"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd884d7c72877a94102c3715f3b1cd09ff4fac28221add3e57cfbe25c236d093"
+version = "0.9.0"
+source = "git+https://github.com/bilelmoussaoui/ashpd?rev=29f2e1a#29f2e1a6f4b0911f504658f5f4630c02e01b13f2"
 dependencies = [
  "async-fs 2.1.1",
  "async-net 2.0.0",
@@ -4889,11 +4888,9 @@ dependencies = [
  "log",
  "media",
  "metal",
- "mio 1.0.0",
  "num_cpus",
  "objc",
  "oo7",
- "open",
  "parking",
  "parking_lot",
  "pathfinder_geometry",
@@ -5691,7 +5688,7 @@ dependencies = [
  "fnv",
  "lazy_static",
  "libc",
- "mio 0.8.11",
+ "mio",
  "rand 0.8.5",
  "serde",
  "tempfile",
@@ -5704,25 +5701,6 @@ name = "ipnet"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28b29a3cd74f0f4598934efe3aeba42bae0eb4680554128851ebbecb02af14e6"
-
-[[package]]
-name = "is-docker"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "928bae27f42bc99b60d9ac7334e3a21d10ad8f1835a4e12ec3ec0464765ed1b3"
-dependencies = [
- "once_cell",
-]
-
-[[package]]
-name = "is-wsl"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "173609498df190136aa7dea1a91db051746d339e18476eed5ca40521f02d7aa5"
-dependencies = [
- "is-docker",
- "once_cell",
-]
 
 [[package]]
 name = "isahc"
@@ -6641,19 +6619,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mio"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4929e1f84c5e54c3ec6141cd5d8b5a5c055f031f80cf78f2072920173cb4d880"
-dependencies = [
- "hermit-abi 0.3.9",
- "libc",
- "log",
- "wasi 0.11.0+wasi-snapshot-preview1",
- "windows-sys 0.52.0",
-]
-
-[[package]]
 name = "miow"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6891,7 +6856,7 @@ dependencies = [
  "kqueue",
  "libc",
  "log",
- "mio 0.8.11",
+ "mio",
  "walkdir",
  "windows-sys 0.48.0",
 ]
@@ -7226,17 +7191,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
 
 [[package]]
-name = "open"
-version = "5.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "449f0ff855d85ddbf1edd5b646d65249ead3f5e422aaa86b7d2d0b049b103e32"
-dependencies = [
- "is-wsl",
- "libc",
- "pathdiff",
-]
-
-[[package]]
 name = "open_ai"
 version = "0.1.0"
 dependencies = [
@@ -7401,6 +7355,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "fuzzy",
  "gpui",
  "itertools 0.11.0",
  "language",
@@ -8086,6 +8041,7 @@ dependencies = [
  "similar",
  "smol",
  "snippet",
+ "snippet_provider",
  "task",
  "tempfile",
  "terminal",
@@ -8539,7 +8495,7 @@ dependencies = [
  "task",
  "terminal_view",
  "ui",
- "ui_text_field",
+ "ui_input",
  "util",
  "workspace",
 ]
@@ -9903,6 +9859,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "snippet_provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "serde",
+ "serde_json",
+ "snippet",
+ "util",
+]
+
+[[package]]
 name = "socket2"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10282,6 +10253,7 @@ dependencies = [
  "story",
  "strum",
  "theme",
+ "title_bar",
  "ui",
 ]
 
@@ -11112,7 +11084,7 @@ dependencies = [
  "backtrace",
  "bytes 1.5.0",
  "libc",
- "mio 0.8.11",
+ "mio",
  "num_cpus",
  "parking_lot",
  "pin-project-lite",
@@ -11737,7 +11709,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ui_text_field"
+name = "ui_input"
 version = "0.1.0"
 dependencies = [
  "editor",
@@ -13720,9 +13692,9 @@ dependencies = [
 
 [[package]]
 name = "zed_clojure"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
- "zed_extension_api 0.0.4",
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]

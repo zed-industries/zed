@@ -6596,7 +6596,6 @@ pub fn client_side_decorations(element: impl IntoElement, cx: &mut WindowContext
                 .on_mouse_move(|_e, cx| {
                     cx.stop_propagation();
                 })
-                .bg(cx.theme().colors().border)
                 .size_full()
                 .child(element),
         )
@@ -6658,7 +6657,7 @@ fn resize_edge(
 
     let corner_size = size(shadow_size * 1.5, shadow_size * 1.5);
     let top_left_bounds = Bounds::new(Point::new(px(0.), px(0.)), corner_size);
-    if top_left_bounds.contains(&pos) {
+    if !tiling.top && top_left_bounds.contains(&pos) {
         return Some(ResizeEdge::TopLeft);
     }
 
@@ -6666,7 +6665,7 @@ fn resize_edge(
         Point::new(window_size.width - corner_size.width, px(0.)),
         corner_size,
     );
-    if top_right_bounds.contains(&pos) {
+    if !tiling.top && top_right_bounds.contains(&pos) {
         return Some(ResizeEdge::TopRight);
     }
 
@@ -6674,7 +6673,7 @@ fn resize_edge(
         Point::new(px(0.), window_size.height - corner_size.height),
         corner_size,
     );
-    if bottom_left_bounds.contains(&pos) {
+    if !tiling.bottom && bottom_left_bounds.contains(&pos) {
         return Some(ResizeEdge::BottomLeft);
     }
 
@@ -6685,7 +6684,7 @@ fn resize_edge(
         ),
         corner_size,
     );
-    if bottom_right_bounds.contains(&pos) {
+    if !tiling.bottom && bottom_right_bounds.contains(&pos) {
         return Some(ResizeEdge::BottomRight);
     }
 

@@ -137,7 +137,7 @@ actions!(
         CopyPath,
         CopyRelativePath,
         Duplicate,
-        RevealInFinder,
+        RevealInFileManager,
         Cut,
         Paste,
         Rename,
@@ -477,7 +477,12 @@ impl ProjectPanel {
                         menu.action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
-                            .action("Reveal in Finder", Box::new(RevealInFinder))
+                            .when(cfg!(target_os = "macos"), |menu| {
+                                menu.action("Reveal in Finder", Box::new(RevealInFileManager))
+                            })
+                            .when(cfg!(not(target_os = "macos")), |menu| {
+                                menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
+                            })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
@@ -1353,7 +1358,7 @@ impl ProjectPanel {
         }
     }
 
-    fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
+    fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             cx.reveal_path(&worktree.abs_path().join(&entry.path));
         }

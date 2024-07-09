@@ -129,13 +129,23 @@ macos() {
     # Link the binary
     ln -sf "/Applications/$app/Contents/MacOS/cli" "$HOME/.local/bin/zed"
 
-    if which "zed" >/dev/null 2>&1; then
+    if [ "$(which "zed")" = "$HOME/.local/bin/zed" ]; then
         echo "Zed has been installed. Run with 'zed'"
     else
         echo "To run Zed from your terminal, you must add ~/.local/bin to your PATH"
         echo "Run:"
-        echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
-        echo "   source ~/.bashrc"
+
+        case "$SHELL" in
+            *zsh)
+                echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.zshrc"
+                echo "   source ~/.zshrc"
+                ;;
+            *)
+                echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
+                echo "   source ~/.bashrc"
+                ;;
+        esac
+
         echo "To run Zed now, '~/.local/bin/zed'"
     fi
 }

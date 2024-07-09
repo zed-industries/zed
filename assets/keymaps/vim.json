@@ -147,6 +147,7 @@
       "8": ["vim::Number", 8],
       "9": ["vim::Number", 9],
       // window related commands (ctrl-w X)
+      "ctrl-w": null,
       "ctrl-w left": ["workspace::ActivatePaneInDirection", "Left"],
       "ctrl-w right": ["workspace::ActivatePaneInDirection", "Right"],
       "ctrl-w up": ["workspace::ActivatePaneInDirection", "Up"],
@@ -231,8 +232,8 @@
       "ctrl-x": "vim::Decrement",
       "p": "vim::Paste",
       "shift-p": ["vim::Paste", { "before": true }],
-      "u": "editor::Undo",
-      "ctrl-r": "editor::Redo",
+      "u": "vim::Undo",
+      "ctrl-r": "vim::Redo",
       "r": ["vim::PushOperator", "Replace"],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
@@ -429,6 +430,7 @@
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
+      "ctrl-x": null,
       "ctrl-x ctrl-o": "editor::ShowCompletions",
       "ctrl-x ctrl-a": "assistant::InlineAssist", // zed specific
       "ctrl-x ctrl-c": "editor::ShowInlineCompletion", // zed specific
@@ -502,7 +504,7 @@
       "t": "project_panel::OpenPermanent",
       "v": "project_panel::OpenPermanent",
       "p": "project_panel::Open",
-      "x": "project_panel::RevealInFinder",
+      "x": "project_panel::RevealInFileManager",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
       "-": "project_panel::SelectParent"
