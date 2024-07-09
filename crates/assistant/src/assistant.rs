@@ -2,7 +2,7 @@ pub mod assistant_panel;
 pub mod assistant_settings;
 mod completion_provider;
 mod context;
-mod context_store;
+pub mod context_store;
 mod inline_assistant;
 mod model_selector;
 mod prompt_library;
@@ -336,6 +336,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     })
     .detach();
 
+    context_store::init(&client);
     prompt_library::init(cx);
     completion_provider::init(client.clone(), cx);
     assistant_slash_command::init(cx);

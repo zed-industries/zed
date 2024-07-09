@@ -23,10 +23,23 @@ use std::{
 };
 use util::{ResultExt, TryFutureExt};
 
+pub fn init(client: &Arc<Client>) {
+    client.add_model_message_handler(ContextStore::handle_advertise_contexts);
+    client.add_model_request_handler(ContextStore::handle_open_context);
+    client.add_model_message_handler(ContextStore::handle_update_context);
+    client.add_model_request_handler(ContextStore::handle_synchronize_contexts);
+}
+
+#[derive(Clone)]
+pub struct RemoteContextMetadata {
+    pub id: ContextId,
+    pub summary: Option<String>,
+}
+
 pub struct ContextStore {
     contexts: Vec<ContextHandle>,
     contexts_metadata: Vec<SavedContextMetadata>,
-    host_contexts: Vec<proto::ContextMetadata>,
+    host_contexts: Vec<RemoteContextMetadata>,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
     telemetry: Arc<Telemetry>,
@@ -96,7 +109,6 @@ impl ContextStore {
                     client: project.read(cx).client(),
                     project: project.clone(),
                 };
-                this.register_handlers();
                 this.handle_project_changed(project, cx);
                 this
             })?;
@@ -107,24 +119,21 @@ impl ContextStore {
         })
     }
 
-    fn register_handlers(&self) {
-        self.client
-            .add_model_message_handler(Self::handle_advertise_contexts);
-        self.client
-            .add_model_request_handler(Self::handle_open_context);
-        self.client
-            .add_model_message_handler(Self::handle_update_context);
-        self.client
-            .add_model_request_handler(Self::handle_synchronize_contexts);
-    }
-
     async fn handle_advertise_contexts(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::AdvertiseContexts>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            this.host_contexts = envelope.payload.contexts;
+            this.host_contexts = envelope
+                .payload
+                .contexts
+                .into_iter()
+                .map(|context| RemoteContextMetadata {
+                    id: ContextId::from_proto(context.context_id),
+                    summary: context.summary,
+                })
+                .collect();
             cx.notify();
         })
     }
@@ -166,12 +175,11 @@ impl ContextStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let context_id = ContextId::from_proto(envelope.payload.context_id);
-            let context = this
-                .loaded_context_for_id(&context_id, cx)
-                .context("context not found")?;
-            let operation_proto = envelope.payload.operation.context("invalid operation")?;
-            let operation = ContextOperation::from_proto(operation_proto)?;
-            context.update(cx, |context, cx| context.apply_ops([operation], cx))?;
+            if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
+                let operation_proto = envelope.payload.operation.context("invalid operation")?;
+                let operation = ContextOperation::from_proto(operation_proto)?;
+                context.update(cx, |context, cx| context.apply_ops([operation], cx))?;
+            }
             Ok(())
         })?
     }
@@ -253,7 +261,9 @@ impl ContextStore {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            project::Event::Reshared => {
+            project::Event::Reshared
+            | project::Event::CollaboratorJoined(_)
+            | project::Event::CollaboratorUpdated { .. } => {
                 self.advertise_contexts(cx);
             }
             project::Event::HostReshared | project::Event::Rejoined => {
@@ -348,7 +358,7 @@ impl ContextStore {
 
     pub fn open_remote_context(
         &mut self,
-        metadata: &proto::ContextMetadata,
+        context_id: ContextId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Context>>> {
         let project = self.project.read(cx);
@@ -359,7 +369,6 @@ impl ContextStore {
             return Task::ready(Err(anyhow!("cannot open remote contexts as the host")));
         }
 
-        let context_id = ContextId::from_proto(metadata.context_id.clone());
         if let Some(context) = self.loaded_context_for_id(&context_id, cx) {
             return Task::ready(Ok(context));
         }
@@ -566,7 +575,7 @@ impl ContextStore {
         })
     }
 
-    pub fn host_contexts(&self) -> &[proto::ContextMetadata] {
+    pub fn host_contexts(&self) -> &[RemoteContextMetadata] {
         &self.host_contexts
     }
 

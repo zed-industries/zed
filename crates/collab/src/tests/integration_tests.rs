@@ -6501,7 +6501,7 @@ async fn test_context_collaboration_with_reconnect(
         .update(cx_b, |store, cx| {
             let host_contexts = store.host_contexts().to_vec();
             assert_eq!(host_contexts.len(), 1);
-            store.open_remote_context(&host_contexts[0], cx)
+            store.open_remote_context(host_contexts[0].id.clone(), cx)
         })
         .await
         .unwrap();

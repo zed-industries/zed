@@ -9,11 +9,11 @@ use crate::{
         SlashCommandCompletionProvider, SlashCommandRegistry,
     },
     terminal_inline_assistant::TerminalInlineAssistant,
-    ApplyEdit, Assist, CompletionProvider, ConfirmCommand, Context, ContextEvent, ContextStore,
-    CycleMessageRole, DeployHistory, DeployPromptLibrary, EditSuggestion, InlineAssist,
-    InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
-    PendingSlashCommandStatus, QuoteSelection, ResetKey, Role, SavedContextMetadata, Split,
-    ToggleFocus, ToggleModelSelector,
+    ApplyEdit, Assist, CompletionProvider, ConfirmCommand, Context, ContextEvent, ContextId,
+    ContextStore, CycleMessageRole, DeployHistory, DeployPromptLibrary, EditSuggestion,
+    InlineAssist, InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector,
+    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
+    ResetKey, Role, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -100,14 +100,20 @@ pub struct AssistantPanel {
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
+#[derive(Clone)]
+enum ContextMetadata {
+    Remote(RemoteContextMetadata),
+    Saved(SavedContextMetadata),
+}
+
 struct SavedContextPickerDelegate {
     store: Model<ContextStore>,
-    matches: Vec<SavedContextMetadata>,
+    matches: Vec<ContextMetadata>,
     selected_index: usize,
 }
 
 enum SavedContextPickerEvent {
-    Confirmed { path: PathBuf },
+    Confirmed(ContextMetadata),
 }
 
 enum InlineAssistTarget {
@@ -151,7 +157,14 @@ impl PickerDelegate for SavedContextPickerDelegate {
         cx.spawn(|this, mut cx| async move {
             let matches = search.await;
             this.update(&mut cx, |this, cx| {
-                this.delegate.matches = matches;
+                let host_contexts = this.delegate.store.read(cx).host_contexts();
+                dbg!(host_contexts.len());
+                this.delegate.matches = host_contexts
+                    .iter()
+                    .cloned()
+                    .map(ContextMetadata::Remote)
+                    .chain(matches.into_iter().map(ContextMetadata::Saved))
+                    .collect();
                 this.delegate.selected_index = 0;
                 cx.notify();
             })
@@ -161,9 +174,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(metadata) = self.matches.get(self.selected_index) {
-            cx.emit(SavedContextPickerEvent::Confirmed {
-                path: metadata.path.clone(),
-            })
+            cx.emit(SavedContextPickerEvent::Confirmed(metadata.clone()));
         }
     }
 
@@ -176,23 +187,37 @@ impl PickerDelegate for SavedContextPickerDelegate {
         _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let context = self.matches.get(ix)?;
+        let item = match context {
+            ContextMetadata::Remote(context) => div()
+                .flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    Label::new("Remote Context")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
+                .child(
+                    Label::new(context.summary.clone().unwrap_or("New Context".into()))
+                        .size(LabelSize::Small),
+                ),
+            ContextMetadata::Saved(context) => div()
+                .flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    Label::new(context.mtime.format("%F %I:%M%p").to_string())
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
+                .child(Label::new(context.title.clone()).size(LabelSize::Small)),
+        };
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(
-                    div()
-                        .flex()
-                        .w_full()
-                        .gap_2()
-                        .child(
-                            Label::new(context.mtime.format("%F %I:%M%p").to_string())
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        )
-                        .child(Label::new(context.title.clone()).size(LabelSize::Small)),
-                ),
+                .child(item),
         )
     }
 }
@@ -601,7 +626,11 @@ impl AssistantPanel {
         Some(self.active_context_editor(cx)?.read(cx).context.clone())
     }
 
-    fn open_context(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+    fn open_saved_context(
+        &mut self,
+        path: PathBuf,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
         let existing_context = self.pane.read(cx).items().find_map(|item| {
             item.downcast::<ContextEditor>()
                 .filter(|editor| editor.read(cx).context.read(cx).path() == Some(&path))
@@ -614,6 +643,49 @@ impl AssistantPanel {
         let context = self
             .context_store
             .update(cx, |store, cx| store.open_local_context(path.clone(), cx));
+        let fs = self.fs.clone();
+        let workspace = self.workspace.clone();
+
+        let lsp_adapter_delegate = workspace
+            .update(cx, |workspace, cx| {
+                make_lsp_adapter_delegate(workspace.project(), cx).log_err()
+            })
+            .log_err()
+            .flatten();
+
+        cx.spawn(|this, mut cx| async move {
+            let context = context.await?;
+            this.update(&mut cx, |this, cx| {
+                let workspace = workspace
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("workspace dropped"))?;
+                let editor = cx.new_view(|cx| {
+                    ContextEditor::for_context(context, fs, workspace, lsp_adapter_delegate, cx)
+                });
+                this.show_context(editor, cx);
+                anyhow::Ok(())
+            })??;
+            Ok(())
+        })
+    }
+
+    fn open_remote_context(
+        &mut self,
+        id: ContextId,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let existing_context = self.pane.read(cx).items().find_map(|item| {
+            item.downcast::<ContextEditor>()
+                .filter(|editor| *editor.read(cx).context.read(cx).id() == id)
+        });
+        if let Some(existing_context) = existing_context {
+            self.show_context(existing_context, cx);
+            return Task::ready(Ok(()));
+        }
+
+        let context = self
+            .context_store
+            .update(cx, |store, cx| store.open_remote_context(id, cx));
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
 
@@ -2209,12 +2281,19 @@ impl ContextHistory {
         event: &SavedContextPickerEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        let SavedContextPickerEvent::Confirmed { path } = event;
+        let SavedContextPickerEvent::Confirmed(context) = event;
         self.assistant_panel
-            .update(cx, |assistant_panel, cx| {
-                assistant_panel
-                    .open_context(path.clone(), cx)
-                    .detach_and_log_err(cx);
+            .update(cx, |assistant_panel, cx| match context {
+                ContextMetadata::Remote(metadata) => {
+                    assistant_panel
+                        .open_remote_context(metadata.id.clone(), cx)
+                        .detach_and_log_err(cx);
+                }
+                ContextMetadata::Saved(metadata) => {
+                    assistant_panel
+                        .open_saved_context(metadata.path.clone(), cx)
+                        .detach_and_log_err(cx);
+                }
             })
             .ok();
     }
