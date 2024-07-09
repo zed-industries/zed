@@ -50,7 +50,7 @@ fn generate_methods() -> Vec<TokenStream2> {
                     &format!(
                         "{prefix}\n\n{suffix}",
                         prefix = box_style_prefix.doc_string_prefix,
-                        suffix = box_style_suffix.doc_string_suffix
+                        suffix = box_style_suffix.doc_string_suffix,
                     ),
                 ));
             }
@@ -65,7 +65,7 @@ fn generate_methods() -> Vec<TokenStream2> {
                     &format!(
                         "{prefix}\n\n{suffix}",
                         prefix = box_style_prefix.doc_string_prefix,
-                        suffix = box_style_suffix.doc_string_suffix
+                        suffix = box_style_suffix.doc_string_suffix,
                     ),
                 ));
             }
@@ -80,16 +80,17 @@ fn generate_methods() -> Vec<TokenStream2> {
             corner_style_prefix.doc_string_prefix,
         ));
 
-        for (suffix, radius_tokens, suffix_doc_string) in corner_suffixes() {
+        for corner_style_suffix in corner_suffixes() {
             methods.push(generate_predefined_setter(
                 corner_style_prefix.prefix,
-                suffix,
+                corner_style_suffix.suffix,
                 &corner_style_prefix.fields,
-                &radius_tokens,
+                &corner_style_suffix.radius_tokens,
                 false,
                 &format!(
-                    "{prefix}\n\n{suffix_doc_string}",
-                    prefix = corner_style_prefix.doc_string_prefix
+                    "{prefix}\n\n{suffix}",
+                    prefix = corner_style_prefix.doc_string_prefix,
+                    suffix = corner_style_suffix.doc_string_suffix,
                 ),
             ));
         }
@@ -714,16 +715,54 @@ fn corner_prefixes() -> Vec<CornerStylePrefix> {
     ]
 }
 
-fn corner_suffixes() -> Vec<(&'static str, TokenStream2, &'static str)> {
+struct CornerStyleSuffix {
+    suffix: &'static str,
+    radius_tokens: TokenStream2,
+    doc_string_suffix: &'static str,
+}
+
+fn corner_suffixes() -> Vec<CornerStyleSuffix> {
     vec![
-        ("none", quote! { px(0.) }, "0px"),
-        ("sm", quote! { rems(0.125) }, "2px (0.125rem)"),
-        ("md", quote! { rems(0.25) }, "4px (0.25rem)"),
-        ("lg", quote! { rems(0.5) }, "8px (0.5rem)"),
-        ("xl", quote! { rems(0.75) }, "12px (0.75rem)"),
-        ("2xl", quote! { rems(1.) }, "16px (1rem)"),
-        ("3xl", quote! { rems(1.5) }, "24px (1.5rem)"),
-        ("full", quote! {  px(9999.) }, "9999px"),
+        CornerStyleSuffix {
+            suffix: "none",
+            radius_tokens: quote! { px(0.) },
+            doc_string_suffix: "0px",
+        },
+        CornerStyleSuffix {
+            suffix: "sm",
+            radius_tokens: quote! { rems(0.125) },
+            doc_string_suffix: "2px (0.125rem)",
+        },
+        CornerStyleSuffix {
+            suffix: "md",
+            radius_tokens: quote! { rems(0.25) },
+            doc_string_suffix: "4px (0.25rem)",
+        },
+        CornerStyleSuffix {
+            suffix: "lg",
+            radius_tokens: quote! { rems(0.5) },
+            doc_string_suffix: "8px (0.5rem)",
+        },
+        CornerStyleSuffix {
+            suffix: "xl",
+            radius_tokens: quote! { rems(0.75) },
+            doc_string_suffix: "12px (0.75rem)",
+        },
+        CornerStyleSuffix {
+            suffix: "2xl",
+            radius_tokens: quote! { rems(1.) },
+            doc_string_suffix: "16px (1rem)",
+        },
+        CornerStyleSuffix {
+            suffix: "3xl",
+            radius_tokens: quote! { rems(1.5) },
+            doc_string_suffix: "24px (1.5rem)",
+        },
+        CornerStyleSuffix {
+            suffix: "full",
+            radius_tokens: quote! {  px(9999.) },
+            doc_string_suffix: "9999px",
+        },
     ]
 }
 
