@@ -85,6 +85,11 @@ impl LabelCommon for Label {
         self
     }
 
+    fn weight(mut self, weight: gpui::FontWeight) -> Self {
+        self.base = self.base.weight(weight);
+        self
+    }
+
     /// Sets the line height style of the label using a [`LineHeightStyle`].
     ///
     /// # Examples
