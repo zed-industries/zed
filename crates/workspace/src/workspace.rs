@@ -120,6 +120,8 @@ actions!(
         ClearAllNotifications,
         CloseAllDocks,
         CloseWindow,
+        CopyPath,
+        CopyAbsolutePath,
         Feedback,
         FollowNextCollaborator,
         NewCenterTerminal,

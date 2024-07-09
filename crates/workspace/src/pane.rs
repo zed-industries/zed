@@ -5,17 +5,17 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenTerminal, OpenVisible, SplitDirection,
-    ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    CloseWindow, CopyAbsolutePath, CopyPath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
+    OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
-    AppContext, AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId,
-    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
-    MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, DismissEvent, Div, DragMoveEvent,
+    EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext,
+    Model, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
     WindowContext,
 };
@@ -1748,27 +1748,36 @@ impl Pane {
                         );
 
                     if let Some(entry) = single_entry_to_resolve {
-                        let parent_abs_path = pane
+                        let paths = pane
                             .update(cx, |pane, cx| {
                                 pane.workspace.update(cx, |workspace, cx| {
                                     let project = workspace.project().read(cx);
                                     project.worktree_for_entry(entry, cx).and_then(|worktree| {
                                         let worktree = worktree.read(cx);
                                         let entry = worktree.entry_for_id(entry)?;
-                                        let abs_path = worktree.absolutize(&entry.path).ok()?;
-                                        let parent = if entry.is_symlink {
-                                            abs_path.canonicalize().ok()?
-                                        } else {
-                                            abs_path
-                                        }
-                                        .parent()?
-                                        .to_path_buf();
-                                        Some(parent)
+                                        let rel_path = &entry.path;
+                                        let abs_path = (|| {
+                                            let abs_path = worktree.absolutize(rel_path).ok()?;
+                                            let abs_path = if entry.is_symlink {
+                                                abs_path.canonicalize().ok()?
+                                            } else {
+                                                abs_path
+                                            }
+                                            .to_path_buf();
+                                            Some(abs_path)
+                                        })();
+                                        Some((Arc::clone(rel_path), abs_path))
                                     })
                                 })
                             })
                             .ok()
                             .flatten();
+                        let (rel_path, abs_path) =
+                            paths.map_or((None, None), |(rel, abs)| (Some(rel), abs));
+                        let parent_abs_path = abs_path
+                            .as_deref()
+                            .and_then(|path| path.parent())
+                            .map(|path| path.to_path_buf());
 
                         let entry_id = entry.to_proto();
                         menu = menu
@@ -1786,14 +1795,36 @@ impl Pane {
                                     });
                                 }),
                             )
-                            .when_some(parent_abs_path, |menu, abs_path| {
+                            .when_some(rel_path, |menu, path| {
+                                menu.entry(
+                                    "Copy Path",
+                                    Some(Box::new(CopyPath)),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new(
+                                            path.to_string_lossy().into_owned(),
+                                        ));
+                                    }),
+                                )
+                            })
+                            .when_some(abs_path, |menu, path| {
+                                menu.entry(
+                                    "Copy Absolute Path",
+                                    Some(Box::new(CopyAbsolutePath)),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new(
+                                            path.to_string_lossy().into_owned(),
+                                        ));
+                                    }),
+                                )
+                            })
+                            .when_some(parent_abs_path, |menu, parent_path| {
                                 menu.entry(
                                     "Open in Terminal",
                                     Some(Box::new(OpenInTerminal)),
                                     cx.handler_for(&pane, move |_, cx| {
                                         cx.dispatch_action(
                                             OpenTerminal {
-                                                working_directory: abs_path.clone(),
+                                                working_directory: parent_path.to_path_buf(),
                                             }
                                             .boxed_clone(),
                                         );
