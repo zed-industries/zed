@@ -110,8 +110,7 @@ pub struct X11ClientState {
     pub(crate) _resource_database: Database,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
-    pub(crate) mouse_focused_window: Option<xproto::Window>,
-    pub(crate) keyboard_focused_window: Option<xproto::Window>,
+    pub(crate) focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
@@ -145,12 +144,7 @@ impl X11ClientStatePtr {
         if let Some(window_ref) = state.windows.remove(&x_window) {
             state.loop_handle.remove(window_ref.refresh_event_token);
         }
-        if state.mouse_focused_window == Some(x_window) {
-            state.mouse_focused_window = None;
-        }
-        if state.keyboard_focused_window == Some(x_window) {
-            state.keyboard_focused_window = None;
-        }
+
         state.cursor_styles.remove(&x_window);
 
         if state.windows.is_empty() {
@@ -347,8 +341,7 @@ impl X11Client {
             _resource_database: resource_database,
             atoms,
             windows: HashMap::default(),
-            mouse_focused_window: None,
-            keyboard_focused_window: None,
+            focused_window: None,
             xkb: xkb_state,
             ximc,
             xim_handler,
@@ -509,7 +502,7 @@ impl X11Client {
             .push(AttributeName::ClientWindow, xim_handler.window)
             .push(AttributeName::FocusWindow, xim_handler.window);
 
-        let window_id = state.keyboard_focused_window;
+        let window_id = state.focused_window;
         drop(state);
         if let Some(window_id) = window_id {
             let window = self.get_window(window_id).unwrap();
@@ -591,19 +584,19 @@ impl X11Client {
                 let window = self.get_window(event.window)?;
                 window.property_notify(event);
             }
-            Event::FocusIn(event) if event.mode == xproto::NotifyMode::NORMAL => {
+            Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_focused(true);
                 let mut state = self.0.borrow_mut();
-                state.keyboard_focused_window = Some(event.event);
+                state.focused_window = Some(event.event);
                 drop(state);
                 self.enable_ime();
             }
-            Event::FocusOut(event) if event.mode == xproto::NotifyMode::NORMAL => {
+            Event::FocusOut(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_focused(false);
                 let mut state = self.0.borrow_mut();
-                state.keyboard_focused_window = None;
+                state.focused_window = None;
                 if let Some(compose_state) = state.compose_state.as_mut() {
                     compose_state.reset();
                 }
@@ -627,7 +620,7 @@ impl X11Client {
                 if state.modifiers == modifiers {
                     drop(state);
                 } else {
-                    let focused_window_id = state.keyboard_focused_window?;
+                    let focused_window_id = state.focused_window?;
                     state.modifiers = modifiers;
                     drop(state);
 
@@ -878,18 +871,12 @@ impl X11Client {
                     valuator_idx += 1;
                 }
             }
-            Event::XinputEnter(event) if event.mode == xinput::NotifyMode::NORMAL => {
-                let window = self.get_window(event.event)?;
-                window.set_focused(true);
-                let mut state = self.0.borrow_mut();
-                state.mouse_focused_window = Some(event.event);
-            }
             Event::XinputLeave(event) if event.mode == xinput::NotifyMode::NORMAL => {
                 self.0.borrow_mut().scroll_x = None; // Set last scroll to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
                 self.0.borrow_mut().scroll_y = None;
 
+                let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
-                state.mouse_focused_window = None;
                 let pressed_button = pressed_button_from_mask(event.buttons[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
@@ -899,13 +886,11 @@ impl X11Client {
                 state.modifiers = modifiers;
                 drop(state);
 
-                let window = self.get_window(event.event)?;
                 window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
                     pressed_button,
                     position,
                     modifiers,
                 }));
-                window.set_focused(false);
             }
             _ => {}
         };
@@ -1155,7 +1140,7 @@ impl LinuxClient for X11Client {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
-        let Some(focused_window) = state.mouse_focused_window else {
+        let Some(focused_window) = state.focused_window else {
             return;
         };
         let current_style = state
@@ -1287,7 +1272,7 @@ impl LinuxClient for X11Client {
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let state = self.0.borrow();
-        state.keyboard_focused_window.and_then(|focused_window| {
+        state.focused_window.and_then(|focused_window| {
             state
                 .windows
                 .get(&focused_window)
