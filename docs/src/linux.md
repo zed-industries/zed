@@ -23,15 +23,20 @@ Zed is open source, and [you can install from source](./development/linux.md).
 
 ### Installing via a package manager
 
-Several people have created third-party Zed packages for various Linux package managers. You may be able to install Zed using these packages.
+There are several third-party Zed packages for various Linux distributions and package managers, sometimes under `zed-editor`. You may be able to install Zed using these packages:
 
-* [Alpine](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zed)
-* [Nix](https://search.nixos.org/packages?show=zed-editor)
-* [Arch](https://archlinux.org/packages/extra/x86_64/zed/)
-* [Fedora](https://fedora.pkgs.org/40/terra/zed-preview-0:0.142.1-pre1.fc40.aarch64.rpm.html)
+* Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
+* Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview),  [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
+* Alpine: `zed` ([aarch64](https://pkgs.alpinelinux.org/package/edge/testing/aarch64/zed)) ([x86_65](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zed))
+* Nix: `zed-editor` ([stable](https://search.nixos.org/packages?show=zed-editor)), ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
+* Fedora 39 & 40 (Terra): `zed-nightly` ([aarch64](https://fedora.pkgs.org/40/terra/zed-nightly-0:0.142.0%5e20240619.0129d4e-1.fc40.aarch64.rpm.html)) ([x86_64](https://fedora.pkgs.org/40/terra/zed-nightly-0:0.142.0%5e20240619.0129d4e-1.fc40.x86_64.rpm.html)) `zed-preview` ([aarch64](https://fedora.pkgs.org/40/terra/zed-preview-0:0.142.1-pre1.fc40.aarch64.rpm.html)) ([x86_64](https://fedora.pkgs.org/40/terra/zed-nightly-0:0.142.0%5e20240619.0129d4e-1.fc40.x86_64.rpm.html))
+* Solus: [`zed`](https://github.com/getsolus/packages/tree/main/packages/z/zed)
+* Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
+* HomeBrew: [`zed`](https://formulae.brew.sh/cask/zed), [`zed@preview`](https://formulae.brew.sh/cask/zed@preview)
+* Manjaro: [`zed`](https://packages.manjaro.org/?query=zed)
 * Please add others to this list!
 
-When installing a third-party package please be aware that it may not be completely up to date and may be slightly different from the Zed we package (a common change is to rename the binary to `zedit` to avoid conflicting with other packages).
+When installing a third-party package please be aware that it may not be completely up to date and may be slightly different from the Zed we package (a common change is to rename the binary to `zedit` or `zeditor` to avoid conflicting with other packages).
 
 We'd love your help making Zed available for everyone. If Zed is not yet available for your package manager, and you would like to fix that, we have some notes on [how to do it](./development/linux.md#notes-for-packaging-zed).
 
@@ -62,6 +67,7 @@ cp ~/.local/zed.app/share/applications/zed.desktop ~/.local/share/applications/z
 sed -i "s|Icon=zed|Icon=$HOME/.local/zed.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/zed.desktop
 sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/libexec/zed-editor|g" ~/.local/share/applications/zed.desktop
 ```
+
 
 ## Troubleshooting
 
