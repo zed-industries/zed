@@ -1,20 +1,14 @@
 use crate::{
-    Context, ContextId, ContextOperation, ContextVersion, SavedContext, SavedContextMetadata,
+    Context, ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext,
+    SavedContextMetadata,
 };
 use anyhow::{anyhow, Context as _, Result};
-use client::{
-    proto::{self, PeerId},
-    telemetry::Telemetry,
-    Client, TypedEnvelope,
-};
+use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
-use collections::BTreeMap;
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
-use gpui::{
-    AppContext, AsyncAppContext, Context as _, EntityId, Model, ModelContext, Task, WeakModel,
-};
+use gpui::{AppContext, AsyncAppContext, Context as _, Model, ModelContext, Task, WeakModel};
 use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
@@ -32,7 +26,7 @@ use util::{ResultExt, TryFutureExt};
 pub struct ContextStore {
     contexts: Vec<ContextHandle>,
     contexts_metadata: Vec<SavedContextMetadata>,
-    remote_contexts: BTreeMap<PeerId, Vec<proto::ContextMetadata>>,
+    host_contexts: Vec<proto::ContextMetadata>,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
     telemetry: Option<Arc<Telemetry>>,
@@ -81,7 +75,7 @@ impl ContextStore {
                 let mut this = Self {
                     contexts: Vec::new(),
                     contexts_metadata: Vec::new(),
-                    remote_contexts: BTreeMap::default(),
+                    host_contexts: Vec::new(),
                     fs,
                     languages,
                     telemetry,
@@ -117,15 +111,14 @@ impl ContextStore {
     }
 
     fn register_handlers(&self) {
-        // todo!(self.client
-        //     .add_model_request_handler(Self::handle_open_context);
-        // todo!(self.client
-        //     .add_model_request_handler(Self::handle_context_update);
-        // todo!(self.client.add_model_request_handler(Self::handle_resync);
         self.client
             .add_model_message_handler(Self::handle_advertise_contexts);
         self.client
             .add_model_request_handler(Self::handle_open_context);
+        self.client
+            .add_model_message_handler(Self::handle_update_context);
+        self.client
+            .add_model_request_handler(Self::handle_synchronize_contexts);
     }
 
     async fn handle_advertise_contexts(
@@ -133,10 +126,8 @@ impl ContextStore {
         envelope: TypedEnvelope<proto::AdvertiseContexts>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let peer_id = envelope.original_sender_id()?;
         this.update(&mut cx, |this, cx| {
-            this.remote_contexts
-                .insert(peer_id, envelope.payload.contexts);
+            this.host_contexts = envelope.payload.contexts;
             cx.notify();
         })
     }
@@ -171,6 +162,65 @@ impl ContextStore {
         })
     }
 
+    async fn handle_update_context(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::UpdateContext>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let context_id = ContextId::from_proto(envelope.payload.context_id);
+            let context = this
+                .loaded_context_for_id(&context_id, cx)
+                .context("context not found")?;
+            let operation_proto = envelope.payload.operation.context("invalid operation")?;
+            let operation = ContextOperation::from_proto(operation_proto)?;
+            context.update(cx, |context, cx| context.apply_ops([operation], cx))?;
+            Ok(())
+        })?
+    }
+
+    async fn handle_synchronize_contexts(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::SynchronizeContexts>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::SynchronizeContextsResponse> {
+        this.update(&mut cx, |this, cx| {
+            if this.project.read(cx).is_remote() {
+                return Err(anyhow!("only the host can synchronize contexts"));
+            }
+
+            let mut local_versions = Vec::new();
+            for remote_version_proto in envelope.payload.contexts {
+                let remote_version = ContextVersion::from_proto(&remote_version_proto);
+                let context_id = ContextId::from_proto(remote_version_proto.context_id);
+                if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
+                    let context = context.read(cx);
+                    let operations = context.serialize_ops(&remote_version, cx);
+                    local_versions.push(context.version(cx).to_proto(context_id.clone()));
+                    let client = this.client.clone();
+                    let project_id = envelope.payload.project_id;
+                    cx.background_executor()
+                        .spawn(async move {
+                            let operations = operations.await;
+                            for operation in operations {
+                                client.send(proto::UpdateContext {
+                                    project_id,
+                                    context_id: context_id.to_proto(),
+                                    operation: Some(operation),
+                                })?;
+                            }
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                }
+            }
+
+            anyhow::Ok(proto::SynchronizeContextsResponse {
+                contexts: local_versions,
+            })
+        })?
+    }
+
     fn project_changed(&mut self, _: Model<Project>, cx: &mut ModelContext<Self>) {
         let is_shared = self.project.read(cx).is_shared();
         let was_shared = mem::replace(&mut self.project_is_shared, is_shared);
@@ -180,8 +230,12 @@ impl ContextStore {
 
         if is_shared {
             self.contexts.retain_mut(|context| {
-                *context = ContextHandle::Weak(context.downgrade());
-                true
+                if let Some(strong_context) = context.upgrade() {
+                    *context = ContextHandle::Strong(strong_context);
+                    true
+                } else {
+                    false
+                }
             });
             let remote_id = self.project.read(cx).remote_id().unwrap();
             self.client_subscription = self
@@ -193,13 +247,19 @@ impl ContextStore {
         } else {
             self.contexts.retain_mut(|context| {
                 if let Some(strong_context) = context.upgrade() {
-                    *context = ContextHandle::Strong(strong_context);
+                    *context = ContextHandle::Weak(context.downgrade());
+                    strong_context.update(cx, |context, cx| {
+                        if context.replica_id() != ReplicaId::default() {
+                            context.set_capability(language::Capability::ReadOnly, cx);
+                        }
+                    });
                     true
                 } else {
                     false
                 }
             });
             self.client_subscription = None;
+            self.host_contexts.clear();
         }
     }
 
@@ -210,12 +270,11 @@ impl ContextStore {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            project::Event::HostReshared | project::Event::Rejoined => {
-                todo!("synchronize contexts, re-advertise all loaded contexts")
+            project::Event::Reshared => {
+                self.advertise_contexts(cx);
             }
-            project::Event::CollaboratorLeft(peer_id) => {
-                todo!("remove all contexts from this peer");
-                todo!("free up replica id allocated for this peer");
+            project::Event::HostReshared | project::Event::Rejoined => {
+                self.synchronize_contexts(cx);
             }
             _ => {}
         }
@@ -300,6 +359,10 @@ impl ContextStore {
         }
 
         let context_id = ContextId::from_proto(metadata.context_id.clone());
+        if let Some(context) = self.loaded_context_for_id(&context_id, cx) {
+            return Task::ready(Ok(context));
+        }
+
         let replica_id = project.replica_id();
         let capability = project.capability();
         let language_registry = self.languages.clone();
@@ -331,12 +394,13 @@ impl ContextStore {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))?;
+            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))??;
             this.update(&mut cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
                     existing_context
                 } else {
                     this.register_context(&context, cx);
+                    this.synchronize_contexts(cx);
                     context
                 }
             })
@@ -351,6 +415,30 @@ impl ContextStore {
         };
         self.contexts.push(handle);
         self.advertise_contexts(cx);
+        cx.subscribe(context, Self::handle_context_event).detach();
+    }
+
+    fn handle_context_event(
+        &mut self,
+        context: Model<Context>,
+        event: &ContextEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(project_id) = self.project.read(cx).remote_id() else {
+            return;
+        };
+
+        if let ContextEvent::Operation(operation) = event {
+            let context_id = context.read(cx).id().to_proto();
+            let operation = operation.to_proto();
+            self.client
+                .send(proto::UpdateContext {
+                    project_id,
+                    context_id,
+                    operation: Some(operation),
+                })
+                .log_err();
+        }
     }
 
     fn advertise_contexts(&self, cx: &AppContext) {
@@ -384,6 +472,61 @@ impl ContextStore {
                 contexts,
             })
             .ok();
+    }
+
+    fn synchronize_contexts(&mut self, cx: &mut ModelContext<Self>) {
+        let Some(project_id) = self.project.read(cx).remote_id() else {
+            return;
+        };
+
+        let contexts = self
+            .contexts
+            .iter()
+            .filter_map(|context| {
+                let context = context.upgrade()?.read(cx);
+                if context.replica_id() != ReplicaId::default() {
+                    Some(context.version(cx).to_proto(context.id().clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let client = self.client.clone();
+        let request = self.client.request(proto::SynchronizeContexts {
+            project_id,
+            contexts,
+        });
+        cx.spawn(|this, cx| async move {
+            let response = request.await?;
+
+            let mut context_ids = Vec::new();
+            let mut operations = Vec::new();
+            this.read_with(&cx, |this, cx| {
+                for context_version_proto in response.contexts {
+                    let context_version = ContextVersion::from_proto(&context_version_proto);
+                    let context_id = ContextId::from_proto(context_version_proto.context_id);
+                    if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
+                        context_ids.push(context_id);
+                        operations.push(context.read(cx).serialize_ops(&context_version, cx));
+                    }
+                }
+            })?;
+
+            let operations = futures::future::join_all(operations).await;
+            for (context_id, operations) in context_ids.into_iter().zip(operations) {
+                for operation in operations {
+                    client.send(proto::UpdateContext {
+                        project_id,
+                        context_id: context_id.to_proto(),
+                        operation: Some(operation),
+                    })?;
+                }
+            }
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn search(&self, query: String, cx: &AppContext) -> Task<Vec<SavedContextMetadata>> {

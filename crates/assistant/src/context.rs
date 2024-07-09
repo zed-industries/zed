@@ -29,7 +29,7 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use ui::SharedString;
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{post_inc, TryFutureExt};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -155,7 +155,7 @@ impl ContextOperation {
         }
     }
 
-    fn to_proto(&self) -> proto::ContextOperation {
+    pub fn to_proto(&self) -> proto::ContextOperation {
         match self {
             Self::InsertMessage {
                 anchor,
@@ -329,11 +329,6 @@ struct PendingCompletion {
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct SlashCommandId(clock::Lamport);
 
-struct FinishedSlashCommand {
-    output_range: Range<language::Anchor>,
-    sections: Vec<SlashCommandOutputSection<language::Anchor>>,
-}
-
 pub struct Context {
     id: ContextId,
     timestamp: clock::Lamport,
@@ -344,7 +339,7 @@ pub struct Context {
     edit_suggestions: Vec<EditSuggestion>,
     pending_slash_commands: Vec<PendingSlashCommand>,
     edits_since_last_slash_command_parse: language::Subscription,
-    finished_slash_commands: HashMap<SlashCommandId, FinishedSlashCommand>,
+    finished_slash_commands: HashSet<SlashCommandId>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
@@ -388,7 +383,7 @@ impl Context {
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new_model(|_cx| {
             let mut buffer = Buffer::remote(
                 language::BufferId::new(1).unwrap(),
                 replica_id,
@@ -410,7 +405,7 @@ impl Context {
             messages_metadata: Default::default(),
             edit_suggestions: Vec::new(),
             pending_slash_commands: Vec::new(),
-            finished_slash_commands: HashMap::default(),
+            finished_slash_commands: HashSet::default(),
             slash_command_output_sections: Vec::new(),
             edits_since_last_slash_command_parse,
             summary: None,
@@ -538,7 +533,7 @@ impl Context {
                 messages_metadata: saved_context.message_metadata,
                 edit_suggestions: Vec::new(),
                 pending_slash_commands: Vec::new(),
-                finished_slash_commands: HashMap::default(),
+                finished_slash_commands: HashSet::default(),
                 slash_command_output_sections: saved_context
                     .slash_command_output_sections
                     .into_iter()
@@ -593,6 +588,15 @@ impl Context {
         }
     }
 
+    pub fn set_capability(
+        &mut self,
+        capability: language::Capability,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.buffer
+            .update(cx, |buffer, cx| buffer.set_capability(capability, cx));
+    }
+
     fn next_timestamp(&mut self) -> clock::Lamport {
         let timestamp = self.timestamp.tick();
         self.version.observe(timestamp);
@@ -636,7 +640,7 @@ impl Context {
 
     pub fn apply_ops(
         &mut self,
-        ops: Vec<ContextOperation>,
+        ops: impl IntoIterator<Item = ContextOperation>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let mut buffer_ops = Vec::new();
@@ -706,19 +710,12 @@ impl Context {
                     sections,
                     ..
                 } => {
-                    if !self.finished_slash_commands.contains_key(&id) {
+                    if self.finished_slash_commands.insert(id) {
                         let buffer = self.buffer.read(cx);
                         self.slash_command_output_sections
                             .extend(sections.iter().cloned());
                         self.slash_command_output_sections
                             .sort_by(|a, b| a.range.cmp(&b.range, buffer));
-                        self.finished_slash_commands.insert(
-                            id,
-                            FinishedSlashCommand {
-                                output_range: output_range.clone(),
-                                sections: sections.clone(),
-                            },
-                        );
                         cx.emit(ContextEvent::SlashCommandFinished {
                             output_range,
                             sections,
@@ -1103,13 +1100,7 @@ impl Context {
 
                             let output_range =
                                 buffer.anchor_after(start)..buffer.anchor_before(new_end);
-                            this.finished_slash_commands.insert(
-                                command_id,
-                                FinishedSlashCommand {
-                                    output_range: output_range.clone(),
-                                    sections: sections.clone(),
-                                },
-                            );
+                            this.finished_slash_commands.insert(command_id);
 
                             (
                                 ContextOperation::SlashCommandFinished {
@@ -1773,6 +1764,23 @@ impl Context {
 pub struct ContextVersion {
     context: clock::Global,
     buffer: clock::Global,
+}
+
+impl ContextVersion {
+    pub fn from_proto(proto: &proto::ContextVersion) -> Self {
+        Self {
+            context: language::proto::deserialize_version(&proto.context_version),
+            buffer: language::proto::deserialize_version(&proto.buffer_version),
+        }
+    }
+
+    pub fn to_proto(&self, context_id: ContextId) -> proto::ContextVersion {
+        proto::ContextVersion {
+            context_id: context_id.to_proto(),
+            context_version: language::proto::serialize_version(&self.context),
+            buffer_version: language::proto::serialize_version(&self.buffer),
+        }
+    }
 }
 
 #[derive(Debug)]

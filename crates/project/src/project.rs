@@ -354,6 +354,7 @@ pub enum Event {
     CollaboratorJoined(proto::PeerId),
     CollaboratorLeft(proto::PeerId),
     HostReshared,
+    Reshared,
     Rejoined,
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
@@ -1704,6 +1705,7 @@ impl Project {
         self.shared_buffers.clear();
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         self.metadata_changed(cx);
+        cx.emit(Event::Reshared);
         Ok(())
     }
 
