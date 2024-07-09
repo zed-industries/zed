@@ -31,7 +31,7 @@ pub fn fallback_prompt_renderer(
             detail: detail.map(ToString::to_string),
             actions: actions.iter().map(ToString::to_string).collect(),
             focus: cx.focus_handle(),
-            active_action_id: actions.len() - 1,
+            active_action_id: 0,
         }
     });
 
@@ -60,26 +60,26 @@ impl FallbackPromptRenderer {
     }
 
     fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
-        self.active_action_id = 0;
-        cx.notify();
-    }
-
-    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
         self.active_action_id = self.actions.len().saturating_sub(1);
         cx.notify();
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
-        self.active_action_id = (self.active_action_id + 1) % self.actions.len();
+    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
+        self.active_action_id = 0;
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         if self.active_action_id > 0 {
             self.active_action_id -= 1;
         } else {
             self.active_action_id = self.actions.len().saturating_sub(1);
         }
+        cx.notify();
+    }
+
+    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        self.active_action_id = (self.active_action_id + 1) % self.actions.len();
         cx.notify();
     }
 }
@@ -119,7 +119,7 @@ impl Render for FallbackPromptRenderer {
                     .child(detail)
             }))
             .child(h_flex().justify_end().gap_2().children(
-                self.actions.iter().rev().enumerate().map(|(ix, action)| {
+                self.actions.iter().enumerate().rev().map(|(ix, action)| {
                     ui::Button::new(ix, action.clone())
                         .label_size(LabelSize::Large)
                         .style(ButtonStyle::Filled)
