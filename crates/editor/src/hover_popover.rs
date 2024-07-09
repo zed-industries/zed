@@ -19,7 +19,7 @@ use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{ops::Range, sync::Arc, time::Duration};
-use ui::{prelude::*, Tooltip};
+use ui::{prelude::*, window_is_transparent, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
 
@@ -588,6 +588,11 @@ impl DiagnosticPopover {
             .id("diagnostic")
             .block()
             .elevation_2_borderless(cx)
+            // Don't draw the background color if the theme
+            // allows transparent surfaces.
+            .when(window_is_transparent(cx), |this| {
+                this.bg(gpui::transparent_black())
+            })
             .max_w(max_size.width)
             .max_h(max_size.height)
             .cursor(CursorStyle::PointingHand)
