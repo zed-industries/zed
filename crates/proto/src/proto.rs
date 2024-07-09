@@ -337,7 +337,13 @@ messages!(
     (OpenNewBuffer, Foreground),
     (RestartLanguageServers, Foreground),
     (LinkedEditingRange, Background),
-    (LinkedEditingRangeResponse, Background)
+    (LinkedEditingRangeResponse, Background),
+    (AdvertiseContexts, Foreground),
+    (OpenContext, Foreground),
+    (OpenContextResponse, Foreground),
+    (UpdateContext, Foreground),
+    (SynchronizeContexts, Foreground),
+    (SynchronizeContextsResponse, Foreground),
 );
 
 request_messages!(
@@ -449,7 +455,9 @@ request_messages!(
     (DeleteDevServerProject, Ack),
     (RegenerateDevServerToken, RegenerateDevServerTokenResponse),
     (RenameDevServer, Ack),
-    (RestartLanguageServers, Ack)
+    (RestartLanguageServers, Ack),
+    (OpenContext, OpenContextResponse),
+    (SynchronizeContexts, SynchronizeContextsResponse),
 );
 
 entity_messages!(
@@ -511,6 +519,10 @@ entity_messages!(
     UpdateWorktree,
     UpdateWorktreeSettings,
     LspExtExpandMacro,
+    AdvertiseContexts,
+    OpenContext,
+    UpdateContext,
+    SynchronizeContexts,
 );
 
 entity_messages!(

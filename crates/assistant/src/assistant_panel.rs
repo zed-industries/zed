@@ -620,7 +620,7 @@ impl AssistantPanel {
 
         let context = self
             .context_store
-            .update(cx, |store, cx| store.load(path.clone(), cx));
+            .update(cx, |store, cx| store.open_local_context(path.clone(), cx));
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
 

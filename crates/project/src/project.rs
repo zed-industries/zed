@@ -353,6 +353,8 @@ pub enum Event {
     },
     CollaboratorJoined(proto::PeerId),
     CollaboratorLeft(proto::PeerId),
+    HostReshared,
+    Rejoined,
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
@@ -1739,6 +1741,7 @@ impl Project {
             .collect();
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();
+        cx.emit(Event::Rejoined);
         cx.notify();
         Ok(())
     }
@@ -8773,6 +8776,7 @@ impl Project {
                     .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
                 this.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
                     .unwrap();
+                cx.emit(Event::HostReshared);
             }
 
             cx.emit(Event::CollaboratorUpdated {

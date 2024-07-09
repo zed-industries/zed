@@ -29,8 +29,25 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use ui::SharedString;
-use util::{post_inc, TryFutureExt};
+use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
+
+#[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ContextId(String);
+
+impl ContextId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string())
+    }
+
+    pub fn from_proto(id: String) -> Self {
+        Self(id)
+    }
+
+    pub fn to_proto(&self) -> String {
+        self.0.clone()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum ContextOperation {
@@ -318,7 +335,7 @@ struct FinishedSlashCommand {
 }
 
 pub struct Context {
-    id: Option<String>,
+    id: ContextId,
     timestamp: clock::Lamport,
     version: clock::Global,
     pending_ops: Vec<ContextOperation>,
@@ -348,9 +365,25 @@ pub struct Context {
 impl EventEmitter<ContextEvent> for Context {}
 
 impl Context {
-    // todo!("avoid taking a replica id and instead introduce a new from_proto function")
+    pub fn local(
+        language_registry: Arc<LanguageRegistry>,
+        telemetry: Option<Arc<Telemetry>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        Self::new(
+            ContextId::new(),
+            ReplicaId::default(),
+            language::Capability::ReadWrite,
+            language_registry,
+            telemetry,
+            cx,
+        )
+    }
+
     pub fn new(
+        id: ContextId,
         replica_id: ReplicaId,
+        capability: language::Capability,
         language_registry: Arc<LanguageRegistry>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
@@ -359,7 +392,7 @@ impl Context {
             let mut buffer = Buffer::remote(
                 language::BufferId::new(1).unwrap(),
                 replica_id,
-                language::Capability::ReadWrite,
+                capability,
                 "",
             );
             buffer.set_language_registry(language_registry.clone());
@@ -368,7 +401,7 @@ impl Context {
         let edits_since_last_slash_command_parse =
             buffer.update(cx, |buffer, _| buffer.subscribe());
         let mut this = Self {
-            id: Some(Uuid::new_v4().to_string()),
+            id,
             timestamp: clock::Lamport::new(replica_id),
             version: clock::Global::new(),
             pending_ops: Vec::new(),
@@ -421,7 +454,7 @@ impl Context {
     fn serialize(&self, cx: &AppContext) -> SavedContext {
         let buffer = self.buffer.read(cx);
         SavedContext {
-            id: self.id.clone(),
+            id: Some(self.id.clone()),
             zed: "context".into(),
             version: SavedContext::VERSION.into(),
             text: buffer.text(),
@@ -465,11 +498,7 @@ impl Context {
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut AsyncAppContext,
     ) -> Result<Model<Self>> {
-        let id = match saved_context.id {
-            Some(id) => Some(id),
-            None => Some(Uuid::new_v4().to_string()),
-        };
-
+        let id = saved_context.id.unwrap_or_else(|| ContextId::new());
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
         let mut version = clock::Global::new();
@@ -549,6 +578,14 @@ impl Context {
         })
     }
 
+    pub fn id(&self) -> &ContextId {
+        &self.id
+    }
+
+    pub fn replica_id(&self) -> ReplicaId {
+        self.timestamp.replica_id
+    }
+
     pub fn version(&self, cx: &AppContext) -> ContextVersion {
         ContextVersion {
             context: self.version.clone(),
@@ -597,7 +634,11 @@ impl Context {
         })
     }
 
-    fn apply_ops(&mut self, ops: Vec<ContextOperation>, cx: &mut ModelContext<Self>) -> Result<()> {
+    pub fn apply_ops(
+        &mut self,
+        ops: Vec<ContextOperation>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
         let mut buffer_ops = Vec::new();
         for op in ops {
             match op {
@@ -1254,7 +1295,7 @@ impl Context {
                         if let Some(telemetry) = this.telemetry.as_ref() {
                             let model = CompletionProvider::global(cx).model();
                             telemetry.report_assistant_event(
-                                this.id.clone(),
+                                Some(this.id.0.clone()),
                                 AssistantKind::Panel,
                                 model.telemetry_id(),
                                 response_latency,
@@ -1671,7 +1712,10 @@ impl Context {
         fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Context>,
     ) {
-        // todo!("if it's remote, don't save or maybe send a Save message.")
+        if self.replica_id() != ReplicaId::default() {
+            // Prevent saving a remote context for now.
+            return;
+        }
 
         self.pending_save = cx.spawn(|this, mut cx| async move {
             if let Some(debounce) = debounce {
@@ -1725,7 +1769,7 @@ impl Context {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ContextVersion {
     context: clock::Global,
     buffer: clock::Global,
@@ -1847,7 +1891,7 @@ pub struct SavedMessage {
 
 #[derive(Serialize, Deserialize)]
 pub struct SavedContext {
-    pub id: Option<String>,
+    pub id: Option<ContextId>,
     pub zed: String,
     pub version: String,
     pub text: String,
@@ -1904,7 +1948,7 @@ struct SavedMessagePreV0_4_0 {
 
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_3_0 {
-    id: Option<String>,
+    id: Option<ContextId>,
     zed: String,
     version: String,
     text: String,
@@ -1955,7 +1999,7 @@ impl SavedContextV0_3_0 {
 
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_2_0 {
-    id: Option<String>,
+    id: Option<ContextId>,
     zed: String,
     version: String,
     text: String,
@@ -1984,7 +2028,7 @@ impl SavedContextV0_2_0 {
 
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_1_0 {
-    id: Option<String>,
+    id: Option<ContextId>,
     zed: String,
     version: String,
     text: String,
@@ -2052,7 +2096,7 @@ mod tests {
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let context = cx.new_model(|cx| Context::new(0, registry, None, cx));
+        let context = cx.new_model(|cx| Context::local(registry, None, cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2183,7 +2227,7 @@ mod tests {
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let context = cx.new_model(|cx| Context::new(0, registry, None, cx));
+        let context = cx.new_model(|cx| Context::local(registry, None, cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2276,7 +2320,7 @@ mod tests {
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let context = cx.new_model(|cx| Context::new(0, registry, None, cx));
+        let context = cx.new_model(|cx| Context::local(registry, None, cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2381,7 +2425,7 @@ mod tests {
         slash_command_registry.register_command(active_command::ActiveSlashCommand, false);
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context = cx.new_model(|cx| Context::new(0, registry.clone(), None, cx));
+        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
 
         let output_ranges = Rc::new(RefCell::new(HashSet::default()));
         context.update(cx, |_, cx| {
@@ -2554,7 +2598,7 @@ mod tests {
         cx.set_global(CompletionProvider::Fake(FakeCompletionProvider::default()));
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context = cx.new_model(|cx| Context::new(0, registry.clone(), None, cx));
+        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
         let buffer = context.read_with(cx, |context, _| context.buffer.clone());
         let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
         let message_1 = context.update(cx, |context, cx| {
@@ -2638,13 +2682,23 @@ mod tests {
         let mut contexts = Vec::new();
 
         let num_peers = rng.gen_range(min_peers..=max_peers);
+        let context_id = ContextId::new();
         for i in 0..num_peers {
-            let context = cx.new_model(|cx| Context::new(i, registry.clone(), None, cx));
+            let context = cx.new_model(|cx| {
+                Context::new(
+                    context_id.clone(),
+                    i as ReplicaId,
+                    language::Capability::ReadWrite,
+                    registry.clone(),
+                    None,
+                    cx,
+                )
+            });
 
             cx.update(|cx| {
                 cx.subscribe(&context, {
                     let network = network.clone();
-                    move |context, event, cx| {
+                    move |_, event, _| {
                         if let ContextEvent::Operation(op) = event {
                             network
                                 .lock()
