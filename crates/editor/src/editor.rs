@@ -886,7 +886,7 @@ enum ContextMenuOrigin {
     GutterIndicator(DisplayRow),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct CompletionsMenu {
     id: CompletionId,
     initial_position: Anchor,
@@ -5192,7 +5192,6 @@ impl Editor {
             });
 
             if let Some(choices) = &tabstop.choices {
-                let id = post_inc(&mut self.next_completion_id);
                 let current_buffer = tabstop.ranges.first().and_then(|range| {
                     Some((
                         range.clone(),
@@ -5207,25 +5206,51 @@ impl Editor {
                 // })
 
                 if let Some((first_range, buffer)) = current_buffer {
-                    let completions = vec![Completion {
-                        old_range: first_range.start.text_anchor..first_range.end.text_anchor,
-                        new_text: "My cool completion".to_owned(),
-                        label: CodeLabel {
-                            text: "My cool text".to_owned(),
-                            runs: Default::default(),
-                            filter_range: Default::default(),
-                        },
-                        server_id: LanguageServerId(usize::MAX),
-                        documentation: None,
-                        lsp_completion: Default::default(),
-                        confirm: None,
-                        show_new_completions_on_confirm: false,
-                    }]
-                    .into_boxed_slice();
+                    // let completions = vec![Completion {
+                    //     old_range: first_range.start.text_anchor..first_range.end.text_anchor,
+                    //     new_text: "My cool completion".to_owned(),
+                    //     label: CodeLabel {
+                    //         text: "My cool text".to_owned(),
+                    //         runs: Default::default(),
+                    //         filter_range: Default::default(),
+                    //     },
+                    //     server_id: LanguageServerId(usize::MAX),
+                    //     documentation: None,
+                    //     lsp_completion: Default::default(),
+                    //     confirm: None,
+                    //     show_new_completions_on_confirm: false,
+                    // }]
+                    // .into_boxed_slice();
+
+                    let completions = choices
+                        .iter()
+                        .map(|choice| Completion {
+                            old_range: first_range.start.text_anchor..first_range.end.text_anchor,
+                            new_text: choice.clone(),
+                            label: CodeLabel {
+                                text: choice.clone(),
+                                runs: Default::default(),
+                                filter_range: Default::default(),
+                            },
+                            server_id: LanguageServerId(usize::MAX),
+                            documentation: None,
+                            lsp_completion: Default::default(),
+                            confirm: None,
+                            show_new_completions_on_confirm: true,
+                        })
+                        .collect();
+
                     *self.context_menu.write() = Some(ContextMenu::Completions(
-                        CompletionsMenu::new(id, first_range.start, buffer, completions)
-                            .suppress_documentation_resolution(),
-                    ))
+                        CompletionsMenu::new(
+                            post_inc(&mut self.next_completion_id),
+                            first_range.start,
+                            buffer,
+                            completions,
+                        )
+                        .suppress_documentation_resolution(),
+                    ));
+
+                    self.show_completions(&ShowCompletions { trigger: None }, cx);
                 }
             }
 
