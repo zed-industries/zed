@@ -58,43 +58,46 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("missing prompt")));
         };
 
-        let prompt = format!("{PROMPT_INSTRUCTIONS_BEFORE_SUMMARY}\n{SUMMARY}\n{PROMPT_INSTRUCTIONS_AFTER_SUMMARY}\n{argument}");
-        let request = LanguageModelRequest {
-            model: CompletionProvider::global(cx).model(),
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: prompt,
-            }],
-            stop: vec![],
-            temperature: 1.0,
-        };
-
-        let stream = CompletionProvider::global(cx).complete(request);
         let mut wip_action: String = String::new();
-        let task: Task<Result<String>> = cx.spawn(|_cx| async move {
-            let mut actions_text = String::new();
-            let stream_completion = async {
-                let mut messages = stream.await?;
-
-                while let Some(message) = messages.next().await {
-                    let text = message?;
-
-                    chunked_line(&mut wip_action, &text, |line| {
-                        actions_text.push('/');
-                        actions_text.push_str(line);
-                        actions_text.push('\n');
-                    });
-
-                    smol::future::yield_now().await;
-                }
-
-                anyhow::Ok(())
+        let provider = CompletionProvider::global(cx);
+        for summary in summaries(SUMMARY.to_string(), provider, cx).await? {
+            let prompt = format!("{PROMPT_INSTRUCTIONS_BEFORE_SUMMARY}\n{SUMMARY}\n{PROMPT_INSTRUCTIONS_AFTER_SUMMARY}\n{argument}");
+            let request = LanguageModelRequest {
+                model: CompletionProvider::global(cx).model(),
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: prompt,
+                }],
+                stop: vec![],
+                temperature: 1.0,
             };
 
-            stream_completion.await?;
+            let stream = provider.complete(request);
+            let task: Task<Result<String>> = cx.spawn(|_cx| async move {
+                let mut actions_text = String::new();
+                let stream_completion = async {
+                    let mut messages = stream.await?;
 
-            Ok(actions_text)
-        });
+                    while let Some(message) = messages.next().await {
+                        let text = message?;
+
+                        chunked_line(&mut wip_action, &text, |line| {
+                            actions_text.push('/');
+                            actions_text.push_str(line);
+                            actions_text.push('\n');
+                        });
+
+                        smol::future::yield_now().await;
+                    }
+
+                    anyhow::Ok(())
+                };
+
+                stream_completion.await?;
+
+                Ok(actions_text)
+            });
+        }
 
         // As a convenience, append /auto's argument to the end of the prompt
         // so you don't have to write it again.
@@ -123,11 +126,11 @@ const OPENING_CONTEXT_TAG: &str = "<context>";
 const CLOSING_CONTEXT_TAG: &str = "</context>";
 
 async fn summaries(
-    full_summary: &str,
-    completion_provider: CompletionProvider,
+    full_summary: String,
+    provider: &CompletionProvider,
     cx: &AppContext,
 ) -> Result<Vec<String>> {
-    let model = completion_provider.model();
+    let model = provider.model();
     let max_token_count = model.max_token_count();
     let tokens_needed = |content: String| {
         let request = LanguageModelRequest {
@@ -140,94 +143,47 @@ async fn summaries(
             temperature: 1.0,
         };
 
-        completion_provider.count_tokens(request, cx)
+        provider.count_tokens(request, cx)
     };
     let full_summary_tokens = tokens_needed(full_summary.to_string()).await?;
 
-    // See if the summary will fit in one request. If so, we're done!
+    // If the full summary is under the max token count, we're done!
     if full_summary_tokens <= max_token_count {
-        Ok(vec![full_summary.to_string()])
+        Ok(vec![full_summary])
     } else {
-        let mut buf = String::new();
+        let mut answer = Vec::new();
+        let mut chunk = String::new();
 
-        // We need to split up the request into smaller chunks.
+        // Split up the request into smaller chunks, each of which fits .
         for context in full_summary.trim().split(OPENING_CONTEXT_TAG) {
             let context = context.trim();
 
             if context.ends_with(CLOSING_CONTEXT_TAG) {
-                buf.push_str(OPENING_CONTEXT_TAG);
-                buf.push_str(context);
+                let candidate_chunk = format!("{chunk}{OPENING_CONTEXT_TAG}{context}");
+
+                // In the case of custom model providers, this will do a network request.
+                // That means this will perform one network request per file, which is way too much!
+                // We can address that by changing this algorithm to split the contexts up into chunks
+                // of several context pieces at a time, see if the chunks fit; if they don't,
+                // try a smaller chunk size until they fit, etc. That will be much more complex, but faster.
+                if tokens_needed(candidate_chunk).await? <= max_token_count {
+                    chunk.push_str(OPENING_CONTEXT_TAG);
+                    chunk.push_str(context);
+                } else {
+                    // Adding the current context to the accumulated chunk puts it over the token limit,
+                    // so push what we've accumulated so far to the final list of chunks, and make the
+                    // current context be the beginning of the next accumulated chunk.
+                    if !chunk.is_empty() {
+                        // Don't bother pushing empty chunks.
+                        answer.push(chunk);
+                    }
+
+                    chunk = format!("{OPENING_CONTEXT_TAG}{context}");
+                }
             }
         }
-    }
 
-    // If we can't get chunks of at least this size, decide it's hopeless and we give up.
-    // Otherwise it's going to take an unreasonable number of calls to the model to get everything.
-    const MIN_CHUNK_LENGTH: usize = 2048 + OPENING_CONTEXT_TAG.len() + CLOSING_CONTEXT_TAG.len();
-    let mut chunk_start = 0;
-    let mut chunk_len = full_summary.len();
-    let mut answer = Vec::new();
-
-    loop {
-        let mut chunk = &full_summary[chunk_start..(chunk_start + chunk_len)];
-
-        let Some(last_opened) = chunk.rfind(OPENING_CONTEXT_TAG) else {
-            // If we don't have any opened tags in the slice, then we're done!
-            // One way this can happen is if the slice is empty, because we've done the last chunk.
-            // (This implies that if the whole summary had no tags, we return an empty vec.)
-            return Ok(answer);
-        };
-        let last_closed = chunk.rfind(CLOSING_CONTEXT_TAG).unwrap_or(chunk.len());
-
-        // If we opened one without closing it, defer handling it to the next slice.
-        if last_closed < last_opened {
-            chunk = &chunk[..(last_closed + CLOSING_CONTEXT_TAG.len())];
-            chunk_start = last_opened;
-        }
-
-        let tokens_needed = {
-            let request = LanguageModelRequest {
-                model: model.clone(),
-                messages: vec![LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: chunk.to_string(),
-                }],
-                stop: Vec::new(),
-                temperature: 1.0,
-            };
-
-            completion_provider.count_tokens(request, cx).await?
-        };
-
-        // This isn't going to fit in one request; calculate a new chunk size,
-        // and then loop back to try again with a different chunk size.
-        if tokens_needed > max_token_count {
-            // A chunk length based on a heuristic
-            let heuristic_len = {
-                let ratio = (tokens_needed as f64) / (max_token_count as f64);
-
-                full_summary.len() as f64 * ratio
-            };
-
-            if heuristic_len.is_finite() {
-                chunk_len = (heuristic_len
-                    .round()
-                    // Always make sure the chunk is *at least* divided in half. This way, if we pick
-                    // a chunk size and the next token request says it's still over the limit (which
-                    // could happen!) then we still make progress with a smaller chunk, and can't get
-                    // stuck in an infinit loop.
-                    .min(heuristic_len / 2.0) as usize)
-                    .max(MIN_CHUNK_LENGTH);
-            } else {
-                // There was division by zero, or something overflowed; we won't be able to summarize.
-                return Ok(answer);
-            }
-        } else {
-            // This will fit in a request! Add it to the answer.
-            answer.push(chunk.to_string());
-
-            chunk_start += 1;
-        }
+        Ok(answer)
     }
 }
 
