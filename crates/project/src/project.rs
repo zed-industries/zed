@@ -45,7 +45,7 @@ use language::{
     language_settings::{
         language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
     },
-    markdown::{self, MarkdownHighlight},
+    markdown::{self},
     point_to_lsp, prepare_completion_documentation,
     proto::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
@@ -635,12 +635,6 @@ pub enum SearchResult {
         ranges: Vec<Range<Anchor>>,
     },
     LimitReached,
-}
-
-#[derive(Debug)]
-pub struct SignatureHelp {
-    pub markdown: String,
-    pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,
 }
 
 #[cfg(any(test, feature = "test-support"))]

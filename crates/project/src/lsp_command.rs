@@ -1,7 +1,9 @@
+mod signature_help;
+
 use crate::{
     CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState, SignatureHelp,
+    LocationLink, MarkupContent, Project, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -15,7 +17,7 @@ use language::{
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
-    Language, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
@@ -24,6 +26,10 @@ use lsp::{
 };
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
+
+pub use signature_help::{
+    SignatureHelp, SIGNATURE_HELP_HIGHLIGHT_CURRENT, SIGNATURE_HELP_HIGHLIGHT_OVERLOAD,
+};
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
@@ -1232,109 +1238,6 @@ impl LspCommand for GetDocumentHighlights {
     }
 }
 
-pub const SIGNATURE_HELP_HIGHLIGHT_CURRENT: MarkdownHighlight =
-    MarkdownHighlight::Style(MarkdownHighlightStyle {
-        italic: false,
-        underline: false,
-        strikethrough: false,
-        weight: FontWeight::EXTRA_BOLD,
-    });
-
-pub const SIGNATURE_HELP_HIGHLIGHT_OVERLOAD: MarkdownHighlight =
-    MarkdownHighlight::Style(MarkdownHighlightStyle {
-        italic: true,
-        underline: false,
-        strikethrough: false,
-        weight: FontWeight::NORMAL,
-    });
-
-pub fn create_signature_help_markdown_string(
-    lsp::SignatureHelp {
-        signatures,
-        active_signature,
-        active_parameter,
-        ..
-    }: lsp::SignatureHelp,
-    language: Option<Arc<Language>>,
-) -> Option<(String, Vec<(Range<usize>, MarkdownHighlight)>)> {
-    let function_options_count = signatures.len();
-
-    let signature_information = active_signature
-        .and_then(|active_signature| signatures.get(active_signature as usize))
-        .or_else(|| signatures.first())?;
-
-    let str_for_join = ", ";
-    let parameter_length = signature_information
-        .parameters
-        .as_ref()
-        .map(|parameters| parameters.len())
-        .unwrap_or(0);
-    let mut highlight_start = 0;
-    let (markdown, mut highlights): (Vec<_>, Vec<_>) = signature_information
-        .parameters
-        .as_ref()?
-        .iter()
-        .enumerate()
-        .filter_map(|(i, parameter_information)| {
-            let string = match parameter_information.label.clone() {
-                lsp::ParameterLabel::Simple(string) => string,
-                lsp::ParameterLabel::LabelOffsets(offset) => signature_information
-                    .label
-                    .chars()
-                    .skip(offset[0] as usize)
-                    .take((offset[1] - offset[0]) as usize)
-                    .collect::<String>(),
-            };
-            let string_length = string.len();
-
-            let result = if let Some(active_parameter) = active_parameter {
-                if i == active_parameter as usize {
-                    Some((
-                        string,
-                        Some((
-                            highlight_start..(highlight_start + string_length),
-                            SIGNATURE_HELP_HIGHLIGHT_CURRENT,
-                        )),
-                    ))
-                } else {
-                    Some((string, None))
-                }
-            } else {
-                Some((string, None))
-            };
-
-            if i != parameter_length {
-                highlight_start += string_length + str_for_join.len();
-            }
-
-            result
-        })
-        .unzip();
-
-    if markdown.is_empty() {
-        None
-    } else {
-        let markdown = markdown.join(str_for_join);
-        let language_name = language
-            .map(|n| n.name().to_lowercase())
-            .unwrap_or_default();
-
-        let markdown = if function_options_count >= 2 {
-            let suffix = format!("(+{} overload)", function_options_count - 1);
-            let highlight_start = markdown.len() + 1;
-            highlights.push(Some((
-                highlight_start..(highlight_start + suffix.len()),
-                SIGNATURE_HELP_HIGHLIGHT_OVERLOAD,
-            )));
-            format!("```{language_name}\n{markdown} {suffix}")
-        } else {
-            format!("```{language_name}\n{markdown}")
-        };
-
-        Some((markdown, highlights.into_iter().flatten().collect()))
-    }
-}
-
 #[async_trait(?Send)]
 impl LspCommand for GetSignatureHelp {
     type Response = Option<SignatureHelp>;
@@ -1378,12 +1281,7 @@ impl LspCommand for GetSignatureHelp {
         mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
         let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
-        Ok(message
-            .and_then(|message| create_signature_help_markdown_string(message, language))
-            .map(|(markdown, highlights)| SignatureHelp {
-                markdown,
-                highlights,
-            }))
+        Ok(message.and_then(|message| SignatureHelp::new(message, language)))
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
