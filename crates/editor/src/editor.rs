@@ -11093,6 +11093,7 @@ impl Editor {
                 if *singleton_buffer_edited {
                     if let Some(project) = &self.project {
                         let project = project.read(cx);
+                        #[allow(clippy::mutable_key_type)]
                         let languages_affected = multibuffer
                             .read(cx)
                             .all_buffers()

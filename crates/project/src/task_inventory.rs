@@ -444,11 +444,6 @@ mod test_inventory {
 
     use super::{task_source_kind_preference, TaskSourceKind, UnboundedSender};
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct TestTask {
-        name: String,
-    }
-
     pub(super) fn static_test_source(
         task_names: impl IntoIterator<Item = String>,
         updates: UnboundedSender<()>,
