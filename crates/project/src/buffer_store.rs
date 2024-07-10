@@ -8,13 +8,7 @@ use rpc::{proto, ErrorExt as _, TypedEnvelope};
 use std::{path::Path, sync::Arc};
 use text::BufferId;
 use util::{debug_panic, maybe};
-use worktree::{File, ProjectEntryId};
-
-pub enum BufferStoreEvent {
-    BufferAdded(Model<Buffer>),
-}
-
-impl EventEmitter<BufferStoreEvent> for BufferStore {}
+use worktree::{File, ProjectEntryId, Worktree};
 
 pub struct BufferStore {
     retain_buffers: bool,
@@ -31,6 +25,12 @@ enum OpenBuffer {
     Weak(WeakModel<Buffer>),
     Operations(Vec<Operation>),
 }
+
+pub enum BufferStoreEvent {
+    BufferAdded(Model<Buffer>),
+}
+
+impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl BufferStore {
     pub fn new(retain_buffers: bool) -> Self {
@@ -96,68 +96,6 @@ impl BufferStore {
         }
 
         cx.emit(BufferStoreEvent::BufferAdded(buffer));
-        Ok(())
-    }
-
-    pub fn add_incomplete_buffer(
-        &mut self,
-        buffer_id: BufferId,
-        buffer_result: Result<Buffer>,
-        cx: &mut AppContext,
-    ) {
-        match buffer_result {
-            Ok(buffer) => {
-                let buffer = cx.new_model(|_| buffer);
-                self.incomplete_remote_buffers.insert(buffer_id, buffer);
-            }
-            Err(error) => {
-                if let Some(listeners) = self.remote_buffer_listeners.remove(&buffer_id) {
-                    for listener in listeners {
-                        listener.send(Err(anyhow!(error.cloned()))).ok();
-                    }
-                }
-            }
-        };
-    }
-
-    pub fn add_incomplete_buffer_chunk(
-        &mut self,
-        chunk: proto::BufferChunk,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        let buffer_id = BufferId::new(chunk.buffer_id)?;
-        let buffer = self
-            .incomplete_remote_buffers
-            .get(&buffer_id)
-            .cloned()
-            .ok_or_else(|| {
-                anyhow!(
-                    "received chunk for buffer {} without initial state",
-                    chunk.buffer_id
-                )
-            })?;
-
-        let result = maybe!({
-            let operations = chunk
-                .operations
-                .into_iter()
-                .map(language::proto::deserialize_operation)
-                .collect::<Result<Vec<_>>>()?;
-            buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))
-        });
-
-        if let Err(error) = result {
-            self.incomplete_remote_buffers.remove(&buffer_id);
-            if let Some(listeners) = self.remote_buffer_listeners.remove(&buffer_id) {
-                for listener in listeners {
-                    listener.send(Err(error.cloned())).ok();
-                }
-            }
-        } else if chunk.is_last {
-            self.incomplete_remote_buffers.remove(&buffer_id);
-            self.add_buffer(buffer, cx)?;
-        }
-
         Ok(())
     }
 
@@ -438,6 +376,90 @@ impl BufferStore {
             }
         }
         Ok(proto::Ack {})
+    }
+
+    pub fn handle_create_buffer_for_peer(
+        &mut self,
+        envelope: TypedEnvelope<proto::CreateBufferForPeer>,
+        mut worktrees: impl Iterator<Item = Model<Worktree>>,
+        replica_id: u16,
+        capability: Capability,
+        cx: &mut ModelContext<Self>,
+    ) -> std::result::Result<(), anyhow::Error> {
+        match envelope
+            .payload
+            .variant
+            .ok_or_else(|| anyhow!("missing variant"))?
+        {
+            proto::create_buffer_for_peer::Variant::State(mut state) => {
+                let buffer_id = BufferId::new(state.id)?;
+
+                let buffer_result = maybe!({
+                    let mut buffer_file = None;
+                    if let Some(file) = state.file.take() {
+                        let worktree_id = worktree::WorktreeId::from_proto(file.worktree_id);
+                        let worktree = worktrees
+                            .find(|worktree| worktree.read(cx).id() == worktree_id)
+                            .ok_or_else(|| {
+                                anyhow!("no worktree found for id {}", file.worktree_id)
+                            })?;
+                        buffer_file = Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
+                            as Arc<dyn language::File>);
+                    }
+                    Buffer::from_proto(replica_id, capability, state, buffer_file)
+                });
+
+                match buffer_result {
+                    Ok(buffer) => {
+                        let buffer = cx.new_model(|_| buffer);
+                        self.incomplete_remote_buffers.insert(buffer_id, buffer);
+                    }
+                    Err(error) => {
+                        if let Some(listeners) = self.remote_buffer_listeners.remove(&buffer_id) {
+                            for listener in listeners {
+                                listener.send(Err(anyhow!(error.cloned()))).ok();
+                            }
+                        }
+                    }
+                }
+            }
+            proto::create_buffer_for_peer::Variant::Chunk(chunk) => {
+                let buffer_id = BufferId::new(chunk.buffer_id)?;
+                let buffer = self
+                    .incomplete_remote_buffers
+                    .get(&buffer_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "received chunk for buffer {} without initial state",
+                            chunk.buffer_id
+                        )
+                    })?;
+
+                let result = maybe!({
+                    let operations = chunk
+                        .operations
+                        .into_iter()
+                        .map(language::proto::deserialize_operation)
+                        .collect::<Result<Vec<_>>>()?;
+                    buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))
+                });
+
+                if let Err(error) = result {
+                    self.incomplete_remote_buffers.remove(&buffer_id);
+                    if let Some(listeners) = self.remote_buffer_listeners.remove(&buffer_id) {
+                        for listener in listeners {
+                            listener.send(Err(error.cloned())).ok();
+                        }
+                    }
+                } else if chunk.is_last {
+                    self.incomplete_remote_buffers.remove(&buffer_id);
+                    self.add_buffer(buffer, cx)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

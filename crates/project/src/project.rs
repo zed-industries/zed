@@ -8928,41 +8928,15 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            match envelope
-                .payload
-                .variant
-                .ok_or_else(|| anyhow!("missing variant"))?
-            {
-                proto::create_buffer_for_peer::Variant::State(mut state) => {
-                    let buffer_id = BufferId::new(state.id)?;
-
-                    let buffer_result = maybe!({
-                        let mut buffer_file = None;
-                        if let Some(file) = state.file.take() {
-                            let worktree_id = WorktreeId::from_proto(file.worktree_id);
-                            let worktree =
-                                this.worktree_for_id(worktree_id, cx).ok_or_else(|| {
-                                    anyhow!("no worktree found for id {}", file.worktree_id)
-                                })?;
-                            buffer_file =
-                                Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
-                                    as Arc<dyn language::File>);
-                        }
-                        Buffer::from_proto(this.replica_id(), this.capability(), state, buffer_file)
-                    });
-
-                    this.buffer_store.update(cx, |buffer_store, cx| {
-                        buffer_store.add_incomplete_buffer(buffer_id, buffer_result, cx)
-                    });
-                }
-                proto::create_buffer_for_peer::Variant::Chunk(chunk) => {
-                    this.buffer_store.update(cx, |buffer_store, cx| {
-                        buffer_store.add_incomplete_buffer_chunk(chunk, cx)
-                    })?;
-                }
-            }
-
-            Ok(())
+            this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.handle_create_buffer_for_peer(
+                    envelope,
+                    this.worktrees(),
+                    this.replica_id(),
+                    this.capability(),
+                    cx,
+                )
+            })
         })?
     }
 
