@@ -7,9 +7,10 @@ use crate::{
 };
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, CursorStyle, Hsla, InteractiveElement, IntoElement,
-    Length, MouseButton, ParentElement, Pixels, ScrollHandle, SharedString, Size,
+    MouseButton, ParentElement, Pixels, ScrollHandle, SharedString, Size,
     StatefulInteractiveElement, Styled, Task, View, ViewContext, WeakView,
 };
+use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
@@ -373,46 +374,12 @@ fn show_hover(
     editor.hover_state.info_task = Some(task);
 }
 
-fn transform_codeblock(mut input: String) -> String {
-    input = input.replace("\\n", "\n").trim().to_string();
-
-    let lines: Vec<&str> = input.lines().collect();
-    let mut result: Vec<String> = Vec::new();
-    let mut i = 0;
-    let mut open_block = false;
-    while i < lines.len() {
-        let mut line = lines[i].to_string();
-        if line.starts_with("```") {
-            open_block = !open_block;
-        } else {
-            //remove mid-sentence single linebreaks
-            while i + 1 < lines.len()
-                && !lines[i + 1].trim().is_empty()
-                && !open_block
-                && !lines[i + 1].contains("```")
-            {
-                i += 1;
-                if line.contains('\n') {
-                    break;
-                }
-                line.push(' ');
-                line.push_str(lines[i]);
-            }
-        }
-        result.push(line);
-        i += 1;
-    }
-    let r = result.join("\n");
-    r
-}
-
 async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Option<View<Markdown>> {
-    let mut combined_text = String::new();
     let fallback_language_name = if let Some(ref l) = language {
         let l = Arc::clone(l);
         Some(l.lsp_id().clone())
@@ -420,11 +387,8 @@ async fn parse_blocks(
         None
     };
 
-    for block in blocks {
-        let text = transform_codeblock(block.clone().text);
+    let combined_text = blocks.iter().map(|block| block.text.trim()).join("\n\n");
 
-        combined_text.push_str(text.as_str());
-    }
     let rendered_block = cx
         .new_view(|cx| {
             let settings = ThemeSettings::get_global(cx);
@@ -438,29 +402,14 @@ async fn parse_blocks(
 
             let markdown_style = MarkdownStyle {
                 base_text_style: base_style,
-                code_block: gpui::StyleRefinement {
-                    text: Some(gpui::TextStyleRefinement {
-                        font_family: Some(buffer_font_family.clone()),
-                        color: Some(cx.theme().colors().editor_foreground),
-                        ..Default::default()
-                    }),
-                    margin: gpui::EdgesRefinement {
-                        top: Some(Length::Definite(rems(1.).into())),
-                        left: None,
-                        right: None,
-                        bottom: Some(Length::Definite(rems(1.).into())),
-                    },
-                    ..Default::default()
-                },
+                code_block: gpui::StyleRefinement::default().mt(rems(1.)).mb(rems(1.)),
                 inline_code: gpui::TextStyleRefinement {
-                    font_family: Some(buffer_font_family.clone()),
                     background_color: Some(cx.theme().colors().background),
                     ..Default::default()
                 },
                 rule_color: Color::Muted.color(cx),
                 block_quote_border_color: Color::Muted.color(cx),
                 block_quote: gpui::TextStyleRefinement {
-                    font_family: Some(buffer_font_family.clone()),
                     color: Some(Color::Muted.color(cx)),
                     ..Default::default()
                 },
@@ -1130,14 +1079,7 @@ mod tests {
             );
         });
     }
-    #[gpui::test]
-    async fn test_transform_info_popover_markdown(_cx: &mut gpui::TestAppContext) {
-        //test removing middle of the block line-breaks
-        let input =String::from( "```rust\nfn\n```\n\n---\n\nA function or function pointer.\n\nFunctions are the primary way code is executed within Rust. Function blocks, usually just\ncalled functions, can be defined in a variety of different places and be assigned many\ndifferent attributes and modifiers.\n\nStandalone functions that just sit within a module not attached to anything else are common,\nbut most functions will end up being inside [`impl`](https://doc.rust-lang.org/stable/std/keyword.impl.html) blocks, either on another type itself, or\nas a trait impl for that type.\n\n```rust\nfn standalone_function() {\n    // code\n}\n\npub fn public_thing(argument: bool) -> String {\n    // code\n}\n\nstruct Thing {\n    foo: i32,\n}\n\nimpl Thing {\n    pub fn new() -> Self {\n        Self {\n            foo: 42,\n        }\n    }\n}\n```\n\nIn addition to presenting fixed types in the form of `fn name(arg: type, ..) -> return_type`,\nfunctions can also declare a list of type parameters along with trait bounds that they fall\ninto.\n\n```rust\nfn generic_function<T: Clone>(x: T) -> (T, T, T) {\n    (x.clone(), x.clone(), x.clone())\n}\n\nfn generic_where<T>(x: T) -> T\n    where T: std::ops::Add<Output = T> + Copy\n{\n    x + x + x\n}\n```\n\nDeclaring trait bounds in the angle brackets is functionally identical to using a `where`\nclause. It's up to the programmer to decide which works better in each situation, but `where`\ntends to be better when things get longer than one line.\n\nAlong with being made public via `pub`, `fn` can also have an [`extern`](https://doc.rust-lang.org/stable/std/keyword.extern.html) added for use in\nFFI.\n\nFor more information on the various types of functions and how they're used, consult the [Rust\nbook](https://doc.rust-lang.org/stable/book/ch03-03-how-functions-work.html) or the [Reference](https://doc.rust-lang.org/stable/reference/items/functions.html).");
-        let  target_output = String::from("```rust\nfn\n```\n ---\n A function or function pointer.\n Functions are the primary way code is executed within Rust. Function blocks, usually just called functions, can be defined in a variety of different places and be assigned many different attributes and modifiers.\n Standalone functions that just sit within a module not attached to anything else are common, but most functions will end up being inside [`impl`](https://doc.rust-lang.org/stable/std/keyword.impl.html) blocks, either on another type itself, or as a trait impl for that type.\n\n```rust\nfn standalone_function() {\n    // code\n}\n\npub fn public_thing(argument: bool) -> String {\n    // code\n}\n\nstruct Thing {\n    foo: i32,\n}\n\nimpl Thing {\n    pub fn new() -> Self {\n        Self {\n            foo: 42,\n        }\n    }\n}\n```\n In addition to presenting fixed types in the form of `fn name(arg: type, ..) -> return_type`, functions can also declare a list of type parameters along with trait bounds that they fall into.\n\n```rust\nfn generic_function<T: Clone>(x: T) -> (T, T, T) {\n    (x.clone(), x.clone(), x.clone())\n}\n\nfn generic_where<T>(x: T) -> T\n    where T: std::ops::Add<Output = T> + Copy\n{\n    x + x + x\n}\n```\n Declaring trait bounds in the angle brackets is functionally identical to using a `where` clause. It's up to the programmer to decide which works better in each situation, but `where` tends to be better when things get longer than one line.\n Along with being made public via `pub`, `fn` can also have an [`extern`](https://doc.rust-lang.org/stable/std/keyword.extern.html) added for use in FFI.\n For more information on the various types of functions and how they're used, consult the [Rust book](https://doc.rust-lang.org/stable/book/ch03-03-how-functions-work.html) or the [Reference](https://doc.rust-lang.org/stable/reference/items/functions.html).");
-        let output = transform_codeblock(input);
-        assert_eq!(output, target_output);
-    }
+
     #[gpui::test]
     async fn test_line_ends_trimmed(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});

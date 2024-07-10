@@ -686,12 +686,7 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::SoftBreak => {
-                    let mut d = div().py_3();
-                    d.style().refine(&self.style.break_style.clone());
-                    builder.push_div(d, range, markdown_end);
-                    builder.pop_div()
-                }
+                MarkdownEvent::SoftBreak => builder.push_text(" ", range.start),
                 MarkdownEvent::HardBreak => {
                     let mut d = div().py_3();
                     d.style().refine(&self.style.break_style);
