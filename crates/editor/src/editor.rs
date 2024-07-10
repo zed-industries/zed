@@ -89,13 +89,16 @@ use language::{
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use language::{BufferRow, Runnable, RunnableRange};
+use language::{point_to_lsp, BufferRow, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
-use lsp::{CompletionTriggerKind, DiagnosticSeverity, LanguageServerId};
+use lsp::{
+    CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity, InsertTextFormat,
+    LanguageServerId,
+};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
@@ -1126,11 +1129,10 @@ impl CompletionsMenu {
                                     None
                                 } else {
                                     Some(
-                                        h_flex().ml_4().child(
-                                            Label::new(text.clone())
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        ),
+                                        Label::new(text.clone())
+                                            .ml_4()
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
                                     )
                                 }
                             } else {
@@ -1153,7 +1155,7 @@ impl CompletionsMenu {
                                     }
                                 }))
                                 .child(h_flex().overflow_hidden().child(completion_label))
-                                .end_slot::<Div>(documentation_label),
+                                .end_slot::<Label>(documentation_label),
                         )
                     })
                     .collect()
@@ -1927,6 +1929,11 @@ impl Editor {
             EditorMode::AutoHeight { .. } => "auto_height",
             EditorMode::Full => "full",
         };
+
+        if EditorSettings::get_global(cx).jupyter.enabled {
+            key_context.add("jupyter");
+        }
+
         key_context.set("mode", mode);
         if self.pending_rename.is_some() {
             key_context.add("renaming");
@@ -3123,14 +3130,24 @@ impl Editor {
             let anchor = snapshot.anchor_after(selection.end);
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.start);
-                if let Some(ranges) =
-                    self.linked_editing_ranges_for(start_anchor.text_anchor..anchor.text_anchor, cx)
-                {
-                    for (buffer, edits) in ranges {
-                        linked_edits
-                            .entry(buffer.clone())
-                            .or_default()
-                            .extend(edits.into_iter().map(|range| (range, text.clone())));
+
+                let is_word_char = text.chars().next().map_or(true, |char| {
+                    let scope = snapshot.language_scope_at(start_anchor.to_offset(&snapshot));
+                    let kind = char_kind(&scope, char);
+
+                    kind == CharKind::Word
+                });
+
+                if is_word_char {
+                    if let Some(ranges) = self
+                        .linked_editing_ranges_for(start_anchor.text_anchor..anchor.text_anchor, cx)
+                    {
+                        for (buffer, edits) in ranges {
+                            linked_edits
+                                .entry(buffer.clone())
+                                .or_default()
+                                .extend(edits.into_iter().map(|range| (range, text.clone())));
+                        }
                     }
                 }
             }
@@ -5142,7 +5159,6 @@ impl Editor {
                 })
                 .collect::<Vec<_>>()
         });
-
         if let Some(tabstop) = tabstops.first() {
             self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select_ranges(tabstop.ranges.iter().cloned());
@@ -8469,13 +8485,14 @@ impl Editor {
         runnable: &mut Runnable,
         cx: &WindowContext<'_>,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
-        let (inventory, worktree_id) = project.read_with(cx, |project, cx| {
-            let worktree_id = project
+        let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
+            let (worktree_id, file) = project
                 .buffer_for_id(runnable.buffer)
                 .and_then(|buffer| buffer.read(cx).file())
-                .map(|file| WorktreeId::from_usize(file.worktree_id()));
+                .map(|file| (WorktreeId::from_usize(file.worktree_id()), file.clone()))
+                .unzip();
 
-            (project.task_inventory().clone(), worktree_id)
+            (project.task_inventory().clone(), worktree_id, file)
         });
 
         let inventory = inventory.read(cx);
@@ -8485,7 +8502,12 @@ impl Editor {
             .flat_map(|tag| {
                 let tag = tag.0.clone();
                 inventory
-                    .list_tasks(Some(runnable.language.clone()), worktree_id)
+                    .list_tasks(
+                        file.clone(),
+                        Some(runnable.language.clone()),
+                        worktree_id,
+                        cx,
+                    )
                     .into_iter()
                     .filter(move |(_, template)| {
                         template.tags.iter().any(|source_tag| source_tag == &tag)
@@ -10310,7 +10332,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
+    pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 cx.reveal_path(&file.abs_path(cx));
@@ -11736,6 +11758,97 @@ pub trait CompletionProvider {
     ) -> bool;
 }
 
+fn snippet_completions(
+    project: &Project,
+    buffer: &Model<Buffer>,
+    buffer_position: text::Anchor,
+    cx: &mut AppContext,
+) -> Vec<Completion> {
+    let language = buffer.read(cx).language_at(buffer_position);
+    let language_name = language.as_ref().map(|language| language.lsp_id());
+    let snippet_store = project.snippets().read(cx);
+    let snippets = snippet_store.snippets_for(language_name, cx);
+
+    if snippets.is_empty() {
+        return vec![];
+    }
+    let snapshot = buffer.read(cx).text_snapshot();
+    let chunks = snapshot.reversed_chunks_in_range(text::Anchor::MIN..buffer_position);
+
+    let mut lines = chunks.lines();
+    let Some(line_at) = lines.next().filter(|line| !line.is_empty()) else {
+        return vec![];
+    };
+
+    let scope = language.map(|language| language.default_scope());
+    let mut last_word = line_at
+        .chars()
+        .rev()
+        .take_while(|c| char_kind(&scope, *c) == CharKind::Word)
+        .collect::<String>();
+    last_word = last_word.chars().rev().collect();
+    let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
+    let to_lsp = |point: &text::Anchor| {
+        let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
+        point_to_lsp(end)
+    };
+    let lsp_end = to_lsp(&buffer_position);
+    snippets
+        .into_iter()
+        .filter_map(|snippet| {
+            let matching_prefix = snippet
+                .prefix
+                .iter()
+                .find(|prefix| prefix.starts_with(&last_word))?;
+            let start = as_offset - last_word.len();
+            let start = snapshot.anchor_before(start);
+            let range = start..buffer_position;
+            let lsp_start = to_lsp(&start);
+            let lsp_range = lsp::Range {
+                start: lsp_start,
+                end: lsp_end,
+            };
+            Some(Completion {
+                old_range: range,
+                new_text: snippet.body.clone(),
+                label: CodeLabel {
+                    text: matching_prefix.clone(),
+                    runs: vec![],
+                    filter_range: 0..matching_prefix.len(),
+                },
+                server_id: LanguageServerId(usize::MAX),
+                documentation: snippet
+                    .description
+                    .clone()
+                    .map(|description| Documentation::SingleLine(description)),
+                lsp_completion: lsp::CompletionItem {
+                    label: snippet.prefix.first().unwrap().clone(),
+                    kind: Some(CompletionItemKind::SNIPPET),
+                    label_details: snippet.description.as_ref().map(|description| {
+                        lsp::CompletionItemLabelDetails {
+                            detail: Some(description.clone()),
+                            description: None,
+                        }
+                    }),
+                    insert_text_format: Some(InsertTextFormat::SNIPPET),
+                    text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                        lsp::InsertReplaceEdit {
+                            new_text: snippet.body.clone(),
+                            insert: lsp_range,
+                            replace: lsp_range,
+                        },
+                    )),
+                    filter_text: Some(snippet.body.clone()),
+                    sort_text: Some(char::MAX.to_string()),
+                    ..Default::default()
+                },
+                confirm: None,
+                show_new_completions_on_confirm: false,
+            })
+        })
+        .collect()
+}
+
 impl CompletionProvider for Model<Project> {
     fn completions(
         &self,
@@ -11745,7 +11858,14 @@ impl CompletionProvider for Model<Project> {
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<Completion>>> {
         self.update(cx, |project, cx| {
-            project.completions(&buffer, buffer_position, options, cx)
+            let snippets = snippet_completions(project, buffer, buffer_position, cx);
+            let project_completions = project.completions(&buffer, buffer_position, options, cx);
+            cx.background_executor().spawn(async move {
+                let mut completions = project_completions.await?;
+                //let snippets = snippets.into_iter().;
+                completions.extend(snippets);
+                Ok(completions)
+            })
         })
     }
 
@@ -12703,7 +12823,7 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
         })
 }
 
-trait RangeToAnchorExt {
+pub trait RangeToAnchorExt {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor>;
 }
 

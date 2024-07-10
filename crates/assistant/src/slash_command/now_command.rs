@@ -2,11 +2,13 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
-use chrono::{DateTime, Local};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+};
+use chrono::Local;
 use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
-use ui::{prelude::*, ButtonLike, ElevationIndex};
+use ui::prelude::*;
 use workspace::Workspace;
 
 pub(crate) struct NowSlashCommand;
@@ -34,7 +36,7 @@ impl SlashCommand for NowSlashCommand {
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>> {
+    ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
 
@@ -46,7 +48,7 @@ impl SlashCommand for NowSlashCommand {
         _cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let now = Local::now();
-        let text = format!("Today is {now}.", now = now.to_rfc3339());
+        let text = format!("Today is {now}.", now = now.to_rfc2822());
         let range = 0..text.len();
 
         Task::ready(Ok(SlashCommandOutput {
@@ -54,29 +56,9 @@ impl SlashCommand for NowSlashCommand {
             sections: vec![SlashCommandOutputSection {
                 range,
                 icon: IconName::CountdownTimer,
-                label: now.to_rfc3339().into(),
+                label: now.to_rfc2822().into(),
             }],
             run_commands_in_text: false,
         }))
-    }
-}
-
-#[derive(IntoElement)]
-struct NowPlaceholder {
-    pub id: ElementId,
-    pub unfold: Arc<dyn Fn(&mut WindowContext)>,
-    pub now: DateTime<Local>,
-}
-
-impl RenderOnce for NowPlaceholder {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let unfold = self.unfold;
-
-        ButtonLike::new(self.id)
-            .style(ButtonStyle::Filled)
-            .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(IconName::CountdownTimer))
-            .child(Label::new(self.now.to_rfc3339()))
-            .on_click(move |_, cx| unfold(cx))
     }
 }

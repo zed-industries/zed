@@ -75,6 +75,19 @@ impl IconSize {
             IconSize::Medium => rems_from_px(16.),
         }
     }
+
+    /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
+    pub(crate) fn square(&self, cx: &mut WindowContext) -> Pixels {
+        let icon_size = self.rems() * cx.rem_size();
+        let padding = match self {
+            IconSize::Indicator => Spacing::None.px(cx),
+            IconSize::XSmall => Spacing::XSmall.px(cx),
+            IconSize::Small => Spacing::XSmall.px(cx),
+            IconSize::Medium => Spacing::XSmall.px(cx),
+        };
+
+        icon_size + padding * 2.
+    }
 }
 
 #[derive(Debug, PartialEq, Copy, Clone, EnumIter, Serialize, Deserialize)]
@@ -146,6 +159,10 @@ pub enum IconName {
     FontSize,
     FontWeight,
     Github,
+    GenericMinimize,
+    GenericMaximize,
+    GenericClose,
+    GenericRestore,
     Hash,
     HistoryRerun,
     Indicator,
@@ -290,6 +307,10 @@ impl IconName {
             IconName::FontSize => "icons/font_size.svg",
             IconName::FontWeight => "icons/font_weight.svg",
             IconName::Github => "icons/github.svg",
+            IconName::GenericMinimize => "icons/generic_minimize.svg",
+            IconName::GenericMaximize => "icons/generic_maximize.svg",
+            IconName::GenericClose => "icons/generic_close.svg",
+            IconName::GenericRestore => "icons/generic_restore.svg",
             IconName::Hash => "icons/hash.svg",
             IconName::HistoryRerun => "icons/history_rerun.svg",
             IconName::Indicator => "icons/indicator.svg",

@@ -591,9 +591,7 @@ impl ProjectSearchView {
         }
 
         self.results_editor.update(cx, |editor, cx| {
-            for item in &match_ranges {
-                editor.replace(item, &query, cx);
-            }
+            editor.replace_all(&mut match_ranges.iter(), &query, cx);
         });
 
         self.model.update(cx, |model, _cx| {
@@ -1460,9 +1458,9 @@ impl Render for ProjectSearchBar {
             )
             .when(limit_reached, |this| {
                 this.child(
-                    div()
-                        .child(Label::new("Search limit reached").color(Color::Warning))
-                        .ml_2(),
+                    Label::new("Search limit reached")
+                        .ml_2()
+                        .color(Color::Warning),
                 )
             });
 

@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ops::Deref;
+use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
@@ -16,7 +17,7 @@ use x11rb::errors::ConnectionError;
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xinput::ConnectionExt;
 use x11rb::protocol::xkb::ConnectionExt as _;
-use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
+use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _, KeyPressEvent};
 use x11rb::protocol::{randr, render, xinput, xkb, xproto, Event};
 use x11rb::resource_manager::Database;
 use x11rb::xcb_ffi::XCBConnection;
@@ -29,19 +30,18 @@ use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput,
-    Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    DisplayId, Keystroke, Modifiers, ModifiersChangedEvent, Pixels, Platform, PlatformDisplay,
+    PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
-use super::{
-    super::{get_xkb_compose_state, open_uri_internal, SCROLL_LINES},
-    X11Display, X11WindowStatePtr, XcbAtoms,
-};
 use super::{button_of_key, modifiers_from_state, pressed_button_from_mask};
+use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
-use crate::platform::linux::is_within_click_distance;
-use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
+use crate::platform::linux::platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES};
 use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
+use crate::platform::linux::{
+    get_xkb_compose_state, is_within_click_distance, open_uri_internal, reveal_path_internal,
+};
 
 pub(super) const XINPUT_MASTER_DEVICE: u16 = 1;
 
@@ -105,6 +105,7 @@ pub struct X11ClientState {
     pub(crate) scale_factor: f32,
 
     pub(crate) xcb_connection: Rc<XCBConnection>,
+    client_side_decorations_supported: bool,
     pub(crate) x_root_index: usize,
     pub(crate) _resource_database: Database,
     pub(crate) atoms: XcbAtoms,
@@ -118,6 +119,7 @@ pub struct X11ClientState {
     pub(crate) compose_state: Option<xkbc::compose::State>,
     pub(crate) pre_edit_text: Option<String>,
     pub(crate) composing: bool,
+    pub(crate) pre_ime_key_down: Option<Keystroke>,
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
     pub(crate) cursor_cache: HashMap<CursorStyle, xproto::Cursor>,
@@ -218,13 +220,25 @@ impl X11Client {
             .map(|class| *class)
             .collect::<Vec<_>>();
 
-        let atoms = XcbAtoms::new(&xcb_connection).unwrap();
+        let atoms = XcbAtoms::new(&xcb_connection).unwrap().reply().unwrap();
+
+        let root = xcb_connection.setup().roots[0].root;
+        let compositor_present = check_compositor_present(&xcb_connection, root);
+        let gtk_frame_extents_supported =
+            check_gtk_frame_extents_supported(&xcb_connection, &atoms, root);
+        let client_side_decorations_supported = compositor_present && gtk_frame_extents_supported;
+        log::info!(
+            "x11: compositor present: {}, gtk_frame_extents_supported: {}",
+            compositor_present,
+            gtk_frame_extents_supported
+        );
+
         let xkb = xcb_connection
             .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION)
+            .unwrap()
+            .reply()
             .unwrap();
 
-        let atoms = atoms.reply().unwrap();
-        let xkb = xkb.reply().unwrap();
         let events = xkb::EventType::STATE_NOTIFY;
         xcb_connection
             .xkb_select_events(
@@ -288,65 +302,7 @@ impl X11Client {
                 {
                     let xcb_connection = xcb_connection.clone();
                     move |_readiness, _, client| {
-                        let mut events = Vec::new();
-                        let mut windows_to_refresh = HashSet::new();
-
-                        while let Some(event) = xcb_connection.poll_for_event()? {
-                            if let Event::Expose(event) = event {
-                                windows_to_refresh.insert(event.window);
-                            } else {
-                                events.push(event);
-                            }
-                        }
-
-                        for window in windows_to_refresh.into_iter() {
-                            if let Some(window) = client.get_window(window) {
-                                window.refresh();
-                            }
-                        }
-
-                        for event in events.into_iter() {
-                            let mut state = client.0.borrow_mut();
-                            if state.ximc.is_none() || state.xim_handler.is_none() {
-                                drop(state);
-                                client.handle_event(event);
-                                continue;
-                            }
-
-                            let mut ximc = state.ximc.take().unwrap();
-                            let mut xim_handler = state.xim_handler.take().unwrap();
-                            let xim_connected = xim_handler.connected;
-                            drop(state);
-
-                            let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
-                                Ok(handled) => handled,
-                                Err(err) => {
-                                    log::error!("XIMClientError: {}", err);
-                                    false
-                                }
-                            };
-                            let xim_callback_event = xim_handler.last_callback_event.take();
-
-                            let mut state = client.0.borrow_mut();
-                            state.ximc = Some(ximc);
-                            state.xim_handler = Some(xim_handler);
-                            drop(state);
-
-                            if let Some(event) = xim_callback_event {
-                                client.handle_xim_callback_event(event);
-                            }
-
-                            if xim_filtered {
-                                continue;
-                            }
-
-                            if xim_connected {
-                                client.xim_handle_event(event);
-                            } else {
-                                client.handle_event(event);
-                            }
-                        }
-
+                        client.process_x11_events(&xcb_connection)?;
                         Ok(calloop::PostAction::Continue)
                     }
                 },
@@ -380,6 +336,7 @@ impl X11Client {
             scale_factor,
 
             xcb_connection,
+            client_side_decorations_supported,
             x_root_index,
             _resource_database: resource_database,
             atoms,
@@ -391,6 +348,7 @@ impl X11Client {
 
             compose_state,
             pre_edit_text: None,
+            pre_ime_key_down: None,
             composing: false,
 
             cursor_handle,
@@ -404,6 +362,125 @@ impl X11Client {
             clipboard,
             clipboard_item: None,
         })))
+    }
+
+    pub fn process_x11_events(
+        &self,
+        xcb_connection: &XCBConnection,
+    ) -> Result<(), EventHandlerError> {
+        loop {
+            let mut events = Vec::new();
+            let mut windows_to_refresh = HashSet::new();
+
+            let mut last_key_release = None;
+            let mut last_key_press: Option<KeyPressEvent> = None;
+
+            loop {
+                match xcb_connection.poll_for_event() {
+                    Ok(Some(event)) => {
+                        match event {
+                            Event::Expose(expose_event) => {
+                                windows_to_refresh.insert(expose_event.window);
+                            }
+                            Event::KeyRelease(_) => {
+                                last_key_release = Some(event);
+                            }
+                            Event::KeyPress(key_press) => {
+                                if let Some(last_press) = last_key_press.as_ref() {
+                                    if last_press.detail == key_press.detail {
+                                        continue;
+                                    }
+                                }
+
+                                if let Some(Event::KeyRelease(key_release)) =
+                                    last_key_release.take()
+                                {
+                                    // We ignore that last KeyRelease if it's too close to this KeyPress,
+                                    // suggesting that it's auto-generated by X11 as a key-repeat event.
+                                    if key_release.detail != key_press.detail
+                                        || key_press.time.saturating_sub(key_release.time) > 20
+                                    {
+                                        events.push(Event::KeyRelease(key_release));
+                                    }
+                                }
+                                events.push(Event::KeyPress(key_press));
+                                last_key_press = Some(key_press);
+                            }
+                            _ => {
+                                if let Some(release_event) = last_key_release.take() {
+                                    events.push(release_event);
+                                }
+                                events.push(event);
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        // Add any remaining stored KeyRelease event
+                        if let Some(release_event) = last_key_release.take() {
+                            events.push(release_event);
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        log::warn!("error polling for X11 events: {e:?}");
+                        break;
+                    }
+                }
+            }
+
+            if events.is_empty() && windows_to_refresh.is_empty() {
+                break;
+            }
+
+            for window in windows_to_refresh.into_iter() {
+                if let Some(window) = self.get_window(window) {
+                    window.refresh();
+                }
+            }
+
+            for event in events.into_iter() {
+                let mut state = self.0.borrow_mut();
+                if state.ximc.is_none() || state.xim_handler.is_none() {
+                    drop(state);
+                    self.handle_event(event);
+                    continue;
+                }
+
+                let mut ximc = state.ximc.take().unwrap();
+                let mut xim_handler = state.xim_handler.take().unwrap();
+                let xim_connected = xim_handler.connected;
+                drop(state);
+
+                let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
+                    Ok(handled) => handled,
+                    Err(err) => {
+                        log::error!("XIMClientError: {}", err);
+                        false
+                    }
+                };
+                let xim_callback_event = xim_handler.last_callback_event.take();
+
+                let mut state = self.0.borrow_mut();
+                state.ximc = Some(ximc);
+                state.xim_handler = Some(xim_handler);
+                drop(state);
+
+                if let Some(event) = xim_callback_event {
+                    self.handle_xim_callback_event(event);
+                }
+
+                if xim_filtered {
+                    continue;
+                }
+
+                if xim_connected {
+                    self.xim_handle_event(event);
+                } else {
+                    self.handle_event(event);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn enable_ime(&self) {
@@ -472,7 +549,7 @@ impl X11Client {
         match event {
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
-                let [atom, ..] = event.data.as_data32();
+                let [atom, _arg1, arg2, arg3, _arg4] = event.data.as_data32();
                 let mut state = self.0.borrow_mut();
 
                 if atom == state.atoms.WM_DELETE_WINDOW {
@@ -481,6 +558,12 @@ impl X11Client {
                         // Rest of the close logic is handled in drop_window()
                         window.close();
                     }
+                } else if atom == state.atoms._NET_WM_SYNC_REQUEST {
+                    window.state.borrow_mut().last_sync_counter =
+                        Some(x11rb::protocol::sync::Int64 {
+                            lo: arg2,
+                            hi: arg3 as i32,
+                        })
                 }
             }
             Event::ConfigureNotify(event) => {
@@ -497,9 +580,9 @@ impl X11Client {
                 let window = self.get_window(event.window)?;
                 window.configure(bounds);
             }
-            Event::Expose(event) => {
+            Event::PropertyNotify(event) => {
                 let window = self.get_window(event.window)?;
-                window.refresh();
+                window.property_notify(event);
             }
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
@@ -528,8 +611,8 @@ impl X11Client {
                     event.base_mods.into(),
                     event.latched_mods.into(),
                     event.locked_mods.into(),
-                    0,
-                    0,
+                    event.base_group as u32,
+                    event.latched_group as u32,
                     event.locked_group.into(),
                 );
 
@@ -553,6 +636,7 @@ impl X11Client {
 
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
+                state.pre_ime_key_down.take();
 
                 let keystroke = {
                     let code = event.detail.into();
@@ -767,10 +851,15 @@ impl X11Client {
 
                             if let Some(old_scroll) = old_scroll {
                                 let delta_scroll = old_scroll - new_scroll;
+                                let (x, y) = if !modifiers.shift {
+                                    (0.0, delta_scroll)
+                                } else {
+                                    (delta_scroll, 0.0)
+                                };
                                 window.handle_input(PlatformInput::ScrollWheel(
                                     crate::ScrollWheelEvent {
                                         position,
-                                        delta: ScrollDelta::Lines(Point::new(0.0, delta_scroll)),
+                                        delta: ScrollDelta::Lines(Point::new(x, y)),
                                         modifiers,
                                         touch_phase: TouchPhase::default(),
                                     },
@@ -827,6 +916,11 @@ impl X11Client {
         match event {
             Event::KeyPress(event) | Event::KeyRelease(event) => {
                 let mut state = self.0.borrow_mut();
+                state.pre_ime_key_down = Some(Keystroke::from_xkb(
+                    &state.xkb,
+                    state.modifiers,
+                    event.detail.into(),
+                ));
                 let mut ximc = state.ximc.take().unwrap();
                 let mut xim_handler = state.xim_handler.take().unwrap();
                 drop(state);
@@ -853,6 +947,16 @@ impl X11Client {
     fn xim_handle_commit(&self, window: xproto::Window, text: String) -> Option<()> {
         let window = self.get_window(window).unwrap();
         let mut state = self.0.borrow_mut();
+        if !state.composing {
+            if let Some(keystroke) = state.pre_ime_key_down.take() {
+                drop(state);
+                window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
+                    keystroke,
+                    is_held: false,
+                }));
+                return Some(());
+            }
+        }
         state.composing = false;
         drop(state);
 
@@ -965,6 +1069,7 @@ impl LinuxClient for X11Client {
             state.common.foreground_executor.clone(),
             params,
             &state.xcb_connection,
+            state.client_side_decorations_supported,
             state.x_root_index,
             x_window,
             &state.atoms,
@@ -1002,26 +1107,18 @@ impl LinuxClient for X11Client {
             .insert_source(calloop::timer::Timer::immediate(), {
                 let refresh_duration = mode_refresh_rate(mode);
                 move |mut instant, (), client| {
-                    let state = client.0.borrow_mut();
-                    state
-                        .xcb_connection
-                        .send_event(
-                            false,
-                            x_window,
-                            xproto::EventMask::EXPOSURE,
-                            xproto::ExposeEvent {
-                                response_type: xproto::EXPOSE_EVENT,
-                                sequence: 0,
-                                window: x_window,
-                                x: 0,
-                                y: 0,
-                                width: 0,
-                                height: 0,
-                                count: 1,
-                            },
-                        )
-                        .unwrap();
-                    let _ = state.xcb_connection.flush().unwrap();
+                    let xcb_connection = {
+                        let state = client.0.borrow_mut();
+                        let xcb_connection = state.xcb_connection.clone();
+                        if let Some(window) = state.windows.get(&x_window) {
+                            let window = window.window.clone();
+                            drop(state);
+                            window.refresh();
+                        }
+                        xcb_connection
+                    };
+                    client.process_x11_events(&xcb_connection).log_err();
+
                     // Take into account that some frames have been skipped
                     let now = Instant::now();
                     while instant < now {
@@ -1076,11 +1173,17 @@ impl LinuxClient for X11Client {
                     ..Default::default()
                 },
             )
-            .expect("failed to change window cursor");
+            .expect("failed to change window cursor")
+            .check()
+            .unwrap();
     }
 
     fn open_uri(&self, uri: &str) {
-        open_uri_internal(uri, None);
+        open_uri_internal(self.background_executor(), uri, None);
+    }
+
+    fn reveal_path(&self, path: PathBuf) {
+        reveal_path_internal(self.background_executor(), path, None);
     }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {
@@ -1193,4 +1296,105 @@ pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
 
 fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
     value.integral as f32 + value.frac as f32 / u32::MAX as f32
+}
+
+fn check_compositor_present(xcb_connection: &XCBConnection, root: u32) -> bool {
+    // Method 1: Check for _NET_WM_CM_S{root}
+    let atom_name = format!("_NET_WM_CM_S{}", root);
+    let atom = xcb_connection
+        .intern_atom(false, atom_name.as_bytes())
+        .unwrap()
+        .reply()
+        .map(|reply| reply.atom)
+        .unwrap_or(0);
+
+    let method1 = if atom != 0 {
+        xcb_connection
+            .get_selection_owner(atom)
+            .unwrap()
+            .reply()
+            .map(|reply| reply.owner != 0)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    // Method 2: Check for _NET_WM_CM_OWNER
+    let atom_name = "_NET_WM_CM_OWNER";
+    let atom = xcb_connection
+        .intern_atom(false, atom_name.as_bytes())
+        .unwrap()
+        .reply()
+        .map(|reply| reply.atom)
+        .unwrap_or(0);
+
+    let method2 = if atom != 0 {
+        xcb_connection
+            .get_property(false, root, atom, xproto::AtomEnum::WINDOW, 0, 1)
+            .unwrap()
+            .reply()
+            .map(|reply| reply.value_len > 0)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    // Method 3: Check for _NET_SUPPORTING_WM_CHECK
+    let atom_name = "_NET_SUPPORTING_WM_CHECK";
+    let atom = xcb_connection
+        .intern_atom(false, atom_name.as_bytes())
+        .unwrap()
+        .reply()
+        .map(|reply| reply.atom)
+        .unwrap_or(0);
+
+    let method3 = if atom != 0 {
+        xcb_connection
+            .get_property(false, root, atom, xproto::AtomEnum::WINDOW, 0, 1)
+            .unwrap()
+            .reply()
+            .map(|reply| reply.value_len > 0)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    // TODO: Remove this
+    log::info!(
+        "Compositor detection: _NET_WM_CM_S?={}, _NET_WM_CM_OWNER={}, _NET_SUPPORTING_WM_CHECK={}",
+        method1,
+        method2,
+        method3
+    );
+
+    method1 || method2 || method3
+}
+
+fn check_gtk_frame_extents_supported(
+    xcb_connection: &XCBConnection,
+    atoms: &XcbAtoms,
+    root: xproto::Window,
+) -> bool {
+    let supported_atoms = xcb_connection
+        .get_property(
+            false,
+            root,
+            atoms._NET_SUPPORTED,
+            xproto::AtomEnum::ATOM,
+            0,
+            1024,
+        )
+        .unwrap()
+        .reply()
+        .map(|reply| {
+            // Convert Vec<u8> to Vec<u32>
+            reply
+                .value
+                .chunks_exact(4)
+                .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect::<Vec<u32>>()
+        })
+        .unwrap_or_default();
+
+    supported_atoms.contains(&atoms._GTK_FRAME_EXTENTS)
 }

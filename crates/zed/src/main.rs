@@ -206,6 +206,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     markdown_preview::init(cx);
     welcome::init(cx);
     extensions_ui::init(cx);
+    snippet_provider::init(cx);
 
     // Initialize each completion provider. Settings are used for toggling between them.
     let copilot_language_server_id = app_state.languages.next_language_server_id();
@@ -221,7 +222,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
 
     assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
 
-    repl::init(app_state.fs.clone(), cx);
+    repl::init(cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();

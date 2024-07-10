@@ -267,7 +267,7 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 | Redo                             | Editor     | `⌘ + Shift + Z`                 |
 | Redo selection                   | Editor     | `⌘ + Shift + U`                 |
 | Rename                           | Editor     | `F2`                            |
-| Reveal in finder                 | Editor     | `Alt + ⌘ + R`                   |
+| Reveal in File Manager           | Editor     | `Alt + ⌘ + R`                   |
 | Revert selected hunks            | Editor     | `⌘ + Alt + Z`                   |
 | Select all                       | Editor     | `⌘ + A`                         |
 | Select all matches               | Editor     | `⌘ + Shift + L`                 |
@@ -483,7 +483,7 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 | Paste                   | Project Panel | `⌘ + V`               |
 | Rename                  | Project Panel | `Enter`               |
 | Rename                  | Project Panel | `F2`                  |
-| Reveal in finder        | Project Panel | `Alt + ⌘ + R`         |
+| Reveal in File Manager  | Project Panel | `Alt + ⌘ + R`         |
 
 #### Project Search Bar
 

@@ -291,14 +291,41 @@ impl ScrollDelta {
     }
 
     /// Combines two scroll deltas into one.
+    /// If the signs of the deltas are the same (both positive or both negative),
+    /// the deltas are added together. If the signs are opposite, the second delta
+    /// (other) is used, effectively overriding the first delta.
     pub fn coalesce(self, other: ScrollDelta) -> ScrollDelta {
         match (self, other) {
-            (ScrollDelta::Pixels(px_a), ScrollDelta::Pixels(px_b)) => {
-                ScrollDelta::Pixels(px_a + px_b)
+            (ScrollDelta::Pixels(a), ScrollDelta::Pixels(b)) => {
+                let x = if a.x.signum() * b.x.signum() >= 0. {
+                    a.x + b.x
+                } else {
+                    b.x
+                };
+
+                let y = if a.y.signum() * b.y.signum() >= 0. {
+                    a.y + b.y
+                } else {
+                    b.y
+                };
+
+                ScrollDelta::Pixels(point(x, y))
             }
 
-            (ScrollDelta::Lines(lines_a), ScrollDelta::Lines(lines_b)) => {
-                ScrollDelta::Lines(lines_a + lines_b)
+            (ScrollDelta::Lines(a), ScrollDelta::Lines(b)) => {
+                let x = if a.x.signum() * b.x.signum() >= 0. {
+                    a.x + b.x
+                } else {
+                    b.x
+                };
+
+                let y = if a.y.signum() * b.y.signum() >= 0. {
+                    a.y + b.y
+                } else {
+                    b.y
+                };
+
+                ScrollDelta::Lines(point(x, y))
             }
 
             _ => other,

@@ -1,4 +1,4 @@
-use gpui::{relative, AnyElement, Styled};
+use gpui::{relative, AnyElement, FontWeight, StyleRefinement, Styled};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -25,6 +25,9 @@ pub trait LabelCommon {
     /// Sets the size of the label using a [`LabelSize`].
     fn size(self, size: LabelSize) -> Self;
 
+    /// Sets the font weight of the label.
+    fn weight(self, weight: FontWeight) -> Self;
+
     /// Sets the line height style of the label using a [`LineHeightStyle`].
     fn line_height_style(self, line_height_style: LineHeightStyle) -> Self;
 
@@ -40,7 +43,9 @@ pub trait LabelCommon {
 
 #[derive(IntoElement)]
 pub struct LabelLike {
+    pub(super) base: Div,
     size: LabelSize,
+    weight: FontWeight,
     line_height_style: LineHeightStyle,
     pub(crate) color: Color,
     strikethrough: bool,
@@ -51,7 +56,9 @@ pub struct LabelLike {
 impl LabelLike {
     pub fn new() -> Self {
         Self {
+            base: div(),
             size: LabelSize::Default,
+            weight: FontWeight::default(),
             line_height_style: LineHeightStyle::default(),
             color: Color::Default,
             strikethrough: false,
@@ -61,9 +68,25 @@ impl LabelLike {
     }
 }
 
+// Style methods.
+impl LabelLike {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.base.style()
+    }
+
+    gpui::margin_style_methods!({
+        visibility: pub
+    });
+}
+
 impl LabelCommon for LabelLike {
     fn size(mut self, size: LabelSize) -> Self {
         self.size = size;
+        self
+    }
+
+    fn weight(mut self, weight: FontWeight) -> Self {
+        self.weight = weight;
         self
     }
 
@@ -96,7 +119,7 @@ impl ParentElement for LabelLike {
 
 impl RenderOnce for LabelLike {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        div()
+        self.base
             .when(self.strikethrough, |this| {
                 this.relative().child(
                     div()
@@ -118,6 +141,7 @@ impl RenderOnce for LabelLike {
             })
             .when(self.italic, |this| this.italic())
             .text_color(self.color.color(cx))
+            .font_weight(self.weight)
             .children(self.children)
     }
 }

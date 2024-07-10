@@ -124,7 +124,6 @@ wayland-protocols = { version = "0.31.2", features = [
 ] }
 wayland-protocols-plasma = { version = "0.2.0", features = ["client"] }
 oo7 = "0.3.0"
-open = "5.1.2"
 filedescriptor = "0.8.2"
 x11rb = { version = "0.13.0", features = [
     "allow-unsafe-code",
@@ -133,6 +132,7 @@ x11rb = { version = "0.13.0", features = [
     "xinput",
     "cursor",
     "resource_manager",
+    "sync",
 ] }
 xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 xim = { git = "https://github.com/npmania/xim-rs", rev = "27132caffc5b9bc9c432ca4afad184ab6e7c16af", features = [
@@ -158,6 +158,10 @@ path = "examples/image/image.rs"
 [[example]]
 name = "set_menus"
 path = "examples/set_menus.rs"
+
+[[example]]
+name = "window_shadow"
+path = "examples/window_shadow.rs"
 
 [[example]]
 name = "input"

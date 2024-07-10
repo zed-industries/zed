@@ -15,6 +15,16 @@ pub fn init(cx: &mut AppContext) {
     SlashCommandRegistry::default_global(cx);
 }
 
+#[derive(Debug)]
+pub struct ArgumentCompletion {
+    /// The label to display for this completion.
+    pub label: String,
+    /// The new text that should be inserted into the command when this completion is accepted.
+    pub new_text: String,
+    /// Whether the command should be run when accepting this completion.
+    pub run_command: bool,
+}
+
 pub trait SlashCommand: 'static + Send + Sync {
     fn name(&self) -> String;
     fn label(&self, _cx: &AppContext) -> CodeLabel {
@@ -28,7 +38,7 @@ pub trait SlashCommand: 'static + Send + Sync {
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<String>>>;
+    ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
     fn run(
         self: Arc<Self>,
