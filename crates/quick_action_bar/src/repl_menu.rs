@@ -1,6 +1,7 @@
+
 use gpui::AnyElement;
 use repl::{ExecutionState, Kernel, KernelSpecification, RuntimePanel, Session, SessionSupport};
-use ui::{prelude::*, Tooltip};
+use ui::{prelude::*, ButtonLike, IconWithIndicator, IntoElement, Tooltip};
 
 use crate::QuickActionBar;
 
@@ -33,14 +34,6 @@ impl QuickActionBar {
             SessionSupport::Unsupported => return None,
         };
 
-        let icon = |kernel: &Kernel| match kernel {
-            Kernel::RunningKernel(_) => IconName::ReplPlay,
-            Kernel::StartingKernel(_) => IconName::ReplNeutral,
-            Kernel::ErroredLaunch(_) => IconName::ReplNeutral,
-            Kernel::ShuttingDown => IconName::ReplNeutral,
-            Kernel::Shutdown => IconName::ReplPause,
-        };
-
         let kernel_name: SharedString = session.kernel_specification.name.clone().into();
 
         let tooltip = |session: &Session| {
@@ -60,13 +53,14 @@ impl QuickActionBar {
 
         let tooltip_text: SharedString = SharedString::from(tooltip(&session).clone());
 
-        let button = IconButton::new("toggle_repl_icon", icon(&session.kernel))
+        let button = ButtonLike::new("toggle_repl_icon")
+            .child(IconWithIndicator::new(Icon::new(IconName::Play), Some(session.kernel.dot())).indicator_border_color(Some(cx.theme().colors().border)))
             .size(ButtonSize::Compact)
-            .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx))
-            .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
-            .into_any_element();
+                .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
+
+            .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {}))).into_any_element();
 
         Some(button)
     }
@@ -80,9 +74,9 @@ impl QuickActionBar {
             SharedString::from(format!("Start REPL for {}", kernel_specification.name));
 
         Some(
-            IconButton::new("toggle_repl_icon", IconName::ReplOff)
+            IconButton::new("toggle_repl_icon", IconName::Play)
                 .size(ButtonSize::Compact)
-                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
                 .style(ButtonStyle::Subtle)
                 .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
                 .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
@@ -97,9 +91,9 @@ impl QuickActionBar {
     ) -> Option<AnyElement> {
         let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
         Some(
-            IconButton::new("toggle_repl_icon", IconName::ReplOff)
+            IconButton::new("toggle_repl_icon", IconName::Play)
                 .size(ButtonSize::Compact)
-                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
                 .style(ButtonStyle::Subtle)
                 .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
                 .on_click(|_, cx| cx.open_url(ZED_REPL_DOCUMENTATION))
