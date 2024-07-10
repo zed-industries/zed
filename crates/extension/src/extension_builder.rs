@@ -526,6 +526,11 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
         }
     }
 
+    let snippets_json_path = extension_path.join("snippets.json");
+    if snippets_json_path.exists() {
+        manifest.snippets = Some(snippets_json_path);
+    }
+
     // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
     // the manifest using the contents of the `grammars` directory.
     if manifest.schema_version.is_v0() {

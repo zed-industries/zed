@@ -1,6 +1,6 @@
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 use serde::{Deserialize, Serialize};
-use strum::EnumIter;
+use strum::{EnumIter, EnumString, IntoStaticStr};
 
 use crate::{prelude::*, Indicator};
 
@@ -75,9 +75,24 @@ impl IconSize {
             IconSize::Medium => rems_from_px(16.),
         }
     }
+
+    /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
+    pub(crate) fn square(&self, cx: &mut WindowContext) -> Pixels {
+        let icon_size = self.rems() * cx.rem_size();
+        let padding = match self {
+            IconSize::Indicator => Spacing::None.px(cx),
+            IconSize::XSmall => Spacing::XSmall.px(cx),
+            IconSize::Small => Spacing::XSmall.px(cx),
+            IconSize::Medium => Spacing::XSmall.px(cx),
+        };
+
+        icon_size + padding * 2.
+    }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone, EnumIter, Serialize, Deserialize)]
+#[derive(
+    Debug, Eq, PartialEq, Copy, Clone, EnumIter, EnumString, IntoStaticStr, Serialize, Deserialize,
+)]
 pub enum IconName {
     Ai,
     ArrowCircle,
@@ -97,12 +112,16 @@ pub enum IconName {
     BellOff,
     BellRing,
     Bolt,
+    Book,
+    BookCopy,
+    BookPlus,
     CaseSensitive,
     Check,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
     ChevronUp,
+    ChevronUpDown,
     Close,
     Code,
     Collab,
@@ -138,6 +157,13 @@ pub enum IconName {
     Folder,
     FolderOpen,
     FolderX,
+    Font,
+    FontSize,
+    FontWeight,
+    GenericClose,
+    GenericMaximize,
+    GenericMinimize,
+    GenericRestore,
     Github,
     Hash,
     HistoryRerun,
@@ -145,6 +171,7 @@ pub enum IconName {
     IndicatorX,
     InlayHint,
     Library,
+    LineHeight,
     Link,
     ListTree,
     MagicWand,
@@ -167,6 +194,10 @@ pub enum IconName {
     PullRequest,
     Quote,
     Regex,
+    ReplPlay,
+    ReplOff,
+    ReplPause,
+    ReplNeutral,
     Replace,
     ReplaceAll,
     ReplaceNext,
@@ -178,8 +209,8 @@ pub enum IconName {
     RotateCw,
     Save,
     Screen,
-    SelectAll,
     SearchSelection,
+    SelectAll,
     Server,
     Settings,
     Shift,
@@ -204,6 +235,7 @@ pub enum IconName {
     Trash,
     TriangleRight,
     Update,
+    Visible,
     WholeWord,
     XCircle,
     ZedAssistant,
@@ -221,6 +253,7 @@ impl IconName {
             IconName::ArrowLeft => "icons/arrow_left.svg",
             IconName::ArrowRight => "icons/arrow_right.svg",
             IconName::ArrowUp => "icons/arrow_up.svg",
+            IconName::ArrowUpFromLine => "icons/arrow_up_from_line.svg",
             IconName::ArrowUpRight => "icons/arrow_up_right.svg",
             IconName::AtSign => "icons/at_sign.svg",
             IconName::AudioOff => "icons/speaker_off.svg",
@@ -231,12 +264,16 @@ impl IconName {
             IconName::BellOff => "icons/bell_off.svg",
             IconName::BellRing => "icons/bell_ring.svg",
             IconName::Bolt => "icons/bolt.svg",
+            IconName::Book => "icons/book.svg",
+            IconName::BookCopy => "icons/book_copy.svg",
+            IconName::BookPlus => "icons/book_plus.svg",
             IconName::CaseSensitive => "icons/case_insensitive.svg",
             IconName::Check => "icons/check.svg",
             IconName::ChevronDown => "icons/chevron_down.svg",
             IconName::ChevronLeft => "icons/chevron_left.svg",
             IconName::ChevronRight => "icons/chevron_right.svg",
             IconName::ChevronUp => "icons/chevron_up.svg",
+            IconName::ChevronUpDown => "icons/chevron_up_down.svg",
             IconName::Close => "icons/x.svg",
             IconName::Code => "icons/code.svg",
             IconName::Collab => "icons/user_group_16.svg",
@@ -272,6 +309,13 @@ impl IconName {
             IconName::Folder => "icons/file_icons/folder.svg",
             IconName::FolderOpen => "icons/file_icons/folder_open.svg",
             IconName::FolderX => "icons/stop_sharing.svg",
+            IconName::Font => "icons/font.svg",
+            IconName::FontSize => "icons/font_size.svg",
+            IconName::FontWeight => "icons/font_weight.svg",
+            IconName::GenericClose => "icons/generic_close.svg",
+            IconName::GenericMaximize => "icons/generic_maximize.svg",
+            IconName::GenericMinimize => "icons/generic_minimize.svg",
+            IconName::GenericRestore => "icons/generic_restore.svg",
             IconName::Github => "icons/github.svg",
             IconName::Hash => "icons/hash.svg",
             IconName::HistoryRerun => "icons/history_rerun.svg",
@@ -279,6 +323,7 @@ impl IconName {
             IconName::IndicatorX => "icons/indicator_x.svg",
             IconName::InlayHint => "icons/inlay_hint.svg",
             IconName::Library => "icons/library.svg",
+            IconName::LineHeight => "icons/line_height.svg",
             IconName::Link => "icons/link.svg",
             IconName::ListTree => "icons/list_tree.svg",
             IconName::MagicWand => "icons/magic_wand.svg",
@@ -301,19 +346,23 @@ impl IconName {
             IconName::PullRequest => "icons/pull_request.svg",
             IconName::Quote => "icons/quote.svg",
             IconName::Regex => "icons/regex.svg",
+            IconName::ReplPlay => "icons/repl_play.svg",
+            IconName::ReplPause => "icons/repl_pause.svg",
+            IconName::ReplNeutral => "icons/repl_neutral.svg",
+            IconName::ReplOff => "icons/repl_off.svg",
             IconName::Replace => "icons/replace.svg",
-            IconName::Reveal => "icons/reveal.svg",
             IconName::ReplaceAll => "icons/replace_all.svg",
             IconName::ReplaceNext => "icons/replace_next.svg",
             IconName::ReplyArrowRight => "icons/reply_arrow_right.svg",
             IconName::Rerun => "icons/rerun.svg",
             IconName::Return => "icons/return.svg",
-            IconName::RotateCw => "icons/rotate_cw.svg",
+            IconName::Reveal => "icons/reveal.svg",
             IconName::RotateCcw => "icons/rotate_ccw.svg",
+            IconName::RotateCw => "icons/rotate_cw.svg",
             IconName::Save => "icons/save.svg",
             IconName::Screen => "icons/desktop.svg",
-            IconName::SelectAll => "icons/select_all.svg",
             IconName::SearchSelection => "icons/search_selection.svg",
+            IconName::SelectAll => "icons/select_all.svg",
             IconName::Server => "icons/server.svg",
             IconName::Settings => "icons/file_icons/settings.svg",
             IconName::Shift => "icons/shift.svg",
@@ -338,12 +387,12 @@ impl IconName {
             IconName::Trash => "icons/trash.svg",
             IconName::TriangleRight => "icons/triangle_right.svg",
             IconName::Update => "icons/update.svg",
+            IconName::Visible => "icons/visible.svg",
             IconName::WholeWord => "icons/word_search.svg",
             IconName::XCircle => "icons/error.svg",
             IconName::ZedAssistant => "icons/zed_assistant.svg",
             IconName::ZedAssistantFilled => "icons/zed_assistant_filled.svg",
             IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
-            IconName::ArrowUpFromLine => "icons/arrow_up_from_line.svg",
         }
     }
 }

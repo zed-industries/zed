@@ -9,6 +9,10 @@ use strum::EnumIter;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
+fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
+    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+}
+
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -55,6 +59,8 @@ pub enum Model {
     #[serde(rename = "gpt-4o", alias = "gpt-4o-2024-05-13")]
     #[default]
     FourOmni,
+    #[serde(rename = "custom")]
+    Custom { name: String, max_tokens: usize },
 }
 
 impl Model {
@@ -74,15 +80,17 @@ impl Model {
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo-preview",
             Self::FourOmni => "gpt-4o",
+            Self::Custom { .. } => "custom",
         }
     }
 
-    pub fn display_name(&self) -> &'static str {
+    pub fn display_name(&self) -> &str {
         match self {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
+            Self::Custom { name, .. } => name,
         }
     }
 
@@ -92,12 +100,24 @@ impl Model {
             Model::Four => 8192,
             Model::FourTurbo => 128000,
             Model::FourOmni => 128000,
+            Model::Custom { max_tokens, .. } => *max_tokens,
         }
+    }
+}
+
+fn serialize_model<S>(model: &Model, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match model {
+        Model::Custom { name, .. } => serializer.serialize_str(name),
+        _ => serializer.serialize_str(model.id()),
     }
 }
 
 #[derive(Debug, Serialize)]
 pub struct Request {
+    #[serde(serialize_with = "serialize_model")]
     pub model: Model,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
@@ -166,8 +186,8 @@ pub struct FunctionContent {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_calls: Vec<ToolCallChunk>,
+    #[serde(default, skip_serializing_if = "is_none_or_empty")]
+    pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

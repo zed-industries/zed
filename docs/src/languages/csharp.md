@@ -1,4 +1,3 @@
 # C#
 
-- Tree Sitter: [tree-sitter-c-sharp](https://github.com/tree-sitter/tree-sitter-c-sharp)
-- Language Server: [OmniSharp](https://github.com/OmniSharp/omnisharp-roslyn)
+C# support is available through the [C# extension](https://github.com/zed-industries/zed/tree/main/extensions/csharp).

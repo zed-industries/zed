@@ -452,7 +452,7 @@ impl MacWindowState {
         let bounds = Bounds::new(
             point(
                 px((window_frame.origin.x - screen_frame.origin.x) as f32),
-                px((window_frame.origin.y - screen_frame.origin.y) as f32),
+                px((window_frame.origin.y + screen_frame.origin.y) as f32),
             ),
             size(
                 px(window_frame.size.width as f32),
@@ -497,7 +497,6 @@ impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
         WindowParams {
-            window_background,
             bounds,
             titlebar,
             kind,
@@ -547,7 +546,7 @@ impl MacWindow {
             let count: u64 = cocoa::foundation::NSArray::count(screens);
             for i in 0..count {
                 let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
-                let frame = NSScreen::visibleFrame(screen);
+                let frame = NSScreen::frame(screen);
                 let display_id = display_id_for_screen(screen);
                 if display_id == display.0 {
                     screen_frame = Some(frame);
@@ -558,7 +557,7 @@ impl MacWindow {
             let screen_frame = screen_frame.unwrap_or_else(|| {
                 let screen = NSScreen::mainScreen(nil);
                 target_screen = screen;
-                NSScreen::visibleFrame(screen)
+                NSScreen::frame(screen)
             });
 
             let window_rect = NSRect::new(
@@ -603,7 +602,7 @@ impl MacWindow {
                     native_window as *mut _,
                     native_view as *mut _,
                     bounds.size.map(|pixels| pixels.0),
-                    window_background != WindowBackgroundAppearance::Opaque,
+                    false,
                 ),
                 request_frame_callback: None,
                 event_callback: None,
@@ -647,10 +646,12 @@ impl MacWindow {
 
             native_window.setMovable_(is_movable as BOOL);
 
-            native_window.setContentMinSize_(NSSize {
-                width: window_min_size.width.to_f64(),
-                height: window_min_size.height.to_f64(),
-            });
+            if let Some(window_min_size) = window_min_size {
+                native_window.setContentMinSize_(NSSize {
+                    width: window_min_size.width.to_f64(),
+                    height: window_min_size.height.to_f64(),
+                });
+            }
 
             if titlebar.map_or(true, |titlebar| titlebar.appears_transparent) {
                 native_window.setTitlebarAppearsTransparent_(YES);
@@ -673,8 +674,6 @@ impl MacWindow {
 
             native_window.setContentView_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
-
-            window.set_background_appearance(window_background);
 
             match kind {
                 WindowKind::Normal => {
@@ -941,6 +940,11 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
 
+    // is_hovered is unused on macOS. See WindowContext::is_window_hovered.
+    fn is_hovered(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -954,7 +958,7 @@ impl PlatformWindow for MacWindow {
 
     fn set_app_id(&mut self, _app_id: &str) {}
 
-    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+    fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut this = self.0.as_ref().lock();
         this.renderer
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
@@ -1062,6 +1066,8 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().activate_callback = Some(callback);
     }
 
+    fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
+
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.as_ref().lock().resize_callback = Some(callback);
     }
@@ -1089,14 +1095,6 @@ impl PlatformWindow for MacWindow {
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
-    }
-
-    fn show_window_menu(&self, _position: Point<Pixels>) {}
-
-    fn start_system_move(&self) {}
-
-    fn should_render_window_controls(&self) -> bool {
-        false
     }
 }
 
@@ -1670,9 +1668,13 @@ extern "C" fn first_rect_for_character_range(
     range: NSRange,
     _: id,
 ) -> NSRect {
-    let frame = unsafe {
-        let window = get_window_state(this).lock().native_window;
-        NSView::frame(window)
+    let frame: NSRect = unsafe {
+        let state = get_window_state(this);
+        let lock = state.lock();
+        let mut frame = NSWindow::frame(lock.native_window);
+        let content_layout_rect: CGRect = msg_send![lock.native_window, contentLayoutRect];
+        frame.origin.y -= frame.size.height - content_layout_rect.size.height;
+        frame
     };
     with_input_handler(this, |input_handler| {
         input_handler.bounds_for_range(range.to_range()?)

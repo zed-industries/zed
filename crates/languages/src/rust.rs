@@ -2,9 +2,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
-use gpui::AsyncAppContext;
+use gpui::{AppContext, AsyncAppContext};
 use http::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
+use language_settings::all_language_settings;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
 use project::project_settings::{BinarySettings, ProjectSettings};
@@ -201,11 +202,16 @@ impl LspAdapter for RustLspAdapter {
         completion: &lsp::CompletionItem,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
+        let detail = completion
+            .label_details
+            .as_ref()
+            .and_then(|detail| detail.detail.as_ref())
+            .or(completion.detail.as_ref())
+            .map(ToOwned::to_owned);
         match completion.kind {
-            Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
-                let detail = completion.detail.as_ref().unwrap();
+            Some(lsp::CompletionItemKind::FIELD) if detail.is_some() => {
                 let name = &completion.label;
-                let text = format!("{}: {}", name, detail);
+                let text = format!("{}: {}", name, detail.unwrap());
                 let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
                 return Some(CodeLabel {
@@ -215,12 +221,11 @@ impl LspAdapter for RustLspAdapter {
                 });
             }
             Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
-                if completion.detail.is_some()
+                if detail.is_some()
                     && completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) =>
             {
-                let detail = completion.detail.as_ref().unwrap();
                 let name = &completion.label;
-                let text = format!("{}: {}", name, detail);
+                let text = format!("{}: {}", name, detail.unwrap());
                 let source = Rope::from(format!("let {} = ();", text).as_str());
                 let runs = language.highlight_text(&source, 4..4 + text.len());
                 return Some(CodeLabel {
@@ -230,12 +235,12 @@ impl LspAdapter for RustLspAdapter {
                 });
             }
             Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD)
-                if completion.detail.is_some() =>
+                if detail.is_some() =>
             {
                 lazy_static! {
                     static ref REGEX: Regex = Regex::new("\\(…?\\)").unwrap();
                 }
-                let detail = completion.detail.as_ref().unwrap();
+                let detail = detail.unwrap();
                 const FUNCTION_PREFIXES: [&'static str; 2] = ["async fn", "fn"];
                 let prefix = FUNCTION_PREFIXES
                     .iter()
@@ -269,9 +274,14 @@ impl LspAdapter for RustLspAdapter {
                     _ => None,
                 };
                 let highlight_id = language.grammar()?.highlight_id_for_name(highlight_name?)?;
-                let mut label = CodeLabel::plain(completion.label.clone(), None);
+                let mut label = completion.label.clone();
+                if let Some(detail) = detail.filter(|detail| detail.starts_with(" (")) {
+                    use std::fmt::Write;
+                    write!(label, "{detail}").ok()?;
+                }
+                let mut label = CodeLabel::plain(label, None);
                 label.runs.push((
-                    0..label.text.rfind('(').unwrap_or(label.text.len()),
+                    0..label.text.rfind('(').unwrap_or(completion.label.len()),
                     highlight_id,
                 ));
                 return Some(label);
@@ -396,7 +406,22 @@ impl ContextProvider for RustContextProvider {
         Ok(TaskVariables::default())
     }
 
-    fn associated_tasks(&self) -> Option<TaskTemplates> {
+    fn associated_tasks(
+        &self,
+        file: Option<Arc<dyn language::File>>,
+        cx: &AppContext,
+    ) -> Option<TaskTemplates> {
+        const DEFAULT_RUN_NAME_STR: &'static str = "RUST_DEFAULT_PACKAGE_RUN";
+        let package_to_run = all_language_settings(file.as_ref(), cx)
+            .language(Some("Rust"))
+            .tasks
+            .variables
+            .get(DEFAULT_RUN_NAME_STR);
+        let run_task_args = if let Some(package_to_run) = package_to_run {
+            vec!["run".into(), "-p".into(), package_to_run.clone()]
+        } else {
+            vec!["run".into()]
+        };
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: format!(
@@ -409,12 +434,14 @@ impl ContextProvider for RustContextProvider {
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: "cargo check --workspace --all-targets".into(),
                 command: "cargo".into(),
                 args: vec!["check".into(), "--workspace".into(), "--all-targets".into()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -433,6 +460,7 @@ impl ContextProvider for RustContextProvider {
                     "--nocapture".into(),
                 ],
                 tags: vec!["rust-test".to_owned()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -449,6 +477,7 @@ impl ContextProvider for RustContextProvider {
                     VariableName::Stem.template_value(),
                 ],
                 tags: vec!["rust-mod-test".to_owned()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -465,6 +494,7 @@ impl ContextProvider for RustContextProvider {
                     "--bin".into(),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
                 ],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 tags: vec!["rust-main".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -479,18 +509,21 @@ impl ContextProvider for RustContextProvider {
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: "cargo run".into(),
                 command: "cargo".into(),
-                args: vec!["run".into()],
+                args: run_task_args,
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: "cargo clean".into(),
                 command: "cargo".into(),
                 args: vec!["clean".into()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
         ]))

@@ -659,6 +659,13 @@ fn handle_calc_client_size(
     requested_client_rect[0].left += frame_x + padding;
     requested_client_rect[0].bottom -= frame_y + padding;
 
+    if state_ptr.state.borrow().is_maximized() {
+        requested_client_rect[0].top += frame_y + padding;
+    } else {
+        // Magic number that calculates the width of the border
+        requested_client_rect[0].top += frame_y - 3;
+    }
+
     Some(0)
 }
 
@@ -821,14 +828,14 @@ fn handle_hit_test_msg(
 
     let dpi = unsafe { GetDpiForWindow(handle) };
     let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
-    let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
 
     let mut cursor_point = POINT {
         x: lparam.signed_loword().into(),
         y: lparam.signed_hiword().into(),
     };
     unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-    if cursor_point.y > 0 && cursor_point.y < frame_y + padding {
+    if !state_ptr.state.borrow().is_maximized() && cursor_point.y >= 0 && cursor_point.y <= frame_y
+    {
         return Some(HTTOP as _);
     }
 
@@ -1044,6 +1051,8 @@ fn handle_system_settings_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Optio
     let mut lock = state_ptr.state.borrow_mut();
     // mouse wheel
     lock.system_settings.mouse_wheel_settings.update();
+    // mouse double click
+    lock.click_state.system_update();
     Some(0)
 }
 
@@ -1259,7 +1268,7 @@ fn is_modifier(virtual_key: VIRTUAL_KEY) -> bool {
 }
 
 #[inline]
-fn current_modifiers() -> Modifiers {
+pub(crate) fn current_modifiers() -> Modifiers {
     Modifiers {
         control: is_virtual_key_pressed(VK_CONTROL),
         alt: is_virtual_key_pressed(VK_MENU),

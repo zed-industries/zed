@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use anyhow::{anyhow, Result};
+use assistant::ContextStore;
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -6447,5 +6448,125 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
         assert!(pane.can_navigate_backward());
         assert!(!pane.can_navigate_forward());
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_context_collaboration_with_reconnect(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a.fs().insert_tree("/a", Default::default()).await;
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+
+    // Client A sees that a guest has joined.
+    executor.run_until_parked();
+
+    project_a.read_with(cx_a, |project, _| {
+        assert_eq!(project.collaborators().len(), 1);
+    });
+    project_b.read_with(cx_b, |project, _| {
+        assert_eq!(project.collaborators().len(), 1);
+    });
+
+    let context_store_a = cx_a
+        .update(|cx| ContextStore::new(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let context_store_b = cx_b
+        .update(|cx| ContextStore::new(project_b.clone(), cx))
+        .await
+        .unwrap();
+
+    // Client A creates a new context.
+    let context_a = context_store_a.update(cx_a, |store, cx| store.create(cx));
+    executor.run_until_parked();
+
+    // Client B retrieves host's contexts and joins one.
+    let context_b = context_store_b
+        .update(cx_b, |store, cx| {
+            let host_contexts = store.host_contexts().to_vec();
+            assert_eq!(host_contexts.len(), 1);
+            store.open_remote_context(host_contexts[0].id.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    // Host and guest make changes
+    context_a.update(cx_a, |context, cx| {
+        context.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Host change\n")], None, cx)
+        })
+    });
+    context_b.update(cx_b, |context, cx| {
+        context.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Guest change\n")], None, cx)
+        })
+    });
+    executor.run_until_parked();
+    assert_eq!(
+        context_a.read_with(cx_a, |context, cx| context.buffer().read(cx).text()),
+        "Guest change\nHost change\n"
+    );
+    assert_eq!(
+        context_b.read_with(cx_b, |context, cx| context.buffer().read(cx).text()),
+        "Guest change\nHost change\n"
+    );
+
+    // Disconnect client A and make some changes while disconnected.
+    server.disconnect_client(client_a.peer_id().unwrap());
+    server.forbid_connections();
+    context_a.update(cx_a, |context, cx| {
+        context.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Host offline change\n")], None, cx)
+        })
+    });
+    context_b.update(cx_b, |context, cx| {
+        context.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Guest offline change\n")], None, cx)
+        })
+    });
+    executor.run_until_parked();
+    assert_eq!(
+        context_a.read_with(cx_a, |context, cx| context.buffer().read(cx).text()),
+        "Host offline change\nGuest change\nHost change\n"
+    );
+    assert_eq!(
+        context_b.read_with(cx_b, |context, cx| context.buffer().read(cx).text()),
+        "Guest offline change\nGuest change\nHost change\n"
+    );
+
+    // Allow client A to reconnect and verify that contexts converge.
+    server.allow_connections();
+    executor.advance_clock(RECEIVE_TIMEOUT);
+    assert_eq!(
+        context_a.read_with(cx_a, |context, cx| context.buffer().read(cx).text()),
+        "Guest offline change\nHost offline change\nGuest change\nHost change\n"
+    );
+    assert_eq!(
+        context_b.read_with(cx_b, |context, cx| context.buffer().read(cx).text()),
+        "Guest offline change\nHost offline change\nGuest change\nHost change\n"
+    );
+
+    // Client A disconnects without being able to reconnect. Context B becomes readonly.
+    server.forbid_connections();
+    server.disconnect_client(client_a.peer_id().unwrap());
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    context_b.read_with(cx_b, |context, cx| {
+        assert!(context.buffer().read(cx).read_only());
     });
 }

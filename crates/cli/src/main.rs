@@ -196,23 +196,24 @@ mod linux {
     impl Detect {
         pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
             let path = if let Some(path) = path {
-                path.to_path_buf().canonicalize()
+                path.to_path_buf().canonicalize()?
             } else {
                 let cli = env::current_exe()?;
                 let dir = cli
                     .parent()
-                    .and_then(Path::parent)
                     .ok_or_else(|| anyhow!("no parent path for cli"))?;
 
-                match dir.join("libexec").join("zed-editor").canonicalize() {
-                    Ok(path) => Ok(path),
-                    // In development cli and zed are in the ./target/ directory together
-                    Err(e) => match cli.parent().unwrap().join("zed").canonicalize() {
-                        Ok(path) if path != cli => Ok(path),
-                        _ => Err(e),
-                    },
-                }
-            }?;
+                // libexec is the standard, lib/zed is for Arch (and other non-libexec distros),
+                // ./zed is for the target directory in development builds.
+                let possible_locations =
+                    ["../libexec/zed-editor", "../lib/zed/zed-editor", "./zed"];
+                possible_locations
+                    .iter()
+                    .find_map(|p| dir.join(p).canonicalize().ok().filter(|path| path != &cli))
+                    .ok_or_else(|| {
+                        anyhow!("could not find any of: {}", possible_locations.join(", "))
+                    })?
+            };
 
             Ok(App(path))
         }

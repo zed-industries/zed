@@ -1,19 +1,20 @@
 use crate::{
     hash, point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
     AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow,
-    Context, Corners, CursorStyle, DevicePixels, DispatchActionListener, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    FontId, Global, GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyBinding,
-    KeyContext, KeyDownEvent, KeyEvent, KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent,
-    LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions, WindowParams,
-    WindowTextSystem, SUBPIXEL_VARIANTS,
+    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
+    FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, Hsla, ImageData,
+    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyMatch, KeymatchResult,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString,
+    Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
+    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -540,6 +541,7 @@ pub struct Window {
     appearance: WindowAppearance,
     appearance_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
+    hovered: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
@@ -549,8 +551,15 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    pending_modifier: ModifierState,
     pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ModifierState {
+    modifiers: Modifiers,
+    saw_keystroke: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -603,7 +612,10 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
 
     cx.active_window()
         .and_then(|w| w.update(cx, |_, cx| cx.bounds()).ok())
-        .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
+        .map(|mut bounds| {
+            bounds.origin += DEFAULT_WINDOW_OFFSET;
+            bounds
+        })
         .unwrap_or_else(|| {
             let display = display_id
                 .map(|id| cx.find_display(id))
@@ -632,6 +644,7 @@ impl Window {
             window_background,
             app_id,
             window_min_size,
+            window_decorations,
         } = options;
 
         let bounds = window_bounds
@@ -647,7 +660,6 @@ impl Window {
                 focus,
                 show,
                 display_id,
-                window_background,
                 window_min_size,
             },
         )?;
@@ -661,9 +673,14 @@ impl Window {
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
         let dirty = Rc::new(Cell::new(true));
         let active = Rc::new(Cell::new(platform_window.is_active()));
+        let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
+
+        platform_window
+            .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
+        platform_window.set_background_appearance(window_background);
 
         if let Some(ref window_open_state) = window_bounds {
             match window_open_state {
@@ -763,7 +780,17 @@ impl Window {
                     .log_err();
             }
         }));
-
+        platform_window.on_hover_status_change(Box::new({
+            let mut cx = cx.to_async();
+            move |active| {
+                handle
+                    .update(&mut cx, |_, cx| {
+                        cx.window.hovered.set(active);
+                        cx.refresh();
+                    })
+                    .log_err();
+            }
+        }));
         platform_window.on_input({
             let mut cx = cx.to_async();
             Box::new(move |event| {
@@ -814,6 +841,7 @@ impl Window {
             appearance,
             appearance_observers: SubscriberSet::new(),
             active,
+            hovered,
             dirty,
             needs_present,
             last_input_timestamp,
@@ -823,6 +851,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
         })
@@ -980,6 +1009,16 @@ impl<'a> WindowContext<'a> {
     /// On some platforms (namely Windows) this is different than the bounds being the size of the display
     pub fn is_maximized(&self) -> bool {
         self.window.platform_window.is_maximized()
+    }
+
+    /// request a certain window decoration (Wayland)
+    pub fn request_decorations(&self, decorations: WindowDecorations) {
+        self.window.platform_window.request_decorations(decorations);
+    }
+
+    /// Start a window resize operation (Wayland)
+    pub fn start_window_resize(&self, edge: ResizeEdge) {
+        self.window.platform_window.start_window_resize(edge);
     }
 
     /// Return the `WindowBounds` to indicate that how a window should be opened
@@ -1196,6 +1235,17 @@ impl<'a> WindowContext<'a> {
         self.window.active.get()
     }
 
+    /// Returns whether this window is considered to be the window
+    /// that currently owns the mouse cursor.
+    /// On mac, this is equivalent to `is_window_active`.
+    pub fn is_window_hovered(&self) -> bool {
+        if cfg!(target_os = "linux") {
+            self.window.hovered.get()
+        } else {
+            self.is_window_active()
+        }
+    }
+
     /// Toggle zoom on the window.
     pub fn zoom_window(&self) {
         self.window.platform_window.zoom();
@@ -1209,13 +1259,23 @@ impl<'a> WindowContext<'a> {
     /// Tells the compositor to take control of window movement (Wayland and X11)
     ///
     /// Events may not be received during a move operation.
-    pub fn start_system_move(&self) {
-        self.window.platform_window.start_system_move()
+    pub fn start_window_move(&self) {
+        self.window.platform_window.start_window_move()
+    }
+
+    /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
+    pub fn set_client_inset(&self, inset: Pixels) {
+        self.window.platform_window.set_client_inset(inset);
     }
 
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
-    pub fn should_render_window_controls(&self) -> bool {
-        self.window.platform_window.should_render_window_controls()
+    pub fn window_decorations(&self) -> Decorations {
+        self.window.platform_window.window_decorations()
+    }
+
+    /// Returns which window controls are currently visible (Wayland)
+    pub fn window_controls(&self) -> WindowControls {
+        self.window.platform_window.window_controls()
     }
 
     /// Updates the window's title at the platform level.
@@ -1229,7 +1289,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Sets the window background appearance.
-    pub fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+    pub fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         self.window
             .platform_window
             .set_background_appearance(background_appearance);
@@ -2944,7 +3004,7 @@ impl<'a> WindowContext<'a> {
 
     fn reset_cursor_style(&self) {
         // Set the cursor only if we're the active window.
-        if self.is_window_active() {
+        if self.is_window_hovered() {
             let style = self
                 .window
                 .rendered_frame
@@ -3161,70 +3221,135 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
-        if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-            let KeymatchResult { bindings, pending } = self
+        let mut bindings: SmallVec<[KeyBinding; 1]> = SmallVec::new();
+        let mut pending = false;
+        let mut keystroke: Option<Keystroke> = None;
+
+        if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            if event.modifiers.number_of_modifiers() == 0
+                && self.window.pending_modifier.modifiers.number_of_modifiers() == 1
+                && !self.window.pending_modifier.saw_keystroke
+            {
+                if event.modifiers.number_of_modifiers() == 0 {
+                    let key = match self.window.pending_modifier.modifiers {
+                        modifiers if modifiers.shift => Some("shift"),
+                        modifiers if modifiers.control => Some("control"),
+                        modifiers if modifiers.alt => Some("alt"),
+                        modifiers if modifiers.platform => Some("platform"),
+                        modifiers if modifiers.function => Some("function"),
+                        _ => None,
+                    };
+                    if let Some(key) = key {
+                        let key = Keystroke {
+                            key: key.to_string(),
+                            ime_key: None,
+                            modifiers: Modifiers::default(),
+                        };
+                        let KeymatchResult {
+                            bindings: modifier_bindings,
+                            pending: pending_bindings,
+                        } = self
+                            .window
+                            .rendered_frame
+                            .dispatch_tree
+                            .dispatch_key(&key, &dispatch_path);
+
+                        keystroke = Some(key);
+                        bindings = modifier_bindings;
+                        pending = pending_bindings;
+                    }
+                }
+            }
+            if self.window.pending_modifier.modifiers.number_of_modifiers() == 0
+                && event.modifiers.number_of_modifiers() == 1
+            {
+                self.window.pending_modifier.saw_keystroke = false
+            }
+            self.window.pending_modifier.modifiers = event.modifiers
+        } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+            self.window.pending_modifier.saw_keystroke = true;
+            let KeymatchResult {
+                bindings: key_down_bindings,
+                pending: key_down_pending,
+            } = self
                 .window
                 .rendered_frame
                 .dispatch_tree
                 .dispatch_key(&key_down_event.keystroke, &dispatch_path);
 
-            if pending {
-                let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
-                if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus
-                {
-                    currently_pending = PendingInput::default();
-                }
-                currently_pending.focus = self.window.focus;
-                currently_pending
-                    .keystrokes
-                    .push(key_down_event.keystroke.clone());
-                for binding in bindings {
-                    currently_pending.bindings.push(binding);
-                }
+            keystroke = Some(key_down_event.keystroke.clone());
 
-                currently_pending.timer = Some(self.spawn(|mut cx| async move {
-                    cx.background_executor.timer(Duration::from_secs(1)).await;
-                    cx.update(move |cx| {
-                        cx.clear_pending_keystrokes();
-                        let Some(currently_pending) = cx.window.pending_input.take() else {
-                            return;
-                        };
-                        cx.pending_input_changed();
-                        cx.replay_pending_input(currently_pending);
-                    })
-                    .log_err();
-                }));
+            bindings = key_down_bindings;
+            pending = key_down_pending;
+        }
 
-                self.window.pending_input = Some(currently_pending);
-                self.pending_input_changed();
+        if keystroke.is_none() {
+            self.finish_dispatch_key_event(event, dispatch_path);
+            return;
+        }
 
-                self.propagate_event = false;
-
-                return;
-            } else if let Some(currently_pending) = self.window.pending_input.take() {
-                self.pending_input_changed();
-                if bindings
-                    .iter()
-                    .all(|binding| !currently_pending.used_by_binding(binding))
-                {
-                    self.replay_pending_input(currently_pending)
-                }
+        if pending {
+            let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
+            if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus {
+                currently_pending = PendingInput::default();
             }
-
-            if !bindings.is_empty() {
-                self.clear_pending_keystrokes();
+            currently_pending.focus = self.window.focus;
+            if let Some(keystroke) = keystroke {
+                currently_pending.keystrokes.push(keystroke.clone());
             }
-
-            self.propagate_event = true;
             for binding in bindings {
-                self.dispatch_action_on_node(node_id, binding.action.as_ref());
-                if !self.propagate_event {
-                    self.dispatch_keystroke_observers(event, Some(binding.action));
-                    return;
-                }
+                currently_pending.bindings.push(binding);
+            }
+
+            currently_pending.timer = Some(self.spawn(|mut cx| async move {
+                cx.background_executor.timer(Duration::from_secs(1)).await;
+                cx.update(move |cx| {
+                    cx.clear_pending_keystrokes();
+                    let Some(currently_pending) = cx.window.pending_input.take() else {
+                        return;
+                    };
+                    cx.replay_pending_input(currently_pending);
+                    cx.pending_input_changed();
+                })
+                .log_err();
+            }));
+
+            self.window.pending_input = Some(currently_pending);
+            self.pending_input_changed();
+
+            self.propagate_event = false;
+            return;
+        } else if let Some(currently_pending) = self.window.pending_input.take() {
+            self.pending_input_changed();
+            if bindings
+                .iter()
+                .all(|binding| !currently_pending.used_by_binding(binding))
+            {
+                self.replay_pending_input(currently_pending)
             }
         }
 
+        if !bindings.is_empty() {
+            self.clear_pending_keystrokes();
+        }
+
+        self.propagate_event = true;
+        for binding in bindings {
+            self.dispatch_action_on_node(node_id, binding.action.as_ref());
+            if !self.propagate_event {
+                self.dispatch_keystroke_observers(event, Some(binding.action));
+                return;
+            }
+        }
+
+        self.finish_dispatch_key_event(event, dispatch_path)
+    }
+
+    fn finish_dispatch_key_event(
+        &mut self,
+        event: &dyn Any,
+        dispatch_path: SmallVec<[DispatchNodeId; 32]>,
+    ) {
         self.dispatch_key_down_up_event(event, &dispatch_path);
         if !self.propagate_event {
             return;
