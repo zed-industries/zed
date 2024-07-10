@@ -37,7 +37,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rpc::proto::{self, EnvelopedMessage as _, RequestMessage};
+use rpc::proto::{self, EnvelopedMessage as _, ProtoClient, RequestMessage};
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::channel::{self, Sender};
 use std::{
@@ -131,7 +131,7 @@ pub struct RemoteWorktree {
     snapshot: Snapshot,
     background_snapshot: Arc<Mutex<Snapshot>>,
     project_id: u64,
-    client: Box<dyn RemoteWorktreeClient>,
+    client: Arc<dyn ProtoClient>,
     updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
     update_observer: Arc<
         Mutex<Option<Box<dyn Send + FnMut(proto::UpdateWorktree) -> BoxFuture<'static, bool>>>>,
@@ -140,14 +140,6 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     visible: bool,
     disconnected: bool,
-}
-
-pub trait RemoteWorktreeClient {
-    fn request(
-        &self,
-        envelope: proto::Envelope,
-        request_type: &'static str,
-    ) -> BoxFuture<'static, Result<proto::Envelope>>;
 }
 
 #[derive(Clone)]
@@ -461,7 +453,7 @@ impl Worktree {
         project_id: u64,
         replica_id: ReplicaId,
         worktree: proto::WorktreeMetadata,
-        client: Box<dyn RemoteWorktreeClient>,
+        client: Arc<dyn ProtoClient>,
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx: &mut ModelContext<Self>| {

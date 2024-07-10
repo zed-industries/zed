@@ -5,6 +5,7 @@ mod macros;
 mod typed_envelope;
 
 pub use error::*;
+use futures::future::BoxFuture;
 pub use typed_envelope::*;
 
 use collections::HashMap;
@@ -57,6 +58,14 @@ pub trait AnyTypedEnvelope: 'static + Send + Sync {
 pub enum MessagePriority {
     Foreground,
     Background,
+}
+
+pub trait ProtoClient {
+    fn request(
+        &self,
+        envelope: Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, anyhow::Result<Envelope>>;
 }
 
 impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {

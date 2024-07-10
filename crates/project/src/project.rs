@@ -26,7 +26,6 @@ use debounced_delay::DebouncedDelay;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::{join_all, try_join_all, Shared},
-    prelude::future::BoxFuture,
     select,
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
@@ -114,7 +113,7 @@ use util::{
     debug_panic, defer, maybe, merge_json_value_into, parse_env_output, post_inc,
     NumericPrefixWithSuffix, ResultExt, TryFutureExt as _,
 };
-use worktree::{CreatedEntry, RemoteWorktreeClient, Snapshot, Traversal};
+use worktree::{CreatedEntry, Snapshot, Traversal};
 
 pub use fs::*;
 pub use language::Location;
@@ -847,13 +846,8 @@ impl Project {
             // That's because Worktree's identifier is entity id, which should probably be changed.
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
-                let worktree = Worktree::remote(
-                    remote_id,
-                    replica_id,
-                    worktree,
-                    Box::new(CollabRemoteWorktreeClient(client.clone())),
-                    cx,
-                );
+                let worktree =
+                    Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx);
                 worktrees.push(worktree);
             }
 
@@ -10061,13 +10055,7 @@ impl Project {
                 self.worktrees.push(WorktreeHandle::Strong(old_worktree));
             } else {
                 self.add_worktree(
-                    &Worktree::remote(
-                        remote_id,
-                        replica_id,
-                        worktree,
-                        Box::new(CollabRemoteWorktreeClient(self.client.clone())),
-                        cx,
-                    ),
+                    &Worktree::remote(remote_id, replica_id, worktree, self.client.clone(), cx),
                     cx,
                 );
             }
@@ -11014,18 +11002,6 @@ impl WorktreeHandle {
             WorktreeHandle::Strong(handle) => handle.entity_id().as_u64() as usize,
             WorktreeHandle::Weak(handle) => handle.entity_id().as_u64() as usize,
         }
-    }
-}
-
-pub struct CollabRemoteWorktreeClient(Arc<Client>);
-
-impl RemoteWorktreeClient for CollabRemoteWorktreeClient {
-    fn request(
-        &self,
-        envelope: proto::Envelope,
-        request_type: &'static str,
-    ) -> BoxFuture<'static, Result<proto::Envelope>> {
-        self.0.request_dynamic(envelope, request_type).boxed()
     }
 }
 
