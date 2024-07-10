@@ -25,7 +25,6 @@ use util::ResultExt;
 use workspace::{item::Dedup, notifications::NotificationId};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, TabContentParams},
-    register_followable_item,
     searchable::SearchableItemHandle,
     ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
 };
@@ -33,7 +32,7 @@ use workspace::{
 actions!(collab, [CopyLink]);
 
 pub fn init(cx: &mut AppContext) {
-    register_followable_item::<ChannelView>(cx)
+    workspace::FollowableViewRegistry::register(cx)
 }
 
 pub struct ChannelView {

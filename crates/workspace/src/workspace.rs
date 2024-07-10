@@ -81,9 +81,9 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{
-    div, h_flex, px, Context as _, Div, FluentBuilder, InteractiveElement as _, IntoElement,
-    ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
-    WindowContext,
+    div, h_flex, px, BorrowAppContext, Context as _, Div, FluentBuilder, InteractiveElement as _,
+    IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
+    VisualContext as _, WindowContext,
 };
 use util::{maybe, ResultExt};
 use uuid::Uuid;
@@ -356,40 +356,59 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
     });
 }
 
-type FollowableItemBuilder = fn(
-    View<Workspace>,
-    ViewId,
-    &mut Option<proto::view::Variant>,
-    &mut WindowContext,
-) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
+#[derive(Default)]
+pub struct FollowableViewRegistry(HashMap<TypeId, FollowableViewDescriptor>);
 
-#[derive(Default, Deref, DerefMut)]
-struct FollowableItemBuilders(
-    HashMap<
-        TypeId,
-        (
-            FollowableItemBuilder,
-            fn(&AnyView) -> Box<dyn FollowableItemHandle>,
-        ),
-    >,
-);
+struct FollowableViewDescriptor {
+    from_state_proto: fn(
+        View<Workspace>,
+        ViewId,
+        &mut Option<proto::view::Variant>,
+        &mut WindowContext,
+    ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>,
+    to_followable_view: fn(&AnyView) -> Box<dyn FollowableItemHandle>,
+}
 
-impl Global for FollowableItemBuilders {}
+impl Global for FollowableViewRegistry {}
 
-pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
-    let builders = cx.default_global::<FollowableItemBuilders>();
-    builders.insert(
-        TypeId::of::<I>(),
-        (
-            |workspace, id, state, cx| {
-                I::from_state_proto(workspace, id, state, cx).map(|task| {
-                    cx.foreground_executor()
-                        .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
-                })
+impl FollowableViewRegistry {
+    pub fn register<I: FollowableItem>(cx: &mut AppContext) {
+        cx.default_global::<Self>().0.insert(
+            TypeId::of::<I>(),
+            FollowableViewDescriptor {
+                from_state_proto: |workspace, id, state, cx| {
+                    I::from_state_proto(workspace, id, state, cx).map(|task| {
+                        cx.foreground_executor()
+                            .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
+                    })
+                },
+                to_followable_view: |view| Box::new(view.clone().downcast::<I>().unwrap()),
             },
-            |this| Box::new(this.clone().downcast::<I>().unwrap()),
-        ),
-    );
+        );
+    }
+
+    pub fn from_state_proto(
+        workspace: View<Workspace>,
+        view_id: ViewId,
+        mut state: Option<proto::view::Variant>,
+        cx: &mut WindowContext,
+    ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>> {
+        cx.update_default_global(|this: &mut Self, cx| {
+            this.0.values().find_map(|descriptor| {
+                (descriptor.from_state_proto)(workspace.clone(), view_id, &mut state, cx)
+            })
+        })
+    }
+
+    pub fn to_followable_view(
+        view: impl Into<AnyView>,
+        cx: &AppContext,
+    ) -> Option<Box<dyn FollowableItemHandle>> {
+        let this = cx.try_global::<Self>()?;
+        let view = view.into();
+        let descriptor = this.0.get(&view.entity_type())?;
+        Some((descriptor.to_followable_view)(&view))
+    }
 }
 
 #[derive(Default, Deref, DerefMut)]
@@ -3167,13 +3186,6 @@ impl Workspace {
     ) -> Result<()> {
         let this = this.upgrade().context("workspace dropped")?;
 
-        let item_builders = cx.update(|cx| {
-            cx.default_global::<FollowableItemBuilders>()
-                .values()
-                .map(|b| b.0)
-                .collect::<Vec<_>>()
-        })?;
-
         let Some(id) = view.id.clone() else {
             return Err(anyhow!("no id for view"));
         };
@@ -3193,16 +3205,15 @@ impl Workspace {
         let item = if let Some(existing_item) = existing_item {
             existing_item
         } else {
-            let mut variant = view.variant.clone();
+            let variant = view.variant.clone();
             if variant.is_none() {
                 Err(anyhow!("missing view variant"))?;
             }
 
-            let task = item_builders.iter().find_map(|build_item| {
-                cx.update(|cx| build_item(this.clone(), id, &mut variant, cx))
-                    .log_err()
-                    .flatten()
-            });
+            let task = cx.update(|cx| {
+                FollowableViewRegistry::from_state_proto(this.clone(), id, variant, cx)
+            })?;
+
             let Some(task) = task else {
                 return Err(anyhow!(
                     "failed to construct view from leader (maybe from a different version of zed?)"

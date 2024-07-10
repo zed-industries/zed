@@ -3,7 +3,7 @@ use crate::{
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
-    DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, ToolbarItemLocation,
+    DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory, ToolbarItemLocation,
     ViewId, Workspace, WorkspaceId,
 };
 use anyhow::Result;
@@ -666,9 +666,7 @@ impl<T: Item> ItemHandle for View<T> {
     }
 
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>> {
-        let builders = cx.try_global::<FollowableItemBuilders>()?;
-        let item = self.to_any();
-        Some(builders.get(&item.entity_type())?.1(&item))
+        FollowableViewRegistry::to_followable_view(self.clone(), cx)
     }
 
     fn on_release(
