@@ -13,7 +13,8 @@ use worktree::{File, ProjectEntryId};
 #[derive(Default)]
 pub(crate) struct BufferStore {
     opened_buffers: HashMap<BufferId, OpenBuffer>,
-    loading_buffers: HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
+    remote_buffer_listeners:
+        HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
     incomplete_remote_buffers: HashMap<BufferId, Model<Buffer>>,
     local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
@@ -59,7 +60,7 @@ impl BufferStore {
             }
         }
 
-        if let Some(senders) = self.loading_buffers.remove(&remote_id) {
+        if let Some(senders) = self.remote_buffer_listeners.remove(&remote_id) {
             for sender in senders {
                 sender.send(Ok(buffer.clone())).ok();
             }
@@ -97,7 +98,7 @@ impl BufferStore {
                 self.incomplete_remote_buffers.insert(buffer_id, buffer);
             }
             Err(error) => {
-                if let Some(listeners) = self.loading_buffers.remove(&buffer_id) {
+                if let Some(listeners) = self.remote_buffer_listeners.remove(&buffer_id) {
                     for listener in listeners {
                         listener.send(Err(anyhow!(error.cloned()))).ok();
                     }
@@ -134,7 +135,7 @@ impl BufferStore {
 
         if let Err(error) = result {
             self.incomplete_remote_buffers.remove(&buffer_id);
-            if let Some(listeners) = self.loading_buffers.remove(&buffer_id) {
+            if let Some(listeners) = self.remote_buffer_listeners.remove(&buffer_id) {
                 for listener in listeners {
                     listener.send(Err(error.cloned())).ok();
                 }
@@ -206,7 +207,7 @@ impl BufferStore {
             return Task::ready(Ok(buffer));
         }
         let (tx, rx) = oneshot::channel();
-        self.loading_buffers.entry(id).or_default().push(tx);
+        self.remote_buffer_listeners.entry(id).or_default().push(tx);
         cx.background_executor().spawn(async move { rx.await? })
     }
 
@@ -216,12 +217,12 @@ impl BufferStore {
     ) -> (Vec<proto::BufferVersion>, Vec<BufferId>) {
         let buffers = self
             .buffers()
-            .filter_map(|buffer| {
+            .map(|buffer| {
                 let buffer = buffer.read(cx);
-                Some(proto::BufferVersion {
+                proto::BufferVersion {
                     id: buffer.remote_id().into(),
                     version: language::proto::serialize_version(&buffer.version),
-                })
+                }
             })
             .collect();
         let incomplete_buffer_ids = self
@@ -257,7 +258,7 @@ impl BufferStore {
 
         // Wake up all futures currently waiting on a buffer to get opened,
         // to give them a chance to fail now that we've disconnected.
-        self.loading_buffers.clear();
+        self.remote_buffer_listeners.clear();
     }
 
     pub fn make_all_weak(&mut self, cx: &mut AppContext) {
