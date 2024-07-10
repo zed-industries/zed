@@ -109,45 +109,29 @@ fn paint_line(
     wrap_boundaries: &[WrapBoundary],
     cx: &mut WindowContext,
 ) -> Result<()> {
-    paint_line_decorations(
+    let line_bounds = Bounds::new(
         origin,
-        layout,
-        line_height,
-        decoration_runs,
-        wrap_boundaries,
-        cx,
-    )?;
-    paint_line_glyphs(
-        origin,
-        layout,
-        line_height,
-        decoration_runs,
-        wrap_boundaries,
-        cx,
-    )?;
-    Ok(())
-}
-fn paint_line_decorations(
-    origin: Point<Pixels>,
-    layout: &LineLayout,
-    line_height: Pixels,
-    decoration_runs: &[DecorationRun],
-    wrap_boundaries: &[WrapBoundary],
-    cx: &mut WindowContext,
-) -> Result<()> {
-    let line_bounds = Bounds::new(origin, size(layout.width, line_height));
+        size(
+            layout.width,
+            line_height * (wrap_boundaries.len() as f32 + 1.),
+        ),
+    );
     cx.paint_layer(line_bounds, |cx| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let mut decoration_runs = decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();
         let mut run_end = 0;
+        let mut color = black();
         let mut current_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
         let mut current_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
         let mut current_background: Option<(Point<Pixels>, Hsla)> = None;
+        let text_system = cx.text_system().clone();
         let mut glyph_origin = origin;
         let mut prev_glyph_position = Point::default();
         for (run_ix, run) in layout.runs.iter().enumerate() {
+            let max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
+
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
 
@@ -246,6 +230,7 @@ fn paint_line_decorations(
                         }
 
                         run_end += style_run.len as usize;
+                        color = style_run.color;
                     } else {
                         run_end = layout.len;
                         finished_background = current_background.take();
@@ -278,6 +263,31 @@ fn paint_line_decorations(
                         glyph_origin.x - strikethrough_origin.x,
                         &strikethrough_style,
                     );
+                }
+
+                let max_glyph_bounds = Bounds {
+                    origin: glyph_origin,
+                    size: max_glyph_size,
+                };
+
+                let content_mask = cx.content_mask();
+                if max_glyph_bounds.intersects(&content_mask.bounds) {
+                    if glyph.is_emoji {
+                        cx.paint_emoji(
+                            glyph_origin + baseline_offset,
+                            run.font_id,
+                            glyph.id,
+                            layout.font_size,
+                        )?;
+                    } else {
+                        cx.paint_glyph(
+                            glyph_origin + baseline_offset,
+                            run.font_id,
+                            glyph.id,
+                            layout.font_size,
+                            color,
+                        )?;
+                    }
                 }
             }
         }
@@ -313,76 +323,6 @@ fn paint_line_decorations(
                 last_line_end_x - strikethrough_start.x,
                 &strikethrough_style,
             );
-        }
-
-        Ok(())
-    })
-}
-
-fn paint_line_glyphs(
-    origin: Point<Pixels>,
-    layout: &LineLayout,
-    line_height: Pixels,
-    decoration_runs: &[DecorationRun],
-    wrap_boundaries: &[WrapBoundary],
-    cx: &mut WindowContext,
-) -> Result<()> {
-    let line_bounds = Bounds::new(origin, size(layout.width, line_height));
-    cx.paint_layer(line_bounds, |cx| {
-        let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
-        let baseline_offset = point(px(0.), padding_top + layout.ascent);
-        let mut decoration_runs = decoration_runs.iter();
-        let mut wraps = wrap_boundaries.iter().peekable();
-        let mut run_end = 0;
-        let mut color = black();
-        let text_system = cx.text_system().clone();
-        let mut glyph_origin = origin;
-        let mut prev_glyph_position = Point::default();
-        for (run_ix, run) in layout.runs.iter().enumerate() {
-            let max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
-            for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
-                glyph_origin.x += glyph.position.x - prev_glyph_position.x;
-
-                if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
-                    wraps.next();
-                    glyph_origin.x = origin.x;
-                    glyph_origin.y += line_height;
-                }
-                prev_glyph_position = glyph.position;
-
-                if glyph.index >= run_end {
-                    if let Some(style_run) = decoration_runs.next() {
-                        run_end += style_run.len as usize;
-                        color = style_run.color;
-                    } else {
-                        run_end = layout.len;
-                    }
-                }
-                let max_glyph_bounds = Bounds {
-                    origin: glyph_origin,
-                    size: max_glyph_size,
-                };
-
-                let content_mask = cx.content_mask();
-                if max_glyph_bounds.intersects(&content_mask.bounds) {
-                    if glyph.is_emoji {
-                        cx.paint_emoji(
-                            glyph_origin + baseline_offset,
-                            run.font_id,
-                            glyph.id,
-                            layout.font_size,
-                        )?;
-                    } else {
-                        cx.paint_glyph(
-                            glyph_origin + baseline_offset,
-                            run.font_id,
-                            glyph.id,
-                            layout.font_size,
-                            color,
-                        )?;
-                    }
-                }
-            }
         }
 
         Ok(())
