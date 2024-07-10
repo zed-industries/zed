@@ -57,7 +57,7 @@ mkdir -p ~/.local
 # extract zed to ~/.local/zed.app/
 tar -xvf <path/to/download>.tar.gz -C ~/.local
 # link the zed binary to ~/.local/bin (or another directory in your $PATH)
-ln -sf ~/.local/bin/zed ~/.local/zed.app/bin/zed
+ln -sf ~/.local/zed.app/bin/zed ~/.local/bin/zed
 ```
 
 If you'd like integration with an XDG-compatible desktop environment, you will also need to install the `.desktop` file:
