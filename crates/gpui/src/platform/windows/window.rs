@@ -265,7 +265,7 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
         let (dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
-            (WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT, WINDOW_STYLE(0x0))
+            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
         } else {
             (
                 WS_EX_OVERLAPPEDWINDOW,
