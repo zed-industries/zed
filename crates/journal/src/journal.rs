@@ -1,11 +1,12 @@
 use anyhow::Result;
-use chrono::{Datelike, Local, NaiveTime, Timelike};
+use chrono::{Datelike, Local, NaiveDate, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::Editor;
 use gpui::{actions, AppContext, ViewContext, WindowContext};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use shellexpand;
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -26,6 +27,9 @@ pub struct JournalSettings {
     ///
     /// Default: hour12
     pub hour_format: Option<HourFormat>,
+    /// The entry format for storing journal entries.
+    /// Default: "journal/%Y/%m/%d.md"
+    pub entry_format: Option<String>,
 }
 
 impl Default for JournalSettings {
@@ -33,6 +37,7 @@ impl Default for JournalSettings {
         Self {
             path: Some("~".into()),
             hour_format: Some(Default::default()),
+            entry_format: Some("journal/%Y/%m/%d.md".into()),
         }
     }
 }
@@ -52,6 +57,15 @@ impl settings::Settings for JournalSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()
+    }
+}
+
+impl JournalSettings {
+    pub fn get_entry_path(&self, date: NaiveDate) -> String {
+        let formatted_path = date
+            .format(self.entry_format.as_deref().unwrap_or(""))
+            .to_string();
+        format!("{}", formatted_path)
     }
 }
 
@@ -79,15 +93,15 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
     };
 
     let now = Local::now();
-    let month_dir = journal_dir
-        .join(format!("{:02}", now.year()))
-        .join(format!("{:02}", now.month()));
-    let entry_path = month_dir.join(format!("{:02}.md", now.day()));
+    let date = NaiveDate::from_ymd_opt(now.year(), now.month(), now.day()).unwrap();
+
+    let entry_path = journal_dir.join(settings.get_entry_path(date));
+
     let now = now.time();
     let entry_heading = heading_entry(now, &settings.hour_format);
 
     let create_entry = cx.background_executor().spawn(async move {
-        std::fs::create_dir_all(month_dir)?;
+        std::fs::create_dir_all(entry_path.parent().unwrap())?;
         OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -139,7 +153,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
 fn journal_dir(path: &str) -> Option<PathBuf> {
     let expanded_journal_dir = shellexpand::full(path) //TODO handle this better
         .ok()
-        .map(|dir| Path::new(&dir.to_string()).to_path_buf().join("journal"));
+        .map(|dir| Path::new(&dir.to_string()).to_path_buf());
 
     return expanded_journal_dir;
 }
@@ -188,6 +202,92 @@ mod tests {
             let expected_heading_entry = "# 15:00";
 
             assert_eq!(actual_heading_entry, expected_heading_entry);
+        }
+    }
+
+    mod folder_structure_tests {
+        use super::super::*;
+        use chrono::NaiveDate;
+
+        #[test]
+        fn test_get_entry_path_with_default_settings() {
+            let settings = JournalSettings::default();
+            let date = NaiveDate::from_ymd_opt(2024, 7, 10);
+            let entry_path = settings.get_entry_path(date.unwrap());
+
+            assert_eq!(entry_path, format!("journal/2024/07/10.md"));
+        }
+
+        #[test]
+        fn test_get_entry_path_with_custom_folder_structure() {
+            let settings = JournalSettings {
+                entry_format: Some("custom/%Y-%m-%d.md".to_string()),
+                ..Default::default()
+            };
+            let date = NaiveDate::from_ymd_opt(2024, 7, 10).unwrap();
+            let entry_path = settings.get_entry_path(date);
+
+            assert_eq!(entry_path, format!("custom/2024-07-10.md"));
+        }
+
+        #[test]
+        fn test_get_entry_path_with_custom_nested_folder_structure() {
+            let settings = JournalSettings {
+                entry_format: Some("entries/%Y/%m/%d-entry.md".to_string()),
+                ..Default::default()
+            };
+            let date = NaiveDate::from_ymd_opt(2024, 7, 10).unwrap();
+            let entry_path = settings.get_entry_path(date);
+
+            assert_eq!(entry_path, "entries/2024/07/10-entry.md");
+        }
+
+        #[test]
+        fn test_journal_dir_expands_tilde() {
+            let path = "~";
+            let expanded_dir = journal_dir(path).unwrap();
+            let expected_dir = match shellexpand::full(path) {
+                Ok(expanded) => Some(Path::new(&expanded.to_string()).to_path_buf()),
+                Err(_) => None,
+            }
+            .unwrap();
+
+            assert_eq!(expanded_dir, expected_dir);
+        }
+
+        #[test]
+        fn test_journal_dir_with_custom_path() {
+            let path = "/custom/path";
+            let expanded_dir = journal_dir(path).unwrap();
+            let expected_dir = Path::new("/custom/path");
+
+            assert_eq!(expanded_dir, expected_dir);
+        }
+
+        #[test]
+        fn test_journal_dir_and_get_entry_path_together() {
+            let settings = JournalSettings {
+                path: Some("~".to_string()),
+                entry_format: Some("entries/%Y/%m/%d-entry.md".to_string()),
+                ..Default::default()
+            };
+
+            let path = settings.path.clone().unwrap();
+            let expanded_journal_dir = journal_dir(&path).unwrap();
+            let date = NaiveDate::from_ymd_opt(2024, 7, 10).unwrap();
+            let entry_path = settings.get_entry_path(date);
+
+            let expected_journal_dir = match shellexpand::full(&path) {
+                Ok(expanded) => Some(Path::new(&expanded.to_string()).to_path_buf()),
+                Err(_) => None,
+            }
+            .unwrap();
+
+            assert_eq!(expanded_journal_dir, expected_journal_dir);
+            assert_eq!(
+                expanded_journal_dir.join(&entry_path),
+                expected_journal_dir.join(&entry_path)
+            );
         }
     }
 }
