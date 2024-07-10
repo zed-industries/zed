@@ -1,7 +1,11 @@
 use super::create_label_for_command;
 use super::{SlashCommand, SlashCommandOutput};
-use crate::{CompletionProvider, LanguageModelRequest, LanguageModelRequestMessage, Role};
+use crate::{
+    completion_provider, CompletionProvider, LanguageModel, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
+};
 use anyhow::{anyhow, Result};
+use futures::future::BoxFuture;
 use futures::StreamExt;
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
@@ -92,7 +96,8 @@ impl SlashCommand for AutoCommand {
             Ok(actions_text)
         });
 
-        // As a convenience, append /auto's argument to the end of the prompt so you don't have to write it again.
+        // As a convenience, append /auto's argument to the end of the prompt
+        // so you don't have to write it again.
         let argument = argument.to_string();
 
         cx.background_executor().spawn(async move {
@@ -108,62 +113,91 @@ impl SlashCommand for AutoCommand {
         })
     }
 }
-const PROMPT_INSTRUCTIONS_BEFORE_SUMMARY: &str = r#"
-I'm going to give you a prompt. I don't want you to respond
-to the prompt itself. I want you to figure out which of the following
-actions on my project, if any, would help you answer the prompt.
 
-Here are the actions:
+const PROMPT_INSTRUCTIONS_BEFORE_SUMMARY: &str = include_str!("prompt_before_summary.txt");
+const PROMPT_INSTRUCTIONS_AFTER_SUMMARY: &str = include_str!("prompt_after_summary.txt");
+const SUMMARY: &str =
+    include_str!("/Users/rtfeldman/code/summarize-dir/zed-output/combined_summaries.xml");
 
-## file
+const OPENING_CONTEXT_TAG: &str = "<context>";
+const CLOSING_CONTEXT_TAG: &str = "</context>";
 
-This action's parameter is a file path to one of the files
-in the project. If you ask for this action, I will tell you
-the full contents of the file, so you  can learn all the
-details of the file.
+async fn summaries(
+    full_summary: &str,
+    completion_provider: CompletionProvider,
+    cx: &AppContext,
+) -> Result<Vec<String>> {
+    let model = completion_provider.model();
+    let max_token_count = model.max_token_count();
+    // If we can't get chunks of at least this size, decide it's hopeless and we give up.
+    // Otherwise it's going to take an unreasonable number of calls to the model to get everything.
+    const MIN_CHUNK_LENGTH: usize = 2048 + OPENING_CONTEXT_TAG.len() + CLOSING_CONTEXT_TAG.len();
+    let mut chunk_start = 0;
+    let mut chunk_len = full_summary.len();
+    let mut answer = Vec::new();
 
-## search
+    loop {
+        let mut chunk = &full_summary[chunk_start..(chunk_start + chunk_len)];
 
-This action's parameter is a string to search for across
-the project. It will tell you which files this string
-(or similar strings; it is a semantic search) appear in,
-as well as some context of the lines surrounding each result.
+        let Some(last_opened) = chunk.rfind(OPENING_CONTEXT_TAG) else {
+            // If we don't have any opened tags in the slice, then we're done!
+            // One way this can happen is if the slice is empty, because we've done the last chunk.
+            // (This implies that if the whole summary had no tags, we return an empty vec.)
+            return Ok(answer);
+        };
+        let last_closed = chunk.rfind(CLOSING_CONTEXT_TAG).unwrap_or(chunk.len());
 
----
+        // If we opened one without closing it, defer handling it to the next slice.
+        if last_closed < last_opened {
+            chunk = &chunk[..(last_closed + CLOSING_CONTEXT_TAG.len())];
+            chunk_start = last_opened;
+        }
 
-That was the end of the list of actions.
+        let tokens_needed = {
+            let request = LanguageModelRequest {
+                model: model.clone(),
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: chunk.to_string(),
+                }],
+                stop: Vec::new(),
+                temperature: 1.0,
+            };
 
-Here is an XML summary of each of the files in my project:
-"#;
+            completion_provider.count_tokens(request, cx).await?
+        };
 
-const PROMPT_INSTRUCTIONS_AFTER_SUMMARY: &str = r#"
-Actions have a cost, so only include actions that you think
-will be helpful to you in doing a great job answering the
-prompt in the future.
+        // This isn't going to fit in one request; calculate a new chunk size,
+        // and then loop back to try again with a different chunk size.
+        if tokens_needed > max_token_count {
+            // A chunk length based on a heuristic
+            let heuristic_len = {
+                let ratio = (tokens_needed as f64) / (max_token_count as f64);
 
-You must respond ONLY with a list of actions you would like to
-perform. Each action should be on its own line, and followed by a space and then its parameter.
+                full_summary.len() as f64 * ratio
+            };
 
-Actions can be performed more than once with different parameters.
-Here is an example valid response:
+            if heuristic_len.is_finite() {
+                chunk_len = (heuristic_len
+                    .round()
+                    // Always make sure the chunk is *at least* divided in half. This way, if we pick
+                    // a chunk size and the next token request says it's still over the limit (which
+                    // could happen!) then we still make progress with a smaller chunk, and can't get
+                    // stuck in an infinit loop.
+                    .min(heuristic_len / 2.0) as usize)
+                    .max(MIN_CHUNK_LENGTH);
+            } else {
+                // There was division by zero, or something overflowed; we won't be able to summarize.
+                return Ok(answer);
+            }
+        } else {
+            // This will fit in a request! Add it to the answer.
+            answer.push(chunk.to_string());
 
-```
-file path/to/my/file.txt
-file path/to/another/file.txt
-search something to search for
-search something else to search for
-```
-
-Once again, do not forget: you must respond ONLY in the format of
-one action per line, and the action name should be followed by
-its parameter. Your response must not include anything other
-than a list of actions, with one action per line, in this format.
-It is extremely important that you do not deviate from this format even slightly!
-
-This is the end of my instructions for how to respond. The rest is the prompt:
-"#;
-
-const SUMMARY: &str = "";
+            chunk_start += 1;
+        }
+    }
+}
 
 fn chunked_line(wip: &mut String, chunk: &str, mut on_line_end: impl FnMut(&str)) {
     // The first iteration of the loop should just push to wip
