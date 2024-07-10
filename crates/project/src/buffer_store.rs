@@ -2,12 +2,17 @@ use crate::ProjectPath;
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
 use futures::channel::oneshot;
-use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel};
-use language::{Buffer, Capability, Operation};
-use rpc::{proto, ErrorExt as _, TypedEnvelope};
+use gpui::{
+    AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel,
+};
+use language::{proto::split_operations, Buffer, Capability, Operation};
+use rpc::{
+    proto::{self, AnyProtoClient, PeerId},
+    ErrorExt as _, TypedEnvelope,
+};
 use std::{path::Path, sync::Arc};
 use text::BufferId;
-use util::{debug_panic, maybe};
+use util::{debug_panic, maybe, ResultExt as _};
 use worktree::{File, ProjectEntryId, Worktree};
 
 pub struct BufferStore {
@@ -341,6 +346,55 @@ impl BufferStore {
         );
 
         Some(())
+    }
+
+    pub async fn create_buffer_for_peer(
+        this: Model<Self>,
+        peer_id: PeerId,
+        buffer_id: BufferId,
+        project_id: u64,
+        client: AnyProtoClient,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        let Some(buffer) = this.update(cx, |this, _| this.get(buffer_id))? else {
+            return Ok(());
+        };
+
+        let operations = buffer.update(cx, |b, cx| b.serialize_ops(None, cx))?;
+        let operations = operations.await;
+        let state = buffer.update(cx, |buffer, _| buffer.to_proto())?;
+
+        let initial_state = proto::CreateBufferForPeer {
+            project_id,
+            peer_id: Some(peer_id),
+            variant: Some(proto::create_buffer_for_peer::Variant::State(state)),
+        };
+
+        if client.send(initial_state).log_err().is_some() {
+            let client = client.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    let mut chunks = split_operations(operations).peekable();
+                    while let Some(chunk) = chunks.next() {
+                        let is_last = chunks.peek().is_none();
+                        client.send(proto::CreateBufferForPeer {
+                            project_id,
+                            peer_id: Some(peer_id),
+                            variant: Some(proto::create_buffer_for_peer::Variant::Chunk(
+                                proto::BufferChunk {
+                                    buffer_id: buffer_id.into(),
+                                    operations: chunk,
+                                    is_last,
+                                },
+                            )),
+                        })?;
+                    }
+                    anyhow::Ok(())
+                })
+                .await
+                .log_err();
+        }
+        Ok(())
     }
 
     pub fn handle_update_buffer(

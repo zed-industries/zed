@@ -1410,6 +1410,11 @@ impl Client {
         self.peer.send(self.connection_id()?, message)
     }
 
+    fn send_dynamic(&self, envelope: proto::Envelope) -> Result<()> {
+        let connection_id = self.connection_id()?;
+        self.peer.send_dynamic(connection_id, envelope)
+    }
+
     pub fn request<T: RequestMessage>(
         &self,
         request: T,
@@ -1615,6 +1620,10 @@ impl ProtoClient for Client {
         request_type: &'static str,
     ) -> BoxFuture<'static, Result<proto::Envelope>> {
         self.request_dynamic(envelope, request_type).boxed()
+    }
+
+    fn send(&self, envelope: proto::Envelope) -> Result<()> {
+        self.send_dynamic(envelope)
     }
 }
 

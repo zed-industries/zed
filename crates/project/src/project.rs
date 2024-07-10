@@ -847,7 +847,7 @@ impl Project {
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
                 let worktree =
-                    Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx);
+                    Worktree::remote(remote_id, replica_id, worktree, client.clone().into(), cx);
                 worktrees.push(worktree);
             }
 
@@ -1613,56 +1613,30 @@ impl Project {
                             })??;
                         }
                         LocalProjectUpdate::CreateBufferForPeer { peer_id, buffer_id } => {
-                            let buffer = this.update(&mut cx, |this, cx| {
+                            let Some(buffer_store) = this.update(&mut cx, |this, _| {
                                 if this
                                     .shared_buffers
                                     .entry(peer_id)
                                     .or_default()
                                     .insert(buffer_id)
                                 {
-                                    this.buffer_store.read(cx).get(buffer_id)
+                                    Some(this.buffer_store.clone())
                                 } else {
                                     None
                                 }
-                            })?;
-
-                            let Some(buffer) = buffer else { continue };
-                            let operations =
-                                buffer.update(&mut cx, |b, cx| b.serialize_ops(None, cx))?;
-                            let operations = operations.await;
-                            let state = buffer.update(&mut cx, |buffer, _| buffer.to_proto())?;
-
-                            let initial_state = proto::CreateBufferForPeer {
-                                project_id,
-                                peer_id: Some(peer_id),
-                                variant: Some(proto::create_buffer_for_peer::Variant::State(state)),
+                            })?
+                            else {
+                                continue;
                             };
-                            if client.send(initial_state).log_err().is_some() {
-                                let client = client.clone();
-                                cx.background_executor()
-                                    .spawn(async move {
-                                        let mut chunks = split_operations(operations).peekable();
-                                        while let Some(chunk) = chunks.next() {
-                                            let is_last = chunks.peek().is_none();
-                                            client.send(proto::CreateBufferForPeer {
-                                                project_id,
-                                                peer_id: Some(peer_id),
-                                                variant: Some(
-                                                    proto::create_buffer_for_peer::Variant::Chunk(
-                                                        proto::BufferChunk {
-                                                            buffer_id: buffer_id.into(),
-                                                            operations: chunk,
-                                                            is_last,
-                                                        },
-                                                    ),
-                                                ),
-                                            })?;
-                                        }
-                                        anyhow::Ok(())
-                                    })
-                                    .await
-                                    .log_err();
-                            }
+                            BufferStore::create_buffer_for_peer(
+                                buffer_store,
+                                peer_id,
+                                buffer_id,
+                                project_id,
+                                client.clone().into(),
+                                &mut cx,
+                            )
+                            .await?;
                         }
                     }
                 }
@@ -10055,7 +10029,13 @@ impl Project {
                 self.worktrees.push(WorktreeHandle::Strong(old_worktree));
             } else {
                 self.add_worktree(
-                    &Worktree::remote(remote_id, replica_id, worktree, self.client.clone(), cx),
+                    &Worktree::remote(
+                        remote_id,
+                        replica_id,
+                        worktree,
+                        self.client.clone().into(),
+                        cx,
+                    ),
                     cx,
                 );
             }
