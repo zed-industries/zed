@@ -1,24 +1,23 @@
-use crate::slash_command::docs_command::{DocsSlashCommand, DocsSlashCommandArgs};
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
-    humanize_token_count,
+    humanize_token_count, parse_next_edit_suggestion,
     prompt_library::open_prompt_library,
     search::*,
     slash_command::{
-        default_command::DefaultSlashCommand, SlashCommandCompletionProvider, SlashCommandLine,
-        SlashCommandRegistry,
+        default_command::DefaultSlashCommand,
+        docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
+        SlashCommandCompletionProvider, SlashCommandRegistry,
     },
     terminal_inline_assistant::TerminalInlineAssistant,
-    ApplyEdit, Assist, CompletionProvider, ConfirmCommand, ContextStore, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistant, InsertIntoEditor,
-    LanguageModelRequest, LanguageModelRequestMessage, MessageId, MessageMetadata, MessageStatus,
-    ModelSelector, QuoteSelection, ResetKey, Role, SavedContext, SavedContextMetadata,
-    SavedMessage, Split, ToggleFocus, ToggleModelSelector,
+    ApplyEdit, Assist, CompletionProvider, ConfirmCommand, Context, ContextEvent, ContextId,
+    ContextStore, CycleMessageRole, DeployHistory, DeployPromptLibrary, EditSuggestion,
+    InlineAssist, InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector,
+    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
+    ResetKey, Role, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection};
+use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use breadcrumbs::Breadcrumbs;
-use client::telemetry::Telemetry;
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
@@ -30,44 +29,33 @@ use editor::{
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
-use futures::future::Shared;
-use futures::{FutureExt, StreamExt};
 use gpui::{
     div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
-    AsyncAppContext, AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty,
-    EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ModelContext,
-    ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
-    Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
+    AsyncWindowContext, ClipboardItem, DismissEvent, Empty, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::SoftWrap, AnchorRangeExt as _, AutoindentMode, Buffer, LanguageRegistry,
-    LspAdapterDelegate, OffsetRangeExt as _, Point, ToOffset as _,
+    language_settings::SoftWrap, AutoindentMode, Buffer, LanguageRegistry, LspAdapterDelegate,
+    OffsetRangeExt as _, Point, ToOffset,
 };
 use multi_buffer::MultiBufferRow;
-use paths::contexts_dir;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, ProjectTransaction};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
-use std::{
-    cmp::{self, Ordering},
-    fmt::Write,
-    iter,
-    ops::Range,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use telemetry_events::AssistantKind;
+use std::{cmp, fmt::Write, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
+    prelude::*,
+    utils::{format_distance_from_now, DateTimeType},
+    Avatar, AvatarShape, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
-use util::{post_inc, ResultExt, TryFutureExt};
-use uuid::Uuid;
+use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{BreadcrumbText, Item, ItemHandle},
@@ -106,24 +94,30 @@ pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     height: Option<Pixels>,
+    project: Model<Project>,
     context_store: Model<ContextStore>,
     languages: Arc<LanguageRegistry>,
-    slash_commands: Arc<SlashCommandRegistry>,
     fs: Arc<dyn Fs>,
-    telemetry: Arc<Telemetry>,
     subscriptions: Vec<Subscription>,
     authentication_prompt: Option<AnyView>,
     model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
+#[derive(Clone)]
+enum ContextMetadata {
+    Remote(RemoteContextMetadata),
+    Saved(SavedContextMetadata),
+}
+
 struct SavedContextPickerDelegate {
     store: Model<ContextStore>,
-    matches: Vec<SavedContextMetadata>,
+    project: Model<Project>,
+    matches: Vec<ContextMetadata>,
     selected_index: usize,
 }
 
 enum SavedContextPickerEvent {
-    Confirmed { path: PathBuf },
+    Confirmed(ContextMetadata),
 }
 
 enum InlineAssistTarget {
@@ -134,8 +128,9 @@ enum InlineAssistTarget {
 impl EventEmitter<SavedContextPickerEvent> for Picker<SavedContextPickerDelegate> {}
 
 impl SavedContextPickerDelegate {
-    fn new(store: Model<ContextStore>) -> Self {
+    fn new(project: Model<Project>, store: Model<ContextStore>) -> Self {
         Self {
+            project,
             store,
             matches: Vec::new(),
             selected_index: 0,
@@ -167,7 +162,13 @@ impl PickerDelegate for SavedContextPickerDelegate {
         cx.spawn(|this, mut cx| async move {
             let matches = search.await;
             this.update(&mut cx, |this, cx| {
-                this.delegate.matches = matches;
+                let host_contexts = this.delegate.store.read(cx).host_contexts();
+                this.delegate.matches = host_contexts
+                    .iter()
+                    .cloned()
+                    .map(ContextMetadata::Remote)
+                    .chain(matches.into_iter().map(ContextMetadata::Saved))
+                    .collect();
                 this.delegate.selected_index = 0;
                 cx.notify();
             })
@@ -177,9 +178,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(metadata) = self.matches.get(self.selected_index) {
-            cx.emit(SavedContextPickerEvent::Confirmed {
-                path: metadata.path.clone(),
-            })
+            cx.emit(SavedContextPickerEvent::Confirmed(metadata.clone()));
         }
     }
 
@@ -189,26 +188,78 @@ impl PickerDelegate for SavedContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let context = self.matches.get(ix)?;
+        let item = match context {
+            ContextMetadata::Remote(context) => {
+                let host_user = self.project.read(cx).host().and_then(|collaborator| {
+                    self.project
+                        .read(cx)
+                        .user_store()
+                        .read(cx)
+                        .get_cached_user(collaborator.user_id)
+                });
+                div()
+                    .flex()
+                    .w_full()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        h_flex().flex_1().overflow_x_hidden().child(
+                            Label::new(context.summary.clone().unwrap_or("New Context".into()))
+                                .size(LabelSize::Small),
+                        ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .children(if let Some(host_user) = host_user {
+                                vec![
+                                    Avatar::new(host_user.avatar_uri.clone())
+                                        .shape(AvatarShape::Circle)
+                                        .into_any_element(),
+                                    Label::new(format!("Shared by @{}", host_user.github_login))
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small)
+                                        .into_any_element(),
+                                ]
+                            } else {
+                                vec![Label::new("Shared by host")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small)
+                                    .into_any_element()]
+                            }),
+                    )
+            }
+            ContextMetadata::Saved(context) => div()
+                .flex()
+                .w_full()
+                .justify_between()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .child(Label::new(context.title.clone()).size(LabelSize::Small))
+                        .overflow_x_hidden(),
+                )
+                .child(
+                    Label::new(format_distance_from_now(
+                        DateTimeType::Local(context.mtime),
+                        false,
+                        true,
+                        true,
+                    ))
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+                ),
+        };
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(
-                    div()
-                        .flex()
-                        .w_full()
-                        .gap_2()
-                        .child(
-                            Label::new(context.mtime.format("%F %I:%M%p").to_string())
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        )
-                        .child(Label::new(context.title.clone()).size(LabelSize::Small)),
-                ),
+                .child(item),
         )
     }
 }
@@ -219,11 +270,14 @@ impl AssistantPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
-            // TODO: deserialize state.
-            let fs = workspace.update(&mut cx, |workspace, _| workspace.app_state().fs.clone())?;
-            let context_store = cx.update(|cx| ContextStore::new(fs.clone(), cx))?.await?;
+            let context_store = workspace
+                .update(&mut cx, |workspace, cx| {
+                    ContextStore::new(workspace.project().clone(), cx)
+                })?
+                .await?;
             workspace.update(&mut cx, |workspace, cx| {
-                cx.new_view(|cx| Self::new(workspace, context_store.clone(), cx))
+                // TODO: deserialize state.
+                cx.new_view(|cx| Self::new(workspace, context_store, cx))
             })
         })
     }
@@ -308,11 +362,10 @@ impl AssistantPanel {
             workspace: workspace.weak_handle(),
             width: None,
             height: None,
+            project: workspace.project().clone(),
             context_store,
             languages: workspace.app_state().languages.clone(),
-            slash_commands: SlashCommandRegistry::global(cx),
             fs: workspace.app_state().fs.clone(),
-            telemetry: workspace.client().telemetry().clone(),
             subscriptions,
             authentication_prompt: None,
             model_selector_menu_handle,
@@ -519,16 +572,22 @@ impl AssistantPanel {
     }
 
     fn new_context(&mut self, cx: &mut ViewContext<Self>) -> Option<View<ContextEditor>> {
+        let context = self.context_store.update(cx, |store, cx| store.create(cx));
         let workspace = self.workspace.upgrade()?;
+        let lsp_adapter_delegate = workspace.update(cx, |workspace, cx| {
+            make_lsp_adapter_delegate(workspace.project(), cx).log_err()
+        });
 
         let editor = cx.new_view(|cx| {
-            ContextEditor::new(
-                self.languages.clone(),
-                self.slash_commands.clone(),
+            let mut editor = ContextEditor::for_context(
+                context,
                 self.fs.clone(),
                 workspace,
+                lsp_adapter_delegate,
                 cx,
-            )
+            );
+            editor.insert_default_prompt(cx);
+            editor
         });
 
         self.show_context(editor.clone(), cx);
@@ -577,7 +636,12 @@ impl AssistantPanel {
         } else {
             let assistant_panel = cx.view().downgrade();
             let history = cx.new_view(|cx| {
-                ContextHistory::new(self.context_store.clone(), assistant_panel, cx)
+                ContextHistory::new(
+                    self.project.clone(),
+                    self.context_store.clone(),
+                    assistant_panel,
+                    cx,
+                )
             });
             self.pane.update(cx, |pane, cx| {
                 pane.add_item(Box::new(history), true, true, None, cx);
@@ -610,10 +674,14 @@ impl AssistantPanel {
         Some(self.active_context_editor(cx)?.read(cx).context.clone())
     }
 
-    fn open_context(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+    fn open_saved_context(
+        &mut self,
+        path: PathBuf,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
         let existing_context = self.pane.read(cx).items().find_map(|item| {
             item.downcast::<ContextEditor>()
-                .filter(|editor| editor.read(cx).context.read(cx).path.as_ref() == Some(&path))
+                .filter(|editor| editor.read(cx).context.read(cx).path() == Some(&path))
         });
         if let Some(existing_context) = existing_context {
             return cx.spawn(|this, mut cx| async move {
@@ -621,12 +689,11 @@ impl AssistantPanel {
             });
         }
 
-        let saved_context = self.context_store.read(cx).load(path.clone(), cx);
+        let context = self
+            .context_store
+            .update(cx, |store, cx| store.open_local_context(path.clone(), cx));
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
-        let slash_commands = self.slash_commands.clone();
-        let languages = self.languages.clone();
-        let telemetry = self.telemetry.clone();
 
         let lsp_adapter_delegate = workspace
             .update(cx, |workspace, cx| {
@@ -636,17 +703,51 @@ impl AssistantPanel {
             .flatten();
 
         cx.spawn(|this, mut cx| async move {
-            let saved_context = saved_context.await?;
-            let context = Context::deserialize(
-                saved_context,
-                path,
-                languages,
-                slash_commands,
-                Some(telemetry),
-                &mut cx,
-            )
-            .await?;
+            let context = context.await?;
+            this.update(&mut cx, |this, cx| {
+                let workspace = workspace
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("workspace dropped"))?;
+                let editor = cx.new_view(|cx| {
+                    ContextEditor::for_context(context, fs, workspace, lsp_adapter_delegate, cx)
+                });
+                this.show_context(editor, cx);
+                anyhow::Ok(())
+            })??;
+            Ok(())
+        })
+    }
 
+    fn open_remote_context(
+        &mut self,
+        id: ContextId,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let existing_context = self.pane.read(cx).items().find_map(|item| {
+            item.downcast::<ContextEditor>()
+                .filter(|editor| *editor.read(cx).context.read(cx).id() == id)
+        });
+        if let Some(existing_context) = existing_context {
+            return cx.spawn(|this, mut cx| async move {
+                this.update(&mut cx, |this, cx| this.show_context(existing_context, cx))
+            });
+        }
+
+        let context = self
+            .context_store
+            .update(cx, |store, cx| store.open_remote_context(id, cx));
+        let fs = self.fs.clone();
+        let workspace = self.workspace.clone();
+
+        let lsp_adapter_delegate = workspace
+            .update(cx, |workspace, cx| {
+                make_lsp_adapter_delegate(workspace.project(), cx).log_err()
+            })
+            .log_err()
+            .flatten();
+
+        cx.spawn(|this, mut cx| async move {
+            let context = context.await?;
             this.update(&mut cx, |this, cx| {
                 let workspace = workspace
                     .upgrade()
@@ -804,1200 +905,6 @@ impl FocusableView for AssistantPanel {
     }
 }
 
-#[derive(Clone)]
-enum ContextEvent {
-    MessagesEdited,
-    SummaryChanged,
-    EditSuggestionsChanged,
-    StreamedCompletion,
-    PendingSlashCommandsUpdated {
-        removed: Vec<Range<language::Anchor>>,
-        updated: Vec<PendingSlashCommand>,
-    },
-    SlashCommandFinished {
-        output_range: Range<language::Anchor>,
-        sections: Vec<SlashCommandOutputSection<language::Anchor>>,
-        run_commands_in_output: bool,
-    },
-}
-
-#[derive(Default)]
-struct Summary {
-    text: String,
-    done: bool,
-}
-
-pub struct Context {
-    id: Option<String>,
-    buffer: Model<Buffer>,
-    edit_suggestions: Vec<EditSuggestion>,
-    pending_slash_commands: Vec<PendingSlashCommand>,
-    edits_since_last_slash_command_parse: language::Subscription,
-    slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
-    message_anchors: Vec<MessageAnchor>,
-    messages_metadata: HashMap<MessageId, MessageMetadata>,
-    next_message_id: MessageId,
-    summary: Option<Summary>,
-    pending_summary: Task<Option<()>>,
-    completion_count: usize,
-    pending_completions: Vec<PendingCompletion>,
-    token_count: Option<usize>,
-    pending_token_count: Task<Option<()>>,
-    pending_edit_suggestion_parse: Option<Task<()>>,
-    pending_save: Task<Result<()>>,
-    path: Option<PathBuf>,
-    _subscriptions: Vec<Subscription>,
-    telemetry: Option<Arc<Telemetry>>,
-    slash_command_registry: Arc<SlashCommandRegistry>,
-    language_registry: Arc<LanguageRegistry>,
-}
-
-impl EventEmitter<ContextEvent> for Context {}
-
-impl Context {
-    fn new(
-        language_registry: Arc<LanguageRegistry>,
-        slash_command_registry: Arc<SlashCommandRegistry>,
-        telemetry: Option<Arc<Telemetry>>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
-        let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::local("", cx);
-            buffer.set_language_registry(language_registry.clone());
-            buffer
-        });
-        let edits_since_last_slash_command_parse =
-            buffer.update(cx, |buffer, _| buffer.subscribe());
-        let mut this = Self {
-            id: Some(Uuid::new_v4().to_string()),
-            message_anchors: Default::default(),
-            messages_metadata: Default::default(),
-            next_message_id: Default::default(),
-            edit_suggestions: Vec::new(),
-            pending_slash_commands: Vec::new(),
-            slash_command_output_sections: Vec::new(),
-            edits_since_last_slash_command_parse,
-            summary: None,
-            pending_summary: Task::ready(None),
-            completion_count: Default::default(),
-            pending_completions: Default::default(),
-            token_count: None,
-            pending_token_count: Task::ready(None),
-            pending_edit_suggestion_parse: None,
-            _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
-            pending_save: Task::ready(Ok(())),
-            path: None,
-            buffer,
-            telemetry,
-            language_registry,
-            slash_command_registry,
-        };
-
-        let message = MessageAnchor {
-            id: MessageId(post_inc(&mut this.next_message_id.0)),
-            start: language::Anchor::MIN,
-        };
-        this.message_anchors.push(message.clone());
-        this.messages_metadata.insert(
-            message.id,
-            MessageMetadata {
-                role: Role::User,
-                status: MessageStatus::Done,
-            },
-        );
-
-        this.set_language(cx);
-        this.count_remaining_tokens(cx);
-        this
-    }
-
-    fn serialize(&self, cx: &AppContext) -> SavedContext {
-        let buffer = self.buffer.read(cx);
-        SavedContext {
-            id: self.id.clone(),
-            zed: "context".into(),
-            version: SavedContext::VERSION.into(),
-            text: buffer.text(),
-            message_metadata: self.messages_metadata.clone(),
-            messages: self
-                .messages(cx)
-                .map(|message| SavedMessage {
-                    id: message.id,
-                    start: message.offset_range.start,
-                })
-                .collect(),
-            summary: self
-                .summary
-                .as_ref()
-                .map(|summary| summary.text.clone())
-                .unwrap_or_default(),
-            slash_command_output_sections: self
-                .slash_command_output_sections
-                .iter()
-                .filter_map(|section| {
-                    let range = section.range.to_offset(buffer);
-                    if section.range.start.is_valid(buffer) && !range.is_empty() {
-                        Some(SlashCommandOutputSection {
-                            range,
-                            icon: section.icon,
-                            label: section.label.clone(),
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn deserialize(
-        saved_context: SavedContext,
-        path: PathBuf,
-        language_registry: Arc<LanguageRegistry>,
-        slash_command_registry: Arc<SlashCommandRegistry>,
-        telemetry: Option<Arc<Telemetry>>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<Model<Self>> {
-        let id = match saved_context.id {
-            Some(id) => Some(id),
-            None => Some(Uuid::new_v4().to_string()),
-        };
-
-        let markdown = language_registry.language_for_name("Markdown");
-        let mut message_anchors = Vec::new();
-        let mut next_message_id = MessageId(0);
-        let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::local(saved_context.text, cx);
-            for message in saved_context.messages {
-                message_anchors.push(MessageAnchor {
-                    id: message.id,
-                    start: buffer.anchor_before(message.start),
-                });
-                next_message_id = cmp::max(next_message_id, MessageId(message.id.0 + 1));
-            }
-            buffer.set_language_registry(language_registry.clone());
-            cx.spawn(|buffer, mut cx| async move {
-                let markdown = markdown.await?;
-                buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
-                    buffer.set_language(Some(markdown), cx)
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-            buffer
-        })?;
-
-        cx.new_model(move |cx| {
-            let edits_since_last_slash_command_parse =
-                buffer.update(cx, |buffer, _| buffer.subscribe());
-            let mut this = Self {
-                id,
-                message_anchors,
-                messages_metadata: saved_context.message_metadata,
-                next_message_id,
-                edit_suggestions: Vec::new(),
-                pending_slash_commands: Vec::new(),
-                slash_command_output_sections: saved_context
-                    .slash_command_output_sections
-                    .into_iter()
-                    .map(|section| {
-                        let buffer = buffer.read(cx);
-                        SlashCommandOutputSection {
-                            range: buffer.anchor_after(section.range.start)
-                                ..buffer.anchor_before(section.range.end),
-                            icon: section.icon,
-                            label: section.label,
-                        }
-                    })
-                    .collect(),
-                edits_since_last_slash_command_parse,
-                summary: Some(Summary {
-                    text: saved_context.summary,
-                    done: true,
-                }),
-                pending_summary: Task::ready(None),
-                completion_count: Default::default(),
-                pending_completions: Default::default(),
-                token_count: None,
-                pending_edit_suggestion_parse: None,
-                pending_token_count: Task::ready(None),
-                _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
-                pending_save: Task::ready(Ok(())),
-                path: Some(path),
-                buffer,
-                telemetry,
-                language_registry,
-                slash_command_registry,
-            };
-            this.set_language(cx);
-            this.reparse_edit_suggestions(cx);
-            this.count_remaining_tokens(cx);
-            this
-        })
-    }
-
-    fn set_language(&mut self, cx: &mut ModelContext<Self>) {
-        let markdown = self.language_registry.language_for_name("Markdown");
-        cx.spawn(|this, mut cx| async move {
-            let markdown = markdown.await?;
-            this.update(&mut cx, |this, cx| {
-                this.buffer
-                    .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
-            })
-        })
-        .detach_and_log_err(cx);
-    }
-
-    fn handle_buffer_event(
-        &mut self,
-        _: Model<Buffer>,
-        event: &language::Event,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if *event == language::Event::Edited {
-            self.count_remaining_tokens(cx);
-            self.reparse_edit_suggestions(cx);
-            self.reparse_slash_commands(cx);
-            cx.emit(ContextEvent::MessagesEdited);
-        }
-    }
-
-    pub(crate) fn token_count(&self) -> Option<usize> {
-        self.token_count
-    }
-
-    pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
-        let request = self.to_completion_request(cx);
-        self.pending_token_count = cx.spawn(|this, mut cx| {
-            async move {
-                cx.background_executor()
-                    .timer(Duration::from_millis(200))
-                    .await;
-
-                let token_count = cx
-                    .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
-                    .await?;
-
-                this.update(&mut cx, |this, cx| {
-                    this.token_count = Some(token_count);
-                    cx.notify()
-                })?;
-                anyhow::Ok(())
-            }
-            .log_err()
-        });
-    }
-
-    fn reparse_slash_commands(&mut self, cx: &mut ModelContext<Self>) {
-        let buffer = self.buffer.read(cx);
-        let mut row_ranges = self
-            .edits_since_last_slash_command_parse
-            .consume()
-            .into_iter()
-            .map(|edit| {
-                let start_row = buffer.offset_to_point(edit.new.start).row;
-                let end_row = buffer.offset_to_point(edit.new.end).row + 1;
-                start_row..end_row
-            })
-            .peekable();
-
-        let mut removed = Vec::new();
-        let mut updated = Vec::new();
-        while let Some(mut row_range) = row_ranges.next() {
-            while let Some(next_row_range) = row_ranges.peek() {
-                if row_range.end >= next_row_range.start {
-                    row_range.end = next_row_range.end;
-                    row_ranges.next();
-                } else {
-                    break;
-                }
-            }
-
-            let start = buffer.anchor_before(Point::new(row_range.start, 0));
-            let end = buffer.anchor_after(Point::new(
-                row_range.end - 1,
-                buffer.line_len(row_range.end - 1),
-            ));
-
-            let old_range = self.pending_command_indices_for_range(start..end, cx);
-
-            let mut new_commands = Vec::new();
-            let mut lines = buffer.text_for_range(start..end).lines();
-            let mut offset = lines.offset();
-            while let Some(line) = lines.next() {
-                if let Some(command_line) = SlashCommandLine::parse(line) {
-                    let name = &line[command_line.name.clone()];
-                    let argument = command_line.argument.as_ref().and_then(|argument| {
-                        (!argument.is_empty()).then_some(&line[argument.clone()])
-                    });
-                    if let Some(command) = self.slash_command_registry.command(name) {
-                        if !command.requires_argument() || argument.is_some() {
-                            let start_ix = offset + command_line.name.start - 1;
-                            let end_ix = offset
-                                + command_line
-                                    .argument
-                                    .map_or(command_line.name.end, |argument| argument.end);
-                            let source_range =
-                                buffer.anchor_after(start_ix)..buffer.anchor_after(end_ix);
-                            let pending_command = PendingSlashCommand {
-                                name: name.to_string(),
-                                argument: argument.map(ToString::to_string),
-                                source_range,
-                                status: PendingSlashCommandStatus::Idle,
-                            };
-                            updated.push(pending_command.clone());
-                            new_commands.push(pending_command);
-                        }
-                    }
-                }
-
-                offset = lines.offset();
-            }
-
-            let removed_commands = self.pending_slash_commands.splice(old_range, new_commands);
-            removed.extend(removed_commands.map(|command| command.source_range));
-        }
-
-        if !updated.is_empty() || !removed.is_empty() {
-            cx.emit(ContextEvent::PendingSlashCommandsUpdated { removed, updated });
-        }
-    }
-
-    fn reparse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
-        self.pending_edit_suggestion_parse = Some(cx.spawn(|this, mut cx| async move {
-            cx.background_executor()
-                .timer(Duration::from_millis(200))
-                .await;
-
-            this.update(&mut cx, |this, cx| {
-                this.reparse_edit_suggestions_in_range(0..this.buffer.read(cx).len(), cx);
-            })
-            .ok();
-        }));
-    }
-
-    fn reparse_edit_suggestions_in_range(
-        &mut self,
-        range: Range<usize>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.buffer.update(cx, |buffer, _| {
-            let range_start = buffer.anchor_before(range.start);
-            let range_end = buffer.anchor_after(range.end);
-            let start_ix = self
-                .edit_suggestions
-                .binary_search_by(|probe| {
-                    probe
-                        .source_range
-                        .end
-                        .cmp(&range_start, buffer)
-                        .then(Ordering::Greater)
-                })
-                .unwrap_err();
-            let end_ix = self
-                .edit_suggestions
-                .binary_search_by(|probe| {
-                    probe
-                        .source_range
-                        .start
-                        .cmp(&range_end, buffer)
-                        .then(Ordering::Less)
-                })
-                .unwrap_err();
-
-            let mut new_edit_suggestions = Vec::new();
-            let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
-            while let Some(suggestion) = parse_next_edit_suggestion(&mut message_lines) {
-                let start_anchor = buffer.anchor_after(suggestion.outer_range.start);
-                let end_anchor = buffer.anchor_before(suggestion.outer_range.end);
-                new_edit_suggestions.push(EditSuggestion {
-                    source_range: start_anchor..end_anchor,
-                    full_path: suggestion.path,
-                });
-            }
-            self.edit_suggestions
-                .splice(start_ix..end_ix, new_edit_suggestions);
-        });
-        cx.emit(ContextEvent::EditSuggestionsChanged);
-        cx.notify();
-    }
-
-    fn pending_command_for_position(
-        &mut self,
-        position: language::Anchor,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<&mut PendingSlashCommand> {
-        let buffer = self.buffer.read(cx);
-        match self
-            .pending_slash_commands
-            .binary_search_by(|probe| probe.source_range.end.cmp(&position, buffer))
-        {
-            Ok(ix) => Some(&mut self.pending_slash_commands[ix]),
-            Err(ix) => {
-                let cmd = self.pending_slash_commands.get_mut(ix)?;
-                if position.cmp(&cmd.source_range.start, buffer).is_ge()
-                    && position.cmp(&cmd.source_range.end, buffer).is_le()
-                {
-                    Some(cmd)
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    fn pending_commands_for_range(
-        &self,
-        range: Range<language::Anchor>,
-        cx: &AppContext,
-    ) -> &[PendingSlashCommand] {
-        let range = self.pending_command_indices_for_range(range, cx);
-        &self.pending_slash_commands[range]
-    }
-
-    fn pending_command_indices_for_range(
-        &self,
-        range: Range<language::Anchor>,
-        cx: &AppContext,
-    ) -> Range<usize> {
-        let buffer = self.buffer.read(cx);
-        let start_ix = match self
-            .pending_slash_commands
-            .binary_search_by(|probe| probe.source_range.end.cmp(&range.start, &buffer))
-        {
-            Ok(ix) | Err(ix) => ix,
-        };
-        let end_ix = match self
-            .pending_slash_commands
-            .binary_search_by(|probe| probe.source_range.start.cmp(&range.end, &buffer))
-        {
-            Ok(ix) => ix + 1,
-            Err(ix) => ix,
-        };
-        start_ix..end_ix
-    }
-
-    fn insert_command_output(
-        &mut self,
-        command_range: Range<language::Anchor>,
-        output: Task<Result<SlashCommandOutput>>,
-        insert_trailing_newline: bool,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.reparse_slash_commands(cx);
-
-        let insert_output_task = cx.spawn(|this, mut cx| {
-            let command_range = command_range.clone();
-            async move {
-                let output = output.await;
-                this.update(&mut cx, |this, cx| match output {
-                    Ok(mut output) => {
-                        if insert_trailing_newline {
-                            output.text.push('\n');
-                        }
-
-                        let event = this.buffer.update(cx, |buffer, cx| {
-                            let start = command_range.start.to_offset(buffer);
-                            let old_end = command_range.end.to_offset(buffer);
-                            let new_end = start + output.text.len();
-                            buffer.edit([(start..old_end, output.text)], None, cx);
-
-                            let mut sections = output
-                                .sections
-                                .into_iter()
-                                .map(|section| SlashCommandOutputSection {
-                                    range: buffer.anchor_after(start + section.range.start)
-                                        ..buffer.anchor_before(start + section.range.end),
-                                    icon: section.icon,
-                                    label: section.label,
-                                })
-                                .collect::<Vec<_>>();
-                            sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
-
-                            this.slash_command_output_sections
-                                .extend(sections.iter().cloned());
-                            this.slash_command_output_sections
-                                .sort_by(|a, b| a.range.cmp(&b.range, buffer));
-
-                            ContextEvent::SlashCommandFinished {
-                                output_range: buffer.anchor_after(start)
-                                    ..buffer.anchor_before(new_end),
-                                sections,
-                                run_commands_in_output: output.run_commands_in_text,
-                            }
-                        });
-                        cx.emit(event);
-                    }
-                    Err(error) => {
-                        if let Some(pending_command) =
-                            this.pending_command_for_position(command_range.start, cx)
-                        {
-                            pending_command.status =
-                                PendingSlashCommandStatus::Error(error.to_string());
-                            cx.emit(ContextEvent::PendingSlashCommandsUpdated {
-                                removed: vec![pending_command.source_range.clone()],
-                                updated: vec![pending_command.clone()],
-                            });
-                        }
-                    }
-                })
-                .ok();
-            }
-        });
-
-        if let Some(pending_command) = self.pending_command_for_position(command_range.start, cx) {
-            pending_command.status = PendingSlashCommandStatus::Running {
-                _task: insert_output_task.shared(),
-            };
-            cx.emit(ContextEvent::PendingSlashCommandsUpdated {
-                removed: vec![pending_command.source_range.clone()],
-                updated: vec![pending_command.clone()],
-            });
-        }
-    }
-
-    fn completion_provider_changed(&mut self, cx: &mut ModelContext<Self>) {
-        self.count_remaining_tokens(cx);
-    }
-
-    fn assist(
-        &mut self,
-        selected_messages: HashSet<MessageId>,
-        cx: &mut ModelContext<Self>,
-    ) -> Vec<MessageAnchor> {
-        let mut user_messages = Vec::new();
-
-        let last_message_id = if let Some(last_message_id) =
-            self.message_anchors.iter().rev().find_map(|message| {
-                message
-                    .start
-                    .is_valid(self.buffer.read(cx))
-                    .then_some(message.id)
-            }) {
-            last_message_id
-        } else {
-            return Default::default();
-        };
-
-        let mut should_assist = false;
-        for selected_message_id in selected_messages {
-            let selected_message_role =
-                if let Some(metadata) = self.messages_metadata.get(&selected_message_id) {
-                    metadata.role
-                } else {
-                    continue;
-                };
-
-            if selected_message_role == Role::Assistant {
-                if let Some(user_message) = self.insert_message_after(
-                    selected_message_id,
-                    Role::User,
-                    MessageStatus::Done,
-                    cx,
-                ) {
-                    user_messages.push(user_message);
-                }
-            } else {
-                should_assist = true;
-            }
-        }
-
-        if should_assist {
-            if !CompletionProvider::global(cx).is_authenticated() {
-                log::info!("completion provider has no credentials");
-                return Default::default();
-            }
-
-            let request = self.to_completion_request(cx);
-            let response = CompletionProvider::global(cx).complete(request, cx);
-            let assistant_message = self
-                .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
-                .unwrap();
-
-            // Queue up the user's next reply.
-            let user_message = self
-                .insert_message_after(assistant_message.id, Role::User, MessageStatus::Done, cx)
-                .unwrap();
-            user_messages.push(user_message);
-
-            let task = cx.spawn({
-                |this, mut cx| async move {
-                    let response = response.await;
-                    let assistant_message_id = assistant_message.id;
-                    let mut response_latency = None;
-                    let stream_completion = async {
-                        let request_start = Instant::now();
-                        let mut messages = response.inner.await?;
-
-                        while let Some(message) = messages.next().await {
-                            if response_latency.is_none() {
-                                response_latency = Some(request_start.elapsed());
-                            }
-                            let text = message?;
-
-                            this.update(&mut cx, |this, cx| {
-                                let message_ix = this
-                                    .message_anchors
-                                    .iter()
-                                    .position(|message| message.id == assistant_message_id)?;
-                                let message_range = this.buffer.update(cx, |buffer, cx| {
-                                    let message_start_offset =
-                                        this.message_anchors[message_ix].start.to_offset(buffer);
-                                    let message_old_end_offset = this.message_anchors
-                                        [message_ix + 1..]
-                                        .iter()
-                                        .find(|message| message.start.is_valid(buffer))
-                                        .map_or(buffer.len(), |message| {
-                                            message.start.to_offset(buffer).saturating_sub(1)
-                                        });
-                                    let message_new_end_offset =
-                                        message_old_end_offset + text.len();
-                                    buffer.edit(
-                                        [(message_old_end_offset..message_old_end_offset, text)],
-                                        None,
-                                        cx,
-                                    );
-                                    message_start_offset..message_new_end_offset
-                                });
-                                this.reparse_edit_suggestions_in_range(message_range, cx);
-                                cx.emit(ContextEvent::StreamedCompletion);
-
-                                Some(())
-                            })?;
-                            smol::future::yield_now().await;
-                        }
-
-                        this.update(&mut cx, |this, cx| {
-                            this.pending_completions
-                                .retain(|completion| completion.id != this.completion_count);
-                            this.summarize(cx);
-                        })?;
-
-                        anyhow::Ok(())
-                    };
-
-                    let result = stream_completion.await;
-
-                    this.update(&mut cx, |this, cx| {
-                        if let Some(metadata) =
-                            this.messages_metadata.get_mut(&assistant_message.id)
-                        {
-                            let error_message = result
-                                .err()
-                                .map(|error| error.to_string().trim().to_string());
-                            if let Some(error_message) = error_message.as_ref() {
-                                metadata.status =
-                                    MessageStatus::Error(SharedString::from(error_message.clone()));
-                            } else {
-                                metadata.status = MessageStatus::Done;
-                            }
-
-                            if let Some(telemetry) = this.telemetry.as_ref() {
-                                let model = CompletionProvider::global(cx).model();
-                                telemetry.report_assistant_event(
-                                    this.id.clone(),
-                                    AssistantKind::Panel,
-                                    model.telemetry_id(),
-                                    response_latency,
-                                    error_message,
-                                );
-                            }
-
-                            cx.emit(ContextEvent::MessagesEdited);
-                        }
-                    })
-                    .ok();
-                }
-            });
-
-            self.pending_completions.push(PendingCompletion {
-                id: post_inc(&mut self.completion_count),
-                _task: task,
-            });
-        }
-
-        user_messages
-    }
-
-    pub fn to_completion_request(&self, cx: &AppContext) -> LanguageModelRequest {
-        let messages = self
-            .messages(cx)
-            .filter(|message| matches!(message.status, MessageStatus::Done))
-            .map(|message| message.to_request_message(self.buffer.read(cx)));
-
-        LanguageModelRequest {
-            model: CompletionProvider::global(cx).model(),
-            messages: messages.collect(),
-            stop: vec![],
-            temperature: 1.0,
-        }
-    }
-
-    fn cancel_last_assist(&mut self) -> bool {
-        self.pending_completions.pop().is_some()
-    }
-
-    fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {
-        for id in ids {
-            if let Some(metadata) = self.messages_metadata.get_mut(&id) {
-                metadata.role.cycle();
-                cx.emit(ContextEvent::MessagesEdited);
-                cx.notify();
-            }
-        }
-    }
-
-    fn insert_message_after(
-        &mut self,
-        message_id: MessageId,
-        role: Role,
-        status: MessageStatus,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<MessageAnchor> {
-        if let Some(prev_message_ix) = self
-            .message_anchors
-            .iter()
-            .position(|message| message.id == message_id)
-        {
-            // Find the next valid message after the one we were given.
-            let mut next_message_ix = prev_message_ix + 1;
-            while let Some(next_message) = self.message_anchors.get(next_message_ix) {
-                if next_message.start.is_valid(self.buffer.read(cx)) {
-                    break;
-                }
-                next_message_ix += 1;
-            }
-
-            let start = self.buffer.update(cx, |buffer, cx| {
-                let offset = self
-                    .message_anchors
-                    .get(next_message_ix)
-                    .map_or(buffer.len(), |message| message.start.to_offset(buffer) - 1);
-                buffer.edit([(offset..offset, "\n")], None, cx);
-                buffer.anchor_before(offset + 1)
-            });
-            let message = MessageAnchor {
-                id: MessageId(post_inc(&mut self.next_message_id.0)),
-                start,
-            };
-            self.message_anchors
-                .insert(next_message_ix, message.clone());
-            self.messages_metadata
-                .insert(message.id, MessageMetadata { role, status });
-            cx.emit(ContextEvent::MessagesEdited);
-            Some(message)
-        } else {
-            None
-        }
-    }
-
-    fn split_message(
-        &mut self,
-        range: Range<usize>,
-        cx: &mut ModelContext<Self>,
-    ) -> (Option<MessageAnchor>, Option<MessageAnchor>) {
-        let start_message = self.message_for_offset(range.start, cx);
-        let end_message = self.message_for_offset(range.end, cx);
-        if let Some((start_message, end_message)) = start_message.zip(end_message) {
-            // Prevent splitting when range spans multiple messages.
-            if start_message.id != end_message.id {
-                return (None, None);
-            }
-
-            let message = start_message;
-            let role = message.role;
-            let mut edited_buffer = false;
-
-            let mut suffix_start = None;
-            if range.start > message.offset_range.start && range.end < message.offset_range.end - 1
-            {
-                if self.buffer.read(cx).chars_at(range.end).next() == Some('\n') {
-                    suffix_start = Some(range.end + 1);
-                } else if self.buffer.read(cx).reversed_chars_at(range.end).next() == Some('\n') {
-                    suffix_start = Some(range.end);
-                }
-            }
-
-            let suffix = if let Some(suffix_start) = suffix_start {
-                MessageAnchor {
-                    id: MessageId(post_inc(&mut self.next_message_id.0)),
-                    start: self.buffer.read(cx).anchor_before(suffix_start),
-                }
-            } else {
-                self.buffer.update(cx, |buffer, cx| {
-                    buffer.edit([(range.end..range.end, "\n")], None, cx);
-                });
-                edited_buffer = true;
-                MessageAnchor {
-                    id: MessageId(post_inc(&mut self.next_message_id.0)),
-                    start: self.buffer.read(cx).anchor_before(range.end + 1),
-                }
-            };
-
-            self.message_anchors
-                .insert(message.index_range.end + 1, suffix.clone());
-            self.messages_metadata.insert(
-                suffix.id,
-                MessageMetadata {
-                    role,
-                    status: MessageStatus::Done,
-                },
-            );
-
-            let new_messages =
-                if range.start == range.end || range.start == message.offset_range.start {
-                    (None, Some(suffix))
-                } else {
-                    let mut prefix_end = None;
-                    if range.start > message.offset_range.start
-                        && range.end < message.offset_range.end - 1
-                    {
-                        if self.buffer.read(cx).chars_at(range.start).next() == Some('\n') {
-                            prefix_end = Some(range.start + 1);
-                        } else if self.buffer.read(cx).reversed_chars_at(range.start).next()
-                            == Some('\n')
-                        {
-                            prefix_end = Some(range.start);
-                        }
-                    }
-
-                    let selection = if let Some(prefix_end) = prefix_end {
-                        cx.emit(ContextEvent::MessagesEdited);
-                        MessageAnchor {
-                            id: MessageId(post_inc(&mut self.next_message_id.0)),
-                            start: self.buffer.read(cx).anchor_before(prefix_end),
-                        }
-                    } else {
-                        self.buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(range.start..range.start, "\n")], None, cx)
-                        });
-                        edited_buffer = true;
-                        MessageAnchor {
-                            id: MessageId(post_inc(&mut self.next_message_id.0)),
-                            start: self.buffer.read(cx).anchor_before(range.end + 1),
-                        }
-                    };
-
-                    self.message_anchors
-                        .insert(message.index_range.end + 1, selection.clone());
-                    self.messages_metadata.insert(
-                        selection.id,
-                        MessageMetadata {
-                            role,
-                            status: MessageStatus::Done,
-                        },
-                    );
-                    (Some(selection), Some(suffix))
-                };
-
-            if !edited_buffer {
-                cx.emit(ContextEvent::MessagesEdited);
-            }
-            new_messages
-        } else {
-            (None, None)
-        }
-    }
-
-    fn summarize(&mut self, cx: &mut ModelContext<Self>) {
-        if self.message_anchors.len() >= 2 && self.summary.is_none() {
-            if !CompletionProvider::global(cx).is_authenticated() {
-                return;
-            }
-
-            let messages = self
-                .messages(cx)
-                .map(|message| message.to_request_message(self.buffer.read(cx)))
-                .chain(Some(LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: "Summarize the context into a short title without punctuation.".into(),
-                }));
-            let request = LanguageModelRequest {
-                model: CompletionProvider::global(cx).model(),
-                messages: messages.collect(),
-                stop: vec![],
-                temperature: 1.0,
-            };
-
-            let response = CompletionProvider::global(cx).complete(request, cx);
-            self.pending_summary = cx.spawn(|this, mut cx| {
-                async move {
-                    let response = response.await;
-                    let mut messages = response.inner.await?;
-
-                    while let Some(message) = messages.next().await {
-                        let text = message?;
-                        let mut lines = text.lines();
-                        this.update(&mut cx, |this, cx| {
-                            let summary = this.summary.get_or_insert(Default::default());
-                            summary.text.extend(lines.next());
-                            cx.emit(ContextEvent::SummaryChanged);
-                        })?;
-
-                        // Stop if the LLM generated multiple lines.
-                        if lines.next().is_some() {
-                            break;
-                        }
-                    }
-
-                    this.update(&mut cx, |this, cx| {
-                        if let Some(summary) = this.summary.as_mut() {
-                            summary.done = true;
-                            cx.emit(ContextEvent::SummaryChanged);
-                        }
-                    })?;
-
-                    anyhow::Ok(())
-                }
-                .log_err()
-            });
-        }
-    }
-
-    fn message_for_offset(&self, offset: usize, cx: &AppContext) -> Option<Message> {
-        self.messages_for_offsets([offset], cx).pop()
-    }
-
-    fn messages_for_offsets(
-        &self,
-        offsets: impl IntoIterator<Item = usize>,
-        cx: &AppContext,
-    ) -> Vec<Message> {
-        let mut result = Vec::new();
-
-        let mut messages = self.messages(cx).peekable();
-        let mut offsets = offsets.into_iter().peekable();
-        let mut current_message = messages.next();
-        while let Some(offset) = offsets.next() {
-            // Locate the message that contains the offset.
-            while current_message.as_ref().map_or(false, |message| {
-                !message.offset_range.contains(&offset) && messages.peek().is_some()
-            }) {
-                current_message = messages.next();
-            }
-            let Some(message) = current_message.as_ref() else {
-                break;
-            };
-
-            // Skip offsets that are in the same message.
-            while offsets.peek().map_or(false, |offset| {
-                message.offset_range.contains(offset) || messages.peek().is_none()
-            }) {
-                offsets.next();
-            }
-
-            result.push(message.clone());
-        }
-        result
-    }
-
-    fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
-        let buffer = self.buffer.read(cx);
-        let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
-        iter::from_fn(move || {
-            if let Some((start_ix, message_anchor)) = message_anchors.next() {
-                let metadata = self.messages_metadata.get(&message_anchor.id)?;
-                let message_start = message_anchor.start.to_offset(buffer);
-                let mut message_end = None;
-                let mut end_ix = start_ix;
-                while let Some((_, next_message)) = message_anchors.peek() {
-                    if next_message.start.is_valid(buffer) {
-                        message_end = Some(next_message.start);
-                        break;
-                    } else {
-                        end_ix += 1;
-                        message_anchors.next();
-                    }
-                }
-                let message_end = message_end
-                    .unwrap_or(language::Anchor::MAX)
-                    .to_offset(buffer);
-
-                return Some(Message {
-                    index_range: start_ix..end_ix,
-                    offset_range: message_start..message_end,
-                    id: message_anchor.id,
-                    anchor: message_anchor.start,
-                    role: metadata.role,
-                    status: metadata.status.clone(),
-                });
-            }
-            None
-        })
-    }
-
-    fn save(
-        &mut self,
-        debounce: Option<Duration>,
-        fs: Arc<dyn Fs>,
-        cx: &mut ModelContext<Context>,
-    ) {
-        self.pending_save = cx.spawn(|this, mut cx| async move {
-            if let Some(debounce) = debounce {
-                cx.background_executor().timer(debounce).await;
-            }
-
-            let (old_path, summary) = this.read_with(&cx, |this, _| {
-                let path = this.path.clone();
-                let summary = if let Some(summary) = this.summary.as_ref() {
-                    if summary.done {
-                        Some(summary.text.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                (path, summary)
-            })?;
-
-            if let Some(summary) = summary {
-                let context = this.read_with(&cx, |this, cx| this.serialize(cx))?;
-                let path = if let Some(old_path) = old_path {
-                    old_path
-                } else {
-                    let mut discriminant = 1;
-                    let mut new_path;
-                    loop {
-                        new_path = contexts_dir().join(&format!(
-                            "{} - {}.zed.json",
-                            summary.trim(),
-                            discriminant
-                        ));
-                        if fs.is_file(&new_path).await {
-                            discriminant += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    new_path
-                };
-
-                fs.create_dir(contexts_dir().as_ref()).await?;
-                fs.atomic_write(path.clone(), serde_json::to_string(&context).unwrap())
-                    .await?;
-                this.update(&mut cx, |this, _| this.path = Some(path))?;
-            }
-
-            Ok(())
-        });
-    }
-}
-
-#[derive(Debug)]
-enum EditParsingState {
-    None,
-    InOldText {
-        path: PathBuf,
-        start_offset: usize,
-        old_text_start_offset: usize,
-    },
-    InNewText {
-        path: PathBuf,
-        start_offset: usize,
-        old_text_range: Range<usize>,
-        new_text_start_offset: usize,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct EditSuggestion {
-    source_range: Range<language::Anchor>,
-    full_path: PathBuf,
-}
-
-struct ParsedEditSuggestion {
-    path: PathBuf,
-    outer_range: Range<usize>,
-    old_text_range: Range<usize>,
-    new_text_range: Range<usize>,
-}
-
-fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSuggestion> {
-    let mut state = EditParsingState::None;
-    loop {
-        let offset = lines.offset();
-        let message_line = lines.next()?;
-        match state {
-            EditParsingState::None => {
-                if let Some(rest) = message_line.strip_prefix("```edit ") {
-                    let path = rest.trim();
-                    if !path.is_empty() {
-                        state = EditParsingState::InOldText {
-                            path: PathBuf::from(path),
-                            start_offset: offset,
-                            old_text_start_offset: lines.offset(),
-                        };
-                    }
-                }
-            }
-            EditParsingState::InOldText {
-                path,
-                start_offset,
-                old_text_start_offset,
-            } => {
-                if message_line == "---" {
-                    state = EditParsingState::InNewText {
-                        path,
-                        start_offset,
-                        old_text_range: old_text_start_offset..offset,
-                        new_text_start_offset: lines.offset(),
-                    };
-                } else {
-                    state = EditParsingState::InOldText {
-                        path,
-                        start_offset,
-                        old_text_start_offset,
-                    };
-                }
-            }
-            EditParsingState::InNewText {
-                path,
-                start_offset,
-                old_text_range,
-                new_text_start_offset,
-            } => {
-                if message_line == "```" {
-                    return Some(ParsedEditSuggestion {
-                        path,
-                        outer_range: start_offset..offset + "```".len(),
-                        old_text_range,
-                        new_text_range: new_text_start_offset..offset,
-                    });
-                } else {
-                    state = EditParsingState::InNewText {
-                        path,
-                        start_offset,
-                        old_text_range,
-                        new_text_start_offset,
-                    };
-                }
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
-struct PendingSlashCommand {
-    name: String,
-    argument: Option<String>,
-    status: PendingSlashCommandStatus,
-    source_range: Range<language::Anchor>,
-}
-
-#[derive(Clone)]
-enum PendingSlashCommandStatus {
-    Idle,
-    Running { _task: Shared<Task<()>> },
-    Error(String),
-}
-
-struct PendingCompletion {
-    id: usize,
-    _task: Task<()>,
-}
-
 pub enum ContextEditorEvent {
     Edited,
     TabContentChanged,
@@ -2013,7 +920,6 @@ pub struct ContextEditor {
     context: Model<Context>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
-    slash_command_registry: Arc<SlashCommandRegistry>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
@@ -2026,31 +932,6 @@ pub struct ContextEditor {
 impl ContextEditor {
     const MAX_TAB_TITLE_LEN: usize = 16;
 
-    fn new(
-        language_registry: Arc<LanguageRegistry>,
-        slash_command_registry: Arc<SlashCommandRegistry>,
-        fs: Arc<dyn Fs>,
-        workspace: View<Workspace>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        let telemetry = workspace.read(cx).client().telemetry().clone();
-        let project = workspace.read(cx).project().clone();
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
-
-        let context = cx.new_model(|cx| {
-            Context::new(
-                language_registry,
-                slash_command_registry,
-                Some(telemetry),
-                cx,
-            )
-        });
-
-        let mut this = Self::for_context(context, fs, workspace, lsp_adapter_delegate, cx);
-        this.insert_default_prompt(cx);
-        this
-    }
-
     fn for_context(
         context: Model<Context>,
         fs: Arc<dyn Fs>,
@@ -2058,16 +939,13 @@ impl ContextEditor {
         lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let slash_command_registry = context.read(cx).slash_command_registry.clone();
-
         let completion_provider = SlashCommandCompletionProvider::new(
-            slash_command_registry.clone(),
             Some(cx.view().downgrade()),
             Some(workspace.downgrade()),
         );
 
         let editor = cx.new_view(|cx| {
-            let mut editor = Editor::for_buffer(context.read(cx).buffer.clone(), None, cx);
+            let mut editor = Editor::for_buffer(context.read(cx).buffer().clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_line_numbers(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
@@ -2086,11 +964,10 @@ impl ContextEditor {
             cx.subscribe(&editor, Self::handle_editor_search_event),
         ];
 
-        let sections = context.read(cx).slash_command_output_sections.clone();
+        let sections = context.read(cx).slash_command_output_sections().to_vec();
         let mut this = Self {
             context,
             editor,
-            slash_command_registry,
             lsp_adapter_delegate,
             blocks: Default::default(),
             scroll_position: None,
@@ -2112,13 +989,12 @@ impl ContextEditor {
         });
         self.split(&Split, cx);
         let command = self.context.update(cx, |context, cx| {
-            context
-                .messages_metadata
-                .get_mut(&MessageId::default())
-                .unwrap()
-                .role = Role::System;
+            let first_message_id = context.messages(cx).next().unwrap().id;
+            context.update_metadata(first_message_id, cx, |metadata| {
+                metadata.role = Role::System;
+            });
             context.reparse_slash_commands(cx);
-            context.pending_slash_commands[0].clone()
+            context.pending_slash_commands()[0].clone()
         });
 
         self.run_command(
@@ -2147,7 +1023,7 @@ impl ContextEditor {
             .map(|message| {
                 let cursor = message
                     .start
-                    .to_offset(self.context.read(cx).buffer.read(cx));
+                    .to_offset(self.context.read(cx).buffer().read(cx));
                 cursor..cursor
             })
             .collect::<Vec<_>>();
@@ -2194,7 +1070,7 @@ impl ContextEditor {
     }
 
     fn insert_command(&mut self, name: &str, cx: &mut ViewContext<Self>) {
-        if let Some(command) = self.slash_command_registry.command(name) {
+        if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
             self.editor.update(cx, |editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.try_cancel());
@@ -2271,7 +1147,7 @@ impl ContextEditor {
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(command) = self.slash_command_registry.command(name) {
+        if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
             if let Some(lsp_adapter_delegate) = self.lsp_adapter_delegate.clone() {
                 let argument = argument.map(ToString::to_string);
                 let output = command.run(argument.as_deref(), workspace, lsp_adapter_delegate, cx);
@@ -2308,7 +1184,7 @@ impl ContextEditor {
                     let excerpt_id = *buffer.as_singleton().unwrap().0;
                     let context = self.context.read(cx);
                     let highlighted_rows = context
-                        .edit_suggestions
+                        .edit_suggestions()
                         .iter()
                         .map(|suggestion| {
                             let start = buffer
@@ -2511,6 +1387,7 @@ impl ContextEditor {
                     }
                 }
             }
+            ContextEvent::Operation(_) => {}
         }
     }
 
@@ -2681,7 +1558,7 @@ impl ContextEditor {
                                 });
 
                             h_flex()
-                                .id(("message_header", message_id.0))
+                                .id(("message_header", message_id.as_u64()))
                                 .pl(cx.gutter_dimensions.full_width())
                                 .h_11()
                                 .w_full()
@@ -2832,7 +1709,7 @@ impl ContextEditor {
                     if !range.is_empty() {
                         spanned_messages += 1;
                         write!(&mut copied_text, "## {}\n\n", message.role).unwrap();
-                        for chunk in context.buffer.read(cx).text_for_range(range) {
+                        for chunk in context.buffer().read(cx).text_for_range(range) {
                             copied_text.push_str(chunk);
                         }
                         copied_text.push('\n');
@@ -2874,13 +1751,13 @@ impl ContextEditor {
         }
 
         let context = self.context.read(cx);
-        let context_buffer = context.buffer.read(cx);
+        let context_buffer = context.buffer().read(cx);
         let context_buffer_snapshot = context_buffer.snapshot();
 
         let selections = self.editor.read(cx).selections.disjoint_anchors();
         let mut selections = selections.iter().peekable();
         let selected_suggestions = context
-            .edit_suggestions
+            .edit_suggestions()
             .iter()
             .filter(|suggestion| {
                 while let Some(selection) = selections.peek() {
@@ -3037,8 +1914,7 @@ impl ContextEditor {
     fn title(&self, cx: &AppContext) -> String {
         self.context
             .read(cx)
-            .summary
-            .as_ref()
+            .summary()
             .map(|summary| summary.text.clone())
             .unwrap_or_else(|| "New Context".into())
     }
@@ -3424,14 +2300,18 @@ pub struct ContextHistory {
 
 impl ContextHistory {
     fn new(
+        project: Model<Project>,
         context_store: Model<ContextStore>,
         assistant_panel: WeakView<AssistantPanel>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let picker = cx.new_view(|cx| {
-            Picker::uniform_list(SavedContextPickerDelegate::new(context_store.clone()), cx)
-                .modal(false)
-                .max_height(None)
+            Picker::uniform_list(
+                SavedContextPickerDelegate::new(project, context_store.clone()),
+                cx,
+            )
+            .modal(false)
+            .max_height(None)
         });
 
         let _subscriptions = vec![
@@ -3454,12 +2334,19 @@ impl ContextHistory {
         event: &SavedContextPickerEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        let SavedContextPickerEvent::Confirmed { path } = event;
+        let SavedContextPickerEvent::Confirmed(context) = event;
         self.assistant_panel
-            .update(cx, |assistant_panel, cx| {
-                assistant_panel
-                    .open_context(path.clone(), cx)
-                    .detach_and_log_err(cx);
+            .update(cx, |assistant_panel, cx| match context {
+                ContextMetadata::Remote(metadata) => {
+                    assistant_panel
+                        .open_remote_context(metadata.id.clone(), cx)
+                        .detach_and_log_err(cx);
+                }
+                ContextMetadata::Saved(metadata) => {
+                    assistant_panel
+                        .open_saved_context(metadata.path.clone(), cx)
+                        .detach_and_log_err(cx);
+                }
             })
             .ok();
     }
@@ -3493,31 +2380,6 @@ impl Item for ContextHistory {
             Color::Muted
         };
         Label::new("History").color(color).into_any_element()
-    }
-}
-
-#[derive(Clone, Debug)]
-struct MessageAnchor {
-    id: MessageId,
-    start: language::Anchor,
-}
-
-#[derive(Clone, Debug)]
-pub struct Message {
-    offset_range: Range<usize>,
-    index_range: Range<usize>,
-    id: MessageId,
-    anchor: language::Anchor,
-    role: Role,
-    status: MessageStatus,
-}
-
-impl Message {
-    fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
-        LanguageModelRequestMessage {
-            role: self.role,
-            content: buffer.text_for_range(self.offset_range.clone()).collect(),
-        }
     }
 }
 
@@ -3623,601 +2485,4 @@ fn slash_command_error_block_renderer(message: String) -> RenderBlock {
             )
             .into_any()
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        slash_command::{active_command, file_command},
-        FakeCompletionProvider, MessageId,
-    };
-    use fs::FakeFs;
-    use gpui::{AppContext, TestAppContext};
-    use rope::Rope;
-    use serde_json::json;
-    use settings::SettingsStore;
-    use std::{cell::RefCell, path::Path, rc::Rc};
-    use unindent::Unindent;
-    use util::test::marked_text_ranges;
-
-    #[gpui::test]
-    fn test_inserting_and_removing_messages(cx: &mut AppContext) {
-        let settings_store = SettingsStore::test(cx);
-        FakeCompletionProvider::setup_test(cx);
-        cx.set_global(settings_store);
-        init(cx);
-        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-
-        let context = cx.new_model(|cx| Context::new(registry, Default::default(), None, cx));
-        let buffer = context.read(cx).buffer.clone();
-
-        let message_1 = context.read(cx).message_anchors[0].clone();
-        assert_eq!(
-            messages(&context, cx),
-            vec![(message_1.id, Role::User, 0..0)]
-        );
-
-        let message_2 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_1.id, Role::Assistant, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..1),
-                (message_2.id, Role::Assistant, 1..1)
-            ]
-        );
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "1"), (1..1, "2")], None, cx)
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..2),
-                (message_2.id, Role::Assistant, 2..3)
-            ]
-        );
-
-        let message_3 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..2),
-                (message_2.id, Role::Assistant, 2..4),
-                (message_3.id, Role::User, 4..4)
-            ]
-        );
-
-        let message_4 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..2),
-                (message_2.id, Role::Assistant, 2..4),
-                (message_4.id, Role::User, 4..5),
-                (message_3.id, Role::User, 5..5),
-            ]
-        );
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(4..4, "C"), (5..5, "D")], None, cx)
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..2),
-                (message_2.id, Role::Assistant, 2..4),
-                (message_4.id, Role::User, 4..6),
-                (message_3.id, Role::User, 6..7),
-            ]
-        );
-
-        // Deleting across message boundaries merges the messages.
-        buffer.update(cx, |buffer, cx| buffer.edit([(1..4, "")], None, cx));
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..3),
-                (message_3.id, Role::User, 3..4),
-            ]
-        );
-
-        // Undoing the deletion should also undo the merge.
-        buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..2),
-                (message_2.id, Role::Assistant, 2..4),
-                (message_4.id, Role::User, 4..6),
-                (message_3.id, Role::User, 6..7),
-            ]
-        );
-
-        // Redoing the deletion should also redo the merge.
-        buffer.update(cx, |buffer, cx| buffer.redo(cx));
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..3),
-                (message_3.id, Role::User, 3..4),
-            ]
-        );
-
-        // Ensure we can still insert after a merged message.
-        let message_5 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_1.id, Role::System, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..3),
-                (message_5.id, Role::System, 3..4),
-                (message_3.id, Role::User, 4..5)
-            ]
-        );
-    }
-
-    #[gpui::test]
-    fn test_message_splitting(cx: &mut AppContext) {
-        let settings_store = SettingsStore::test(cx);
-        cx.set_global(settings_store);
-        FakeCompletionProvider::setup_test(cx);
-        init(cx);
-        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-
-        let context = cx.new_model(|cx| Context::new(registry, Default::default(), None, cx));
-        let buffer = context.read(cx).buffer.clone();
-
-        let message_1 = context.read(cx).message_anchors[0].clone();
-        assert_eq!(
-            messages(&context, cx),
-            vec![(message_1.id, Role::User, 0..0)]
-        );
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "aaa\nbbb\nccc\nddd\n")], None, cx)
-        });
-
-        let (_, message_2) = context.update(cx, |context, cx| context.split_message(3..3, cx));
-        let message_2 = message_2.unwrap();
-
-        // We recycle newlines in the middle of a split message
-        assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc\nddd\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_2.id, Role::User, 4..16),
-            ]
-        );
-
-        let (_, message_3) = context.update(cx, |context, cx| context.split_message(3..3, cx));
-        let message_3 = message_3.unwrap();
-
-        // We don't recycle newlines at the end of a split message
-        assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\nccc\nddd\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_3.id, Role::User, 4..5),
-                (message_2.id, Role::User, 5..17),
-            ]
-        );
-
-        let (_, message_4) = context.update(cx, |context, cx| context.split_message(9..9, cx));
-        let message_4 = message_4.unwrap();
-        assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\nccc\nddd\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_3.id, Role::User, 4..5),
-                (message_2.id, Role::User, 5..9),
-                (message_4.id, Role::User, 9..17),
-            ]
-        );
-
-        let (_, message_5) = context.update(cx, |context, cx| context.split_message(9..9, cx));
-        let message_5 = message_5.unwrap();
-        assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\n\nccc\nddd\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_3.id, Role::User, 4..5),
-                (message_2.id, Role::User, 5..9),
-                (message_4.id, Role::User, 9..10),
-                (message_5.id, Role::User, 10..18),
-            ]
-        );
-
-        let (message_6, message_7) =
-            context.update(cx, |context, cx| context.split_message(14..16, cx));
-        let message_6 = message_6.unwrap();
-        let message_7 = message_7.unwrap();
-        assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\n\nccc\ndd\nd\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_3.id, Role::User, 4..5),
-                (message_2.id, Role::User, 5..9),
-                (message_4.id, Role::User, 9..10),
-                (message_5.id, Role::User, 10..14),
-                (message_6.id, Role::User, 14..17),
-                (message_7.id, Role::User, 17..19),
-            ]
-        );
-    }
-
-    #[gpui::test]
-    fn test_messages_for_offsets(cx: &mut AppContext) {
-        let settings_store = SettingsStore::test(cx);
-        FakeCompletionProvider::setup_test(cx);
-        cx.set_global(settings_store);
-        init(cx);
-        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let context = cx.new_model(|cx| Context::new(registry, Default::default(), None, cx));
-        let buffer = context.read(cx).buffer.clone();
-
-        let message_1 = context.read(cx).message_anchors[0].clone();
-        assert_eq!(
-            messages(&context, cx),
-            vec![(message_1.id, Role::User, 0..0)]
-        );
-
-        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "aaa")], None, cx));
-        let message_2 = context
-            .update(cx, |context, cx| {
-                context.insert_message_after(message_1.id, Role::User, MessageStatus::Done, cx)
-            })
-            .unwrap();
-        buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "bbb")], None, cx));
-
-        let message_3 = context
-            .update(cx, |context, cx| {
-                context.insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
-            })
-            .unwrap();
-        buffer.update(cx, |buffer, cx| buffer.edit([(8..8, "ccc")], None, cx));
-
-        assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_2.id, Role::User, 4..8),
-                (message_3.id, Role::User, 8..11)
-            ]
-        );
-
-        assert_eq!(
-            message_ids_for_offsets(&context, &[0, 4, 9], cx),
-            [message_1.id, message_2.id, message_3.id]
-        );
-        assert_eq!(
-            message_ids_for_offsets(&context, &[0, 1, 11], cx),
-            [message_1.id, message_3.id]
-        );
-
-        let message_4 = context
-            .update(cx, |context, cx| {
-                context.insert_message_after(message_3.id, Role::User, MessageStatus::Done, cx)
-            })
-            .unwrap();
-        assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_2.id, Role::User, 4..8),
-                (message_3.id, Role::User, 8..12),
-                (message_4.id, Role::User, 12..12)
-            ]
-        );
-        assert_eq!(
-            message_ids_for_offsets(&context, &[0, 4, 8, 12], cx),
-            [message_1.id, message_2.id, message_3.id, message_4.id]
-        );
-
-        fn message_ids_for_offsets(
-            context: &Model<Context>,
-            offsets: &[usize],
-            cx: &AppContext,
-        ) -> Vec<MessageId> {
-            context
-                .read(cx)
-                .messages_for_offsets(offsets.iter().copied(), cx)
-                .into_iter()
-                .map(|message| message.id)
-                .collect()
-        }
-    }
-
-    #[gpui::test]
-    async fn test_slash_commands(cx: &mut TestAppContext) {
-        let settings_store = cx.update(SettingsStore::test);
-        cx.set_global(settings_store);
-        cx.update(|cx| FakeCompletionProvider::setup_test(cx));
-
-        cx.update(Project::init_settings);
-        cx.update(init);
-        let fs = FakeFs::new(cx.background_executor.clone());
-
-        fs.insert_tree(
-            "/test",
-            json!({
-                "src": {
-                    "lib.rs": "fn one() -> usize { 1 }",
-                    "main.rs": "
-                        use crate::one;
-                        fn main() { one(); }
-                    ".unindent(),
-                }
-            }),
-        )
-        .await;
-
-        let slash_command_registry = SlashCommandRegistry::new();
-        slash_command_registry.register_command(file_command::FileSlashCommand, false);
-        slash_command_registry.register_command(active_command::ActiveSlashCommand, false);
-
-        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context =
-            cx.new_model(|cx| Context::new(registry.clone(), slash_command_registry, None, cx));
-
-        let output_ranges = Rc::new(RefCell::new(HashSet::default()));
-        context.update(cx, |_, cx| {
-            cx.subscribe(&context, {
-                let ranges = output_ranges.clone();
-                move |_, _, event, _| match event {
-                    ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
-                        for range in removed {
-                            ranges.borrow_mut().remove(range);
-                        }
-                        for command in updated {
-                            ranges.borrow_mut().insert(command.source_range.clone());
-                        }
-                    }
-                    _ => {}
-                }
-            })
-            .detach();
-        });
-
-        let buffer = context.read_with(cx, |context, _| context.buffer.clone());
-
-        // Insert a slash command
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "/file src/lib.rs")], None, cx);
-        });
-        assert_text_and_output_ranges(
-            &buffer,
-            &output_ranges.borrow(),
-            "
-            «/file src/lib.rs»
-            "
-            .unindent()
-            .trim_end(),
-            cx,
-        );
-
-        // Edit the argument of the slash command.
-        buffer.update(cx, |buffer, cx| {
-            let edit_offset = buffer.text().find("lib.rs").unwrap();
-            buffer.edit([(edit_offset..edit_offset + "lib".len(), "main")], None, cx);
-        });
-        assert_text_and_output_ranges(
-            &buffer,
-            &output_ranges.borrow(),
-            "
-            «/file src/main.rs»
-            "
-            .unindent()
-            .trim_end(),
-            cx,
-        );
-
-        // Edit the name of the slash command, using one that doesn't exist.
-        buffer.update(cx, |buffer, cx| {
-            let edit_offset = buffer.text().find("/file").unwrap();
-            buffer.edit(
-                [(edit_offset..edit_offset + "/file".len(), "/unknown")],
-                None,
-                cx,
-            );
-        });
-        assert_text_and_output_ranges(
-            &buffer,
-            &output_ranges.borrow(),
-            "
-            /unknown src/main.rs
-            "
-            .unindent()
-            .trim_end(),
-            cx,
-        );
-
-        #[track_caller]
-        fn assert_text_and_output_ranges(
-            buffer: &Model<Buffer>,
-            ranges: &HashSet<Range<language::Anchor>>,
-            expected_marked_text: &str,
-            cx: &mut TestAppContext,
-        ) {
-            let (expected_text, expected_ranges) = marked_text_ranges(expected_marked_text, false);
-            let (actual_text, actual_ranges) = buffer.update(cx, |buffer, _| {
-                let mut ranges = ranges
-                    .iter()
-                    .map(|range| range.to_offset(buffer))
-                    .collect::<Vec<_>>();
-                ranges.sort_by_key(|a| a.start);
-                (buffer.text(), ranges)
-            });
-
-            assert_eq!(actual_text, expected_text);
-            assert_eq!(actual_ranges, expected_ranges);
-        }
-    }
-
-    #[test]
-    fn test_parse_next_edit_suggestion() {
-        let text = "
-            some output:
-
-            ```edit src/foo.rs
-                let a = 1;
-                let b = 2;
-            ---
-                let w = 1;
-                let x = 2;
-                let y = 3;
-                let z = 4;
-            ```
-
-            some more output:
-
-            ```edit src/foo.rs
-                let c = 1;
-            ---
-            ```
-
-            and the conclusion.
-        "
-        .unindent();
-
-        let rope = Rope::from(text.as_str());
-        let mut lines = rope.chunks().lines();
-        let mut suggestions = vec![];
-        while let Some(suggestion) = parse_next_edit_suggestion(&mut lines) {
-            suggestions.push((
-                suggestion.path.clone(),
-                text[suggestion.old_text_range].to_string(),
-                text[suggestion.new_text_range].to_string(),
-            ));
-        }
-
-        assert_eq!(
-            suggestions,
-            vec![
-                (
-                    Path::new("src/foo.rs").into(),
-                    [
-                        "    let a = 1;", //
-                        "    let b = 2;",
-                        "",
-                    ]
-                    .join("\n"),
-                    [
-                        "    let w = 1;",
-                        "    let x = 2;",
-                        "    let y = 3;",
-                        "    let z = 4;",
-                        "",
-                    ]
-                    .join("\n"),
-                ),
-                (
-                    Path::new("src/foo.rs").into(),
-                    [
-                        "    let c = 1;", //
-                        "",
-                    ]
-                    .join("\n"),
-                    String::new(),
-                )
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_serialization(cx: &mut TestAppContext) {
-        let settings_store = cx.update(SettingsStore::test);
-        cx.set_global(settings_store);
-        cx.update(FakeCompletionProvider::setup_test);
-        cx.update(init);
-        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context =
-            cx.new_model(|cx| Context::new(registry.clone(), Default::default(), None, cx));
-        let buffer = context.read_with(cx, |context, _| context.buffer.clone());
-        let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
-        let message_1 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_0, Role::Assistant, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        let message_2 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_1.id, Role::System, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "a"), (1..1, "b\nc")], None, cx);
-            buffer.finalize_last_transaction();
-        });
-        let _message_3 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_2.id, Role::System, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), "a\nb\nc\n");
-        assert_eq!(
-            cx.read(|cx| messages(&context, cx)),
-            [
-                (message_0, Role::User, 0..2),
-                (message_1.id, Role::Assistant, 2..6),
-                (message_2.id, Role::System, 6..6),
-            ]
-        );
-
-        let deserialized_context = Context::deserialize(
-            context.read_with(cx, |context, cx| context.serialize(cx)),
-            Default::default(),
-            registry.clone(),
-            Default::default(),
-            None,
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-        let deserialized_buffer =
-            deserialized_context.read_with(cx, |context, _| context.buffer.clone());
-        assert_eq!(
-            deserialized_buffer.read_with(cx, |buffer, _| buffer.text()),
-            "a\nb\nc\n"
-        );
-        assert_eq!(
-            cx.read(|cx| messages(&deserialized_context, cx)),
-            [
-                (message_0, Role::User, 0..2),
-                (message_1.id, Role::Assistant, 2..6),
-                (message_2.id, Role::System, 6..6),
-            ]
-        );
-    }
-
-    fn messages(context: &Model<Context>, cx: &AppContext) -> Vec<(MessageId, Role, Range<usize>)> {
-        context
-            .read(cx)
-            .messages(cx)
-            .map(|message| (message.id, message.role, message.offset_range))
-            .collect()
-    }
 }

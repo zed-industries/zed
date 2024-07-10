@@ -31,7 +31,6 @@ pub mod tabs_command;
 pub mod term_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
-    commands: Arc<SlashCommandRegistry>,
     cancel_flag: Mutex<Arc<AtomicBool>>,
     editor: Option<WeakView<ContextEditor>>,
     workspace: Option<WeakView<Workspace>>,
@@ -46,14 +45,12 @@ pub(crate) struct SlashCommandLine {
 
 impl SlashCommandCompletionProvider {
     pub fn new(
-        commands: Arc<SlashCommandRegistry>,
         editor: Option<WeakView<ContextEditor>>,
         workspace: Option<WeakView<Workspace>>,
     ) -> Self {
         Self {
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
             editor,
-            commands,
             workspace,
         }
     }
@@ -65,8 +62,8 @@ impl SlashCommandCompletionProvider {
         name_range: Range<Anchor>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<project::Completion>>> {
-        let candidates = self
-            .commands
+        let commands = SlashCommandRegistry::global(cx);
+        let candidates = commands
             .command_names()
             .into_iter()
             .enumerate()
@@ -76,7 +73,6 @@ impl SlashCommandCompletionProvider {
                 char_bag: def.as_ref().into(),
             })
             .collect::<Vec<_>>();
-        let commands = self.commands.clone();
         let command_name = command_name.to_string();
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
@@ -155,7 +151,8 @@ impl SlashCommandCompletionProvider {
         flag.store(true, SeqCst);
         *flag = new_cancel_flag.clone();
 
-        if let Some(command) = self.commands.command(command_name) {
+        let commands = SlashCommandRegistry::global(cx);
+        if let Some(command) = commands.command(command_name) {
             let completions = command.complete_argument(
                 argument,
                 new_cancel_flag.clone(),

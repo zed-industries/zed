@@ -377,6 +377,7 @@ dependencies = [
  "cargo_toml",
  "chrono",
  "client",
+ "clock",
  "collections",
  "command_palette_hooks",
  "ctor",
@@ -419,6 +420,7 @@ dependencies = [
  "telemetry_events",
  "terminal",
  "terminal_view",
+ "text",
  "theme",
  "tiktoken-rs",
  "toml 0.8.10",
@@ -2405,6 +2407,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "parking_lot",
+ "serde",
  "smallvec",
 ]
 
@@ -2463,6 +2466,7 @@ version = "0.44.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "assistant",
  "async-trait",
  "async-tungstenite",
  "audio",
